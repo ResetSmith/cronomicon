@@ -253,7 +253,7 @@ func scopeServing(ctx context.Context, database *sql.DB, scopeID string) (*servi
 		SELECT rn.name, rn.kind = 'server'
 		  FROM runners rn
 		 WHERE EXISTS (SELECT 1 FROM runner_agencies ra
-		                WHERE ra.runner_id = rn.id AND ra.agency_id IN (SELECT value FROM json_each(?)))
+		                WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency AND ra.agency_id IN (SELECT value FROM json_each(?)))
 		   AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c WHERE c.value IN `+shellTypesSQL+`)
 		 ORDER BY rn.name, rn.id`, string(agencyJSON))
 	if err != nil {
@@ -307,9 +307,7 @@ func scopeServing(ctx context.Context, database *sql.DB, scopeID string) (*servi
 func checkShellJobRequires(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT COALESCE(NULLIF(j.uid, ''), j.source || ':' || j.name), j.name, j.source, COALESCE(j.scope, ''), j.requires_json,
-		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                   FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-		                  WHERE sc.name = j.scope), ?)
+		       COALESCE(`+agencyid.JobSQL("j")+`, ?) -- its owner (1400)
 		  FROM jobs j
 		 WHERE j.deleted_at IS NULL
 		   AND j.run_type IN `+shellTypesSQL+`
@@ -319,11 +317,11 @@ func checkShellJobRequires(ctx context.Context, database *sql.DB) error {
 		        WHERE rn.kind <> 'server'
 		          AND EXISTS (
 		              SELECT 1 FROM runner_agencies ra
-		               WHERE ra.runner_id = rn.id
+		               WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency
 		                 AND ((COALESCE(j.scope, '') = '' AND ra.agency_id = ?)
 		                      OR ra.agency_id IN (SELECT sa.agency_id FROM scope_agencies sa
 		                                            JOIN scopes sc ON sc.id = sa.scope_id
-		                                           WHERE sc.name = j.scope)))
+		                                           WHERE sc.name = j.scope AND sc.owner_agency = COALESCE(`+agencyid.JobSQL("j")+`, '`+agencyid.Global+`'))))
 		          AND NOT EXISTS (
 		              SELECT 1 FROM json_each(CASE WHEN json_valid(j.requires_json) THEN j.requires_json ELSE '[]' END) need
 		               WHERE need.value NOT IN (SELECT have.value FROM json_each(COALESCE(rn.capabilities, '[]')) have)))
@@ -376,7 +374,7 @@ func checkNoRunnerForShellJobs(ctx context.Context, database *sql.DB) error {
 			SELECT j.name AS job,
 			       CASE WHEN COALESCE(j.scope, '') = '' THEN ? ELSE sa.agency_id END AS agency
 			  FROM jobs j
-			  LEFT JOIN scopes sc ON sc.name = j.scope
+			  LEFT JOIN scopes sc ON sc.name = j.scope AND sc.owner_agency = COALESCE(`+agencyid.JobSQL("j")+`, '`+agencyid.Global+`')
 			  LEFT JOIN scope_agencies sa ON sa.scope_id = sc.id
 			 WHERE j.deleted_at IS NULL AND j.run_type IN `+shellTypesSQL+`
 		)
@@ -385,7 +383,7 @@ func checkNoRunnerForShellJobs(ctx context.Context, database *sql.DB) error {
 		            SELECT DISTINCT s2.job AS job FROM shell_jobs s2 WHERE s2.agency = a.id ORDER BY s2.job LIMIT 5))
 		  FROM agencies a JOIN shell_jobs sj ON sj.agency = a.id
 		 WHERE NOT EXISTS (
-		       SELECT 1 FROM runners rn JOIN runner_agencies ra ON ra.runner_id = rn.id
+		       SELECT 1 FROM runners rn JOIN runner_agencies ra ON ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency
 		        WHERE ra.agency_id = a.id
 		          AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c
 		                       WHERE c.value IN `+shellTypesSQL+`))
@@ -410,11 +408,10 @@ func checkNoRunnerForShellJobs(ctx context.Context, database *sql.DB) error {
 		found = append(found, Finding{
 			AgencyID: id,
 			Subject:  id,
-			Detail: fmt.Sprintf("%s has shell jobs (%s) and no runner that can run them: no agent of its own, and the "+
-				"local runner does not serve it. Until 2.3.0 the server ran every agency's shell jobs; it now runs "+
-				"those of the agencies on the local runner's list, so a run of these jobs waits. Either enrol an "+
-				"agent for %s (Runners → Add Runner), or have a global administrator add %s to the agencies the "+
-				"local runner serves (Settings → Local runner).", name, list, name, name),
+			Detail: fmt.Sprintf("%s has shell jobs (%s) and no runner that can run them: no agent of its own. "+
+				"Until 2.3.0 the server ran every agency's shell jobs; since 2.4.0 the local runner is Global's and "+
+				"runs Global's only, so a run of these jobs waits. Enrol an agent for %s (Runners → Add Runner).",
+				name, list, name),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -580,9 +577,7 @@ func checkLeftoverExecutorKey(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		WITH carrying AS (
 			SELECT j.name AS job, j.executor AS executor,
-			       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-			                   FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-			                  WHERE sc.name = j.scope), ?) AS agency
+			       COALESCE(`+agencyid.JobSQL("j")+`, ?) AS agency -- its owner (1400)
 			  FROM jobs j
 			 WHERE j.source = 'git' AND j.deleted_at IS NULL AND COALESCE(j.executor, '') <> ''
 		)

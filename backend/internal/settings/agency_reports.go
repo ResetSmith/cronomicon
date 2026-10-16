@@ -18,12 +18,14 @@ import (
 // Global became an agency (migration 1220). The report is gone; these stay.
 
 // scopedRow is one secret/env_vars row reduced to what the scope predicate needs.
-type scopedRow struct{ id, key, scope, owner string }
+// scopedRow: owner is the owning agency's NAME ("" for Global's), ownerID its id.
+type scopedRow struct{ id, key, scope, owner, ownerID string }
 
 func loadScopedRows(ctx context.Context, database *sql.DB, table string) ([]scopedRow, error) {
 	rows, err := database.QueryContext(ctx,
 		`SELECT t.id, t.key, COALESCE(t.scope,''),
-		        CASE WHEN t.owner_agency = '`+agencyid.Global+`' THEN '' ELSE COALESCE(ag.name,'') END
+		        CASE WHEN t.owner_agency = '`+agencyid.Global+`' THEN '' ELSE COALESCE(ag.name,'') END,
+		        t.owner_agency
 		 FROM `+table+` t LEFT JOIN agencies ag ON ag.id = t.owner_agency`)
 	if err != nil {
 		return nil, fmt.Errorf("preflight: read %s: %w", table, err)
@@ -32,7 +34,7 @@ func loadScopedRows(ctx context.Context, database *sql.DB, table string) ([]scop
 	var out []scopedRow
 	for rows.Next() {
 		var r scopedRow
-		if err := rows.Scan(&r.id, &r.key, &r.scope, &r.owner); err != nil {
+		if err := rows.Scan(&r.id, &r.key, &r.scope, &r.owner, &r.ownerID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

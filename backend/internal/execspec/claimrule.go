@@ -24,7 +24,7 @@ import (
 // EffectiveCaps subtracts a runner's server-managed capability mask from the
 // capability tokens it declared. The mask is subtract-only (it lists run types
 // the operator has switched off for this runner). Order-preserving; an empty
-// mask returns caps unchanged. The claim calls this; effectiveCapsSQL is the
+// mask returns caps unchanged. The claim calls this; EffectiveCapsSQL is the
 // same rule for the two mirrors, and a test holds them to one answer.
 func EffectiveCaps(caps, mask []string) []string {
 	if len(mask) == 0 {
@@ -43,11 +43,14 @@ func EffectiveCaps(caps, mask []string) []string {
 	return out
 }
 
-// effectiveCapsSQL is EffectiveCaps as a one-column subquery over the runners
+// EffectiveCapsSQL is EffectiveCaps as a one-column subquery over the runners
 // row aliased `alias`: the declared tokens that the mask does not list. A
 // managed_settings blob that is absent, not JSON, or carries no mask subtracts
 // nothing — as LoadManagedSettings reads it.
-func effectiveCapsSQL(alias string) string {
+//
+// Exported for the questions that must give the claim's answer about what an
+// agent can take: runref.CheckoutNeedsAgent and the notice that mirrors it.
+func EffectiveCapsSQL(alias string) string {
 	return `(SELECT ec.value FROM json_each(COALESCE(` + alias + `.capabilities, '[]')) ec
 	          WHERE ec.value NOT IN (
 	                SELECT em.value FROM json_each(
@@ -87,7 +90,7 @@ func RunBindsKeySQL(alias string) string {
 	                         THEN kb.owner_uid = ` + alias + `.job_uid
 	                         ELSE kb.owner_source = COALESCE(NULLIF(` + alias + `.job_source, ''), 'git')
 	                              AND kb.owner_name = ` + alias + `.job_name END)
-	            OR (kb.owner_kind = 'script' AND kb.owner_name = ` + alias + `.script_ref))))`
+	            OR (kb.owner_kind = 'script' AND kb.owner_uid = ` + alias + `.script_uid))))`
 }
 
 // runBindsKey is RunBindsKeySQL for one run.
@@ -125,7 +128,10 @@ func SetInjectionGateArmed(armed bool) { injectionGateArmed.Store(armed) }
 // credential (an implicit key binding, CA-3b) or its job or script declares
 // reference bindings. The job is identified by the run's frozen uid when it has
 // one (R2F-1: a same-named sibling's bindings must not decide this run's gate)
-// and by source and name for a run that predates the uid.
+// and by source and name for a run that predates the uid. The SCRIPT is
+// identified by the run's frozen script_uid and never by name (1290): a run
+// with no script_uid matches no script's bindings, which is the truth for a
+// run whose script had gone and the safe answer for anything else.
 func runNeedsInjectionRunner(ctx context.Context, database *sql.DB, runID string) (bool, error) {
 	if !injectionGateArmed.Load() {
 		return false, nil
@@ -140,7 +146,7 @@ func runNeedsInjectionRunner(ctx context.Context, database *sql.DB, runID string
 		                         THEN rb.owner_uid = r.job_uid
 		                         ELSE rb.owner_source = COALESCE(NULLIF(r.job_source, ''), 'git')
 		                              AND rb.owner_name = r.job_name END)
-		           OR (rb.owner_kind = 'script' AND rb.owner_name = r.script_ref))
+		           OR (rb.owner_kind = 'script' AND rb.owner_uid = r.script_uid))
 		  FROM runs r WHERE r.id = ?`, runID).Scan(&needs)
 	return needs, err
 }

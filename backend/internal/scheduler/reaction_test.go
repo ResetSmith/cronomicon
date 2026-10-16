@@ -660,9 +660,10 @@ func TestReactionParamsMatchACronFire(t *testing.T) {
 	if got.SSHUser != "deploy" || got.SSHCredential != "cred-label" {
 		t.Errorf("identity = %q/%q, want deploy/cred-label", got.SSHUser, got.SSHCredential)
 	}
-	// PP-L8 — a Forbid job carries its key so the partial unique index applies.
-	if got.ConcurrencyKey != "rich-key" {
-		t.Errorf("concurrency key = %q, want rich-key", got.ConcurrencyKey)
+	// PP-L8 — a Forbid job carries its key so the partial unique index applies,
+	// shared within its agency (question 56).
+	if got.ConcurrencyKey != "global:rich-key" {
+		t.Errorf("concurrency key = %q, want global:rich-key", got.ConcurrencyKey)
 	}
 	// The frozen policy is what lets promoteOne re-judge Forbid without a
 	// jobs-table join a rename could invalidate.
@@ -859,8 +860,8 @@ func TestReactionForbidKeyRespectsAnExplicitKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ConcurrencyKey != "db-migration-lock" {
-		t.Errorf("concurrency key = %q, want the authored key", got.ConcurrencyKey)
+	if got.ConcurrencyKey != "global:db-migration-lock" {
+		t.Errorf("concurrency key = %q, want the authored key within its agency", got.ConcurrencyKey)
 	}
 }
 

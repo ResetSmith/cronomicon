@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/inventory"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/tagutil"
 )
 
@@ -103,6 +105,9 @@ type LocalScopeInput struct {
 	Description  *string
 	Hosts        []string
 	RawInventory *string
+	// OwnerAgency is the agency a new scope is created in (I2: its name is
+	// unique there). Global's when empty. Read by CreateScope only.
+	OwnerAgency string
 }
 
 // BrokenReference describes a dangling scope reference after a rename.
@@ -111,27 +116,63 @@ type BrokenReference struct {
 	Name   string `json:"name"`
 }
 
+// repoLinkSet is every repository's URL and branch, for building the link to
+// a file of one of them.
+type repoLinkSet map[string][2]string
+
+// repoLinks reads them. A read that fails yields none, and no scope gets a
+// link: the link is a convenience, and a scope list must not fail for it.
+func repoLinks(ctx context.Context, database *sql.DB) repoLinkSet {
+	out := repoLinkSet{}
+	rows, err := database.QueryContext(ctx, `SELECT id, url, branch FROM git_repos`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, url, branch string
+		if rows.Scan(&id, &url, &branch) == nil {
+			if branch == "" {
+				branch = "main"
+			}
+			out[id] = [2]string{strings.TrimSuffix(url, ".git"), branch}
+		}
+	}
+	return out
+}
+
+// fileURL is the address of one file of a repository in its web interface, or
+// "" when the repository has no URL. A scope from before a scope recorded its
+// repository (none since migration 1310) is Global's.
+func (l repoLinkSet) fileURL(repoID, path string) string {
+	if repoID == "" {
+		repoID = repoid.Global
+	}
+	r, ok := l[repoID]
+	if !ok || r[0] == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/-/blob/%s/%s", r[0], r[1], path)
+}
+
 // ListScopes returns scopes. If sourceFilter is provided, it filters by source ('git' or 'cronomicon').
 func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]Scope, error) {
-	// Fetch GitLab config first to resolve GitLabURL for git-source scopes.
-	var repoURL, writeBranch string
-	row := database.QueryRowContext(ctx, `SELECT repo_url, write_branch FROM gitlab_config WHERE id=1`)
-	_ = row.Scan(&repoURL, &writeBranch)
-	if writeBranch == "" {
-		writeBranch = "main"
-	}
-	repoURL = strings.TrimSuffix(repoURL, ".git")
+	// Each repository's URL and branch, to resolve GitLabURL for git-source
+	// scopes: a scope's link is to ITS repository (scopes.repo_id, 2.4.0).
+	links := repoLinks(ctx, database)
 
 	var query string
 	var args []any
 	if sourceFilter != "" {
 		query = `SELECT id, name, source, description, created_by, created_at,
-		                last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
+		                last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags,
+		                COALESCE(repo_id, '')
 		         FROM scopes WHERE source=? ORDER BY name`
 		args = append(args, sourceFilter)
 	} else {
 		query = `SELECT id, name, source, description, created_by, created_at,
-		                last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
+		                last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags,
+		                COALESCE(repo_id, '')
 		         FROM scopes ORDER BY source DESC, name`
 	}
 
@@ -145,11 +186,12 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 	for rows.Next() {
 		var sc Scope
 		var desc, createdBy, lastModBy, lastModAt, sourcePath, gitMeta, syncedAt, invFmt, projStatus, hasInvStr sql.NullString
-		var tagsRaw string
+		var tagsRaw, scopeRepo string
 		if err := rows.Scan(
 			&sc.ID, &sc.Scope, &sc.Source, &desc,
 			&createdBy, &sc.CreatedAt, &lastModBy, &lastModAt,
 			&sourcePath, &gitMeta, &syncedAt, &invFmt, &projStatus, &hasInvStr, &tagsRaw,
+			&scopeRepo,
 		); err != nil {
 			return nil, err
 		}
@@ -174,8 +216,7 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 			if sourcePath.Valid && sourcePath.String != "" {
 				filename := filepath.Base(sourcePath.String)
 				sc.Name = &filename
-				if repoURL != "" {
-					urlVal := fmt.Sprintf("%s/-/blob/%s/%s", repoURL, writeBranch, sourcePath.String)
+				if urlVal := links.fileURL(scopeRepo, sourcePath.String); urlVal != "" {
 					sc.GitLabURL = &urlVal
 				}
 			}
@@ -240,27 +281,23 @@ func applyGitMeta(sc *Scope, raw sql.NullString) {
 
 // GetScope fetches a single scope by ID (handles both git and cronomicon sources).
 func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) {
-	// Fetch GitLab config to resolve GitLabURL.
-	var repoURL, writeBranch string
-	rowCfg := database.QueryRowContext(ctx, `SELECT repo_url, write_branch FROM gitlab_config WHERE id=1`)
-	_ = rowCfg.Scan(&repoURL, &writeBranch)
-	if writeBranch == "" {
-		writeBranch = "main"
-	}
-	repoURL = strings.TrimSuffix(repoURL, ".git")
+	// Each repository's URL and branch, to resolve GitLabURL (see ListScopes).
+	links := repoLinks(ctx, database)
 
 	row := database.QueryRowContext(ctx,
 		`SELECT id, name, source, description, created_by, created_at,
-		        last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
+		        last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags,
+		        COALESCE(repo_id, '')
 		 FROM scopes WHERE id=?`, id)
 
 	var sc Scope
 	var desc, createdBy, lastModBy, lastModAt, sourcePath, gitMeta, syncedAt, invFmt, projStatus, hasInvStr sql.NullString
-	var tagsRaw string
+	var tagsRaw, scopeRepo string
 	if err := row.Scan(
 		&sc.ID, &sc.Scope, &sc.Source, &desc,
 		&createdBy, &sc.CreatedAt, &lastModBy, &lastModAt,
 		&sourcePath, &gitMeta, &syncedAt, &invFmt, &projStatus, &hasInvStr, &tagsRaw,
+		&scopeRepo,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -288,8 +325,7 @@ func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) 
 		if sourcePath.Valid && sourcePath.String != "" {
 			filename := filepath.Base(sourcePath.String)
 			sc.Name = &filename
-			if repoURL != "" {
-				urlVal := fmt.Sprintf("%s/-/blob/%s/%s", repoURL, writeBranch, sourcePath.String)
+			if urlVal := links.fileURL(scopeRepo, sourcePath.String); urlVal != "" {
 				sc.GitLabURL = &urlVal
 			}
 		}
@@ -405,9 +441,9 @@ func CreateScope(ctx context.Context, database *sql.DB, inp LocalScopeInput, act
 	defer tx.Rollback() //nolint:errcheck
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO scopes (id, name, source, description, created_by, created_at, last_modified_by, last_modified_at, raw_inventory, inventory_format, projection_status, projection_json)
-		 VALUES (?, ?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, inp.Scope, inp.Description, actor, now, actor, now, rawInv, invFmt, projStatus, projJSON)
+		`INSERT INTO scopes (id, name, source, description, created_by, created_at, last_modified_by, last_modified_at, raw_inventory, inventory_format, projection_status, projection_json, owner_agency)
+		 VALUES (?, ?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, inp.Scope, inp.Description, actor, now, actor, now, rawInv, invFmt, projStatus, projJSON, ownerOrGlobalAgency(inp.OwnerAgency))
 	if err != nil {
 		return nil, fmt.Errorf("create scope: %w", err)
 	}
@@ -566,10 +602,28 @@ func UpdateScope(ctx context.Context, database *sql.DB, id string, inp LocalScop
 	// than by remembering to write the UPDATE.
 	var broken []BrokenReference
 	if oldName != newName {
-		// Lint: find broken references in env_vars and secrets (scope column).
-		// Use the tx (not the pool) to avoid a deadlock on the single-connection pool.
-		broken = append(broken, brokenEnvVarRefsTx(ctx, tx, oldName)...)
-		broken = append(broken, brokenSecretRefsTx(ctx, tx, oldName)...)
+		// The scope's agency: a scope's name is unique within an agency only (I2),
+		// so what names the old name in ANOTHER agency is that agency's scope's, and
+		// is neither moved nor reported.
+		var scopeOwner string
+		if err := tx.QueryRowContext(ctx, `SELECT owner_agency FROM scopes WHERE id = ?`, id).Scan(&scopeOwner); err != nil {
+			return nil, nil, fmt.Errorf("read the scope's agency: %w", err)
+		}
+		// A job carries its scope by NAME. The jobs built in the app go with the
+		// scope to its new name (present defect 51, the owner's yes to question
+		// 26): left on the old one, they belonged to whatever scope took that
+		// name next, another agency's included, listed to it and run on its
+		// hosts. A job from Git keeps what its file says, and is reported below.
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE jobs SET scope = ? WHERE source = 'cronomicon' AND scope = ? AND owner_agency = ?`, newName, oldName, scopeOwner); err != nil {
+			return nil, nil, fmt.Errorf("move the scope's jobs to its new name: %w", err)
+		}
+		// Lint: find broken references in env_vars, secrets and Git jobs (scope
+		// column). Use the tx (not the pool) to avoid a deadlock on the
+		// single-connection pool.
+		broken = append(broken, brokenEnvVarRefsTx(ctx, tx, oldName, scopeOwner)...)
+		broken = append(broken, brokenSecretRefsTx(ctx, tx, oldName, scopeOwner)...)
+		broken = append(broken, brokenGitJobRefs(ctx, tx, oldName, scopeOwner)...)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -596,8 +650,12 @@ func DeleteScope(ctx context.Context, database *sql.DB, id, actor string) (bool,
 	// Check job references (jobs table owned by B3/B5). FX-A4: a binned job is not
 	// a live reference — it cannot run, and blocking the scope delete on one made
 	// the operator empty the recycle bin to proceed.
+	// The scope's own agency's jobs (I2): another agency's jobs on its scope of
+	// the name are nothing to this one.
 	var refCount int
-	_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE scope=? AND deleted_at IS NULL`, existing.Scope).Scan(&refCount)
+	_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE scope=? AND deleted_at IS NULL
+	      AND COALESCE(`+agencyid.JobSQL("jobs")+`, '`+agencyid.Global+`') = (SELECT owner_agency FROM scopes WHERE id = ?)`,
+		existing.Scope, id).Scan(&refCount)
 	if refCount > 0 {
 		return false, fmt.Errorf("scope is still referenced by %d job(s)", refCount)
 	}
@@ -701,8 +759,8 @@ type dbQuerier interface {
 }
 
 // brokenEnvVarRefs finds env_vars that still reference oldScope.
-func brokenEnvVarRefs(ctx context.Context, q dbQuerier, oldScope string) []BrokenReference {
-	rows, _ := q.QueryContext(ctx, `SELECT key FROM env_vars WHERE scope=?`, oldScope)
+func brokenEnvVarRefs(ctx context.Context, q dbQuerier, oldScope, owner string) []BrokenReference {
+	rows, _ := q.QueryContext(ctx, `SELECT key FROM env_vars WHERE scope = ? AND owner_agency = ?`, oldScope, owner)
 	if rows == nil {
 		return nil
 	}
@@ -717,8 +775,8 @@ func brokenEnvVarRefs(ctx context.Context, q dbQuerier, oldScope string) []Broke
 }
 
 // brokenSecretRefs finds secrets that still reference oldScope.
-func brokenSecretRefs(ctx context.Context, q dbQuerier, oldScope string) []BrokenReference {
-	rows, _ := q.QueryContext(ctx, `SELECT key FROM secrets WHERE scope=?`, oldScope)
+func brokenSecretRefs(ctx context.Context, q dbQuerier, oldScope, owner string) []BrokenReference {
+	rows, _ := q.QueryContext(ctx, `SELECT key FROM secrets WHERE scope = ? AND owner_agency = ?`, oldScope, owner)
 	if rows == nil {
 		return nil
 	}
@@ -732,12 +790,41 @@ func brokenSecretRefs(ctx context.Context, q dbQuerier, oldScope string) []Broke
 	return out
 }
 
+// brokenGitJobRefs finds the jobs from Git that still name oldScope: a rename
+// cannot change a file, so each is the repository's to change.
+func brokenGitJobRefs(ctx context.Context, q dbQuerier, oldScope, owner string) []BrokenReference {
+	rows, _ := q.QueryContext(ctx, `SELECT name FROM jobs WHERE source = 'git' AND scope = ? AND owner_agency = ? ORDER BY name`, oldScope, owner)
+	if rows == nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []BrokenReference
+	for rows.Next() {
+		var n string
+		_ = rows.Scan(&n)
+		out = append(out, BrokenReference{Entity: "jobs", Name: n})
+	}
+	return out
+}
+
+// ownerOrGlobalAgency is an agency id, Global's for none.
+//
+// (ScopeNameClaimed and its 409 `scope_name_in_use`, present defect 51 and the
+// owner's yes to question 26, went with I2: a job finds its scope in its own
+// agency, so another agency's scope of the name takes no job of this one's.)
+func ownerOrGlobalAgency(agency string) string {
+	if agency == "" {
+		return agencyid.Global
+	}
+	return agency
+}
+
 // brokenEnvVarRefsTx is like brokenEnvVarRefs but uses a transaction.
-func brokenEnvVarRefsTx(ctx context.Context, tx *sql.Tx, oldScope string) []BrokenReference {
-	return brokenEnvVarRefs(ctx, tx, oldScope)
+func brokenEnvVarRefsTx(ctx context.Context, tx *sql.Tx, oldScope, owner string) []BrokenReference {
+	return brokenEnvVarRefs(ctx, tx, oldScope, owner)
 }
 
 // brokenSecretRefsTx is like brokenSecretRefs but uses a transaction.
-func brokenSecretRefsTx(ctx context.Context, tx *sql.Tx, oldScope string) []BrokenReference {
-	return brokenSecretRefs(ctx, tx, oldScope)
+func brokenSecretRefsTx(ctx context.Context, tx *sql.Tx, oldScope, owner string) []BrokenReference {
+	return brokenSecretRefs(ctx, tx, oldScope, owner)
 }

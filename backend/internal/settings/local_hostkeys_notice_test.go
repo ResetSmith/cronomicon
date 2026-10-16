@@ -62,11 +62,11 @@ func TestTheLocalRunnersPlanAndItsMissingKeysNotice(t *testing.T) {
 		}
 		return out
 	}
-	agentPlan, err := hostkeys.PlanScopeFor(ctx, database, "fin-prod", false)
+	agentPlan, err := hostkeys.PlanScopeFor(ctx, database, scopeOwnerForTest(t, database, "fin-prod"), "fin-prod", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverPlan, err := hostkeys.PlanScopeForRunner(ctx, database, "fin-prod", localID)
+	serverPlan, err := hostkeys.PlanScopeForRunner(ctx, database, scopeOwnerForTest(t, database, "fin-prod"), "fin-prod", localID)
 	if err != nil {
 		t.Fatal(err)
 	}

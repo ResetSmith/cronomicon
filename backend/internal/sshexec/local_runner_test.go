@@ -320,9 +320,9 @@ func TestApplyReportsAStartThatFailed(t *testing.T) {
 
 // The SSH executor was on under 2.2, and the first 2.3.0 start sets
 // CRONOMICON_LOCAL_RUNNER=forbid. The upgrade pass acts on what the server WAS
-// doing: the local runner is placed where it was serving and the queued runs
-// are moved, not closed as "the executor was off" — so the day forbid is lifted
-// it serves what it served. While forbidden it claims nothing.
+// doing: the agencies it was serving are recorded (since §0a it is not placed
+// in them: the local runner serves Global only) and the queued runs are moved,
+// not closed as "the executor was off". While forbidden it claims nothing.
 func TestForbidAtTheFirstStartStillPlacesTheLocalRunner(t *testing.T) {
 	svc, pool, ctx := localRunnerEngine(t, &config.Config{SSHExecutorEnabled: true, LocalRunnerForbid: true})
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -347,9 +347,16 @@ func TestForbidAtTheFirstStartStillPlacesTheLocalRunner(t *testing.T) {
 	if status != "offline" {
 		t.Errorf("forbidden, the row reads %q", status)
 	}
+	// Not placed in Finance (§0a, IN-3: the local runner serves Global only;
+	// until then it was placed where the server was serving): Finance is
+	// recorded, and told its shell jobs wait for an agent of its own.
 	var serves int
-	if err := pool.QueryRow(`SELECT COUNT(*) FROM runner_agencies WHERE runner_id = ? AND agency_id = 'ag-fin'`, id).Scan(&serves); err != nil || serves != 1 {
-		t.Errorf("the local runner was not placed in Finance, where the server was serving (%d rows, %v)", serves, err)
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM runner_agencies WHERE runner_id = ? AND agency_id = 'ag-fin'`, id).Scan(&serves); err != nil || serves != 0 {
+		t.Errorf("the local runner was placed in Finance (%d rows, %v)", serves, err)
+	}
+	var served string
+	if err := pool.QueryRow(`SELECT value FROM settings WHERE key = 'upgrade.2.4.0.localRunnerServed'`).Scan(&served); err != nil || served != `["ag-fin"]` {
+		t.Errorf("the record of what it served = %q (%v), want Finance", served, err)
 	}
 	var runStatus, executor string
 	if err := pool.QueryRow(`SELECT status, executor FROM runs WHERE id = 'was-queued'`).Scan(&runStatus, &executor); err != nil {

@@ -71,7 +71,7 @@ func TestLR0_TheRunnerMembershipSetterIsTheOwners(t *testing.T) {
 	}
 	// An empty list is refused for the owner too (LR-26): a runner always
 	// serves an agency.
-	rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", gRoot, `[{"runnerId":"r-both","agencyIds":[]}]`)
+	rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", gRoot, asRepair(`[{"runnerId":"r-both","agencyIds":[]}]`))
 	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "agency_required") {
 		t.Errorf("a global administrator emptying a runner's agencies = %d, want 422 agency_required (%s)", rec.Code, rec.Body)
 	}

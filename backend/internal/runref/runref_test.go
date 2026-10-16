@@ -128,12 +128,12 @@ func TestBindingsClearedOnOwnerDelete(t *testing.T) {
 		VALUES('uid-deploy','deploy','cronomicon','bash','echo','sha256:x',?)`, now); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
-	if _, err := pool.Exec(`INSERT INTO scripts(name, run_type, command, content_hash, synced_at)
-		VALUES('build','bash','echo','sha256:y',?)`, now); err != nil {
+	if _, err := pool.Exec(`INSERT INTO scripts(uid, name, run_type, command, content_hash, synced_at)
+		VALUES('uid-script-build','build','bash','echo','sha256:y',?)`, now); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
 	jobOwner := Owner{Kind: "job", Source: "cronomicon", Name: "deploy"}
-	scriptOwner := Owner{Kind: "script", Name: "build"}
+	scriptOwner := Owner{Kind: "script", Name: "build", UID: "uid-script-build"}
 	if err := ReplaceBindings(ctx, pool, jobOwner, []Binding{{Kind: KindSecret, Name: "DB_PASS"}}, "a"); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestBindingsClearedOnOwnerDelete(t *testing.T) {
 func TestReplaceBindingsValidation(t *testing.T) {
 	pool := openDB(t)
 	ctx := context.Background()
-	owner := Owner{Kind: "script", Source: "", Name: "s"}
+	owner := Owner{Kind: "script", Source: "", Name: "s", UID: "uid-script-s"}
 
 	cases := []struct {
 		name string

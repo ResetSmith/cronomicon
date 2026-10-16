@@ -170,16 +170,26 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 	// Bind a secret and a variable. (A bound KEY is a different story on this
 	// executor — it fails the run before connecting; see
 	// TestSSHExecutorFailsBeforeConnectingOnKeyBinding.)
-	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','cronomicon','j1','secret','DB_PASS',?),('job','cronomicon','j1','var','REGION',?)`, now, now); err != nil {
+	//
+	// The secret is the JOB's binding and the variable is its SCRIPT's, filed
+	// under the script's uid (migration 1290). The run below freezes that uid
+	// beside the name; a local runner that looked the script up by name, or
+	// dropped the uid, would deliver the secret and not the variable.
+	if _, err := pool.Exec(`INSERT INTO scripts(uid, name, run_type, command, content_hash, synced_at)
+		VALUES('uid-lib','lib.sh','bash','echo hi','sha256:x',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
+		VALUES('job','cronomicon','j1',NULL,'secret','DB_PASS',?),('script','','lib.sh','uid-lib','var','REGION',?)`, now, now); err != nil {
 		t.Fatal(err)
 	}
 	// The run carries a per-run reference ADDITION in its override envelope: the
 	// undeclared EXTRA variable.
 	if _, err := pool.Exec(`
-		INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, override_json, created_at)
+		INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, override_json, created_at,
+		                 script_ref, script_uid)
 		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','runner',
-		       '{"references":[{"kind":"var","name":"EXTRA"}]}',?)`, scope, now); err != nil {
+		       '{"references":[{"kind":"var","name":"EXTRA"}]}',?, 'lib.sh', 'uid-lib')`, scope, now); err != nil {
 		t.Fatal(err)
 	}
 

@@ -36,7 +36,7 @@ func TestResolveJobDefSSHIdentity(t *testing.T) {
 	seed("ansible-id", "ansible", "deploy", "prod-key")
 	seed("tf-id", "terraform", "deploy", "prod-key")
 
-	_, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "bash-id"}, "git")
+	_, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "bash-id"}, "git", "")
 	if !ok {
 		t.Fatal("bash-id did not resolve")
 	}
@@ -44,7 +44,7 @@ func TestResolveJobDefSSHIdentity(t *testing.T) {
 		t.Errorf("bash jobDef identity = (%q,%q), want (deploy,prod-key)", jd.sshUser, jd.sshCred)
 	}
 
-	_, jd, ok = e.resolveJobDef(ctx, StepRef{Name: "ansible-id"}, "git")
+	_, jd, ok = e.resolveJobDef(ctx, StepRef{Name: "ansible-id"}, "git", "")
 	if !ok {
 		t.Fatal("ansible-id did not resolve")
 	}
@@ -52,7 +52,7 @@ func TestResolveJobDefSSHIdentity(t *testing.T) {
 		t.Errorf("ansible jobDef identity = (%q,%q), want (deploy,prod-key) — RP-7", jd.sshUser, jd.sshCred)
 	}
 
-	_, jd, ok = e.resolveJobDef(ctx, StepRef{Name: "tf-id"}, "git")
+	_, jd, ok = e.resolveJobDef(ctx, StepRef{Name: "tf-id"}, "git", "")
 	if !ok {
 		t.Fatal("tf-id did not resolve")
 	}

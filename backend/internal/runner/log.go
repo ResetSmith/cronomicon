@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
@@ -582,9 +583,9 @@ func (s *Service) HandleGetLog(w http.ResponseWriter, r *http.Request) {
 
 	// Verify the run exists and get its scope + log folder.
 	var scope, archivedAt sql.NullString
-	var entityCode string
+	var entityCode, runOwner string // runOwner: the agency the run's scope is looked for in (I2)
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT scope, COALESCE(entity_code,''), log_archived_at FROM runs WHERE id = ?`, traceID).Scan(&scope, &entityCode, &archivedAt)
+		`SELECT scope, COALESCE(entity_code,''), log_archived_at, `+agencyid.RunScopeOwnerSQL("agencies_json")+` FROM runs WHERE id = ?`, traceID).Scan(&scope, &entityCode, &archivedAt, &runOwner)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 		return
@@ -602,7 +603,7 @@ func (s *Service) HandleGetLog(w http.ResponseWriter, r *http.Request) {
 		if scope.Valid {
 			scStr = scope.String
 		}
-		if !auth.ScopeReadable(id, scStr) {
+		if !auth.ScopeReadableIn(id, runOwner, scStr) {
 			// LU-9: audited like every scope denial in internal/api. This one is
 			// worth more than most — it guards run OUTPUT, which carries whatever
 			// the job printed — so a walk across trace ids must be visible.

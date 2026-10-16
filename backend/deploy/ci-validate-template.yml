@@ -1,64 +1,85 @@
-# Cronomicon — CI-time job-definition validation (V1.1-1, from T11).
+# Cronomicon — CI-time job-definition validation (V1.1-1, from T11; directory mode 2.4.0).
 #
-# Drop this into the .gitlab-ci.yml of the repo that holds your Cronomicon job
-# definitions (jobs/*.yaml, workflows/*.yaml, inventory/*.ini). It runs
-# `cronomicon validate` on every merge request so malformed definitions —
-# unknown apiVersion (T10), bad pragmas (S10) — are caught before they reach
-# Cronomicon, with line-numbered errors.
+# Drop this into the .gitlab-ci.yml of a repository that holds Cronomicon job
+# definitions. On every merge request it runs `cronomicon validate` over the
+# whole checkout, as Git sync reads it: scripts/, jobs/, schedules/ and
+# workflows/ with their sub-folders, and inventory/ (its top level, as sync
+# reads it). Errors are line-numbered and fail the pipeline; warnings are
+# printed and do not.
 #
-# The `cronomicon` binary ships the same parser the runtime uses, so CI and runtime
-# never disagree. Pin CRONOMICON_IMAGE to the version your Cronomicon deployment runs.
+# The `cronomicon` binary ships the same parser the runtime uses, so CI and sync
+# do not disagree. Use the version your Cronomicon deployment runs.
+#
+# ── The image ────────────────────────────────────────────────────────────────
+# A CI job's `script:` runs in a shell. The Cronomicon server image is
+# distroless: it has none, and its binary is /app/cronomicon, not on the PATH.
+# (Until 2.4.0 this template named the server image, and could not run in it.)
+# Build a validation image from it once per Cronomicon version and push it to a
+# registry your runners can pull from:
+#
+#     FROM ghcr.io/resetsmith/cronomicon:<version> AS cronomicon
+#     FROM debian:bookworm-slim
+#     RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+#      && rm -rf /var/lib/apt/lists/*
+#     COPY --from=cronomicon /app/cronomicon /usr/local/bin/cronomicon
+#
+# (bookworm, because the binary is built against the glibc of the server's
+# distroless base, Debian 12: an Alpine base does not run it. curl is for the
+# optional merge-request comment at the end.)
+#
+# ── Which repository this is ─────────────────────────────────────────────────
+# A checkout cannot say whether it is Global's repository or an agency's, and
+# one rule differs (2.4.0). In both, a script_ref, scheduleRef or reaction that
+# names nothing in this repository is an error: a repository takes nothing
+# from another.
+#
+#   CRONOMICON_REPO_KIND: "global"  — Global's repository. A job may name no
+#       scope (it is Global's then); a scope it names must be one of Global's,
+#       which sync checks and this cannot see.
+#   CRONOMICON_REPO_KIND: "agency"  — an agency's repository. A job must name a
+#       scope (sync refuses one that does not), one of the agency's.
+#
+# ── Optional: the errors as a comment on the merge request ───────────────────
+# Set GITLAB_MR_TOKEN, a MASKED CI/CD variable holding a Project or Group Access
+# Token with the `api` scope (CI_JOB_TOKEN cannot post notes). When the job
+# fails on a merge request, its output is posted as a note. The failed job
+# already blocks the merge and shows the errors in its log: this is a
+# convenience, not a second gate.
 
 variables:
-  CRONOMICON_IMAGE: "registry.example.com/cronomicon:latest"
+  CRONOMICON_VALIDATE_IMAGE: "registry.example.com/cronomicon-validate:2.4.0"
+  CRONOMICON_REPO_KIND: "global"
 
 validate-job-definitions:
   stage: test
-  image: "$CRONOMICON_IMAGE"
+  image: "$CRONOMICON_VALIDATE_IMAGE"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   script:
-    # Validate every definition file; fail fast with line-numbered errors.
     - |
-      set -e
-      found=0
-      for f in $(find jobs workflows inventory -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.ini' \) 2>/dev/null); do
-        found=1
-        echo "validating $f"
-        cronomicon validate "$f"
-      done
-      if [ "$found" = "0" ]; then echo "no definition files found"; fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# OPT-IN (V1.1-1 / Q1): also post the validation errors as a comment on the MR.
-#
-# The base job above already FAILS the pipeline — which blocks the merge and
-# shows the line-numbered errors in the job log — so this is a convenience, not
-# a second gate. It needs a token that can write MR notes: create a Project (or
-# Group) Access Token / PAT with the `api` scope and expose it as a *masked*
-# CI/CD variable named GITLAB_MR_TOKEN. (CI_JOB_TOKEN cannot post notes.)
-#
-# To enable, uncomment the job below. It also fails on validation errors, so you
-# can keep the base job or drop it — running both is redundant.
-#
-# validate-and-comment:
-#   stage: test
-#   image: "$CRONOMICON_IMAGE"
-#   rules:
-#     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-#   script:
-#     - |
-#       set +e
-#       out="$(find jobs workflows inventory -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.ini' \) -print0 2>/dev/null \
-#               | xargs -0 -r -n1 cronomicon validate 2>&1)"
-#       code=$?
-#       echo "$out"
-#       if [ "$code" -ne 0 ] && [ -n "$GITLAB_MR_TOKEN" ]; then
-#         note="### ❌ Cronomicon job-definition validation failed"$'\n\n''```'$'\n'"$out"$'\n''```'
-#         curl -sf --request POST \
-#           --header "PRIVATE-TOKEN: $GITLAB_MR_TOKEN" \
-#           --data-urlencode "body=$note" \
-#           "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes" >/dev/null || true
-#       fi
-#       exit $code
+      set -eu
+      case "$CRONOMICON_REPO_KIND" in
+        global|agency) ;;
+        *) echo "CRONOMICON_REPO_KIND must be \"global\" or \"agency\", not \"$CRONOMICON_REPO_KIND\"" >&2; exit 2 ;;
+      esac
+      flags=""
+      if [ "$CRONOMICON_REPO_KIND" = "agency" ]; then
+        flags="-agency"
+      fi
+      set +e
+      # $flags is one word or none.
+      cronomicon validate $flags . > .cronomicon-validate.log 2>&1
+      code=$?
+      cat .cronomicon-validate.log
+      exit $code
+  after_script:
+    - |
+      if [ "$CI_JOB_STATUS" = "failed" ] && [ -n "${GITLAB_MR_TOKEN:-}" ] && [ -n "${CI_MERGE_REQUEST_IID:-}" ] \
+         && [ -f .cronomicon-validate.log ]; then
+        note="$(printf '### Cronomicon job-definition validation failed\n\n```\n%s\n```\n' "$(cat .cronomicon-validate.log)")"
+        curl -sf --request POST \
+          --header "PRIVATE-TOKEN: $GITLAB_MR_TOKEN" \
+          --data-urlencode "body=$note" \
+          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes" >/dev/null || true
+      fi

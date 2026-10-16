@@ -15,7 +15,7 @@ func TestKeyBindingsNeedAgent(t *testing.T) {
 	f := newOwnerFixture(t) // agencies ag-a (TeamA), ag-b (TeamB)
 	ctx := context.Background()
 	job := Owner{Kind: "job", Source: "git", Name: "deploy"}
-	script := Owner{Kind: "script", Name: "scripts/deploy.sh"}
+	script := Owner{Kind: "script", Name: "scripts/deploy.sh", UID: "uid-script-deploy"}
 	const now = "2026-01-01T00:00:00Z"
 	// Scopes: one of TeamA's, one of TeamA's bound to a runner, one of TeamB's.
 	for _, sc := range [][2]string{{"sc-a", "a-open"}, {"sc-bound", "a-bound"}, {"sc-b", "b-open"}} {
@@ -104,7 +104,7 @@ func TestKeyBindingsNeedAgent(t *testing.T) {
 			for o, bs := range tc.bind {
 				bind(t, f, o, bs...)
 			}
-			got, err := KeyBindingsNeedAgent(ctx, f.pool, []Owner{job, script}, tc.perRun, tc.runType, tc.scope)
+			got, err := KeyBindingsNeedAgent(ctx, f.pool, []Owner{job, script}, tc.perRun, tc.runType, scopeOwner(t, f.pool, tc.scope), tc.scope)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -46,12 +46,28 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 	}
 
 	// Singletons present.
-	for _, tbl := range []string{"notification_config", "gitlab_config", "git_sync_state"} {
+	for _, tbl := range []string{"notification_config"} {
 		var n int
 		_ = pool.QueryRow("SELECT COUNT(*) FROM " + tbl + " WHERE id=1").Scan(&n)
 		if n != 1 {
 			t.Errorf("singleton %s missing", tbl)
 		}
+	}
+	// A repository for Global (migration 1310) and one for each agency (§0a:
+	// each agency's Git definitions are its own repository's), with NO URL:
+	// the demo data is in no repository, and a URL would send the sync service
+	// to clone it. Global's has what the last sync saw.
+	var repos int
+	var repoURL, lastSHA string
+	_ = pool.QueryRow(`SELECT COUNT(*), COALESCE(MAX(url),''), (SELECT COALESCE(last_sha,'') FROM git_repos WHERE id = 'global') FROM git_repos`).Scan(&repos, &repoURL, &lastSHA)
+	if repos != 3 || repoURL != "" || lastSHA == "" {
+		t.Errorf("git_repos after the seed: %d rows, url %q, Global's last_sha %q; want Global's and the two agencies', no URL, a last SHA", repos, repoURL, lastSHA)
+	}
+	var misplaced int
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM jobs j JOIN git_repos g ON g.id = j.repo_id
+	                    WHERE j.source = 'git' AND g.agency_id <> COALESCE((SELECT sa.agency_id FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = j.scope), 'global')`).Scan(&misplaced)
+	if misplaced != 0 {
+		t.Errorf("%d seeded Git jobs are in another agency's repository than their scope's", misplaced)
 	}
 
 	// Every row belongs to an agency, and to the right one (migration 1220): a
@@ -78,6 +94,10 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 			       SELECT json_group_array(a.name) FROM scopes s
 			         JOIN scope_agencies sa ON sa.scope_id = s.id JOIN agencies a ON a.id = sa.agency_id
 			        WHERE s.name = r.scope HAVING COUNT(*) > 0), '["Global"]')`,
+		"a Git definition that names no repository, or one built in the app that names one (GR-3)": `
+			SELECT name FROM jobs      WHERE (source = 'git') <> (repo_id IS NOT NULL)
+			UNION ALL SELECT name FROM workflows WHERE (source = 'git') <> (repo_id IS NOT NULL)
+			UNION ALL SELECT name FROM scopes    WHERE (source = 'git') <> (repo_id IS NOT NULL)`,
 		"a waiting run that is not indexed for the claim": `
 			SELECT r.id FROM runs r, json_each(r.agencies_json) je
 			 WHERE r.status IN ('queued', 'running')
@@ -118,6 +138,12 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, n := range open {
+		// Except that its agencies have no repository connected (2.4.0
+		// Phase I3): the demo has no Git server to connect, and the notice
+		// says so truly. Whether a demo should seed one is the owner's to say.
+		if n.Kind == notices.KindAgencyNoRepository {
+			continue
+		}
 		t.Errorf("the seed raises a %s notice: %s", n.Kind, n.Detail)
 	}
 

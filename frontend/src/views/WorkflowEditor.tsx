@@ -5,7 +5,6 @@ import "@xyflow/react/dist/style.css";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
-import { COMPOSE_ADMIN_ONLY, globalOnly } from "../api/globalAdmin";
 import { useGet, rows } from "../hooks";
 import { c } from "../theme";
 import { StepChain } from "./workflows/StepChain";
@@ -16,6 +15,7 @@ import { withFreshIds } from "./workflows/canvasEdit";
 import type { WfStep } from "./workflows/shared";
 import { ambiguousNames, disambiguate, type NamedRef } from "../utils/disambiguate";
 import { Btn, InfoBody, InfoToggle } from "../components/ui";
+import { RepairDialog, isRepairRequired, type RepairBody } from "../components/RepairDialog";
 import { CalendarPicker } from "./scheduling/CalendarPicker";
 import { ReactionsEditor, reactionsError, saveReactionsFor, useLoadedReactions } from "./scheduling/ReactionsEditor";
 import { deleteBlockedNote, reactionsWatchingRefusal } from "./scheduling/reactions";
@@ -262,14 +262,11 @@ export function WorkflowEditor() {
 
 
   const [canCompose, setCanCompose] = useState<boolean | null>(null);
-  // GC (v2.2.2) — reactions are written through their own endpoint, which the
-  // server takes only from a compose ADMINISTRATOR. The workflow itself and its
-  // inline schedules stay per-scope compose.
-  const [composeAdmin, setComposeAdmin] = useState(false);
+  // Reactions are written through their own endpoint, by compose on the
+  // workflow's agency (2.4.2, question 61; a compose administrator's until then).
   useEffect(() => {
     fetchCapabilities().then((cap) => {
       setCanCompose(cap.compose);
-      setComposeAdmin(!!cap.composeAdmin);
     });
   }, []);
 
@@ -293,6 +290,13 @@ export function WorkflowEditor() {
   const [enabled, setEnabled] = useState(true);
 
   const [busy, setBusy] = useState(false);
+  // A save that changes the workflow's agency (its jobs are another agency's
+  // than the ones it ran) is a global administrator's repair (2.4.0 I4, IN-7;
+  // questions 46 and 48). The server answers 409 repair_required; the save
+  // waits here for the reason and is sent again with it.
+  const [repairFor, setRepairFor] = useState<{ body: unknown; done: () => Promise<void> } | null>(null);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [repairErr, setRepairErr] = useState("");
   const [validating, setValidating] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
@@ -311,6 +315,9 @@ export function WorkflowEditor() {
   // RX-24 — the server's refusal when reactions watch this workflow. Non-null
   // swaps both confirm rows (canvas and simple) for the forced one.
   const [delBlock, setDelBlock] = useState<string | null>(null);
+  // The loaded workflow's agency (2.4.1): its inline entries are judged by that
+  // agency's calendars. A new workflow's is not known until it is saved.
+  const [wfAgency, setWfAgency] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (!editId) return;
@@ -328,6 +335,7 @@ export function WorkflowEditor() {
         return;
       }
       const loaded = (wf.steps ?? []) as WorkflowStep[];
+      setWfAgency(wf.ownerAgency || undefined);
       setName(wf.name ?? "");
       setDescription(wf.description ?? "");
       setEnabled(!wf.disabled);
@@ -451,6 +459,29 @@ export function WorkflowEditor() {
     if (ok) setOkMsg("Looks good — no validation errors.");
   }
 
+  function askRepair(body: unknown, done: () => Promise<void>) {
+    setRepairErr("");
+    setRepairFor({ body, done });
+  }
+
+  async function sendRepair(rep: RepairBody) {
+    if (!repairFor || !editId) return;
+    setRepairBusy(true);
+    setRepairErr("");
+    const { response, error } = await api.PUT("/workflows/{workflowId}", {
+      params: { path: { workflowId: Number(editId) }, header: csrfHeader },
+      body: { ...(repairFor.body as object), ...rep } as never,
+    });
+    setRepairBusy(false);
+    if (error || !response.ok) {
+      setRepairErr(errMessage(error) || `Save failed (${response.status}).`);
+      return;
+    }
+    const { done } = repairFor;
+    setRepairFor(null);
+    await done();
+  }
+
   async function submit() {
     setErr(null);
     setOkMsg(null);
@@ -469,6 +500,13 @@ export function WorkflowEditor() {
       : await api.POST("/workflows", { body: body as never });
     setBusy(false);
     if (error || !response.ok) {
+      if (isEdit && isRepairRequired(error)) {
+        askRepair(body, async () => {
+          await persistReactions();
+          setOkMsg(`Workflow "${name.trim()}" updated (cronomicon-source).`);
+        });
+        return;
+      }
       setErr(errMessage(error) || `${isEdit ? "Save" : "Create"} failed (${response.status}).`);
       return;
     }
@@ -559,6 +597,14 @@ export function WorkflowEditor() {
       : await api.POST("/workflows", { body: body as never });
     setBusy(false);
     if (error || !response.ok) {
+      if (isEdit && isRepairRequired(error)) {
+        askRepair(body, async () => {
+          await persistReactions();
+          setOkMsg(`Workflow "${name.trim()}" updated (cronomicon-source).`);
+          setCanvasDirty(false);
+        });
+        return;
+      }
       setErr(errMessage(error) || `${isEdit ? "Save" : "Create"} failed (${response.status}).`);
       return;
     }
@@ -576,11 +622,28 @@ export function WorkflowEditor() {
     }
   }
 
+  const repairDialog = repairFor && (
+    <RepairDialog
+      title={`Save ${name.trim()} for another agency?`}
+      message={
+        <>
+          Its jobs are now another agency's than the ones it ran, so saving it changes the workflow's agency: its runs, schedules and
+          history become that agency's.
+        </>
+      }
+      confirmLabel="Save"
+      busy={repairBusy}
+      error={repairErr}
+      onCancel={() => setRepairFor(null)}
+      onConfirm={sendRepair}
+    />
+  );
+
   if (canCompose === false) {
     return (
       <div style={{ color: c.textSec, maxWidth: 560 }}>
         In-app workflow composition requires the <strong>Compose</strong> capability (Admin-only in v20).
-        Git-defined workflows are authored through the GitLab publish flow.
+        Git-defined workflows are authored through the publish flow.
       </div>
     );
   }
@@ -588,7 +651,7 @@ export function WorkflowEditor() {
   if (gitSource)
     return (
       <div style={{ color: c.textSec, maxWidth: 560 }}>
-        This workflow is <strong>Git-authored</strong> — read-only here. Edit it through the GitLab publish flow;
+        This workflow is <strong>Git-authored</strong> — read-only here. Edit it through the publish flow;
         only cronomicon-source workflows are editable in-app.
       </div>
     );
@@ -640,7 +703,7 @@ export function WorkflowEditor() {
               </div>
             </div>
           )}
-          <InlineCalendarBindings entries={preservedInline} onPatch={(i, b) => { patchInlineBinding(i, b); markDirty(); }} />
+          <InlineCalendarBindings entries={preservedInline} agency={wfAgency} onPatch={(i, b) => { patchInlineBinding(i, b); markDirty(); }} />
         </div>
 
         <WorkflowCanvasEditor value={canvasTree} onChange={(t) => { setCanvasTree(t); markDirty(); }} jobs={jobs.map((j) => ({ name: j.name ?? "", source: j.source, uid: j.uid, agencies: (j as NamedRef).agencies ?? undefined }))} layout={canvasLayout} onLayoutChange={(m) => { setCanvasLayout(m); markDirty(); }} />
@@ -655,6 +718,7 @@ export function WorkflowEditor() {
           </div>
         )}
         {err && <div style={{ color: c.danger }}>{err}</div>}
+        {repairDialog}
         {okMsg && <div style={{ color: c.success }}>{okMsg}</div>}
         {delErr && <div style={{ color: c.danger, fontSize: c.fontSm }}>{delErr}</div>}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -786,7 +850,9 @@ export function WorkflowEditor() {
           ownerKind="workflow"
           ownerName={isEdit ? name : ""}
           ownerSource="cronomicon"
-          disabledReason={globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY) || undefined}
+          // 2.4.2 (question 61): reactions are written by compose on the
+          // definition's agency, which whoever may save the workflow holds.
+          disabledReason={undefined}
           loadError={reactions.loadError}
         />
         {reactionsError({ kind: "workflow", name, source: "cronomicon" }, reactions.list) && (
@@ -826,7 +892,7 @@ export function WorkflowEditor() {
             {preservedInline.length} inline schedule{preservedInline.length === 1 ? "" : "s"} preserved on save (authored via the API).
           </div>
         )}
-        <InlineCalendarBindings entries={preservedInline} onPatch={patchInlineBinding} />
+        <InlineCalendarBindings entries={preservedInline} agency={wfAgency} onPatch={patchInlineBinding} />
       </Field>
 
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: c.fontSm, color: c.textSec }}>
@@ -848,6 +914,7 @@ export function WorkflowEditor() {
       )}
 
       {err && <div style={{ color: c.danger, fontSize: c.fontSm }}>{err}</div>}
+      {repairDialog}
       {okMsg && <div style={{ color: c.primary, fontSize: c.fontSm }}>{okMsg}</div>}
 
       <div style={{ display: "flex", gap: 10 }}>
@@ -885,9 +952,12 @@ export function WorkflowEditor() {
 // inline entries.
 function InlineCalendarBindings({
   entries,
+  agency,
   onPatch,
 }: {
   entries: PreservedInline[];
+  /** The workflow's agency, whose calendars its entries are judged by. */
+  agency?: string;
   onPatch: (i: number, b: { skipCalendars: string[]; onlyCalendars: string[] }) => void;
 }) {
   if (entries.length === 0) return null;
@@ -903,6 +973,7 @@ function InlineCalendarBindings({
             onChange={(b) => onPatch(i, b)}
             spec={s}
             compact
+            agency={agency}
           />
         </div>
       ))}

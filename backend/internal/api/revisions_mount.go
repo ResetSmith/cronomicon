@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/entitycode"
@@ -157,12 +158,20 @@ func snapshotRevision(ctx context.Context, tx *sql.Tx, kind, source, name, uid, 
 // detachedBindingsFromTombstone reads the bindings deleteScheduleDef captured
 // into the most recent tombstone for this schedule. A schedule binned before
 // this was recorded (or one no definition referenced) simply yields none.
-func detachedBindingsFromTombstone(ctx context.Context, tx *sql.Tx, name string) ([]scheduleBinding, error) {
+//
+// THIS schedule: the one with this uid. A name outlives the schedule that had
+// it: a schedule that was purged leaves its revisions, and a new schedule of
+// the same name starts a chain of its own. Read by name alone, the restore of
+// the new one could replay the OLD one's bindings (and now ties what it
+// replays to the restored schedule's uid). A tombstone with no uid, from
+// before revisions carried one, is still found by its name.
+func detachedBindingsFromTombstone(ctx context.Context, tx *sql.Tx, name, uid string) ([]scheduleBinding, error) {
 	var blob string
 	err := tx.QueryRowContext(ctx, `
 		SELECT snapshot_json FROM definition_revisions
 		 WHERE kind = ? AND source = 'cronomicon' AND name = ? AND action = ?
-		 ORDER BY revision_no DESC LIMIT 1`, revKindSchedule, name, revActionDeleted).Scan(&blob)
+		   AND (uid = ? OR uid IS NULL OR uid = '')
+		 ORDER BY (uid = ?) DESC, revision_no DESC LIMIT 1`, revKindSchedule, name, revActionDeleted, uid, uid).Scan(&blob)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -303,7 +312,7 @@ func (s *Server) restoreRevision(w http.ResponseWriter, r *http.Request) {
 		// tags would silently revert tagging work done since. Splice the LIVE
 		// values over the snapshot's instead.
 		in.Tags = s.liveTags(r.Context(), "jobs", name)
-		s.writeComposedJob(w, r, in, id.Email, false, liveUID)
+		s.writeComposedJob(w, r, in, id.Email, false, liveUID, s.jobAgencyFor(r.Context(), liveUID, "cronomicon", name))
 	case revKindWorkflow:
 		var in workflowComposeInput
 		if err := json.Unmarshal([]byte(snap), &in); err != nil {
@@ -314,7 +323,15 @@ func (s *Server) restoreRevision(w http.ResponseWriter, r *http.Request) {
 		// No tag splice here: unlike jobComposeInput, workflowComposeInput carries
 		// no Tags field at all — workflow tags are written only through their own
 		// endpoint, so the compose upsert cannot clobber them.
-		s.writeComposedWorkflow(w, r, in, id.Email, false, liveUID)
+		//
+		// A revision whose jobs are another agency's than the workflow runs now
+		// makes it that agency's: a repair (question 46), whose two fields the
+		// restore takes in an optional body.
+		var rep repairInput
+		if r.ContentLength != 0 {
+			_ = json.NewDecoder(r.Body).Decode(&rep)
+		}
+		s.writeComposedWorkflow(w, r, in, id.Email, false, liveUID, rep)
 	case revKindSchedule:
 		var in scheduleInput
 		if err := json.Unmarshal([]byte(snap), &in); err != nil {
@@ -322,6 +339,9 @@ func (s *Server) restoreRevision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		in.Name = name
+		// Whose: the live schedule's owner, which the write keys on (I2). A
+		// snapshot taken by an edit records none.
+		_ = s.db.QueryRowContext(r.Context(), `SELECT owner_agency FROM schedules WHERE uid = ?`, liveUID).Scan(&in.OwnerAgency)
 		s.writeComposedSchedule(w, r, in, id.Email, false)
 	}
 }
@@ -442,16 +462,12 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 	// a silent cross-agency pick, so multiplicity refuses with the generic
 	// wording (naming the sibling's agency would be an existence oracle).
 	var binnedUIDs []string
-	var binnedScopes []string
+	// Whose each binned row is: its owner (a job's since 1400, a workflow's since
+	// 1360, a schedule's since 1300), which is what its name collides within.
+	var binnedOwners []string
 	rows, err := tx.QueryContext(r.Context(),
-		`SELECT uid, COALESCE(scope,'') FROM `+table+`
+		`SELECT uid, COALESCE(owner_agency, '`+agencyid.Global+`') FROM `+table+`
 		  WHERE source='cronomicon' AND name = ? AND deleted_at IS NOT NULL`, name)
-	if err != nil {
-		// schedules/workflows carry no scope column; fall back to uid-only.
-		rows, err = tx.QueryContext(r.Context(),
-			`SELECT uid, '' FROM `+table+`
-			  WHERE source='cronomicon' AND name = ? AND deleted_at IS NOT NULL`, name)
-	}
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -459,7 +475,7 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var u, sc string
 		if err := rows.Scan(&u, &sc); err == nil {
-			binnedUIDs, binnedScopes = append(binnedUIDs, u), append(binnedScopes, sc)
+			binnedUIDs, binnedOwners = append(binnedUIDs, u), append(binnedOwners, sc)
 		}
 	}
 	rows.Close()
@@ -475,7 +491,7 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 	// The name may have been legitimately reused in an overlapping pool while
 	// this one sat in the bin — a restore is a create for uniqueness purposes.
 	if kind == revKindJob {
-		conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", name, binnedScopes[0], restoredUID)
+		conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", name, binnedOwners[0], restoredUID)
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return
@@ -486,7 +502,7 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if kind == revKindWorkflow {
-		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", name, nil, restoredUID)
+		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", name, binnedOwners[0], restoredUID)
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return
@@ -508,12 +524,12 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if kind == revKindSchedule {
-		bindings, err := detachedBindingsFromTombstone(r.Context(), tx, name)
+		bindings, err := detachedBindingsFromTombstone(r.Context(), tx, name, restoredUID)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		owners, err := restoreScheduleBindings(r.Context(), tx, bindings)
+		owners, err := restoreScheduleBindings(r.Context(), tx, bindings, restoredUID)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
@@ -657,13 +673,14 @@ func PurgeDefinition(ctx context.Context, database *sql.DB, logDir, kind, name s
 	}
 	if kind == revKindSchedule {
 		// Schedules have no delete trigger; their runtime expansions are keyed by
-		// source_ref, exactly as deleteScheduleDef cascades them.
+		// schedule_uid, exactly as deleteScheduleDef cascades them (1300). The
+		// arm that also took every entry with NO schedule uid and this NAME is
+		// gone: such an entry is one that could not be attributed to a single
+		// schedule, and a purge of one schedule must not delete the timing of a
+		// definition bound to another schedule of the same name.
 		if purgedUID.Valid && purgedUID.String != "" {
 			_, _ = tx.ExecContext(ctx,
-				`DELETE FROM definition_schedules WHERE schedule_uid=? OR (schedule_uid IS NULL AND source_ref=?)`,
-				purgedUID.String, name)
-		} else {
-			_, _ = tx.ExecContext(ctx, `DELETE FROM definition_schedules WHERE source_ref=?`, name)
+				`DELETE FROM definition_schedules WHERE schedule_uid=?`, purgedUID.String)
 		}
 	}
 

@@ -88,6 +88,40 @@ const open = async (canWrite: boolean) => {
 const rowOf = (text: string) => within(screen.getByText(text).closest("tr") as HTMLElement);
 const button = (q: { getByRole: typeof screen.getByRole }, name: string) => q.getByRole("button", { name }) as HTMLButtonElement;
 
+// R8 — each row says what the caller may do with it (canEdit, canDelete),
+// answered by the rule its route uses, a scope's gate included. The screen
+// reads that before anything it could derive from /me/access.
+describe("SSH Targets — the row's own flags (R8)", () => {
+  const saved = { hosts: HOSTS.map((h) => ({ ...h })), bastions: BASTIONS.map((b) => ({ ...b })) };
+  afterEach(() => {
+    HOSTS.splice(0, HOSTS.length, ...saved.hosts.map((h) => ({ ...h })));
+    BASTIONS.splice(0, BASTIONS.length, ...saved.bastions.map((b) => ({ ...b })));
+  });
+
+  it("disables an imported host the server says is not theirs, which nothing else could tell", async () => {
+    ACCESS = { grants: [grant(FIN)] };
+    Object.assign(HOSTS[0], { canEdit: false, canDelete: false });
+    await open(false);
+    for (const name of ["Test", "Edit", "Remove"]) {
+      const b = button(rowOf("web-01.internal"), name);
+      expect(b.disabled, name).toBe(true);
+      expect(b.title, name).toMatch(/follows its scope/);
+    }
+  });
+
+  it("follows the flags over the derivation, and keeps Remove apart from Edit", async () => {
+    ACCESS = { grants: [grant(FIN)] };
+    // Derived, jump-dmz is Global's and not theirs; the server says they may edit it but not delete it.
+    Object.assign(BASTIONS[0], { canEdit: true, canDelete: false });
+    await open(false);
+    expect(button(rowOf("jump-dmz"), "Edit").disabled).toBe(false);
+    expect(button(rowOf("jump-dmz"), "Test").disabled).toBe(false);
+    const remove = button(rowOf("jump-dmz"), "Remove");
+    expect(remove.disabled).toBe(true);
+    expect(remove.title).toMatch(/This bastion is Global's/);
+  });
+});
+
 describe("SSH Targets — an administrator of one agency (LR-69)", () => {
   beforeEach(() => {
     ACCESS = { grants: [grant(FIN)] };
@@ -109,14 +143,16 @@ describe("SSH Targets — an administrator of one agency (LR-69)", () => {
     expect(writes.find((w) => w.path === "/ssh/bastions")!.body).toMatchObject({ name: "jump-new", ownerAgency: "ag-fin" });
   });
 
-  it("offers a new record only its owner's keys and Global's", async () => {
+  // §0a, IN-6: Global's key is Global's records' only, and the server refuses
+  // an agency's record that names it (2.4.2, present defect 55: it was offered).
+  it("offers a new record only its owner's keys", async () => {
     await open(false);
     fireEvent.click(button(screen, "+ Add Host"));
     await waitFor(() => screen.getByLabelText("Agency that owns this host record"));
     const keys = screen.getByTitle(/SSH key: a credential/) as HTMLSelectElement;
     const offered = Array.from(keys.options).map((o) => o.textContent);
-    expect(offered).toContain("shared_key");
     expect(offered).toContain("fin_key");
+    expect(offered).not.toContain("shared_key");
     expect(offered).not.toContain("tax_key");
   });
 

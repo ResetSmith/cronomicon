@@ -33,8 +33,8 @@ func seedCal(t *testing.T, pool *sql.DB, name string, global, record bool, days 
 	}
 	for day, label := range days {
 		if _, err := pool.ExecContext(context.Background(),
-			`INSERT INTO calendar_days (calendar_source, calendar_name, day, label)
-			 VALUES ('cronomicon', ?, ?, ?)`, name, day, label); err != nil {
+			`INSERT INTO calendar_days (calendar_owner, calendar_source, calendar_name, day, label)
+			 VALUES ('global', 'cronomicon', ?, ?, ?)`, name, day, label); err != nil {
 			t.Fatalf("seed day %s/%s: %v", name, day, err)
 		}
 	}
@@ -310,7 +310,7 @@ func TestFireWorkflowSuppressedByCalendarRecords(t *testing.T) {
 	s := New(pool, quietLog(), nil)
 
 	var fired []string
-	s.SetWorkflowFirer(func(_ context.Context, _ string, name, _, _ string) { fired = append(fired, name) })
+	s.SetWorkflowFirer(func(_ context.Context, f WorkflowFire) { fired = append(fired, f.Name) })
 
 	if _, err := pool.ExecContext(ctx, `INSERT INTO workflows (name, enabled, synced_at) VALUES ('release', 1, 't')`); err != nil {
 		t.Fatalf("seed workflow: %v", err)
@@ -318,7 +318,7 @@ func TestFireWorkflowSuppressedByCalendarRecords(t *testing.T) {
 	seedCal(t, pool, "federal-holidays", false, false, map[string]string{today(s): "Veterans Day"})
 	bindSchedule(t, pool, "workflow", "release", "nightly", `["federal-holidays"]`, "")
 
-	s.fireWorkflow("git", "release", "nightly", "")
+	s.fireWorkflow("", "git", "release", "nightly", "")
 
 	if len(fired) != 0 {
 		t.Errorf("workflow fired %v during a calendar suppression, want none", fired)
@@ -340,7 +340,7 @@ func TestFireWorkflowSuppressedByCalendarRecords(t *testing.T) {
 	}
 
 	// Same per-day de-dupe as the job path.
-	s.fireWorkflow("git", "release", "nightly", "")
+	s.fireWorkflow("", "git", "release", "nightly", "")
 	var n int
 	_ = pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM workflow_runs WHERE workflow_name='release'`).Scan(&n)
 	if n != 1 {

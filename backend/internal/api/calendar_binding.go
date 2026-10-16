@@ -15,11 +15,14 @@ import (
 // in a loop pay one small query per entry; the compose paths handle a handful of
 // entries per request, so the fixed-query discipline that matters for the list
 // endpoints (CC.9) is not in play here.
-func (s *Server) validateCalendarBinding(ctx context.Context, skip, only []string) (outSkip, outOnly []string, verr string) {
+//
+// Among the entry's own agency's calendars (§0a, 2.4.0): another agency's reads
+// as one that is not there.
+func (s *Server) validateCalendarBinding(ctx context.Context, agency string, skip, only []string) (outSkip, outOnly []string, verr string) {
 	if len(calendar.ParseNamesSlice(skip)) == 0 && len(calendar.ParseNamesSlice(only)) == 0 {
 		return nil, nil, "" // the overwhelmingly common case: no bindings, no query
 	}
-	known, global, err := calendar.LoadFlags(ctx, s.db)
+	known, global, err := calendar.LoadFlagsFor(ctx, s.db, agency)
 	if err != nil {
 		return nil, nil, "calendar lookup failed: " + err.Error()
 	}

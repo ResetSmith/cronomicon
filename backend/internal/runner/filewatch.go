@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -91,7 +92,8 @@ func watchesForRunner(ctx context.Context, database *sql.DB, runnerID string, ca
 	}
 	var out []runnerproto.WatchSpec
 	for _, c := range cands {
-		if !watchAgencyPermits(ctx, database, c.scope, runnerAgencies) {
+		jobAgency := jobAgencyOf(ctx, database, c.uid)
+		if !watchAgencyPermits(ctx, database, jobAgency, c.scope, runnerAgencies) {
 			continue
 		}
 		// SB-1 — a scope bound to named runners is watched only by them. The drop
@@ -100,7 +102,7 @@ func watchesForRunner(ctx context.Context, database *sql.DB, runnerID string, ca
 		// the same path exists on another segment, fires the job for the wrong
 		// file. An error reads as "not permitted": this list is also what a
 		// sighting is checked against, so it must fail closed.
-		if ok, err := execspec.ScopeBindingPermits(ctx, database, c.scope, runnerID); err != nil || !ok {
+		if ok, err := execspec.ScopeBindingPermits(ctx, database, jobAgency, c.scope, runnerID); err != nil || !ok {
 			continue
 		}
 		ws, err := watchspec.Parse(c.raw)
@@ -117,13 +119,27 @@ func watchesForRunner(ctx context.Context, database *sql.DB, runnerID string, ca
 	return out
 }
 
+// jobAgencyOf is the agency of the job with this uid (agencyid.JobSQL), the
+// agency its scope is looked for in (I2: a scope's name is unique within an
+// agency only). Global's for no uid or no such job, as such a run is.
+func jobAgencyOf(ctx context.Context, database *sql.DB, uid string) string {
+	if uid == "" {
+		return agencyid.Global
+	}
+	var a sql.NullString
+	if err := database.QueryRowContext(ctx, `SELECT `+agencyid.DefinitionSQL, uid, "job").Scan(&a); err != nil || !a.Valid {
+		return agencyid.Global
+	}
+	return a.String
+}
+
 // watchAgencyPermits mirrors claimRun's agency rule: a job's directories are
 // watchable only by a runner that serves one of the job's scope's agencies. An
 // unscoped job is Global's (migration 1220) and is watched only by a runner that
 // serves Global — what "a runner with no agencies at all" meant before Global
 // was a row. Relaxing it would let one department observe another's directories.
-func watchAgencyPermits(ctx context.Context, database *sql.DB, scope string, runnerAgencies []string) bool {
-	jobAgencies, err := execspec.ScopeAgencies(ctx, database, strings.TrimSpace(scope))
+func watchAgencyPermits(ctx context.Context, database *sql.DB, agency, scope string, runnerAgencies []string) bool {
+	jobAgencies, err := execspec.ScopeAgencies(ctx, database, agency, strings.TrimSpace(scope))
 	if err != nil {
 		return false
 	}
@@ -139,6 +155,7 @@ func runnerAgencyNames(ctx context.Context, database *sql.DB, runnerID string) (
 	rows, err := database.QueryContext(ctx, `
 		SELECT a.name FROM runner_agencies ra
 		  JOIN agencies a ON a.id = ra.agency_id
+		  JOIN runners rn ON rn.id = ra.runner_id AND rn.owner_agency = ra.agency_id -- its owner's only (§0a)
 		 WHERE ra.runner_id = ?`, runnerID)
 	if err != nil {
 		return nil, err
@@ -329,7 +346,7 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 	// row is still written (the UNIQUE index above claimed it), so the file does
 	// not silently re-fire later, and the refusal reason says what stopped it.
 	if g := scheduler.Evaluate(ctx, s.db, s.log, scheduler.GateRequest{
-		Origin: scheduler.OriginFileArrival, Source: spec.JobSource, OwnerKind: "job", Name: spec.JobName,
+		Origin: scheduler.OriginFileArrival, Source: spec.JobSource, OwnerKind: "job", Name: spec.JobName, UID: jobUID.String,
 	}, nil); !g.Allowed {
 		s.refuseSighting(ctx, sightingID, g.Reason)
 		return false, nil
@@ -344,7 +361,7 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 		"CRONOMICON_WATCH_SIZE": fmt.Sprintf("%d", sg.SizeBytes),
 	})
 
-	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, scope)
+	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, jobAgencyOf(ctx, s.db, jobUID.String), scope)
 	if aerr != nil {
 		return false, fmt.Errorf("read the agencies of scope %q: %w", scope, aerr)
 	}
@@ -360,11 +377,11 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 	// R2F-1 — jobUID is the row the resolution above actually landed on, so
 	// both the script lookup and the binding probes read THAT job, not a
 	// same-named sibling in another department.
-	var scriptRef sql.NullString
+	var scriptRef, scriptUID sql.NullString
 	_ = s.db.QueryRowContext(ctx,
-		`SELECT script_ref FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
-		jobUID.String, jobUID.String, spec.JobName, spec.JobSource).Scan(&scriptRef)
-	owners := runref.RunOwners(spec.JobSource, spec.JobName, jobUID.String, scriptRef.String)
+		`SELECT script_ref, script_uid FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
+		jobUID.String, jobUID.String, spec.JobName, spec.JobSource).Scan(&scriptRef, &scriptUID)
+	owners := runref.RunOwners(spec.JobSource, spec.JobName, jobUID.String, scriptRef.String, scriptUID.String)
 	// The scope alone decides: an unbound run carries ["Global"] since migration
 	// 1220, never the empty set this also used to ask for.
 	if scope == "" {
@@ -378,18 +395,36 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 			return false, nil
 		}
 	}
+	// GR-15 — an arrival for a job of an agency's repository whose scope is not
+	// that agency's is refused, with the reason recorded.
+	if stranded, serr := runref.RepoScopeMismatch(ctx, s.db, jobUID.String, spec.JobSource, spec.JobName, scope); serr != nil {
+		s.refuseSighting(ctx, sightingID, "could not check the job's repository against its scope: "+serr.Error())
+		return false, nil
+	} else if stranded {
+		s.refuseSighting(ctx, sightingID, runref.ReasonRepoScopeMismatch)
+		return false, nil
+	}
 	// LR-47 — an arrival for a key-bound shell job with no agent to deliver the
 	// key is refused with the reason recorded, like every other gate here: the
 	// local runner cannot deliver it, and nobody is watching a file land. Every
 	// run is written for the runner executor (LR-42).
 	executor := execspec.ExecutorRunner
-	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType, scope)
+	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType, jobAgencyOf(ctx, s.db, jobUID.String), scope)
 	if kerr != nil {
 		s.refuseSighting(ctx, sightingID, "could not check key bindings: "+kerr.Error())
 		return false, nil
 	}
 	if len(keys) > 0 {
 		s.refuseSighting(ctx, sightingID, runref.ReasonKeyBindingNeedsAgent)
+		return false, nil
+	}
+	// Present defect 44 — nor an arrival for a project job with no agent that
+	// allows checkout to wait for.
+	if stuck, cerr := runref.CheckoutNeedsAgent(ctx, s.db, jobUID.String, spec.JobSource, spec.JobName, scope); cerr != nil {
+		s.refuseSighting(ctx, sightingID, "could not check for an agent that allows checkout: "+cerr.Error())
+		return false, nil
+	} else if stuck {
+		s.refuseSighting(ctx, sightingID, runref.ReasonCheckoutNeedsAgent)
 		return false, nil
 	}
 
@@ -409,7 +444,7 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 	// is a fire like any other, and a Forbid job whose run is still going must
 	// not be started twice because two files landed.
 	if concPolicy.Valid && cronutil.HoldsGate(concPolicy.String) {
-		key := cronutil.ConcurrencyKey(concKey.String, jobUID.String, spec.JobSource, spec.JobName)
+		key := cronutil.ConcurrencyKey(concKey.String, jobAgencyOf(ctx, s.db, jobUID.String), jobUID.String, spec.JobSource, spec.JobName)
 		params.ConcurrencyKey = key
 		params.Policy = concPolicy.String
 		if conflict, cerr := scheduler.CheckForbid(ctx, s.db, key); cerr == nil && conflict {

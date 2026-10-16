@@ -118,14 +118,14 @@ func TestOwnedBeatsSharedWithinAScope(t *testing.T) {
 	if got != "teama-tok" {
 		t.Errorf("owned row did not win: got %q, want teama-tok", got)
 	}
-	// A department with no row of its own still falls through to the shared row —
-	// today's behaviour, and the reason this is not a tightening.
-	got, err = f.resolveSecret(t, "TOKEN", "prod", []string{"TeamB"})
-	if err != nil {
-		t.Fatalf("TeamB resolve: %v", err)
+	// A department with no row of its own does NOT fall through to Global's row
+	// (§0a, IN-6; until then it did, LR-23). Global's own run gets Global's.
+	if got, err := f.resolveSecret(t, "TOKEN", "prod", []string{"TeamB"}); err == nil {
+		t.Errorf("TeamB, with no row of its own, resolved Global's row: %q", got)
 	}
-	if got != "shared-tok" {
-		t.Errorf("fallback to the shared row broke: got %q, want shared-tok", got)
+	got, err = f.resolveSecret(t, "TOKEN", "prod", []string{"Global"})
+	if err != nil || got != "shared-tok" {
+		t.Errorf("Global's run: got %q (%v), want Global's row shared-tok", got, err)
 	}
 }
 
@@ -448,7 +448,15 @@ func TestAnOwnerThatNamesNoAgencyIsNobodysNotGlobals(t *testing.T) {
 	exec(`INSERT INTO secrets (id, key, source, created_at) VALUES ('s1', 'TOKEN', 'stored', 't')`)
 	exec(`INSERT INTO ssh_credentials (id, label, source, created_at) VALUES ('k1', 'deploy', 'stored', 't')`)
 
-	runs := [][]string{{"Global"}, {"Tax"}, nil}
+	// Global's runs (an empty set is Global's). Since §0a (IN-6) a run of Tax
+	// does not resolve Global's row at all; until then it did.
+	runs := [][]string{{"Global"}, nil}
+	if _, found, err := LookupEntityID(ctx, pool, KindSecret, "TOKEN", "", []string{"Tax"}); err != nil || found {
+		t.Errorf("Global's secret resolved for a run of Tax (found=%v, err=%v)", found, err)
+	}
+	if _, found, err := LookupEntityID(ctx, pool, KindKey, "deploy", "", []string{"Tax"}); err != nil || found {
+		t.Errorf("Global's key resolved for a run of Tax (found=%v, err=%v)", found, err)
+	}
 	for _, run := range runs {
 		if _, found, err := LookupEntityID(ctx, pool, KindSecret, "TOKEN", "", run); err != nil || !found {
 			t.Fatalf("precondition: Global's secret resolves for a run in %v (found=%v, err=%v)", run, found, err)
@@ -466,6 +474,61 @@ func TestAnOwnerThatNamesNoAgencyIsNobodysNotGlobals(t *testing.T) {
 		}
 		if id, found, err := LookupEntityID(ctx, pool, KindKey, "deploy", "", run); err != nil || found {
 			t.Errorf("a key whose owner names no agency resolved for a run in %v (id=%q, err=%v)", run, id, err)
+		}
+	}
+}
+
+// TestAKeySharedByMembershipIsItsOwnersOnly — the two checks that ask of one key
+// by id or label (a host record's key, a job's `key` binding at validation) say
+// what dispatch says: a key is usable by a run of its OWNER's. Membership that
+// shares Global's key, or TeamA's, into another agency does not make it that
+// agency's (§0a, IN-6). Before the review of I1 both checks said yes, so a run
+// was let through validation to fail at dispatch, and a host record's key was
+// used by a run that dispatch would have refused it to.
+func TestAKeySharedByMembershipIsItsOwnersOnly(t *testing.T) {
+	f := newOwnerFixture(t)
+	ctx := context.Background()
+	const now = "2026-01-01T00:00:00Z"
+	f.exec(`INSERT INTO ssh_credentials (id, label, source, created_at) VALUES ('k-g', 'global_key', 'stored', ?)`, now)
+	f.exec(`INSERT INTO ssh_credentials (id, label, source, created_at) VALUES ('k-gs', 'global_shared_key', 'stored', ?)`, now)
+	f.exec(`INSERT INTO ssh_credentials (id, label, source, owner_agency, created_at) VALUES ('k-a', 'teama_key', 'stored', 'ag-a', ?)`, now)
+	f.exec(`INSERT INTO ssh_credential_agencies(credential_id, agency_id) VALUES ('k-a', 'ag-a')`)
+	// Shared by membership: Global's into TeamA, TeamA's into TeamB. Global's
+	// membership cannot be mixed with an agency's (migration 1220's triggers), so
+	// the Global key shared into TeamA has left Global's membership: it is usable
+	// by no run, and the global_credential_bound notice lists it.
+	f.exec(`INSERT INTO ssh_credential_agencies(credential_id, agency_id) VALUES ('k-gs', 'ag-a')`)
+	f.exec(`INSERT INTO ssh_credential_agencies(credential_id, agency_id) VALUES ('k-a', 'ag-b')`)
+
+	for _, c := range []struct {
+		id, label string
+		run       []string
+		want      bool
+	}{
+		{"k-g", "global_key", []string{"Global"}, true},
+		{"k-g", "global_key", nil, true},
+		{"k-g", "global_key", []string{"TeamA"}, false},
+		{"k-gs", "global_shared_key", []string{"TeamA"}, false},
+		{"k-gs", "global_shared_key", []string{"Global"}, false},
+		{"k-a", "teama_key", []string{"TeamA"}, true},
+		{"k-a", "teama_key", []string{"TeamB"}, false},
+		{"k-a", "teama_key", []string{"Global"}, false},
+	} {
+		byID, err := KeyIDUsable(ctx, f.pool, c.id, c.run)
+		if err != nil {
+			t.Fatalf("KeyIDUsable(%s, %v): %v", c.id, c.run, err)
+		}
+		byLabel, err := keyInAgencies(ctx, f.pool, c.label, c.run)
+		if err != nil {
+			t.Fatalf("keyInAgencies(%s, %v): %v", c.label, c.run, err)
+		}
+		_, dispatched, err := LookupEntityID(ctx, f.pool, KindKey, c.label, "", c.run)
+		if err != nil {
+			t.Fatalf("LookupEntityID(%s, %v): %v", c.label, c.run, err)
+		}
+		if byID != c.want || byLabel != c.want || dispatched != c.want {
+			t.Errorf("%s for a run in %v: by id %v, by label %v, dispatch %v; want %v",
+				c.id, c.run, byID, byLabel, dispatched, c.want)
 		}
 	}
 }

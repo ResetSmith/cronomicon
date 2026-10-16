@@ -279,15 +279,16 @@ func (t Target) DialAddr() string {
 // does not hold) is Global's work and resolves against Global's records only,
 // which HostByName does by itself; a scope that lists no hosts at all has no
 // membership to ask about (HostInScope).
-func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, hosts []string) ([]Target, error) {
+// agency is whose the run is: its scope is looked for in that agency (I2).
+func ResolveTargets(ctx context.Context, db *sql.DB, agency, scope, targetHost string, hosts []string) ([]Target, error) {
 	if targetHost != "" {
-		if in, known, err := HostInScope(ctx, db, scope, targetHost); err != nil {
+		if in, known, err := HostInScope(ctx, db, agency, scope, targetHost); err != nil {
 			return nil, err
 		} else if known && !in {
 			return []Target{{Name: targetHost, ResolveErr: "target_host " + targetHost + " is not a member of scope " + scope +
 				" — a job runs only against hosts of its own scope"}}, nil
 		}
-		t, err := HostByName(ctx, db, scope, targetHost)
+		t, err := HostByName(ctx, db, agency, scope, targetHost)
 		if err != nil {
 			return nil, err
 		}
@@ -300,7 +301,7 @@ func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, h
 		return nil, nil
 	}
 
-	names, err := ScopeHosts(ctx, db, scope)
+	names, err := ScopeHosts(ctx, db, agency, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +321,7 @@ func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, h
 				targets = append(targets, Target{Name: h, ResolveErr: "host " + h + " is not a member of scope " + scope})
 				continue
 			}
-			t, err := HostByName(ctx, db, scope, h)
+			t, err := HostByName(ctx, db, agency, scope, h)
 			if err != nil {
 				return nil, err
 			}
@@ -335,7 +336,7 @@ func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, h
 
 	var targets []Target
 	for _, name := range names {
-		t, err := HostByName(ctx, db, scope, name)
+		t, err := HostByName(ctx, db, agency, scope, name)
 		if err != nil {
 			return nil, err
 		}
@@ -361,7 +362,10 @@ func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, h
 //     host of such a scope would stop jobs that have always run. The owner
 //     filter of HostByName still applies to them: they reach their own agency's
 //     records and Global's, and no one else's.
-func HostInScope(ctx context.Context, db *sql.DB, scope, host string) (in, known bool, err error) {
+//
+// agency is the agency the scope is looked for in (I2: a scope's name is
+// unique within an agency only).
+func HostInScope(ctx context.Context, db *sql.DB, agency, scope, host string) (in, known bool, err error) {
 	if scope == "" {
 		return false, false, nil
 	}
@@ -369,7 +373,7 @@ func HostInScope(ctx context.Context, db *sql.DB, scope, host string) (in, known
 	err = db.QueryRowContext(ctx, `
 		SELECT EXISTS (SELECT 1 FROM scope_hosts sh WHERE sh.scope_id = s.id AND sh.host = ?),
 		       (SELECT COUNT(*) FROM scope_hosts sh WHERE sh.scope_id = s.id)
-		  FROM scopes s WHERE s.name = ?`, host, scope).Scan(&in, &hosts)
+		  FROM scopes s WHERE `+agencyid.ScopeIn("s", "?", "?"), host, scope, ownerOrGlobal(agency)).Scan(&in, &hosts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, false, nil
 	}
@@ -384,13 +388,13 @@ func HostInScope(ctx context.Context, db *sql.DB, scope, host string) (in, known
 // intersection, and the trigger-boundary membership check in runJob. Source-
 // agnostic: git scopes are materialized into scope_hosts during sync, cronomicon
 // scopes via settings.
-func ScopeHosts(ctx context.Context, db *sql.DB, scope string) ([]string, error) {
+func ScopeHosts(ctx context.Context, db *sql.DB, agency, scope string) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT sh.host
 		FROM scope_hosts sh
 		JOIN scopes s ON s.id = sh.scope_id
-		WHERE s.name = ?
-		ORDER BY sh.host`, scope)
+		WHERE `+agencyid.ScopeIn("s", "?", "?")+`
+		ORDER BY sh.host`, scope, ownerOrGlobal(agency))
 	if err != nil {
 		return nil, fmt.Errorf("read scope hosts: %w", err)
 	}
@@ -437,13 +441,13 @@ func OverrideHosts(overrideJSON string) []string {
 //
 // The TOFU host-key capture must write back to the SAME row id this resolves (see
 // sshexec hostKeyCallback) or the stored key and the dialed row drift.
-func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Target, error) {
-	// LR-70: a scope sees the records imported for it, the records its own
-	// agency wrote by hand, and Global's — never another agency's, which it
-	// could shadow or borrow until 2.3.0 by a matching hostname. A run with no
-	// scope (or an unknown one) sees Global's alone. The order among them is the
-	// one it always was, with Global first among the hand-written: a global
-	// administrator's record still wins everywhere, deliberately.
+func HostByName(ctx context.Context, db *sql.DB, agency, scope, hostname string) (*Target, error) {
+	// LR-70: a scope sees the records imported for it and the records its own
+	// agency wrote by hand — never another agency's, which it could shadow or
+	// borrow until 2.3.0 by a matching hostname. Global's hand-written records
+	// are seen by Global's runs only (§0a, IN-6; question 33): until then they
+	// were seen by every scope's, and won. A run with no scope (or an unknown
+	// one) of Global's sees Global's alone. agency is whose the run is (I2).
 	row := db.QueryRowContext(ctx, `
 		SELECT h.id, h.hostname, h.address, h.port, h.username, h.via, h.auth_key_env_var, h.auth_credential_id,
 		       h.scope_id, h.owner_agency
@@ -451,7 +455,7 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 		WHERE h.hostname = ?
 		  AND `+HostRecordForScopeSQL+`
 		ORDER BY `+HostRecordOrderSQL+`
-		LIMIT 1`, hostname, scope, scope)
+		LIMIT 1`, hostname, scope, ownerOrGlobal(agency), ownerOrGlobal(agency))
 	var id, name, owner string
 	var address, user, via, authKeyEnvVar, authCredentialID, scopeID sql.NullString
 	var port sql.NullInt64
@@ -483,18 +487,19 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 	return t, nil
 }
 
-// HostRecordForScopeSQL is THE rule for which ssh_hosts rows (alias h) a scope
-// may resolve (LR-70), as a predicate with two parameters, the scope's name
-// twice: the records imported for it, the hand-written records of its own
-// agency, and Global's. HostRecordOrderSQL is the order among several. They are
-// exported because the host-key review asks the same question for the same host
-// (runner.serverPin) and had a copy of the predicate from before records had
-// owners: it went on reading every agency's records after this one stopped.
+// HostRecordForScopeSQL is THE rule for which ssh_hosts rows (alias h) a run
+// may resolve (LR-70), as a predicate with three parameters: the scope's name,
+// then the agency whose run it is, twice. The records imported for that
+// agency's scope of the name, and the records that agency wrote by hand:
+// Global's are Global's runs' (§0a, question 33), and a scope's name is
+// unique within an agency only (I2). HostRecordOrderSQL is the order among
+// several. They are exported because the host-key review asks the same
+// question for the same host (runner.serverPin) and had a copy of the
+// predicate from before records had owners: it went on reading every agency's
+// records after this one stopped.
 const (
-	HostRecordForScopeSQL = `(h.scope_id IN (SELECT id FROM scopes WHERE name = ?)
-		       OR (h.scope_id IS NULL AND (h.owner_agency = '` + agencyid.Global + `'
-		           OR h.owner_agency IN (SELECT sa.agency_id FROM scope_agencies sa
-		                                   JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?))))`
+	HostRecordForScopeSQL = `(h.scope_id IN (SELECT sc.id FROM scopes sc WHERE sc.name = ? AND sc.owner_agency = ?)
+		       OR (h.scope_id IS NULL AND h.owner_agency = ?))`
 	HostRecordOrderSQL = `(h.source='cronomicon') DESC, (h.scope_id IS NULL) DESC, (h.owner_agency = '` + agencyid.Global + `') DESC,
 		         h.last_modified_at DESC, h.id DESC`
 )
@@ -534,17 +539,26 @@ func scopeAgencyIDs(ctx context.Context, db *sql.DB, scopeID string) ([]string, 
 // that EXISTS and has no agency is not "global": every scope is born with a
 // Global row and can only trade it for another, so that state is corruption, and
 // it is returned as ErrScopeHasNoAgency for the producer to refuse on.
-func ScopeAgencies(ctx context.Context, db *sql.DB, scope string) ([]string, error) {
+//
+// agency is the id of the agency whose run this is (the job's owner, a
+// workflow's agency): a scope's name is unique within its agency only (I2,
+// IN-5), and the scope is looked for there. A scope of that name the agency
+// does not hold is "a scope the catalog does not hold", as before: another
+// agency's scope of the name is nothing to this run.
+func ScopeAgencies(ctx context.Context, db *sql.DB, agency, scope string) ([]string, error) {
 	out := []string{}
 	if scope == "" {
 		return []string{agencyid.GlobalName}, nil
+	}
+	if agency == "" {
+		agency = agencyid.Global
 	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT a.name FROM scope_agencies sa
 		JOIN scopes   s ON s.id = sa.scope_id
 		JOIN agencies a ON a.id = sa.agency_id
-		WHERE s.name = ?
-		ORDER BY a.name`, scope)
+		WHERE `+agencyid.ScopeIn("s", "?1", "?2")+`
+		ORDER BY a.name`, scope, agency)
 	if err != nil {
 		// The error is the caller's to act on. This used to answer "no agencies"
 		// — written for a pre-670 schema that cannot exist at run time, since
@@ -569,13 +583,56 @@ func ScopeAgencies(ctx context.Context, db *sql.DB, scope string) ([]string, err
 		return out, nil
 	}
 	var known bool
-	if err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM scopes WHERE name = ?)`, scope).Scan(&known); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM scopes s WHERE `+agencyid.ScopeIn("s", "?1", "?2")+`)`, scope, agency).Scan(&known); err != nil {
 		return nil, err
 	}
 	if known {
 		return nil, fmt.Errorf("%w: %q", ErrScopeHasNoAgency, scope)
 	}
 	return []string{agencyid.GlobalName}, nil
+}
+
+// ownerOrGlobal is an agency id, Global's for none: a caller that does not
+// know whose a run is asks as Global's, as such a run is.
+func ownerOrGlobal(agency string) string {
+	if agency == "" {
+		return agencyid.Global
+	}
+	return agency
+}
+
+// RunScopeOwner is the agency a run's scope is looked for in, from the run's
+// agency snapshot (names): its one agency, and Global's for a run of several,
+// which is a run on a scope several agencies share, and such a scope is
+// Global's (1410). Global's for an empty snapshot, as such a run is.
+func RunScopeOwner(ctx context.Context, db *sql.DB, runAgencies []string) (string, error) {
+	if len(runAgencies) != 1 {
+		return agencyid.Global, nil
+	}
+	var id string
+	err := db.QueryRowContext(ctx, `SELECT id FROM agencies WHERE name = ?`, runAgencies[0]).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agencyid.Global, nil
+	}
+	return id, err
+}
+
+// ScopeOwnerByName is the agency of the one scope of this name, for a caller
+// that names a scope and no agency (an API request from before names were per
+// agency, I2): the scope's owner when exactly one scope has the name, and
+// Global's when none does or several do. A caller that knows whose run it is
+// asks ScopeAgencies with that agency instead.
+func ScopeOwnerByName(ctx context.Context, db *sql.DB, scope string) (string, error) {
+	var owner sql.NullString
+	err := db.QueryRowContext(ctx,
+		`SELECT CASE WHEN COUNT(*) = 1 THEN MIN(owner_agency) END FROM scopes WHERE name = ?`, scope).Scan(&owner)
+	if err != nil {
+		return "", err
+	}
+	if !owner.Valid {
+		return agencyid.Global, nil
+	}
+	return owner.String, nil
 }
 
 // ErrScopeHasNoAgency reports a scope row with no membership at all. The
@@ -617,7 +674,7 @@ func AgenciesHaveOnlineRunner(ctx context.Context, db *sql.DB, agencies []string
 		SELECT EXISTS(
 			SELECT 1 FROM runner_agencies ra
 			JOIN agencies a  ON a.id  = ra.agency_id
-			JOIN runners  rn ON rn.id = ra.runner_id
+			JOIN runners  rn ON rn.id = ra.runner_id AND rn.owner_agency = ra.agency_id
 			WHERE a.name IN (SELECT value FROM json_each(?)) AND rn.status = 'online'
 		)`, MarshalAgencies(agencies)).Scan(&exists)
 	if err != nil {
@@ -672,11 +729,18 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 	if ag == "" {
 		ag = "[]"
 	}
+	// The agency the run's scope is looked for in (I2), from its snapshot.
+	var runNames []string
+	_ = json.Unmarshal([]byte(ag), &runNames)
+	scopeOwner, oerr := RunScopeOwner(ctx, db, runNames)
+	if oerr != nil {
+		return false, requires, oerr
+	}
 	reqJSON := requiresJSON.String
 	if reqJSON == "" {
 		reqJSON = "[]"
 	}
-	caps := effectiveCapsSQL("rn")
+	caps := EffectiveCapsSQL("rn")
 	err = db.QueryRowContext(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM runners rn
@@ -686,38 +750,195 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 			    SELECT 1 FROM json_each(?) je
 			    WHERE je.value NOT IN `+caps+`)
 			  AND EXISTS (SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
-			               WHERE ra.runner_id = rn.id AND a.name IN (SELECT value FROM json_each(?)))
+			               WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency AND a.name IN (SELECT value FROM json_each(?)))
 			  -- SB-1 binding parity (mig. 1180): an unrestricted scope passes, a
 			  -- restricted one needs THIS runner named. Correlated here where
 			  -- claimRun's is not, because this probe walks runners for one run
 			  -- rather than runs for one runner — the rule is the same.
 			  AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-			                    WHERE sc.name = ?)
+			                    WHERE sc.name = ? AND sc.owner_agency = ?)
 			       OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-			                   WHERE sc.name = ? AND sr.runner_id = rn.id))
+			                   WHERE sc.name = ? AND sc.owner_agency = ? AND sr.runner_id = rn.id))
 			  AND (? = 0 OR rn.allow_secret_injection = 1)
 			  AND `+localRunnerCannotSQL("rn")+`
-		)`, runType.String, reqJSON, ag, scope.String, scope.String, needsInjection, bindsKey).Scan(&ok)
+		)`, runType.String, reqJSON, ag, scope.String, scopeOwner, scope.String, scopeOwner, needsInjection, bindsKey).Scan(&ok)
 	if err != nil {
 		return false, requires, err
 	}
 	return ok, requires, nil
 }
 
+// JobRef names the job a run is of. UID is the run's job_uid and is what
+// decides; Name and Source are what the run is called, and are asked only for
+// a run that records no uid.
+type JobRef struct {
+	UID    string
+	Name   string
+	Source string
+}
+
+// CloneDirs says where a repository is cloned on this server (GR-12): each has
+// a directory of its own. The server's is gitlab.CloneDirFor.
+type CloneDirs func(repoID string) string
+
+// OneCloneDir is a CloneDirs with one directory for every repository: for a
+// caller that has one clone.
+func OneCloneDir(dir string) CloneDirs { return func(string) string { return dir } }
+
+// Pin is the commit a checkout run was pinned to when it was queued
+// (runs.checkout_repo, checkout_sha, checkout_entry). The zero Pin is a run
+// that is not pinned.
+type Pin struct {
+	Repo  string // empty is Global's: a run from before 2.4.0 records none
+	SHA   string
+	Entry string
+}
+
+// ErrJobGone is a run whose job no longer exists: the uid the run records
+// names no job (or, for a run that records none, nothing holds its name).
+var ErrJobGone = errors.New("the job this run is of no longer exists")
+
+// ErrScriptGone is a job built in the app whose script is no longer there
+// (present defects 41 and 45; the owner's decision of 2026-10-13).
+//
+// A job built in the app runs its SCRIPT, as the server last synced it from
+// Git: ResolveCommand reads the body from the script's record at every run.
+// The job's row holds a copy of the script too, which sync keeps for display
+// and which was what ran until 2.4.0 Phase R5. With the script's row gone
+// there is nothing for the job to run. Running the copy went against what a
+// script is (it comes from Git, and this one no longer does), and had two
+// consequences that were found one at a time: a copy that is a file's path was
+// read in Global's repository, which handed the job whatever the
+// installation's own repository holds at a path another repository's
+// committers chose (41); and a job refused because its scope had been given
+// to another agency ran again, on that agency's hosts, the day the first
+// agency's committers removed the script (45).
+var ErrScriptGone = errors.New("the script this job is built on has been removed")
+
+// scriptGoneSQL is true for the job j when it is one of those: built in the
+// app ON A SCRIPT (it names one, or its body is a file, which only a script
+// has), and joined to no script row. A job built in the app that names no
+// script and holds its own inline body is from before scripts were what a job
+// is built on, and runs that body as it always has.
+const scriptGoneSQL = `(j.source <> 'git'
+	AND (COALESCE(j.script_ref, '') <> ''
+	     OR (COALESCE(j.command, '') = '' AND COALESCE(j.script, '') = '' AND COALESCE(j.script_path, '') <> ''))
+	AND NOT EXISTS (SELECT 1 FROM scripts sg WHERE sg.uid = j.script_uid))`
+
+// ScriptGone reports whether the job a run is of is one ErrScriptGone refuses,
+// for a caller that must say so before it resolves the run (the manifest). A
+// job that is not there, and a name two jobs hold for a run with no uid, are
+// not this question's: false, and ResolveCommand answers them.
+func ScriptGone(ctx context.Context, db *sql.DB, job JobRef) (bool, error) {
+	source := job.Source
+	if source == "" {
+		source = "git"
+	}
+	var gone bool
+	var err error
+	if job.UID != "" {
+		err = db.QueryRowContext(ctx, `SELECT `+scriptGoneSQL+` FROM jobs j WHERE j.uid = ?`, job.UID).Scan(&gone)
+	} else {
+		err = db.QueryRowContext(ctx, `
+			SELECT `+scriptGoneSQL+` FROM jobs j
+			 WHERE j.name = ?1 AND j.source = ?2
+			   AND (SELECT COUNT(*) FROM jobs o WHERE o.name = ?1 AND o.source = ?2) = 1`, job.Name, source).Scan(&gone)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return gone, err
+}
+
+// AmbiguousJobError is the refusal to pick between two jobs of one name for a
+// run that does not record which it is of.
+type AmbiguousJobError struct{ Name string }
+
+func (e *AmbiguousJobError) Error() string {
+	return fmt.Sprintf("two jobs are called %q, and this run does not record which one it is of", e.Name)
+}
+
 // ResolveCommand returns the interpreter argv and the script body for a job
 // (EX.1). Exactly one of command/script/script_path is set (parse-time
 // validated); script_path is read from the synced clone.
-func ResolveCommand(ctx context.Context, db *sql.DB, gitCacheDir, jobName, jobSource, runType string) (interp []string, body string, err error) {
+//
+// job says WHICH job: the run's job_uid. Until 2.4.0 this was handed the job's
+// name and source and nothing else, although both of its callers held the uid,
+// and two agencies may each own a job of one name: a run of one agency's job
+// was handed the other agency's command, and its history looked normal,
+// because the run row named the right job (present defect 4). A uid that no
+// job has is an error: the name is not asked instead, since the name may be
+// another job. A run that records no uid is resolved by its name and source
+// when ONE job holds them, and refused when two do.
+//
+// A body kept as a file (script_path) is read from the clone of the SCRIPT's
+// repository (GR-22): dirs says where that is. The job's path is a copy of its
+// script's, relative to the script's repository, and a job built in the app has
+// no repository of its own. Until 2.4.0 there was one clone, and both callers
+// read Global's. A job from Git that has no script row (a path of its own, or a
+// script that has gone) is read in the job's own repository (Global's for one
+// that records none). (From GR-16 until §0a an agency's job could use Global's
+// script, and was read there.)
+//
+// A job BUILT IN THE APP is read through its script's record and not from the
+// job's own copy: the inline body, or the path of the file, is the script's as
+// the server last synced it. One whose script has gone is ErrScriptGone,
+// whatever kind its body was.
+//
+// The file is read from a commit's OBJECTS and never from the clone's working
+// tree, which a sync rewrites in place (present defect 27; commitread.go). A
+// run that is not pinned is read at the last synced commit of that repository.
+// A checkout run (at.SHA set) is read at the commit, in the repository and at
+// the entry it was pinned to when it was queued: what the agent will check
+// out, whatever a later sync did to the file (present defect 23).
+//
+// A job that has gone is ErrJobGone; a file that cannot be read from the
+// objects is a *CommitReadError. Both are for the caller to show.
+func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef, at Pin, runType string) (interp []string, body string, err error) {
+	jobName, jobSource := job.Name, job.Source
 	if jobSource == "" {
 		jobSource = "git" // legacy/git runs (NULL job_source) resolve the git-source job (A9)
 	}
-	var command, script, scriptPath sql.NullString
-	row := db.QueryRowContext(ctx,
-		`SELECT command, script, script_path FROM jobs WHERE name = ? AND source = ?`, jobName, jobSource)
-	if err := row.Scan(&command, &script, &scriptPath); err != nil {
-		return nil, "", fmt.Errorf("read job command: %w", err)
+	var command, script, scriptPath, synced sql.NullString
+	var repo string
+	// The repository's last synced commit is read WITH the job's row: one
+	// statement, one moment. Read after it, a sync that moved the file and
+	// committed in between would have the old path looked for in the new commit.
+	var scriptGone bool
+	// For a job built in the app that is joined to a script, the three body
+	// columns are the SCRIPT's (s.*); for every other job they are the job's.
+	const cols = `SELECT CASE WHEN j.source <> 'git' AND s.uid IS NOT NULL THEN s.command ELSE j.command END,
+	       CASE WHEN j.source <> 'git' AND s.uid IS NOT NULL THEN s.script ELSE j.script END,
+	       CASE WHEN j.source <> 'git' AND s.uid IS NOT NULL THEN s.script_path ELSE j.script_path END,
+	       COALESCE(s.repo_id, j.repo_id, 'global'),
+	       (SELECT g.last_sha FROM git_repos g WHERE g.id = COALESCE(s.repo_id, j.repo_id, 'global')),
+	       ` + scriptGoneSQL + `
+	  FROM jobs j LEFT JOIN scripts s ON s.uid = j.script_uid `
+	if job.UID != "" {
+		if err := db.QueryRowContext(ctx, cols+`WHERE j.uid = ?`, job.UID).
+			Scan(&command, &script, &scriptPath, &repo, &synced, &scriptGone); err != nil {
+			return nil, "", fmt.Errorf("read job command: %w", jobGone(err))
+		}
+	} else {
+		var n int
+		if err := db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM jobs WHERE name = ? AND source = ?`, jobName, jobSource).Scan(&n); err != nil {
+			return nil, "", fmt.Errorf("read job command: %w", err)
+		}
+		if n > 1 {
+			return nil, "", fmt.Errorf("read job command: %w", &AmbiguousJobError{Name: jobName})
+		}
+		if err := db.QueryRowContext(ctx, cols+`WHERE j.name = ? AND j.source = ?`, jobName, jobSource).
+			Scan(&command, &script, &scriptPath, &repo, &synced, &scriptGone); err != nil {
+			return nil, "", fmt.Errorf("read job command: %w", jobGone(err))
+		}
 	}
 
+	if scriptGone {
+		// Before anything is read or handed out, pinned or not, and whatever
+		// kind the body was.
+		return nil, "", ErrScriptGone
+	}
 	switch {
 	case command.Valid && command.String != "":
 		body = command.String
@@ -726,7 +947,25 @@ func ResolveCommand(ctx context.Context, db *sql.DB, gitCacheDir, jobName, jobSo
 	case scriptPath.Valid && scriptPath.String != "":
 		// Execution needs the FULL body (limit 0 = uncapped); the 1 MiB cap is a
 		// display-only concern handled by the catalog content endpoint.
-		data, _, rerr := SafeReadRepoFile(gitCacheDir, scriptPath.String, 0)
+		if dirs == nil {
+			return nil, "", fmt.Errorf("job %q keeps its body in a file, and this caller has no clone to read it from", jobName)
+		}
+		var data []byte
+		var rerr error
+		if at.SHA != "" {
+			pinned, entry := at.Repo, at.Entry
+			if pinned == "" {
+				pinned = "global"
+			}
+			if entry == "" {
+				entry = scriptPath.String
+			}
+			data, _, rerr = ReadCommitFile(dirs(pinned), at.SHA, entry, 0)
+		} else if synced.String == "" {
+			rerr = notSynced(scriptPath.String, repo)
+		} else {
+			data, _, rerr = ReadCommitFile(dirs(repo), synced.String, scriptPath.String, 0)
+		}
 		if rerr != nil {
 			return nil, "", rerr
 		}
@@ -758,11 +997,21 @@ func ResolveCommand(ctx context.Context, db *sql.DB, gitCacheDir, jobName, jobSo
 	return interp, body, nil
 }
 
+// jobGone turns "no such row" into ErrJobGone and leaves any other error alone.
+func jobGone(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrJobGone
+	}
+	return err
+}
+
 // SafeReadRepoFile reads a repo-relative file from gitCacheDir behind the
 // canonical path-traversal guard (Clean → reject ../abs → Join → EvalSymlinks →
-// Rel re-check). It is the single reader shared by the SSH executor
-// (ResolveCommand), the sync hash/scan (gitlab.readBodyAt), and the catalog
-// content endpoint, so the guard cannot drift across the three.
+// Rel re-check). It reads the clone's WORKING TREE, and since 2.4.0 its one
+// caller is the sync itself (gitlab.readBodyAt, the hash and the scan), which
+// is what writes that tree and holds the queue while it reads. Dispatch and
+// the routes that show a body read a commit's objects (ReadCommitFile, present
+// defect 27), under the same rules for what a path may be.
 //
 // When limit > 0 the read is bounded: at most limit bytes are returned and
 // truncated reports whether the file was larger (the returned data is exactly
@@ -786,6 +1035,12 @@ func SafeReadRepoFile(gitCacheDir, relPath string, limit int64) (data []byte, tr
 	rel, err := filepath.Rel(gitCacheDir, resolvedPath)
 	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 		return nil, false, fmt.Errorf("scriptPath %q escapes repository root: resolves to %q", relPath, resolvedPath)
+	}
+	// Nor the clone's own .git, which is inside the directory and is no part of
+	// what the repository holds: its config names the connection's URL, and a
+	// committed link to it would be a script's body, shown and run.
+	if rel == ".git" || strings.HasPrefix(rel, ".git"+string(filepath.Separator)) {
+		return nil, false, fmt.Errorf("scriptPath %q escapes repository root: resolves into the clone's .git", relPath)
 	}
 	if limit <= 0 {
 		data, err = os.ReadFile(resolvedPath)

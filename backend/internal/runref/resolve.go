@@ -416,10 +416,15 @@ func lookupScoped(ctx context.Context, database *sql.DB, table, key, runScope st
 		`SELECT t.id, COALESCE(t.scope,''), `+ownerNameSQL("t")+` FROM `+table+` t
 		 LEFT JOIN agencies ag ON ag.id = t.owner_agency
 		 WHERE t.key = ?
-		   AND (COALESCE(t.scope,'') = '' OR COALESCE(t.scope,'') = ?)
+		   -- a scoped row is its scope's (I2, a scope's name is unique within
+		   -- an agency only): owned by the run's scope owner, or by one of the
+		   -- run's agencies (a scope several share, from before 2.3, is
+		   -- Global's, and its rows are its members')
+		   AND (COALESCE(t.scope,'') = ''
+		        OR (COALESCE(t.scope,'') = ? AND (t.owner_agency = `+agencyid.RunScopeOwnerSQL("?")+` OR `+ownerInRunSQL("t")+`)))
 		   AND `+usableByRunSQL(memberTable, memberCol, "t.id")+`
 		 ORDER BY (COALESCE(t.scope,'') = ?) DESC, t.id`,
-		key, runScope, agencyJSON, runScope)
+		key, runScope, agencyJSON, agencyJSON, agencyJSON, agencyJSON, runScope)
 	if qerr != nil {
 		return "", "", false, fmt.Errorf("lookup %s %q: %w", table, key, qerr)
 	}
@@ -456,11 +461,18 @@ type candidate struct{ id, scope, owner string }
 // ambiguous=true when the winning tier holds more than one row at the same scope
 // precedence. A nil winner with ambiguous=false means nothing resolved.
 func pickOwned(cands []candidate, runAgencies []string, runScope string) (win *candidate, ambiguous bool) {
+	// A row of Global's ("" here) is a run of Global's own, and no other run's
+	// (§0a, IN-6). Until then it was every run's "shared" tier, under the run's
+	// own agency's rows. usableByRunSQL already keeps it from another agency's
+	// run; this is the same rule again, as for a drifted owner below.
+	globalRun := len(runAgencies) == 0 || slices.ContainsFunc(runAgencies, agencyid.IsGlobalName)
 	var owned, shared []candidate
 	for _, c := range cands {
 		switch {
+		case c.owner == "" && globalRun:
+			owned = append(owned, c)
 		case c.owner == "":
-			shared = append(shared, c)
+			// Global's, for a run of another agency: not usable.
 		case slices.Contains(runAgencies, c.owner):
 			owned = append(owned, c)
 		default:
@@ -520,7 +532,9 @@ func LookupEntityID(ctx context.Context, database *sql.DB, kind Kind, name, runS
 
 // usableByRunSQL is THE visibility rule for a secret, a variable or an SSH key,
 // as one SQL fragment with one bound parameter (the run's agency names, JSON):
-// the row is in Global, or in one of the run's agencies.
+// the row is in one of the run's agencies. A row of Global's is usable by a run
+// of Global's, and by no other (§0a, IN-6: until then it was usable by every
+// agency's run, LR-23; a secret two agencies need is a common Vault path).
 //
 // It replaced "the row has no membership rows, OR its membership intersects the
 // run's" when Global became a row (migration 1220). The first arm was the shared
@@ -530,9 +544,9 @@ func LookupEntityID(ctx context.Context, database *sql.DB, kind Kind, name, runS
 func usableByRunSQL(memberTable, memberCol, idExpr string) string {
 	return `EXISTS (
 		SELECT 1 FROM ` + memberTable + ` m
-		  LEFT JOIN agencies a ON a.id = m.agency_id
+		  JOIN agencies a ON a.id = m.agency_id
 		 WHERE m.` + memberCol + ` = ` + idExpr + `
-		   AND (m.agency_id = '` + agencyid.Global + `' OR a.name IN (SELECT value FROM json_each(?))))`
+		   AND a.name IN (SELECT value FROM json_each(?)))`
 }
 
 // ownerNameSQL renders a row's owner for pickOwned: the owning agency's NAME, or
@@ -550,15 +564,25 @@ func ownerNameSQL(alias string) string {
 	             ELSE COALESCE(ag.name, '` + danglingOwner + `') END`
 }
 
+// ownerInRunSQL is "the row's OWNER is one of the run's agencies" (one bound
+// parameter, the run's agency names as JSON): pickOwned's rule for a caller
+// that asks of one row by id or label. A row Global owns whose membership
+// shares it into an agency is Global's, and usable by Global's runs only
+// (§0a, IN-6; found by the review of I1: these two checks said yes).
+func ownerInRunSQL(alias string) string {
+	return `COALESCE((SELECT name FROM agencies WHERE id = ` + alias + `.owner_agency), '') IN (SELECT value FROM json_each(?))`
+}
+
 // danglingOwner cannot be an agency's name: names are trimmed on write and this
 // begins with a space.
 const danglingOwner = " (no such agency)"
 
 // marshalNames renders an agency set for the json_each parameter above. Always a
-// well-formed array — an empty run set is "[]", which matches only Global's rows.
+// well-formed array — an empty run set is Global's (a run with no snapshot is
+// Global's: the 1220 trigger runs_born_global), and matches only Global's rows.
 func marshalNames(names []string) string {
 	if len(names) == 0 {
-		return "[]"
+		return `["` + agencyid.GlobalName + `"]`
 	}
 	b, err := json.Marshal(names)
 	if err != nil {
@@ -666,8 +690,9 @@ func KeyIDUsable(ctx context.Context, database *sql.DB, credentialID string, run
 	err := database.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM ssh_credentials c
 		WHERE c.id = ?
-		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id"),
-		credentialID, marshalNames(runAgencies)).Scan(&n)
+		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id")+`
+		  AND `+ownerInRunSQL("c"),
+		credentialID, marshalNames(runAgencies), marshalNames(runAgencies)).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("resolve key agencies %q: %w", credentialID, err)
 	}
@@ -679,8 +704,9 @@ func keyInAgencies(ctx context.Context, database *sql.DB, label string, runAgenc
 	err := database.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM ssh_credentials c
 		WHERE c.label = ?
-		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id"),
-		label, marshalNames(runAgencies)).Scan(&hit)
+		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id")+`
+		  AND `+ownerInRunSQL("c"),
+		label, marshalNames(runAgencies), marshalNames(runAgencies)).Scan(&hit)
 	if err != nil {
 		return false, fmt.Errorf("resolve key agencies %q: %w", label, err)
 	}

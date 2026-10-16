@@ -75,8 +75,22 @@ CREATE TABLE IF NOT EXISTS jobs (
     ssh_user           TEXT,
     ssh_credential     TEXT,
     become_password_secret TEXT,
+    script_uid         TEXT, -- which script script_ref means (migration 1290)
+    repo_id            TEXT, -- the repository a Git job comes from (migration 1310)
+    owner_agency       TEXT, -- whose a job built in the app is (migration 1400)
     PRIMARY KEY (source, name)
 );
+-- Mirrors migration 1400's jobs_born_owned: a row written with no owner is
+-- born with what its agency was worked out to be before the column.
+CREATE TRIGGER IF NOT EXISTS jobs_born_owned AFTER INSERT ON jobs WHEN NEW.owner_agency IS NULL
+BEGIN
+    UPDATE jobs SET owner_agency = CASE WHEN NEW.source = 'git' AND NEW.repo_id IS NOT NULL
+        THEN COALESCE((SELECT g.agency_id FROM git_repos g WHERE g.id = NEW.repo_id), 'global')
+        ELSE COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+                         FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+                        WHERE sc.name = NEW.scope), 'global') END
+     WHERE rowid = NEW.rowid;
+END;
 
 -- SB: the job upsert clears a "leftover runner_tag" notice once the line is
 -- gone from the YAML, so this minimal schema needs the table it clears. Mirrors
@@ -105,13 +119,18 @@ CREATE TABLE IF NOT EXISTS entity_codes (
     created_at TEXT NOT NULL,
     deleted_at TEXT,
     -- R2-2 (migration 1020). Same fixture-drift caveat as everything else here.
-    uid        TEXT
+    uid        TEXT,
+    repo_id    TEXT -- migration 1320
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_codes_live
     ON entity_codes(kind, source, name) WHERE deleted_at IS NULL;
 
+-- Mirrors migration 1290: a script has a uid and a repository, and its name
+-- is unique per repository.
 CREATE TABLE IF NOT EXISTS scripts (
-    name         TEXT PRIMARY KEY,
+    uid          TEXT PRIMARY KEY NOT NULL DEFAULT (lower(hex(randomblob(16)))),
+    repo_id      TEXT NOT NULL DEFAULT 'global',
+    name         TEXT NOT NULL,
     description  TEXT,
     run_type     TEXT NOT NULL,
     command      TEXT,
@@ -125,7 +144,8 @@ CREATE TABLE IF NOT EXISTS scripts (
     variables    TEXT NOT NULL DEFAULT '[]',
     prompts_json TEXT NOT NULL DEFAULT '[]',
     tags         TEXT NOT NULL DEFAULT '[]',
-    project_root TEXT
+    project_root TEXT,
+    UNIQUE (repo_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS workflows (
@@ -139,8 +159,14 @@ CREATE TABLE IF NOT EXISTS workflows (
     source_path TEXT,
     synced_at   TEXT,
     tags        TEXT NOT NULL DEFAULT '[]',
+    repo_id     TEXT, -- migration 1310
+    owner_agency TEXT NOT NULL DEFAULT 'global', -- migration 1360
     PRIMARY KEY (source, name)
 );
+-- Migration 1320: a Git name is unique within its repository, and sync's
+-- upserts conflict on exactly these two.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_git_name ON jobs(repo_id, name) WHERE source = 'git';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_workflows_git_name ON workflows(repo_id, name) WHERE source = 'git';
 
 CREATE TABLE IF NOT EXISTS definition_schedules (
     owner_source TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','cronomicon')),
@@ -209,16 +235,18 @@ CREATE TABLE IF NOT EXISTS calendars (
     created_at        TEXT NOT NULL DEFAULT '2026-01-01T00:00:00Z',
     last_modified_by  TEXT,
     last_modified_at  TEXT,
-    PRIMARY KEY (source, name)
+    owner_agency      TEXT NOT NULL DEFAULT 'global', -- migration 1390; the key 1430's
+    PRIMARY KEY (owner_agency, source, name)
 );
 
 CREATE TABLE IF NOT EXISTS calendar_days (
+    calendar_owner  TEXT NOT NULL DEFAULT 'global', -- migration 1430
     calendar_source TEXT NOT NULL,
     calendar_name   TEXT NOT NULL,
     day             TEXT NOT NULL,
     label           TEXT,
     rule            TEXT,
-    PRIMARY KEY (calendar_source, calendar_name, day)
+    PRIMARY KEY (calendar_owner, calendar_source, calendar_name, day)
 );
 
 CREATE TABLE IF NOT EXISTS schedules (
@@ -241,18 +269,78 @@ CREATE TABLE IF NOT EXISTS schedules (
     interval         TEXT,
     skip_calendars   TEXT,
     only_calendars   TEXT,
-    PRIMARY KEY (source, name)
+    -- Mirrors migration 1300: a schedule has an owner and (from Git) a
+    -- repository, and its name is unique per source and owner.
+    owner_agency     TEXT NOT NULL DEFAULT 'global',
+    repo_id          TEXT,
+    UNIQUE (source, owner_agency, name)
 );
 
-CREATE TABLE IF NOT EXISTS git_sync_state (
-    id          INTEGER PRIMARY KEY CHECK (id = 1),
-    last_sha    TEXT,
-    last_synced_at TEXT,
-    last_status TEXT
+CREATE TABLE IF NOT EXISTS git_repos (
+    -- Mirrors migration 1310: a repository is a row (was gitlab_config and
+    -- git_sync_state, one row each). Global's is there on every installation.
+    id                       TEXT PRIMARY KEY,
+    agency_id                TEXT NOT NULL UNIQUE,
+    url                      TEXT NOT NULL DEFAULT '',
+    branch                   TEXT NOT NULL DEFAULT 'main',
+    token_enc                TEXT,
+    webhook_enabled          INTEGER NOT NULL DEFAULT 1,
+    webhook_events_push      INTEGER NOT NULL DEFAULT 1,
+    webhook_events_mr        INTEGER NOT NULL DEFAULT 1,
+    webhook_events_tag       INTEGER NOT NULL DEFAULT 1,
+    webhook_secret_enc       TEXT,
+    webhook_secret_prev_enc  TEXT,
+    webhook_overlap_until    TEXT,
+    last_sha                 TEXT,
+    last_synced_at           TEXT,
+    last_status              TEXT
 );
+INSERT OR IGNORE INTO git_repos (id, agency_id) VALUES ('global', 'global');
+
+-- Whose an in-app job is born: its scope's one agency (jobs_born_owned, above),
+-- Global's repository's lookups included since §0a. The columns are the ones
+-- scripts_test.go creates the table with.
+CREATE TABLE IF NOT EXISTS scopes (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    source TEXT,
+    source_path TEXT,
+    git_meta_json TEXT,
+    synced_at TEXT,
+    description TEXT,
+    created_by TEXT,
+    created_at TEXT,
+    raw_inventory TEXT,
+    inventory_format TEXT,
+    repo_id TEXT,
+    owner_agency TEXT NOT NULL DEFAULT 'global', -- migration 1410
+    released_from TEXT,                          -- migration 1470
+    UNIQUE (owner_agency, name)                  -- migration 1420
+);
+CREATE TABLE IF NOT EXISTS scope_agencies (
+    scope_id  TEXT NOT NULL,
+    agency_id TEXT NOT NULL,
+    PRIMARY KEY (scope_id, agency_id)
+);
+-- Mirrors 1410's triggers: a scope's owner is its one agency, Global's for several.
+CREATE TRIGGER IF NOT EXISTS scope_owner_on_join AFTER INSERT ON scope_agencies
+BEGIN
+    UPDATE OR IGNORE scopes SET owner_agency = COALESCE(
+        (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END FROM scope_agencies sa WHERE sa.scope_id = NEW.scope_id),
+        'global')
+     WHERE id = NEW.scope_id;
+END;
+CREATE TRIGGER IF NOT EXISTS scope_owner_on_leave AFTER DELETE ON scope_agencies
+BEGIN
+    UPDATE OR IGNORE scopes SET owner_agency = COALESCE(
+        (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END FROM scope_agencies sa WHERE sa.scope_id = OLD.scope_id),
+        'global')
+     WHERE id = OLD.scope_id;
+END;
 
 CREATE TABLE IF NOT EXISTS git_sync_events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_id       TEXT NOT NULL DEFAULT 'global', -- migration 1310
     triggered_by  TEXT NOT NULL,
     sha           TEXT,
     status        TEXT NOT NULL,
@@ -268,6 +356,7 @@ CREATE TABLE IF NOT EXISTS git_sync_events (
 
 CREATE TABLE IF NOT EXISTS schedule_pushes (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_id       TEXT NOT NULL DEFAULT 'global', -- migration 1310
     at            TEXT NOT NULL,
     actor         TEXT NOT NULL,
     schedule_file TEXT NOT NULL,

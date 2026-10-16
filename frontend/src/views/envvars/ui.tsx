@@ -9,6 +9,19 @@ import { useGet, rows } from "../../hooks";
 // tab views that import them from this kit.
 export { csrfHeader, errMsg };
 
+/**
+ * rowFlagWhy — why a row's Edit or Delete is off, from the row's own flag
+ * (R8: canEdit/canDelete, answered by the rule its route uses). "" when the
+ * flag allows it or is absent (an older server: the server decides).
+ * `owner` is the owning agency's NAME, as these rows report it.
+ */
+export function rowFlagWhy(flag: boolean | undefined, owner: string | null | undefined, noun: string): string {
+  if (flag !== false) return "";
+  return !owner || owner === "Global"
+    ? `This ${noun} is Global's — only a global administrator (a role on every agency) can change it.`
+    : `This ${noun} belongs to ${owner} — only that agency's administrators can change it.`;
+}
+
 // useInlineTags moved to the shared hooks module (CC.18) — the Env Vars tabs now
 // import it from ../../hooks alongside the catalog views.
 

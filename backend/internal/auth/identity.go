@@ -186,6 +186,32 @@ func (i Identity) Can(perm, scope string) bool {
 	return false
 }
 
+// CanIn is Can for a scope of a named agency: the same grant carries the
+// permission and covers the scope, and a grant of an agency covers that
+// agency's scopes only. A scope's name is unique within an agency only (I2,
+// IN-5), so Can's "this name" cannot tell Finance's `web` from Tax's; every
+// caller that knows whose the object is asks this. An unrestricted grant
+// covers every agency, as for Can.
+func (i Identity) CanIn(perm, agency, scope string) bool {
+	for _, g := range i.RoleGrants() {
+		if !PermsForRoles([]string{g.Role}).Has(perm) {
+			continue
+		}
+		if g.Unrestricted() {
+			return true
+		}
+		if scope == AllScopes {
+			continue
+		}
+		// A grant that names no agency, or a row that names no owner, covers by
+		// name alone (scopes.go, grantCoversIn says why).
+		if (agency == "" || g.Agency == "" || g.Agency == agency) && g.Covers(scope) {
+			return true
+		}
+	}
+	return false
+}
+
 // CanAnywhere reports whether ANY of the actor's grants carries perm, ignoring
 // scope entirely — "may this actor do this somewhere".
 //
@@ -280,6 +306,48 @@ func (i Identity) CanAgency(perm, agencyID string) bool {
 		}
 	}
 	return false
+}
+
+// ReadsAgency reports whether the actor may READ what belongs to an agency
+// (2.4.0, GR-26): the rows an agency's repository supplies, its sync history
+// and problems. Global's are every session's. An agency's are its own people's:
+// anyone who holds a grant on that agency, whatever the role, and anyone whose
+// grant reaches every agency (a global administrator, and a viewer of
+// everything, who reads every scope already). An empty agency id is no agency,
+// and nobody reads it.
+func (i Identity) ReadsAgency(agencyID string) bool {
+	if agencyID == agencyid.Global {
+		return true
+	}
+	if agencyID == "" {
+		return false
+	}
+	for _, g := range i.RoleGrants() {
+		if g.Unrestricted() || g.Agency == agencyID {
+			return true
+		}
+	}
+	return false
+}
+
+// AgenciesRead is ReadsAgency as a list, for a query that filters rows:
+// everywhere is true when one of the actor's grants reaches every agency, and
+// then the list is not needed; otherwise agencies is the ids of the agencies
+// the actor holds a grant on, sorted. Global's rows are every session's and
+// are not in the list.
+func (i Identity) AgenciesRead() (everywhere bool, agencies []string) {
+	seen := map[string]bool{}
+	for _, g := range i.RoleGrants() {
+		if g.Unrestricted() {
+			return true, nil
+		}
+		if g.Agency != "" && !seen[g.Agency] {
+			seen[g.Agency] = true
+			agencies = append(agencies, g.Agency)
+		}
+	}
+	slices.Sort(agencies)
+	return false, agencies
 }
 
 // AgenciesFor lists the agency IDs this actor holds perm on through a DEPARTMENTAL

@@ -187,7 +187,7 @@ func (s *Server) handleListScopeBindingNotices(w http.ResponseWriter, r *http.Re
 	}
 	list := all[:0]
 	for _, p := range all {
-		if pinVisible(id, p.Scope) {
+		if pinVisible(id, s.pinAgency(r.Context(), p.JobUID, p.JobSource, p.JobName, p.Scope), p.Scope) {
 			list = append(list, p)
 		}
 	}
@@ -214,8 +214,9 @@ func (s *Server) handleDismissScopeBindingNotices(w http.ResponseWriter, r *http
 	// administrator's. A notice id that matches nothing is skipped by the writer.
 	for _, nid := range inp.IDs {
 		var scope sql.NullString
+		var jobUID, jobSource, jobName string
 		err := s.db.QueryRowContext(r.Context(),
-			`SELECT scope FROM retired_runner_pins WHERE id = ?`, nid).Scan(&scope)
+			`SELECT scope, COALESCE(job_uid, ''), job_source, job_name FROM retired_runner_pins WHERE id = ?`, nid).Scan(&scope, &jobUID, &jobSource, &jobName)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -231,7 +232,7 @@ func (s *Server) handleDismissScopeBindingNotices(w http.ResponseWriter, r *http
 			}
 			continue
 		}
-		if !s.requireCan(w, r, id, auth.PermConfigureApp, scope.String) {
+		if !s.requireCan(w, r, id, auth.PermConfigureApp, s.pinAgency(r.Context(), jobUID, jobSource, jobName, scope.String), scope.String) {
 			return
 		}
 	}
@@ -281,7 +282,7 @@ func (s *Server) handlePreviewScopeRunners(w http.ResponseWriter, r *http.Reques
 		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
 		return
 	}
-	if !auth.ScopeReadable(id, preview.Scope) {
+	if !auth.ScopeReadableIn(id, s.scopeOwnerByID(r.Context(), r.PathValue("scopeId")), preview.Scope) {
 		httpx.Fail(w, http.StatusForbidden, "forbidden",
 			"you cannot read this scope's jobs, so its binding cannot be previewed for you")
 		return

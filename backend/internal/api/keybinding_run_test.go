@@ -59,6 +59,15 @@ func TestRunOfKeyBoundJobWithNoAgentIsRefused(t *testing.T) {
 	// An agent of the scope's agency is what changes it — registered is enough;
 	// offline is an ordinary wait.
 	seed(`INSERT OR IGNORE INTO scopes (id, name, source, created_at) VALUES ('sc-tax-kb', 'tax', 'cronomicon', 't')`)
+	// The job is the scope's agency's, from that agency's repository: a job finds
+	// its scope in its own agency (I2).
+	seed(`INSERT OR IGNORE INTO git_repos (id, agency_id, url, branch)
+	      SELECT 'repo-kb', owner_agency, 'u', 'main' FROM scopes
+	       WHERE name = 'tax' AND owner_agency <> 'global'
+	         AND NOT EXISTS (SELECT 1 FROM git_repos g WHERE g.agency_id = scopes.owner_agency)`)
+	seed(`UPDATE jobs SET repo_id = (SELECT g.id FROM git_repos g JOIN scopes sc ON sc.owner_agency = g.agency_id
+	                                  WHERE sc.name = 'tax' AND sc.owner_agency <> 'global')
+	       WHERE name = 'deploy' AND source = 'git'`)
 	seed(`INSERT INTO runners (id, name, status, registered_at, created_at, owner_agency)
 	      VALUES ('agent-kb', 'agent-kb', 'offline', 't', 't',
 	              COALESCE((SELECT sa.agency_id FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id

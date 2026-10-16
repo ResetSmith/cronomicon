@@ -12,6 +12,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/tagutil"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 )
@@ -72,13 +73,42 @@ type scriptContent struct {
 	RunType    string  `json:"runType"`
 }
 
+// scriptUID resolves a script's NAME to its uid, in Global's repository.
+//
+// The script routes address a script by name, and since migration 1290 a name
+// is unique per repository, not per installation. Until a route can say which
+// repository it means (2.4.0, Phase R6) it means Global's, which is the only
+// one an installation has. Every statement after this lookup keys on the uid,
+// so that none of them can come to mean "every repository's script of this
+// name" when a second repository arrives.
+func (s *Server) scriptUID(r *http.Request, name string) (string, bool) {
+	return s.scriptUIDIn(r, repoid.Global, name)
+}
+
+// scriptUIDIn is scriptUID for a named repository: the two routes that READ a
+// script, body and all, say which repository they mean (?repo=, GR-26), and
+// the caller has decided who may read it. The routes that WRITE a script's
+// tags and bindings still mean Global's.
+func (s *Server) scriptUIDIn(r *http.Request, repoID, name string) (string, bool) {
+	var uid string
+	err := s.db.QueryRowContext(r.Context(),
+		`SELECT uid FROM scripts WHERE repo_id = ? AND name = ?`, repoID, name).Scan(&uid)
+	return uid, err == nil && uid != ""
+}
+
 func (s *Server) getScriptContent(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	// Which repository's script of the name (?repo=; none is Global's), and
+	// whether the caller reads it (GR-26).
+	repo, ok := s.readableRepo(w, r, r.URL.Query().Get("repo"))
+	if !ok {
+		return
+	}
 
 	var runType string
 	var command, script, scriptPath sql.NullString
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT run_type, command, script, script_path FROM scripts WHERE name = ?`, name).
+		`SELECT run_type, command, script, script_path FROM scripts WHERE repo_id = ? AND name = ?`, repo, name).
 		Scan(&runType, &command, &script, &scriptPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "script not found")
@@ -99,7 +129,10 @@ func (s *Server) getScriptContent(w http.ResponseWriter, r *http.Request) {
 	case script.Valid && script.String != "":
 		raw = []byte(script.String)
 	case scriptPath.Valid && scriptPath.String != "":
-		data, tr, rerr := execspec.SafeReadRepoFile(gitlab.DefaultCloneDir(), scriptPath.String, scriptBodyDisplayCap)
+		// From the objects of the last synced commit, as dispatch reads it, and
+		// not from the working tree, which a sync rewrites in place (present
+		// defect 27).
+		data, tr, rerr := execspec.ReadSyncedFile(r.Context(), s.db, gitlab.CloneDirFor, repo, scriptPath.String, scriptBodyDisplayCap)
 		if rerr != nil {
 			// A6/A3: never echo the absolute resolved path or 500 on a cold-start /
 			// renamed / unsynced file — map every read failure to a clean 409.
@@ -134,7 +167,10 @@ type scriptUsedByRef struct {
 // scriptRow is the JSON shape of the Script schema in openapi.yaml. usedBy is
 // detail-only (omitted from list rows); usedByCount is on both.
 type scriptRow struct {
-	Name        string  `json:"name"`
+	Name string `json:"name"`
+	// RepoID is the repository the script is of (2.4.0): a name is a script in
+	// each repository that has one. `global` for Global's.
+	RepoID      string  `json:"repoId"`
 	Description *string `json:"description,omitempty"`
 	RunType     string  `json:"runType"`
 	Command     *string `json:"command,omitempty"`
@@ -268,8 +304,21 @@ func (s *Server) listScripts(w http.ResponseWriter, r *http.Request) {
 		args = append(args, fargs...)
 	}
 
+	// GR-26: the scripts of Global's repository, and of the repositories of the
+	// agencies the caller is of. The list had no filter: with a second
+	// repository it showed every agency's scripts to every session.
+	if id, ok := auth.IdentityFrom(r.Context()); ok {
+		frag, fargs := readableRepoSQL(id, "s.repo_id")
+		where += frag
+		args = append(args, fargs...)
+	}
+	if repo := q.Get("repo"); repo != "" {
+		where += " AND s.repo_id = ?"
+		args = append(args, repo)
+	}
+
 	var total int
-	_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM scripts"+where, args...).Scan(&total)
+	_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM scripts s"+where, args...).Scan(&total)
 
 	// used_by is a correlated subquery so the whole list is one round-trip (no
 	// per-row follow-up query, no nested-iterator pool deadlock). The (blob)
@@ -287,9 +336,10 @@ func (s *Server) listScripts(w http.ResponseWriter, r *http.Request) {
 		           WHEN s.script_path IS NOT NULL AND s.script_path <> '' THEN 'file'
 		           ELSE ''
 		       END AS source_kind,
-		       (SELECT COUNT(*) FROM jobs j WHERE j.script_ref = s.name) AS used_by
+		       (SELECT COUNT(*) FROM jobs j WHERE j.script_uid = s.uid) AS used_by,
+		       s.repo_id
 		FROM scripts s`+where+`
-		ORDER BY s.name LIMIT ? OFFSET ?`, pageArgs...)
+		ORDER BY s.name, s.repo_id LIMIT ? OFFSET ?`, pageArgs...)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -310,10 +360,21 @@ func (s *Server) listScripts(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getScript(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	// Which repository's script of the name (?repo=; none is Global's), and
+	// whether the caller reads it (GR-26): this answer carries the body.
+	repo, ok := s.readableRepo(w, r, r.URL.Query().Get("repo"))
+	if !ok {
+		return
+	}
+	uid, found := s.scriptUIDIn(r, repo, name)
+	if !found {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "script not found")
+		return
+	}
 	row := s.db.QueryRowContext(r.Context(), `
 		SELECT name, description, run_type, command, script, script_path,
-		       executor, content_hash, source_path, synced_at, warnings, variables, tags, prompts_json, 0
-		FROM scripts WHERE name = ?`, name)
+		       executor, content_hash, source_path, synced_at, warnings, variables, tags, prompts_json, 0, repo_id
+		FROM scripts WHERE uid = ?`, uid)
 	sr, err := scanScript(row)
 	if err != nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "script not found")
@@ -321,7 +382,9 @@ func (s *Server) getScript(w http.ResponseWriter, r *http.Request) {
 	}
 	sr.SourceKind = deriveSourceKind(sr.Command, sr.Script, sr.ScriptPath)
 
-	// usedBy reverse index: every job that references this script.
+	// usedBy reverse index: every job that references THIS script, by its uid.
+	// By name it would also list the jobs of another repository's script of the
+	// same name.
 	sr.UsedBy = []string{}
 	sr.UsedByRefs = []scriptUsedByRef{}
 	jrows, err := s.db.QueryContext(r.Context(),
@@ -331,7 +394,7 @@ func (s *Server) getScript(w http.ResponseWriter, r *http.Request) {
 		           JOIN agencies a ON a.id = sa.agency_id
 		           JOIN scopes   sc ON sc.id = sa.scope_id
 		          WHERE sc.name = jobs.scope) AS agencies
-		   FROM jobs WHERE script_ref = ? ORDER BY name`, name)
+		   FROM jobs WHERE script_uid = ? ORDER BY name`, uid)
 	if err == nil {
 		defer jrows.Close()
 		for jrows.Next() {
@@ -364,7 +427,7 @@ func scanScript(sc rowScanner) (scriptRow, error) {
 		tags, prompts                             sql.NullString
 	)
 	if err := sc.Scan(&sr.Name, &description, &sr.RunType, &command, &script, &scriptPath,
-		&executor, &sr.ContentHash, &sourcePath, &sr.SyncedAt, &warnings, &variables, &tags, &prompts, &sr.UsedByCount); err != nil {
+		&executor, &sr.ContentHash, &sourcePath, &sr.SyncedAt, &warnings, &variables, &tags, &prompts, &sr.UsedByCount, &sr.RepoID); err != nil {
 		return scriptRow{}, err
 	}
 	sr.Warnings = parseWarnings(warnings.String)
@@ -404,7 +467,7 @@ func scanScriptListRow(sc rowScanner) (scriptRow, error) {
 	)
 	if err := sc.Scan(&sr.Name, &description, &sr.RunType, &scriptPath,
 		&executor, &sr.ContentHash, &sourcePath, &sr.SyncedAt, &warnings, &variables, &tags,
-		&prompts, &sourceKind, &sr.UsedByCount); err != nil {
+		&prompts, &sourceKind, &sr.UsedByCount, &sr.RepoID); err != nil {
 		return scriptRow{}, err
 	}
 	sr.Warnings = parseWarnings(warnings.String)
@@ -450,10 +513,15 @@ func deriveSourceKind(command, script, scriptPath *string) string {
 // logged-in user) — wired in mountScripts, not here.
 func (s *Server) updateScriptTags(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	uid, found := s.scriptUID(r, name)
+	if !found {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "script not found")
+		return
+	}
 
 	// Decode/normalize/UPDATE + RowsAffected==0 → 404 is the shared skeleton
 	// (CC.12); the audit + re-fetch tail below stays inline (it differs per entity).
-	if _, ok := s.writeTagsUpdate(w, r, "scripts", "name = ?", "script not found", name); !ok {
+	if _, ok := s.writeTagsUpdate(w, r, "scripts", "uid = ?", "script not found", uid); !ok {
 		return
 	}
 
@@ -473,8 +541,9 @@ func (s *Server) updateScriptTags(w http.ResponseWriter, r *http.Request) {
 		SELECT s.name, s.description, s.run_type, s.command, s.script, s.script_path,
 		       s.executor, s.content_hash, s.source_path, s.synced_at, s.warnings, s.variables, s.tags,
 		       s.prompts_json,
-		       (SELECT COUNT(*) FROM jobs j WHERE j.script_ref = s.name) AS used_by
-		FROM scripts s WHERE s.name = ?`, name)
+		       (SELECT COUNT(*) FROM jobs j WHERE j.script_uid = s.uid) AS used_by,
+		       s.repo_id
+		FROM scripts s WHERE s.uid = ?`, uid)
 	sr, err := scanScript(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Pruned between the UPDATE and the re-read (a vanishingly small window).

@@ -65,12 +65,88 @@ func seedV1(t *testing.T, cfgV1 *config.Config) (*sql.DB, string) {
 	if err != nil {
 		t.Fatalf("encrypt token: %v", err)
 	}
-	if _, err := pool.Exec(
-		`INSERT INTO gitlab_config (id, pat_enc) VALUES (1, ?)
-		 ON CONFLICT(id) DO UPDATE SET pat_enc=excluded.pat_enc`, tok); err != nil {
-		t.Fatalf("insert gitlab_config: %v", err)
+	// Global's repository's token, on its row of git_repos (migration 1310).
+	if _, err := pool.Exec(`UPDATE git_repos SET token_enc=? WHERE id='global'`, tok); err != nil {
+		t.Fatalf("set Global's token: %v", err)
 	}
 	return pool, dbPath
+}
+
+// A repository is a row, and every repository's token and webhook secrets are
+// re-wrapped: Global's and an agency's. The previous webhook secret, which a
+// rotation keeps for an overlap, is one of them (it was on no list until 2.4.0).
+// Two rows that hold the SAME stored token are two items, each moved and each
+// counted: the update is addressed by the row, not by the token value alone.
+func TestRewrapCoversEveryRepository(t *testing.T) {
+	_, k1b64 := newKEK(t)
+	cfgV1 := &config.Config{SecretKEKEnv: k1b64, SecretKEKVersion: 1}
+	pool, _ := seedV1(t, cfgV1)
+	defer pool.Close()
+	enc := func(plain string) string {
+		t.Helper()
+		tok, err := secrets.EncryptString(cfgV1, plain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tok
+	}
+	var globalTok string
+	if err := pool.QueryRow(`SELECT token_enc FROM git_repos WHERE id='global'`).Scan(&globalTok); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(`UPDATE git_repos SET webhook_secret_enc=?, webhook_secret_prev_enc=? WHERE id='global'`,
+		enc("global-hook"), enc("global-hook-previous")); err != nil {
+		t.Fatal(err)
+	}
+	// The agency's row holds the very same stored token as Global's.
+	if _, err := pool.Exec(`INSERT INTO git_repos (id, agency_id, token_enc, webhook_secret_enc, webhook_secret_prev_enc) VALUES ('repo-b', 'ag-b', ?, ?, ?)`,
+		globalTok, enc("agency-hook"), enc("agency-hook-previous")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, k2b64 := newKEK(t)
+	cfgV2 := &config.Config{SecretKEKEnv: k2b64, SecretKEKVersion: 2}
+	t.Setenv("CRONOMICON_KEK_1", k1b64)
+	ctx := context.Background()
+
+	// The secret, the SSH credential, and three tokens of each repository.
+	before, err := survey(ctx, pool, 2)
+	if err != nil {
+		t.Fatalf("survey: %v", err)
+	}
+	if before.outstanding() != 8 {
+		t.Fatalf("outstanding before the pass = %d, want 8", before.outstanding())
+	}
+	moved, failed := rewrapAll(ctx, pool, cfgV2, secrets.NewSealer(cfgV2), 2)
+	if moved != 8 || failed != 0 {
+		t.Fatalf("moved=%d failed=%d, want 8 and 0", moved, failed)
+	}
+	after, err := survey(ctx, pool, 2)
+	if err != nil {
+		t.Fatalf("survey: %v", err)
+	}
+	if after.outstanding() != 0 {
+		t.Fatalf("%d still outstanding after the pass", after.outstanding())
+	}
+	for _, c := range []struct{ id, col, want string }{
+		{"global", "token_enc", "glpat-supersecret"},
+		{"global", "webhook_secret_enc", "global-hook"},
+		{"global", "webhook_secret_prev_enc", "global-hook-previous"},
+		{"repo-b", "token_enc", "glpat-supersecret"},
+		{"repo-b", "webhook_secret_enc", "agency-hook"},
+		{"repo-b", "webhook_secret_prev_enc", "agency-hook-previous"},
+	} {
+		var tok string
+		if err := pool.QueryRow(`SELECT `+c.col+` FROM git_repos WHERE id=?`, c.id).Scan(&tok); err != nil {
+			t.Fatal(err)
+		}
+		if v, _ := secrets.TokenKEKVersion(tok); v != 2 {
+			t.Errorf("%s of %s should be at v2, got v%d", c.col, c.id, v)
+		}
+		if plain, err := secrets.DecryptString(cfgV2, tok); err != nil || plain != c.want {
+			t.Errorf("%s of %s under the new key = %q (%v), want %q", c.col, c.id, plain, err, c.want)
+		}
+	}
 }
 
 // The whole point of DR-5, proven end to end: everything moves to the new
@@ -141,7 +217,7 @@ func TestRewrapMovesEveryStoreAndPreservesPlaintext(t *testing.T) {
 	}
 
 	var tok string
-	if err := pool.QueryRow(`SELECT pat_enc FROM gitlab_config WHERE id=1`).Scan(&tok); err != nil {
+	if err := pool.QueryRow(`SELECT token_enc FROM git_repos WHERE id='global'`).Scan(&tok); err != nil {
 		t.Fatal(err)
 	}
 	if v, _ := secrets.TokenKEKVersion(tok); v != 2 {
@@ -224,7 +300,7 @@ func TestTokenColumnsAllAddressRealColumns(t *testing.T) {
 	}
 	ctx := context.Background()
 	for _, tc := range tokenColumns {
-		if _, err := readToken(ctx, pool, tc); err != nil {
+		if _, err := readTokens(ctx, pool, tc); err != nil {
 			t.Errorf("%s (%s.%s WHERE %s): %v", tc.Label, tc.Table, tc.Column, tc.Where, err)
 		}
 	}

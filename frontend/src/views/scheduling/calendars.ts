@@ -39,26 +39,49 @@ export function useCalendars(refresh = 0): CalendarsList {
 // for the component's lifetime. Failed fetches cache as [] — a preview is
 // advisory, and the server re-evaluates for real at fire time.
 
-export function useCalendarDays(names: string[]): { days: DaysByCalendar; loading: boolean } {
+// calendarDaysKey is the key useCalendarDays files a calendar's days under:
+// its name, or, given its owner, the owner and the name (2.4.1). Two agencies
+// may each have a calendar of a name (2.4.0, I2), and by the name alone the
+// read answered 409 ambiguous_calendar or another agency's days.
+export const calendarDaysKey = (name: string, owner?: string | null) => (owner ? `${owner}/${name}` : name);
+
+/** A calendar to read: its name and, when known, its owning agency. (A bare
+ *  name was accepted too until 2.4.2; no caller passed one.) */
+export type CalendarRef = { name: string; owner?: string | null };
+
+export function useCalendarDays(refs: CalendarRef[]): { days: DaysByCalendar; loading: boolean } {
   const [days, setDays] = useState<DaysByCalendar>({});
   const inFlight = useRef<Set<string>>(new Set());
-  const want = [...new Set(names.filter(Boolean))].sort().join(" ");
+  // Keys carry no spaces (a name is a slug, an agency id has none), so the
+  // joined string is a stable dependency.
+  const want = [
+    ...new Set(
+      refs
+        .map((r) => (r.name ? calendarDaysKey(r.name, r.owner) : ""))
+        .filter(Boolean),
+    ),
+  ]
+    .sort()
+    .join(" ");
   useEffect(() => {
     let cancelled = false;
-    for (const name of want ? want.split(" ") : []) {
-      if (name in days || inFlight.current.has(name)) continue;
-      inFlight.current.add(name);
+    for (const key of want ? want.split(" ") : []) {
+      if (key in days || inFlight.current.has(key)) continue;
+      inFlight.current.add(key);
+      const slash = key.indexOf("/");
+      const name = slash < 0 ? key : key.slice(slash + 1);
+      const owner = slash < 0 ? undefined : key.slice(0, slash);
       api
-        .GET("/calendars/{name}", { params: { path: { name } } })
+        .GET("/calendars/{name}", { params: { path: { name }, query: owner ? { agencyId: owner } : {} } } as never)
         .then(({ data }) => {
           if (cancelled) return;
           const cal = data as Calendar | undefined;
-          setDays((cur) => ({ ...cur, [name]: cal?.days ?? [] }));
+          setDays((cur) => ({ ...cur, [key]: cal?.days ?? [] }));
         })
         .catch(() => {
-          if (!cancelled) setDays((cur) => ({ ...cur, [name]: [] }));
+          if (!cancelled) setDays((cur) => ({ ...cur, [key]: [] }));
         })
-        .finally(() => inFlight.current.delete(name));
+        .finally(() => inFlight.current.delete(key));
     }
     return () => {
       cancelled = true;
@@ -69,6 +92,40 @@ export function useCalendarDays(names: string[]): { days: DaysByCalendar; loadin
   }, [want]);
   const loading = (want ? want.split(" ") : []).some((n) => !(n in days));
   return { days, loading };
+}
+
+/**
+ * useAgencyCalendars — the calendars an entry of one agency is judged by
+ * (2.4.1), as the scheduler judges it: the entry's bound names resolve within
+ * its agency, and only that agency's global calendars apply (calendar.Load and
+ * EvaluateFor, since 2.4.0's I2). Two agencies may each have a calendar of a
+ * name; by the name alone a preview read the other's days, and a picker
+ * offered both.
+ *
+ * `agency` is the definition's agency id (`global` for Global's). Unknown
+ * (undefined: a new workflow, a scope not chosen yet) keeps the behaviour of
+ * before: every calendar, read by name. `names` are the bound calendars whose
+ * days are wanted beside the globals'. The days come back keyed by name, for
+ * suppressionFor.
+ */
+export function useAgencyCalendars(
+  calendars: Calendar[],
+  agency: string | undefined,
+  names: string[],
+  /** Whether the days are wanted at all (false: only the list). */
+  withDays = true,
+): { relevant: Calendar[]; globals: string[]; daysByName: DaysByCalendar } {
+  const ownerOf = (cal: Calendar) => cal.ownerAgency || "global";
+  const relevant = agency ? calendars.filter((cal) => ownerOf(cal) === agency) : calendars;
+  const globals = relevant.filter((cal) => cal.global).map((cal) => cal.name ?? "").filter(Boolean);
+  const wanted = withDays ? [...new Set([...names, ...globals])].filter(Boolean) : [];
+  const { days } = useCalendarDays(wanted.map((name) => ({ name, owner: agency })));
+  const daysByName: DaysByCalendar = {};
+  for (const name of wanted) {
+    const d = days[calendarDaysKey(name, agency)];
+    if (d) daysByName[name] = d;
+  }
+  return { relevant, globals, daysByName };
 }
 
 // useCalendarRollupMap — the server-computed roll-up for every definition, keyed

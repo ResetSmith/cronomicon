@@ -7,7 +7,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
-	"github.com/ResetSmith/cronomicon/internal/settings"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 )
 
 // mountGit wires B3 (GitLab integration + schedule write-path) routes.
@@ -17,32 +17,47 @@ import (
 //	GET  /api/v1/git/sync                (operator; sync status)
 //	POST /api/v1/git/sync                (operator; trigger resync, CSRF)
 //	GET  /api/v1/git/history             (operator; paginated sync events)
-//	POST /api/v1/webhooks/gitlab         (unauthenticated; X-Gitlab-Token)
+//	POST /api/v1/webhooks/gitlab         (unauthenticated; X-Gitlab-Token; Global's repository)
+//	POST /api/v1/webhooks/gitlab/{repoId} (the same, for the repository named)
 func (s *Server) mountGit(mux *http.ServeMux) {
-	// Effective repo URL + PAT: env wins, DB-backed settings otherwise (E.3).
-	// Resolved once at startup — settings changes take effect on restart.
-	repoURL, token := settings.ResolveGitlabRuntime(context.Background(), s.db, s.cfg)
-	svc := gitlab.NewService(
-		s.db,
-		s.log,
-		repoURL,
-		token,
-		gitlab.DefaultCloneDir(),
-		s.cfg.WebhookSecret,
-	)
-	svc.Cfg = s.cfg
+	// One sync service per repository, owned by a registry (GR-11). Each
+	// resolves its repository's URL and token when it is built (for Global's:
+	// env wins, its row otherwise, E.3), and is built again whenever the
+	// connection is written, so a change needs no restart of the server.
+	reg := gitlab.NewRegistry(s.db, s.log, s.cfg)
 	// Reload the scheduler immediately after a git sync brings in new schedules
 	// (no-op when unset, e.g. in tests). The hook self-gates on SHA change.
 	if s.scheduleReload != nil {
-		svc.SetOnSyncComplete(s.scheduleReload)
+		reg.SetOnSyncComplete(s.scheduleReload)
 	}
-	h := gitlab.NewHandlers(svc)
+	s.git = reg
+	h := gitlab.NewRegistryHandlers(reg)
 
-	// Kick off an initial background sync so the cache warms at startup.
-	gitlab.StartBackgroundSync(context.Background(), svc)
+	// Start every repository's service, each with a first sync so the cache
+	// warms at startup. They live as long as the process: at shutdown they are
+	// stopped, and the drain waits for a sync in flight to unwind before the
+	// pool closes.
+	if err := reg.Start(s.runCtx); err != nil {
+		s.log.Error("git: the repositories could not be listed; no sync service was started", "error", err)
+	}
+	if s.runCtx.Done() != nil {
+		if s.shutdownWG != nil {
+			s.shutdownWG.Add(1)
+		}
+		context.AfterFunc(s.runCtx, func() {
+			reg.Close()
+			if s.shutdownWG != nil {
+				s.shutdownWG.Done()
+			}
+		})
+	}
 
 	// ── Webhook (unauthenticated; verified by X-Gitlab-Token header) ──────
 	mux.Handle("POST /api/v1/webhooks/gitlab",
+		http.HandlerFunc(h.WebhookGitLab))
+	// One route per repository (GR-20). The one above is the one every
+	// installation's hook points at already, and means Global's.
+	mux.Handle("POST /api/v1/webhooks/gitlab/{repoId}",
 		http.HandlerFunc(h.WebhookGitLab))
 
 	// ── Schedule publish (PublishSchedule = admin OR approver, PP-B1 / closes
@@ -64,56 +79,86 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/schedule-pushes",
 		s.auth.RequireSession(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				h.ListSchedulePushes(s.db, w, r)
+				// GR-26: the publishes to Global's repository, and to the
+				// repositories of the agencies the caller is of.
+				cond, args := "", []any(nil)
+				if id, ok := auth.IdentityFrom(r.Context()); ok {
+					cond, args = readableRepoSQL(id, "repo_id")
+				}
+				h.ListSchedulePushes(s.db, cond, args, w, r)
 			}),
 		),
 	)
 
 	// ── Git sync status (operator GET — no CSRF for reads) ─────────────────
+	//
+	// Each of the three takes ?repo= (2.4.0, GR-9, GR-26); without it, it means
+	// Global's repository, as it always did. The status and the history of a
+	// repository are read by its agency's people and by those who reach every
+	// agency, Global's by every session (readableRepo). A sync is started by
+	// who may configure the repository: its agency's administrator, or for
+	// Global's a global administrator, as before (configurableRepo).
 	mux.Handle("GET /api/v1/git/sync",
-		s.auth.RequireSession(http.HandlerFunc(h.GetSyncStatus)))
+		s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if repo, ok := s.readableRepo(w, r, r.URL.Query().Get("repo")); ok {
+				h.GetSyncStatusOf(repo, w, r)
+			}
+		})))
 
 	// ── Git sync trigger (ConfigureApp, PP-B1) ─────────────────────────────
 	mux.Handle("POST /api/v1/git/sync",
-		s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(h.PostSync)),
+		s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if repo, ok := s.configurableRepo(w, r, r.URL.Query().Get("repo")); ok {
+				h.PostSyncOf(repo, w, r)
+			}
+		})),
 	)
 
 	// ── Git sync history (operator GET) ───────────────────────────────────
 	mux.Handle("GET /api/v1/git/history",
-		s.auth.RequireSession(http.HandlerFunc(h.ListGitHistory)))
+		s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if repo, ok := s.readableRepo(w, r, r.URL.Query().Get("repo")); ok {
+				h.ListGitHistoryOf(repo, w, r)
+			}
+		})))
 
 	// ── Scope resync (ConfigureApp, PP-B1) ─────────────────────────────────
+	// One repository, as POST /git/sync (2.4.2, question 53): ?repo= names it,
+	// Global's without it, and who may configure it starts it.
 	mux.Handle("POST /api/v1/scopes/resync",
-		s.requireGlobal(auth.PermConfigureApp)(
-			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				id, ok := auth.IdentityFrom(r.Context())
-				if !ok {
-					httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-					return
-				}
-				h.ResyncScopes(id.Email, w, r)
-			}),
-		),
+		s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, ok := auth.IdentityFrom(r.Context())
+			if !ok {
+				httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+				return
+			}
+			if repo, ok := s.configurableRepo(w, r, r.URL.Query().Get("repo")); ok {
+				h.ResyncScopesOf(repo, id.Email, w, r)
+			}
+		})),
 	)
 }
 
-// authorizePublish is the per-file half of the publish gate (GC-9).
+// authorizePublish is the per-file half of the publish gate (GR-24).
 //
-// The route asks only whether the caller holds publishSchedule SOMEWHERE. Until
-// v2.2.2 nothing asked more, so an approver in one agency could write any
-// `jobs/`, `schedules/` or `workflows/` file naming any scope — authoring
-// another department's job through the one shared repository. The rule now:
+// The route asks only whether the caller holds publishSchedule SOMEWHERE. The
+// rule, by the repository the publish names:
 //
 //   - a global publisher (an unrestricted grant carrying the permission) may
-//     publish anything, as before;
-//   - anyone else may publish only a JOB file, whose incoming content names a
-//     scope they hold the permission on — and, when the publish REPLACES
-//     something, the scope it replaces must be theirs too. "Replaces" covers
-//     both the file already at that path and any git job that already uses the
-//     incoming name (sync upserts by name, so a second file with a taken name
-//     would rewrite the first one's row);
-//   - a schedule or workflow file, an unscoped job, or content whose scope
-//     cannot be read is a global publisher's alone.
+//     publish anything, to any repository;
+//   - GLOBAL's repository takes publishes from a global publisher only (the
+//     owner's decision of 2026-10-13, on 2.4.0's question 19). From v2.2.2 to
+//     2.3.x (GC-9) an agency's approver could publish there a job file of a
+//     scope of their own; an agency now publishes to its own repository;
+//   - an AGENCY's repository takes publishes from those who hold the
+//     permission on that agency: its schedules and workflows as they are, and a
+//     JOB file whose incoming content names a scope they hold the permission
+//     on — and, when the publish REPLACES something, the scope it replaces
+//     must be theirs too. "Replaces" covers both the file already at that path
+//     and any job of that repository that already uses the incoming name (sync
+//     upserts by name, so a second file with a taken name would rewrite the
+//     first one's row). An unscoped job, or content whose scope cannot be
+//     read, is a global publisher's alone.
 //
 // It returns "" to allow, or the 403 message, having written the audit row.
 func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) string {
@@ -131,9 +176,21 @@ func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) strin
 		}
 		return msg
 	}
+	// GR-24: a repository other than Global's takes publishes from those who
+	// hold publishSchedule on ITS agency. One sentence for another agency's
+	// repository and for one that is not there.
+	if t.Repo == "" || t.Repo == repoid.Global {
+		// Whatever the file: Global's repository is the installation's.
+		return deny("Global's repository", "Global's repository takes publishes only from an administrator whose "+
+			"publish permission covers every agency; publish to your own agency's repository")
+	}
+	if t.NoSuchRepo || !id.CanAgency(perm, t.Agency) {
+		return deny("repository "+t.Repo, "insufficient permissions: publishSchedule is required on the agency that repository belongs to")
+	}
 	if t.Kind != "job" {
-		return deny(t.Kind+" file", "schedule and workflow files are shared by every agency — "+
-			"only an administrator whose publish permission covers every agency may publish them")
+		// The agency's own schedules and workflows, in the agency's own
+		// repository: its publishers'. (Sync confines what they may name.)
+		return ""
 	}
 	if !t.NewParsed || t.NewScope == "" {
 		return deny("no scope", "a job you publish must name a scope you hold publishSchedule on; "+
@@ -156,8 +213,12 @@ func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) strin
 		return deny("replaces file", taken)
 	}
 	{
+		// Of THIS repository (2.4.0): a name is a job in each repository that
+		// has one, and sync upserts by name within a repository. Asked of every
+		// repository, a job of that name in another agency's repository refused
+		// the publish as "outside your access", and so said the name was taken.
 		rows, err := s.db.QueryContext(r.Context(),
-			`SELECT COALESCE(scope,'') FROM jobs WHERE source = 'git' AND name = ?`, t.Name)
+			`SELECT COALESCE(scope,'') FROM jobs WHERE source = 'git' AND name = ? AND repo_id = ?`, t.Name, t.Repo)
 		if err != nil {
 			return deny("db error", "could not verify the job name; try again")
 		}

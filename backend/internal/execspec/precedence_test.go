@@ -37,7 +37,7 @@ func TestHostByNamePrecedence(t *testing.T) {
 	exec(`INSERT INTO ssh_hosts(id,source,hostname,address,port,username,auth_key_env_var,created_at,last_modified_at)
 	      VALUES('am1','cronomicon','web1','10.9.9.9',2222,'opuser','OP_KEY','t','2026-01-02T00:00:00Z')`)
 
-	tgt, err := execspec.HostByName(ctx, pool, "prod", "web1")
+	tgt, err := execspec.HostByName(ctx, pool, ownerOf(t, pool, "prod"), "prod", "web1")
 	if err != nil || tgt == nil {
 		t.Fatalf("HostByName web1: %v (%+v)", err, tgt)
 	}
@@ -50,10 +50,10 @@ func TestHostByNamePrecedence(t *testing.T) {
 	// (with no cronomicon overlay) returns nothing.
 	exec(`INSERT INTO scopes(id,name,source,created_at) VALUES('soth','other','git','t')`)
 	exec(`INSERT INTO ssh_hosts(id,source,scope_id,hostname,address,created_at) VALUES('g2','git','soth','web2','10.2.2.2','t')`)
-	if got, _ := execspec.HostByName(ctx, pool, "prod", "web2"); got != nil {
+	if got, _ := execspec.HostByName(ctx, pool, ownerOf(t, pool, "prod"), "prod", "web2"); got != nil {
 		t.Errorf("web2 (only in scope 'other') resolved under 'prod' = %+v, want nil", got)
 	}
-	if got, _ := execspec.HostByName(ctx, pool, "other", "web2"); got == nil || got.ID != "g2" {
+	if got, _ := execspec.HostByName(ctx, pool, ownerOf(t, pool, "other"), "other", "web2"); got == nil || got.ID != "g2" {
 		t.Errorf("web2 under its own scope should resolve to g2, got %+v", got)
 	}
 
@@ -61,8 +61,8 @@ func TestHostByNamePrecedence(t *testing.T) {
 	// last_modified_at → a stable pick (id DESC), not query-plan luck.
 	exec(`INSERT INTO ssh_hosts(id,source,hostname,created_at,last_modified_at) VALUES('amA','cronomicon','dup','t','2026-02-01T00:00:00Z')`)
 	exec(`INSERT INTO ssh_hosts(id,source,hostname,created_at,last_modified_at) VALUES('amB','cronomicon','dup','t','2026-02-01T00:00:00Z')`)
-	d1, _ := execspec.HostByName(ctx, pool, "prod", "dup")
-	d2, _ := execspec.HostByName(ctx, pool, "prod", "dup")
+	d1, _ := execspec.HostByName(ctx, pool, ownerOf(t, pool, "prod"), "prod", "dup")
+	d2, _ := execspec.HostByName(ctx, pool, ownerOf(t, pool, "prod"), "prod", "dup")
 	if d1 == nil || d2 == nil || d1.ID != d2.ID || d1.ID != "amB" {
 		t.Errorf("tie resolution unstable/unexpected: %v vs %v (want stable amB)", d1, d2)
 	}
@@ -74,21 +74,21 @@ func TestHostByNamePrecedence(t *testing.T) {
 	exec(`INSERT INTO scopes(id,name,source,created_at) VALUES('sb','scopeB','cronomicon','t')`)
 	exec(`INSERT INTO ssh_hosts(id,source,scope_id,hostname,address,created_at,last_modified_at) VALUES('ha','cronomicon','sa','shared','10.0.0.1','t','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO ssh_hosts(id,source,scope_id,hostname,address,created_at,last_modified_at) VALUES('hb','cronomicon','sb','shared','10.0.0.2','t','2026-01-02T00:00:00Z')`)
-	if a, _ := execspec.HostByName(ctx, pool, "scopeA", "shared"); a == nil || a.ID != "ha" || a.Address != "10.0.0.1" {
+	if a, _ := execspec.HostByName(ctx, pool, ownerOf(t, pool, "scopeA"), "scopeA", "shared"); a == nil || a.ID != "ha" || a.Address != "10.0.0.1" {
 		t.Errorf("scopeA 'shared' = %+v, want its own row ha/10.0.0.1 (not scopeB's newer one)", a)
 	}
-	if b, _ := execspec.HostByName(ctx, pool, "scopeB", "shared"); b == nil || b.ID != "hb" {
+	if b, _ := execspec.HostByName(ctx, pool, ownerOf(t, pool, "scopeB"), "scopeB", "shared"); b == nil || b.ID != "hb" {
 		t.Errorf("scopeB 'shared' = %+v, want its own row hb", b)
 	}
 	// A global operator overlay (NULL scope_id), even OLDER, wins over a scoped import.
 	exec(`INSERT INTO ssh_hosts(id,source,hostname,address,created_at,last_modified_at) VALUES('ov','cronomicon','shared','10.9.9.9','t','2025-01-01T00:00:00Z')`)
-	if ov, _ := execspec.HostByName(ctx, pool, "scopeA", "shared"); ov == nil || ov.ID != "ov" {
+	if ov, _ := execspec.HostByName(ctx, pool, ownerOf(t, pool, "scopeA"), "scopeA", "shared"); ov == nil || ov.ID != "ov" {
 		t.Errorf("global operator overlay should win over a scoped import, got %+v", ov)
 	}
 
 	// Scan shape: a bare row with NULL address/port/username still scans, with id set.
 	exec(`INSERT INTO ssh_hosts(id,source,hostname,created_at) VALUES('bare','cronomicon','bareh','t')`)
-	bt, err := execspec.HostByName(ctx, pool, "prod", "bareh")
+	bt, err := execspec.HostByName(ctx, pool, ownerOf(t, pool, "prod"), "prod", "bareh")
 	if err != nil || bt == nil {
 		t.Fatalf("HostByName bareh (NULL cols): %v", err)
 	}

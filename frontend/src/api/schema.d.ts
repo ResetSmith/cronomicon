@@ -153,6 +153,16 @@ export interface paths {
         /**
          * Edit an cronomicon-source job (A11)
          * @description Edits an in-app job. Git-source jobs are read-only here (409). Requires Compose.
+         *
+         *     **A save may not make a workflow span agencies (v2.4.0).** A workflow
+         *     runs its own agency's jobs and workflows only, so a workflow built in
+         *     the app whose jobs would be several agencies' is refused, for everyone,
+         *     a global administrator included. The same holds for a save that would
+         *     make a workflow ALREADY saved span: a job it runs saved into another
+         *     agency's scope, or a workflow it runs as a step saved onto another
+         *     agency's jobs. 409 `crosses_agencies`, and nothing is written;
+         *     the message names the workflow to a saver who may compose in its
+         *     agency.
          */
         put: operations["updateJob"];
         post?: never;
@@ -351,7 +361,13 @@ export interface paths {
          *     in the GitLab clone at sync time and cached read-only (Git wins on read,
          *     §2.4); jobs reference a script via scriptRef. Read-only over the API —
          *     authoring goes through the Git publish flow. Each row carries usedByCount,
-         *     the number of jobs referencing it (blast-radius visibility).
+         *     the number of jobs referencing it (blast-radius visibility), and since
+         *     v2.4.0 `repoId`, the repository it is of.
+         *
+         *     **Who reads what (v2.4.0, GR-26).** A row of Global's repository is every
+         *     session's. A row of an agency's repository is that agency's people's,
+         *     whatever their role, and theirs whose grant reaches every agency; to
+         *     anyone else it is not there.
          */
         get: operations["listScripts"];
         put?: never;
@@ -372,7 +388,8 @@ export interface paths {
         /**
          * Get a script
          * @description Returns the script plus usedBy — the names of every job referencing it,
-         *     the reverse index that makes a shared script's blast radius visible.
+         *     the reverse index that makes a shared script's blast radius visible. The
+         *     answer carries an inline body (`command`, `script`).
          */
         get: operations["getScript"];
         put?: never;
@@ -397,8 +414,9 @@ export interface paths {
          *     synced clone (path-traversal guarded, capped at 1 MiB for display —
          *     execution and content-hashing are uncapped). A non-UTF8 body returns
          *     encoding=binary with content null. Read-only, served to any authenticated
-         *     session. 409 when the file cannot be read from the synced repository (e.g.
-         *     not yet synced, renamed, removed).
+         *     session for a script of Global's repository; a script of an agency's
+         *     repository is read as `repo` says. 409 when the file cannot be read from
+         *     the synced repository (e.g. not yet synced, renamed, removed).
          */
         get: operations["getScriptContent"];
         put?: never;
@@ -791,6 +809,12 @@ export interface paths {
          *     is a DISTINCT resource from GET /schedules (the per-binding owner
          *     projection). source ∈ {git, cronomicon}; git rows are Git-authored, cronomicon
          *     rows are operator-authored (Phase 3+). Each row carries usedByCount.
+         *
+         *     **Who reads what (v2.4.0, GR-26).** A row of Global's repository is every
+         *     session's. A row of an agency's repository is that agency's people's,
+         *     whatever their role, and theirs whose grant reaches every agency; to
+         *     anyone else it is not there.
+         *     A schedule built in the app is listed for every session.
          */
         get: operations["listScheduleDefs"];
         put?: never;
@@ -798,7 +822,7 @@ export interface paths {
          * Author an cronomicon-source schedule (schedule-builder)
          * @description Creates an in-app (source='cronomicon') first-class Schedule — a named cron (+
          *     optional plaintext env) authored without a Git round-trip. Requires the
-         *     Compose capability (Admin-only in v20). Git-source schedules are read-only
+         *     Compose capability on the owner agency (ownerAgency; v2.4.0, see ScheduleInput). Git-source schedules are read-only
          *     here; they are authored through the Git publish flow.
          */
         post: operations["createScheduleDef"];
@@ -826,7 +850,7 @@ export interface paths {
          * @description Edits an in-app schedule and PROPAGATES the new cron/env to every job and
          *     workflow that referenced it — so the change actually takes effect, not just in
          *     the catalog (the scheduleRefs snapshot is updated by source_ref). Git-source
-         *     schedules are read-only here (409). Requires Compose.
+         *     schedules are read-only here (409). Requires Compose on the schedule's owner; reaches that agency's definitions only (v2.4.0).
          */
         put: operations["updateScheduleDef"];
         post?: never;
@@ -835,7 +859,7 @@ export interface paths {
          * @description Deletes an in-app schedule. Blocked with 409 when still referenced unless
          *     ?force=true, which also detaches the expanded entries from referencing
          *     definitions (resyncing their legacy schedule mirror). Git-source schedules are
-         *     read-only here (409). Requires Compose.
+         *     read-only here (409). Requires Compose on the schedule's owner (v2.4.0).
          */
         delete: operations["deleteScheduleDef"];
         options?: never;
@@ -850,7 +874,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List workflows */
+        /**
+         * List workflows
+         * @description **Who reads what (v2.4.0, GR-26).** A row of Global's repository is every
+         *     session's. A row of an agency's repository is that agency's people's,
+         *     whatever their role, and theirs whose grant reaches every agency; to
+         *     anyone else it is not there.
+         *     A workflow built in the app is listed for every session.
+         */
         get: operations["listWorkflows"];
         put?: never;
         /**
@@ -897,11 +928,34 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a workflow */
+        /**
+         * Get a workflow
+         * @description 404 for a workflow of an agency's repository when the caller is not of
+         *     that agency and does not reach every agency (v2.4.0, GR-26).
+         */
         get: operations["getWorkflow"];
         /**
          * Edit an cronomicon-source workflow (A11)
          * @description Edits an in-app workflow's step graph + schedules. Git-source workflows are read-only here (409). Requires Compose.
+         *
+         *     **A save may not make a workflow span agencies (v2.4.0).** A workflow
+         *     runs its own agency's jobs and workflows only, so a workflow built in
+         *     the app whose jobs would be several agencies' is refused, for everyone,
+         *     a global administrator included. The same holds for a save that would
+         *     make a workflow ALREADY saved span: a job it runs saved into another
+         *     agency's scope, or a workflow it runs as a step saved onto another
+         *     agency's jobs. 409 `crosses_agencies`, and nothing is written;
+         *     the message names the workflow to a saver who may compose in its
+         *     agency.
+         *
+         *     **A save that changes a workflow's agency is a repair (v2.4.0, IN-7).**
+         *     A workflow's agency follows its jobs, so an edit that gives FIN's
+         *     workflow TAX's jobs would make it TAX's: a global administrator's
+         *     repair, with `repair: true` and a `reason` written to the audit log
+         *     (403 for anyone else, an administrator of both agencies included; 409
+         *     `repair_required` without it). A workflow that had no jobs takes the
+         *     agency of the first jobs it is given without one. To have a workflow
+         *     in another agency, create it there (names are per agency).
          */
         put: operations["updateWorkflow"];
         post?: never;
@@ -1073,10 +1127,12 @@ export interface paths {
         get: operations["getDefinitionReactions"];
         /**
          * Replace a definition's reactions
-         * @description Wholesale replacement — an empty list clears them. Admin-gated
-         *     (ConfigureApp), the same gate as schedule-defs and calendars: a reaction
-         *     is a standing instruction to run something and, unlike a schedule, has
-         *     no visible clock.
+         * @description Wholesale replacement — an empty list clears them. Takes `compose` on
+         *     the agency of the definition the reactions belong to (v2.4.2), as
+         *     schedule-defs and calendars do since v2.4.0; it was a gate of an
+         *     administrator of every agency while a reaction could trigger another
+         *     agency's definition. A reaction is a standing instruction to run
+         *     something and, unlike a schedule, has no visible clock.
          *
          *     Validation refuses, with the offending reaction named: self-reference,
          *     an unknown upstream, an `onOutcome` outside the enum, a cycle (with the
@@ -1153,7 +1209,10 @@ export interface paths {
     };
     "/calendars/{name}": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whose calendar of the name (v2.4.0): required when more than one agency has one (409 ambiguous_calendar otherwise). */
+                agencyId?: string;
+            };
             header?: never;
             path: {
                 name: string;
@@ -1184,7 +1243,10 @@ export interface paths {
     };
     "/calendars/{name}/days": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whose calendar of the name (v2.4.0): required when more than one agency has one (409 ambiguous_calendar otherwise). */
+                agencyId?: string;
+            };
             header?: never;
             path: {
                 name: string;
@@ -1469,7 +1531,10 @@ export interface paths {
         };
         /**
          * List schedule push audit records
-         * @description Records of Cronomicon→GitLab pushes. 1-year retention per A4.
+         * @description Records of Cronomicon→GitLab pushes. 1-year retention per A4. Since
+         *     v2.4.0 (GR-26) a publish to an agency's repository is listed for that
+         *     agency's people and for those whose grant reaches every agency;
+         *     publishes to Global's, for every session.
          */
         get: operations["listSchedulePushes"];
         put?: never;
@@ -1491,13 +1556,44 @@ export interface paths {
         put?: never;
         /**
          * Publish a schedule edit (or new job YAML) to GitLab
-         * @description Commits the YAML to main as the bot identity and returns the new commit
-         *     SHA (A2). The If-Match header carries the base_sha the edit was based
-         *     on — REQUIRED (hard contract per A2/D2/D13). On mismatch the server
-         *     rejects with 412 and returns the diff so the UI can show "someone else
-         *     changed this — review and retry." Pushes are serialized server-side
-         *     with a DB row lock (§3.4). The validator enforces apiVersion and the
-         *     YAML schema (T10), returning line-numbered 422 errors. CSRF required.
+         * @description Commits the YAML to the connection's branch as the bot identity and
+         *     returns the new commit SHA (A2). The If-Match header carries the
+         *     base_sha the edit was based on — REQUIRED (hard contract per
+         *     A2/D2/D13). The validator enforces apiVersion and the YAML schema
+         *     (T10), returning line-numbered 422 errors. CSRF required.
+         *
+         *     **What a publish is based on (v2.4.0).** The server fetches the branch
+         *     first, and goes ahead only when the base_sha, the last synced commit
+         *     and the branch's head on the remote are one commit. Otherwise it
+         *     answers 412 with the diff and `currentSha`, the branch's head on the
+         *     remote, which is the base a retry carries. When the branch has commits
+         *     the last sync does not have, the 412's message says so and the server
+         *     starts a sync: the retry goes through once that sync has run. The push
+         *     is not forced, so a commit that somebody pushes between the fetch and
+         *     the push is not lost: the publish fails (503) and nothing of it is
+         *     left on the server. Until v2.4.0 the base was compared with the last
+         *     synced commit alone and the push was forced, which silently discarded
+         *     commits pushed to the branch since the last sync.
+         *
+         *     **Which repository, and who (v2.4.0, GR-24).** `repoId` in the body
+         *     names the repository; without it the publish is to Global's. A
+         *     repository other than Global's takes publishes from those who hold
+         *     `publishSchedule` on ITS agency: job files in scopes they hold it on,
+         *     and the agency's own `schedules/` and `workflows/` files. Another
+         *     agency's repository and one that is not there are refused 403 in the
+         *     same words; a global publisher is answered 404 for one that is not
+         *     there. **Global's repository takes publishes from a global publisher
+         *     only** (an administrator whose `publishSchedule` covers every agency):
+         *     403 for anyone else, whatever the file. From v2.2.2 to v2.3.x an
+         *     agency's approver could publish there a job file in a scope they held
+         *     the permission on; an agency now publishes to its own repository, and
+         *     one that has none asks a global publisher. Whether a job's name is
+         *     already taken is asked of the repository published to.
+         *
+         *     A push that delivers nothing is a failure (503), where it was answered
+         *     as a success. The fetch and the push are each given up after
+         *     `CRONOMICON_GIT_FETCH_TIMEOUT`. Publishes and syncs are serialized
+         *     server-side (one queue).
          */
         post: operations["publishSchedule"];
         delete?: never;
@@ -1527,7 +1623,15 @@ export interface paths {
          */
         get: operations["listScopes"];
         put?: never;
-        /** Create a local (Cronomicon-source) scope (S8) */
+        /**
+         * Create a local (Cronomicon-source) scope (S8)
+         * @description **A scope may not take a name that jobs of another agency name**
+         *     (v2.4.0): 409 `scope_name_in_use`. A job carries its scope by name, so a
+         *     scope of that name would take those jobs, listed to its agency and run
+         *     on its hosts. A job from an agency's repository is that agency's, one
+         *     from Global's repository Global's; one built in the app whose scope is
+         *     gone is counted as another's. A global administrator is not refused.
+         */
         post: operations["createScope"];
         delete?: never;
         options?: never;
@@ -1560,8 +1664,17 @@ export interface paths {
         /**
          * Update a local scope (S8/S9)
          * @description Only Cronomicon-source scopes are editable (Git scopes are edited in
-         *     GitLab). Rename does NOT cascade to job/workflow/env-var references in
-         *     v1 (S9) — the response includes brokenReferences so the UI can warn.
+         *     GitLab). A rename takes the jobs built in the app that name the scope
+         *     to its new name (v2.4.0); it does not change a job from Git, a variable
+         *     or a secret, which keep the old name and are listed in
+         *     brokenReferences (`entity` jobs, envVars, secrets) so the UI can warn.
+         *
+         *     **A scope may not take a name that jobs of another agency name**
+         *     (v2.4.0): 409 `scope_name_in_use`. A job carries its scope by name, so a
+         *     scope of that name would take those jobs, listed to its agency and run
+         *     on its hosts. A job from an agency's repository is that agency's, one
+         *     from Global's repository Global's; one built in the app whose scope is
+         *     gone is counted as another's. A global administrator is not refused.
          *
          *     A rename is refused (409 code=scope_bound_busy) while the scope is bound
          *     to runners and has runs queued or scheduled under its current name: a run
@@ -1650,6 +1763,12 @@ export interface paths {
          *     scope") plus any line-numbered parse errors; emits a gitsync activity
          *     entry. The retired `types` pragma directive is ignored and is not an
          *     error. CSRF required.
+         *
+         *     One repository (v2.4.2): `repo` names it, Global's without it, and the
+         *     deltas are of its scopes only. Taken by who may configure that
+         *     repository (configureApp on its agency; Global's, a global
+         *     administrator), as POST /git/sync; until v2.4.2 it was Global's
+         *     repository's only, a global administrator's.
          */
         post: operations["resyncScopes"];
         delete?: never;
@@ -1756,6 +1875,10 @@ export interface paths {
          *     Operator-owned tags are NOT rolled back: they are edited through their
          *     own endpoint and a restore carrying the snapshot's tags would silently
          *     revert tagging work done since. CSRF required.
+         *
+         *     A workflow's revision whose jobs are another agency's than the
+         *     workflow runs now would change its agency: a repair (v2.4.0, IN-7),
+         *     whose `repair` and `reason` the restore takes in an optional body.
          */
         post: operations["restoreDefinitionRevision"];
         delete?: never;
@@ -1996,6 +2119,14 @@ export interface paths {
          * @description Operator-governed (ConfigureApp); agencies are never self-declared by a runner.
          *     The name `Global` is reserved in every letter case for the built-in agency
          *     (422 `name_reserved`, v2.3.0). CSRF required.
+         *
+         *     **An agency is created together with its repository (v2.4.0, IN-2).**
+         *     `repository` is required (422 `repository_required`); its connection is
+         *     held to `gitAllowedHosts` (422 `repo_url_not_allowed`) and tested before
+         *     anything is written, as `PUT /agencies/{agencyId}/git-repo` tests it
+         *     (422 `connection_failed`, 422 `token_cannot_push`). The answer is the
+         *     agency with the repository it was created with, whose sync starts at
+         *     once. A repository is changed afterwards, never disconnected.
          */
         post: operations["createAgency"];
         delete?: never;
@@ -2036,11 +2167,71 @@ export interface paths {
         post?: never;
         /**
          * Delete an agency
-         * @description Blocked with 409 (code=agency_in_use) while any scope, runner or active
-         *     service account references it. Historical run agency snapshots never block
-         *     deletion. The built-in agency Global cannot be deleted (422 `builtin_agency`).
+         * @description An agency is deleted only when it is EMPTY, and its repository with it
+         *     (v2.4.0, IN-13). What its repository supplied — its Git jobs,
+         *     workflows, scripts, schedules, scopes and calendars — goes with the
+         *     connection (it is all still in Git). Blocked with 409 `agency_in_use`,
+         *     naming each, while anything else is the agency's: a job, workflow or
+         *     schedule built in the app (the recycle bin's too), a calendar built in
+         *     the app, a scope made in the app, a runner, a secret, variable or key,
+         *     a host record or bastion, an access grant, an active service account.
+         *     409 `scopes_busy` while a scope of its repository is bound to runners
+         *     and has runs queued or parked, and nothing is removed. Historical run
+         *     agency snapshots never block deletion. The built-in agency Global
+         *     cannot be deleted (422 `builtin_agency`).
          */
         delete: operations["deleteAgency"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scopes/{scopeId}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clone a scope to an agency (v2.4.0)
+         * @description Makes a NEW scope, built in the app, owned by the agency named, with a
+         *     name of its own, from the scope in the path, whatever that scope's
+         *     source (a scope that comes from Git stays Git's; its clone is not). The
+         *     clone is a snapshot: it does not follow the original afterwards. It is
+         *     how a second agency gets a set of hosts without the first agency's
+         *     jobs being stranded, which moving the scope does.
+         *
+         *     **A scope may not take a name that jobs of another agency name**
+         *     (v2.4.0): 409 `scope_name_in_use`. A job carries its scope by name, so a
+         *     scope of that name would take those jobs, listed to its agency and run
+         *     on its hosts. A job from an agency's repository is that agency's, one
+         *     from Global's repository Global's; one built in the app whose scope is
+         *     gone is counted as another's. A global administrator is not refused.
+         *
+         *     **Copied:** the hosts, the groups and their nesting, the host and group
+         *     variables, the inventory as written, and the tags.
+         *
+         *     **Not copied:** the runner bindings (the receiving agency has its own
+         *     agents); the approved host keys (each runner approves its own); the
+         *     jobs (they are the giving agency's); and, of the host records, the SSH
+         *     key and the bastion. Each host's record (address, port, user, operating
+         *     system) is copied into a record of the clone, the receiving agency's,
+         *     with the key and the bastion unset: the clone connects to nothing until
+         *     its agency sets its own. `note` in the answer says so.
+         *
+         *     **Who:** `configureApp` on the agency the scope is in AND on the agency
+         *     the clone is for (a global administrator for Global, on either side).
+         *     A clone shows one agency's host list to another, so it takes both. It
+         *     does not take what MOVING the scope takes (a global administrator): the
+         *     scope stays where it is. 409 when the agency the clone is for already has
+         *     a scope of the name (a scope's name is unique within its agency, v2.4.0).
+         *     CSRF required.
+         */
+        post: operations["cloneScope"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2063,11 +2254,24 @@ export interface paths {
          *     work, on a runner that serves Global, and no department's runner claims
          *     them. 422 (code=unknown_agency) if the id is not in the catalog.
          *
-         *     Moving a scope takes `configureApp` on BOTH sides: on the agency the scope
-         *     is in and on the one it is going to (a global administrator for Global,
-         *     on either side). Until v2.3.0 it took a global administrator. A scope
-         *     that predates v2.3.0 and is in several agencies is settled on the one
-         *     named. CSRF required.
+         *     **Moving a scope is a global administrator's repair** (v2.4.0, IN-7):
+         *     403 for anyone else, an administrator of both agencies included, who
+         *     may clone the scope to the other one (`POST /scopes/{scopeId}/clone`);
+         *     409 `repair_required` for a global administrator who does not send
+         *     `repair: true`, 422 without a `reason`; the reason is written to the
+         *     audit log. In v2.3.x a move took `configureApp` on both sides. Naming
+         *     the agency the scope is in already moves nothing and takes
+         *     `configureApp` on that agency. A scope that predates v2.3.0 and is in
+         *     several agencies is settled on one of them by a repair too. CSRF
+         *     required.
+         *
+         *     A scope whose inventory is in a repository belongs to that repository's
+         *     agency and cannot be moved: 409 `scope_agency_fixed` (an agency's
+         *     repository since v2.4.0, Global's too since v2.4.3). It leaves the agency
+         *     when its file leaves the repository. Another agency gets its hosts by
+         *     POST /scopes/{scopeId}/clone. Until v2.4.3 a scope from Global's
+         *     repository was repaired into an agency here; migration 1470 made each
+         *     such scope that agency's own, built in the app.
          */
         put: operations["setScopeAgency"];
         post?: never;
@@ -2655,8 +2859,9 @@ export interface paths {
          *     belong to.
          *
          *     Takes `configureApp` on the runner's present owner (a global
-         *     administrator, for the one case that is accepted) and on the agency
-         *     named. CSRF required.
+         *     administrator, for the one case that is accepted) and is a global
+         *     administrator's repair (`repair`, `reason`). A runner that does not
+         *     exist is 404 before anything else is asked (v2.4.2). CSRF required.
          */
         post: operations["setRunnerOwner"];
         delete?: never;
@@ -3358,6 +3563,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether the installation is frozen, and why
+         * @description The installation-wide freeze (v2.4.0): while it is on, no scheduled fire
+         *     of any agency happens (fires, trigger gates and reactions, wherever a
+         *     global calendar of Global's did until v2.4.0), and each is recorded as a
+         *     skipped fire with the reason. Readable by anyone signed in.
+         */
+        get: operations["getInstallationFreeze"];
+        /**
+         * Freeze or thaw the installation
+         * @description A global administrator's (configureApp on every agency). Turning it on
+         *     takes a reason (422 without one), at most 500 characters. Audited.
+         */
+        put: operations["setInstallationFreeze"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/general": {
         parameters: {
             query?: never;
@@ -3383,11 +3616,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get GitLab connection config (PAT masked) */
+        /**
+         * Get GitLab connection config (PAT masked)
+         * @deprecated
+         * @description Deprecated in 2.4.0, kept for one minor release. It addresses Global's repository only: use `GET /agencies/{agencyId}/git-repo`, where the id `global` is Global's.
+         */
         get: operations["getGitlabConfig"];
         /**
          * Update GitLab connection config
-         * @description Omit pat to keep the stored value. CRONOMICON_GITLAB_PAT env var overrides the DB value at startup (§11.2).
+         * @deprecated
+         * @description Deprecated in 2.4.0, kept for one minor release. It addresses Global's repository only: use `PUT /agencies/{agencyId}/git-repo`, where the id `global` is Global's. Omit `pat` to keep the stored token; the masked value a read returns in `pat` is taken the same way when it is sent back. The connection is applied when it is saved, with no restart of the server: the repository's sync service is rebuilt from it and syncs at once. The environment variables `CRONOMICON_GITLAB_BASE_URL` and `CRONOMICON_GITLAB_TOKEN`, when set, override the stored URL and token of this repository (§11.2).
          */
         put: operations["updateGitlabConfig"];
         post?: never;
@@ -3408,7 +3646,13 @@ export interface paths {
         put?: never;
         /**
          * Rotate the GitLab webhook secret (S15)
-         * @description Two-step rotation per S15 — writes the new secret to Cronomicon and (if
+         * @deprecated
+         * @description Deprecated in 2.4.0, kept for one minor release. It addresses Global's
+         *     repository only: use
+         *     `POST /agencies/{agencyId}/git-repo/webhook-secret/rotate`, where the id
+         *     `global` is Global's.
+         *
+         *     Two-step rotation per S15 — writes the new secret to Cronomicon and (if
          *     updateGitlab=true) updates the webhook config in GitLab via API. Both
          *     old and new secrets are accepted for an overlap window (>= 5 min). If
          *     GitLab cannot be updated automatically, the response notes manual
@@ -3655,8 +3899,10 @@ export interface paths {
          * @description A record imported for a scope is changed by that scope's agency; one
          *     written by hand by its owner agency's administrators (v2.3.0; Global's by
          *     a global administrator). Naming another `ownerAgency` on a hand-written
-         *     record gives it to that agency and needs `configureApp` there too; on an
-         *     imported record it is ignored. The SSH key named by `authCredentialId`
+         *     record gives it to that agency: a global administrator's repair since
+         *     v2.4.0 (IN-7), with `repair: true` and a `reason` (403 for anyone else,
+         *     409 `repair_required` without it; until then an administrator of both
+         *     agencies could); on an imported record it is ignored. The SSH key named by `authCredentialId`
          *     must be one the record's own agency may use — a key of that agency or one
          *     that is Global's — or the write is refused 422 `unknown_credential`, with
          *     the same answer for another agency's key and for an id that matches
@@ -3931,6 +4177,175 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/git-repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The repositories the caller may configure (v2.4.0)
+         * @description Each agency may have a repository of its own definitions beside Global's
+         *     (GR-1). This lists the repositories whose agency the caller holds
+         *     `configureApp` on: a global administrator sees them all, Global's first;
+         *     an agency's administrator sees their agency's. Needs `configureApp`
+         *     somewhere (403 otherwise).
+         */
+        get: operations["listGitRepos"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git-repo-names": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The repositories whose history the caller may read (v2.4.0)
+         * @description Which repository and whose: no connection. The rule is the one `?repo=`
+         *     is read by on GET /git/history, GET /schedule-pushes and the script
+         *     reads (GR-26): Global's for every session; an agency's for its people,
+         *     whatever their role, and for those whose grant reaches every agency.
+         *     The screens that work on one repository at a time choose from it
+         *     (R8): GET /git-repos answers `configureApp` only.
+         */
+        get: operations["listGitRepoNames"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/git-repo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The agency's id; `global` for Global's repository. */
+                agencyId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * An agency's repository and its connection (v2.4.0)
+         * @description Needs `configureApp` on the agency (GR-9); Global's needs a global
+         *     administrator. 403 for anyone else, whether or not the agency or its
+         *     repository is there. 404 `not_connected` when the agency has none.
+         */
+        get: operations["getAgencyGitRepo"];
+        /**
+         * Connect an agency's repository, or edit its connection (v2.4.0)
+         * @description Writes the connection of the agency's repository, connecting one when
+         *     the agency has none (201). An agency has at most one repository beside
+         *     Global's. Needs `configureApp` on the agency (GR-9): an agency's
+         *     administrator connects their own agency's repository, with the agency's
+         *     own token. Global's needs a global administrator, and is written here
+         *     exactly as `PUT /settings/gitlab` writes it.
+         *
+         *     **The URL of an agency's repository (GR-10).** `repoUrl` is required,
+         *     must be `https://` (or `http://`), must carry no user or password, and
+         *     must name a host on `gitAllowedHosts` (the general settings, written by
+         *     a global administrator). Otherwise 422 `repo_url_not_allowed`, and
+         *     nothing is stored. Global's repository is exempt.
+         *
+         *     **The token must be able to push (v2.4.0, IN-2).** A first connection,
+         *     and an edit that names another URL, token or branch, is tested first
+         *     (as `POST …/git-repo/test` tests): 422 `connection_failed` when the
+         *     remote does not answer, 422 `token_cannot_push` when the token may only
+         *     read, and nothing is stored. An edit that changes neither (the bot's
+         *     name, the webhook, the expiry warning) is not tested again.
+         *
+         *     Omit `pat` to keep the stored token; the masked value a read returns is
+         *     taken the same way when it is sent back. `writeBranch`, `botName`,
+         *     `botEmail` and `tokenExpiryNotifyDays` take their defaults when left
+         *     out of a first write. The connection is applied when it is saved: the
+         *     repository's sync service is started (or rebuilt) from it and syncs at
+         *     once.
+         */
+        put: operations["putAgencyGitRepo"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/git-repo/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test a repository's connection (v2.4.0)
+         * @description Asks the repository's remote for its branches, with the connection in
+         *     the request, and stores nothing: what a connection's form calls before
+         *     it saves. Needs `configureApp` on the agency (GR-9); `global` is
+         *     Global's, a global administrator's.
+         *
+         *     `repoUrl`, `pat` and `writeBranch` are read from the request; one that
+         *     is left out is the stored one, when the agency has a repository (for
+         *     `pat`: left out, or the mask a read returned). The URL of an agency's
+         *     repository is held to GR-10 first (422 `repo_url_not_allowed`), so a
+         *     test cannot be aimed where a connection could not be saved. The request
+         *     to the remote goes through the outbound guard and is given up after 30
+         *     seconds.
+         *
+         *     The answer is 200 whether or not the remote answered: `ok` says which.
+         */
+        post: operations["testAgencyGitRepo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/git-repo/webhook-secret/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate an agency's repository's webhook secret (v2.4.0)
+         * @description Each repository has its own webhook route,
+         *     `/webhooks/gitlab/{repoId}`, and its own secret (GR-20). This rotates
+         *     the secret of the agency's repository, exactly as
+         *     `POST /settings/gitlab/webhook-secret/rotate` rotates Global's: the
+         *     answer carries the new secret, once; the previous one goes on being
+         *     accepted until `overlapUntil`. Needs `configureApp` on the agency
+         *     (GR-9). 404 `not_connected` when the agency has no repository.
+         *
+         *     With `updateGitlab` (the default) the repository's hook is updated by a
+         *     request to the repository's host, carrying the repository's token: for
+         *     an agency's repository that host is held to GR-10 (422
+         *     `repo_url_not_allowed`), and it is GitLab's hooks API that is called.
+         *     With `updateGitlab: false` only the stored secret changes, and the hook
+         *     is set by hand from the answer.
+         */
+        post: operations["rotateAgencyGitRepoWebhookSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agencies/{agencyId}/vault-prefixes": {
         parameters: {
             query?: never;
@@ -4003,8 +4418,9 @@ export interface paths {
          *     Adding an entity is a re-homing act and carries the RF-1b guard per added
          *     entity: the caller needs the kind's permission on the agency that has the
          *     entity today AND on this agency. Removing needs the permission on this
-         *     agency alone. A scope follows the same rule as the other kinds since
-         *     v2.3.0; no one is signed out.
+         *     agency alone. No one is signed out. A SCOPE is added by a global
+         *     administrator only (v2.4.0): adding one moves it here, and a scope is
+         *     moved by nobody else.
          *
          *     A scope, secret, variable and SSH key belongs to exactly ONE agency
          *     (v2.3.0, LR-7, LR-54), so this route adds only what is **Global's**: the
@@ -4025,7 +4441,9 @@ export interface paths {
          *     `owner_removal`) — move it instead; a removal that would leave an entity
          *     in no agency at all (422 `agency_required`); adding to Global an entity
          *     that is in a named agency (422 `global_mixed`); and an add that would give
-         *     this agency two rows of one name (409 `owner_conflict`). A row from before
+         *     this agency two rows of one name (409 `owner_conflict`); and adding or
+         *     removing a scope that a repository supplies (409
+         *     `scope_agency_fixed`; an agency's since v2.4.0, Global's since v2.4.3). A row from before
          *     v2.3.0 that several agencies share may be removed from all but one, and
          *     the one that is left becomes its owner. A no-op save writes no audit row.
          *     Returns the resulting AgencyDetail.
@@ -4056,9 +4474,11 @@ export interface paths {
          *     `agency_required`, and Global beside a named agency is 422 `global_mixed`
          *     (a runner that serves Global claims Global's runs and no department's).
          *
-         *     The **local runner** (kind `server`) is the one runner with a serve list:
-         *     for it this route takes any non-empty set of agencies, Global beside
-         *     others included, from a global administrator.
+         *     The **local runner** (kind `server`) is Global's and serves Global only
+         *     (v2.4.0): for it this route takes exactly Global, and anything else is
+         *     422 `local_runner_global_only`. (From v2.3.0 a global administrator gave
+         *     it any non-empty set of agencies; the upgrade narrows it, and the notice
+         *     `local_runner_served` names each agency it served.)
          *
          *     **An agent serves exactly the agency that owns it** (v2.3.0, MA-11), so
          *     this route no longer places one: the list written must be exactly the
@@ -4090,12 +4510,12 @@ export interface paths {
          *     the agencies plan Phase 2). Every row belongs to at least one agency since v2.3.0 (migration 1220):
          *     what belonged to "no agency" belongs to **Global** (`global`), the built-in
          *     agency of the global administrators, and says so here. A Global secret,
-         *     variable or key is usable by every agency's runs; a Global scope or runner
-         *     serves Global's work only.
+         *     variable, key, scope or runner is used by Global's runs only (v2.4.0, §0a;
+         *     until then Global's secrets, variables and keys were every agency's).
          *
          *     These tables are what dispatch and reference resolution read: a runner claims
          *     a run only when it serves one of the run's agencies, and a run resolves a
-         *     secret, variable or key only when the row is Global's or one of its own.
+         *     secret, variable or key only when the row is one of its own.
          */
         get: operations["listScopeAgencies"];
         /**
@@ -4104,6 +4524,10 @@ export interface paths {
          *     `PUT /runner-agencies`. Every scope and
          *     agency id is validated before ANY write, so a bad id cannot leave half a
          *     matrix applied: 422 `unknown_member` / `unknown_agency`. CSRF required.
+         *
+         *     A row that names an agency the scope is not in today MOVES the scope,
+         *     and that takes a global administrator (v2.4.0; see
+         *     `PUT /scopes/{scopeId}/agency`): 403 for anyone else.
          *
          *     Gated on **ConfigureApp**, the same gate as the agency catalog, runner
          *     membership and the scope binding. Membership is an isolation-zone
@@ -4134,12 +4558,12 @@ export interface paths {
          *     the agencies plan Phase 2). Every row belongs to at least one agency since v2.3.0 (migration 1220):
          *     what belonged to "no agency" belongs to **Global** (`global`), the built-in
          *     agency of the global administrators, and says so here. A Global secret,
-         *     variable or key is usable by every agency's runs; a Global scope or runner
-         *     serves Global's work only.
+         *     variable, key, scope or runner is used by Global's runs only (v2.4.0, §0a;
+         *     until then Global's secrets, variables and keys were every agency's).
          *
          *     These tables are what dispatch and reference resolution read: a runner claims
          *     a run only when it serves one of the run's agencies, and a run resolves a
-         *     secret, variable or key only when the row is Global's or one of its own.
+         *     secret, variable or key only when the row is one of its own.
          */
         get: operations["listSecretAgencies"];
         /**
@@ -4178,12 +4602,12 @@ export interface paths {
          *     the agencies plan Phase 2). Every row belongs to at least one agency since v2.3.0 (migration 1220):
          *     what belonged to "no agency" belongs to **Global** (`global`), the built-in
          *     agency of the global administrators, and says so here. A Global secret,
-         *     variable or key is usable by every agency's runs; a Global scope or runner
-         *     serves Global's work only.
+         *     variable, key, scope or runner is used by Global's runs only (v2.4.0, §0a;
+         *     until then Global's secrets, variables and keys were every agency's).
          *
          *     These tables are what dispatch and reference resolution read: a runner claims
          *     a run only when it serves one of the run's agencies, and a run resolves a
-         *     secret, variable or key only when the row is Global's or one of its own.
+         *     secret, variable or key only when the row is one of its own.
          */
         get: operations["listEnvVarAgencies"];
         /**
@@ -4222,12 +4646,12 @@ export interface paths {
          *     the agencies plan Phase 2). Every row belongs to at least one agency since v2.3.0 (migration 1220):
          *     what belonged to "no agency" belongs to **Global** (`global`), the built-in
          *     agency of the global administrators, and says so here. A Global secret,
-         *     variable or key is usable by every agency's runs; a Global scope or runner
-         *     serves Global's work only.
+         *     variable, key, scope or runner is used by Global's runs only (v2.4.0, §0a;
+         *     until then Global's secrets, variables and keys were every agency's).
          *
          *     These tables are what dispatch and reference resolution read: a runner claims
          *     a run only when it serves one of the run's agencies, and a run resolves a
-         *     secret, variable or key only when the row is Global's or one of its own.
+         *     secret, variable or key only when the row is one of its own.
          */
         get: operations["listSshCredentialAgencies"];
         /**
@@ -4559,13 +4983,58 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * A repository's last sync
+         * @description The commit, time and status of the repository's last sync. Global's is
+         *     read by every session. An agency's (v2.4.0, `?repo=`) is read by that
+         *     agency's people, whatever their role, and by those whose grant reaches
+         *     every agency (GR-26); for anyone else, and for a repository that is not
+         *     there, 404.
+         */
+        get: operations["getGitSyncStatus"];
         put?: never;
         /**
          * Trigger an immediate Git sync (operator)
-         * @description Same pipeline as the <=5min poll and the GitLab webhook (§3.1). CSRF required.
+         * @description Same pipeline as the GitLab webhook and the sync at start-up (§3.1).
+         *     Nothing polls a repository on a timer: it is synced when the server
+         *     starts, when its connection is saved, on a webhook delivery, when a
+         *     publish finds commits that were not synced, and by this route. A sync
+         *     asked for while one is running is not dropped; one more runs after it.
+         *     CSRF required.
+         *
+         *     **Who (v2.4.0, GR-9).** `configureApp` on the agency of the repository
+         *     `?repo=` names: an agency's administrator syncs their agency's
+         *     repository. Global's, which is what the route means without `repo`,
+         *     needs a global administrator, as before. Everybody else is answered 403
+         *     whether or not the repository is there; a global administrator is
+         *     answered 404 for one that is not.
          */
         post: operations["triggerGitSync"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git-repos/{repoId}/problems": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What a repository's last sync had to say about its files (v2.4.0)
+         * @description The repository's sync problems as of its last sync (GR-30): each file
+         *     error and each warning, errors first. Replaced by every sync of the
+         *     repository. The inbox carries one notice for a repository that has
+         *     errors; this is the list behind it. Read as the repository's history is
+         *     (GR-26): Global's by every session; an agency's by its people and by
+         *     those who reach every agency; 404 otherwise.
+         */
+        get: operations["listGitRepoProblems"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4579,7 +5048,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Git sync history */
+        /**
+         * List Git sync history
+         * @description One repository's syncs: Global's, or (v2.4.0) the one `?repo=` names.
+         *     Until v2.4.0 the list had no repository in it. Read as
+         *     `GET /git/sync` is.
+         */
         get: operations["listGitHistory"];
         put?: never;
         post?: never;
@@ -4604,6 +5078,11 @@ export interface paths {
          *     session or bearer auth. Triggers an immediate sync. During a webhook
          *     secret rotation overlap window both old and new secrets are accepted (S15).
          *
+         *     This route is for the installation's own (Global's) repository. Each
+         *     repository has a route of its own, `/webhooks/gitlab/{repoId}`, which
+         *     behaves in every way as this one does, against that repository's secret
+         *     and settings (v2.4.0).
+         *
          *     Gated by the Webhook Enabled / Webhook Events settings (F2-3). Disabled →
          *     403; an event type whose flag is off → 202 with no sync, since an
          *     unselected event is not a delivery error. X-Gitlab-Event selects the
@@ -4612,6 +5091,37 @@ export interface paths {
          *     token is checked first, so a 403 is never reachable without the secret.
          */
         post: operations["receiveGitlabWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/gitlab/{repoId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Webhook receiver of one repository (v2.4.0)
+         * @description `/webhooks/gitlab` for the repository named in the path: the delivery is
+         *     checked against that repository's webhook secret (and its previous one,
+         *     during a rotation's overlap), is gated by that repository's Webhook
+         *     Enabled and Webhook Events settings, and triggers a sync of that
+         *     repository and of no other. `global` names the installation's own
+         *     repository, for which this route and the one without an id are the same.
+         *
+         *     A repository that does not exist answers 401, exactly as a wrong token
+         *     does: the route is unauthenticated, and would otherwise tell a caller
+         *     which ids exist. The environment's webhook secret
+         *     (`CRONOMICON_GITLAB_WEBHOOK_SECRET`) is the installation's own
+         *     repository's and opens no other.
+         */
+        post: operations["receiveRepositoryWebhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4704,6 +5214,8 @@ export interface components {
          */
         Job: {
             readonly id?: number;
+            /** @description v2.4.2, on GET /jobs/{jobId}. The id of the agency the job is (its owner since 1400): whose calendars its schedule entries are judged by. */
+            readonly ownerAgency?: string;
             /** @description AF-4a — the definition's stable surrogate identity, assigned when the row is first seen (by sync or by the composer) and preserved across syncs, edits and restores. Unlike `id` (a numeric handle) and unlike the name (which a later phase will allow to repeat across agencies), the uid never changes for the life of the row. New integrations should key on it. */
             readonly uid?: string;
             readonly name?: string;
@@ -4712,6 +5224,11 @@ export interface components {
              * @enum {string}
              */
             readonly source?: "git" | "cronomicon";
+            /**
+             * @description v2.4.0 — the repository a Git job is of; `global` for Global's. Absent for a job
+             *     built in the app. Publish edits a job in this repository.
+             */
+            readonly repoId?: string;
             /** @description Repo-relative file path (e.g. jobs/db/backup.yaml), for folder browsing. Null for Compose-authored jobs. */
             readonly sourcePath?: string | null;
             type?: components["schemas"]["RunType"];
@@ -4933,6 +5450,12 @@ export interface components {
          *     An `executor` property was accepted here until v2.3.0. It is not part
          *     of the body any more; one that is sent is ignored, like any unknown
          *     property.
+         *
+         *     A job runs on its own agency's scopes (v2.4.0, I2): 422
+         *     `scope_not_in_agency` when the job's agency has no scope of the name
+         *     another agency has; on a create without `ownerAgency`, 422
+         *     `ambiguous_scope` when more than one agency the caller composes in has a
+         *     scope of the name (name the agency with `ownerAgency`).
          */
         JobComposeInput: {
             /** @description Job name (slug, [a-z0-9][a-z0-9_-]*). Immutable on edit. */
@@ -5110,6 +5633,11 @@ export interface components {
          */
         Script: {
             readonly name?: string;
+            /**
+             * @description v2.4.0 — the repository the script is of; `global` for Global's. A
+             *     name is a script in each repository that has one.
+             */
+            readonly repoId?: string;
             readonly description?: string | null;
             runType?: components["schemas"]["RunType"];
             /** @description Inline one-liner executable source. Exactly one of command/script/scriptPath is set. */
@@ -5262,6 +5790,12 @@ export interface components {
          *     operator-authored (Phase 3+).
          */
         Schedule: {
+            /** @description The id of the agency the schedule is (v2.4.0). A name is unique within an agency only; the routes by name take it as `?agencyId=` when two agencies hold one. */
+            readonly ownerAgency?: string;
+            /** @description v2.4.2, on the list. The caller's PUT would pass: compose on the schedule's agency, for one built in the app. */
+            readonly canEdit?: boolean;
+            /** @description v2.4.2, on the list. As canEdit. */
+            readonly canDelete?: boolean;
             /** @description AF-4a — stable surrogate identity; see Job.uid. */
             readonly uid?: string;
             /**
@@ -5403,9 +5937,35 @@ export interface components {
              *     The child executes as a REAL workflow run linked to this step, with its own History entry and its own cancellability. Only the step's `inputs` cross the boundary — the parent's env does not flow implicitly. Nesting is capped at 3 deep; cycles are rejected when authoring in-app and refused at run time.
              */
             workflow?: string;
+            /**
+             * @description v2.4.0 — pins a `type: workflow` step to ONE workflow by its
+             *     identity, as `jobUid` pins a job step. Two agencies may each hold a
+             *     workflow of one name. Every save of a workflow built in the app
+             *     writes it: a step that gives one keeps it (422 if it names no
+             *     workflow, a workflow of another name, or one in the recycle bin);
+             *     otherwise the child is chosen among the workflows of the name the
+             *     saver may compose, built in the app first, then from Git, and 422
+             *     when several are, naming the step, for the saver to give this. A
+             *     pinned child that is binned, disabled or gone fails the step; it is
+             *     never replaced by another workflow of its name. A step that pins
+             *     nothing (saved before v2.4.0) runs a child built in the app only
+             *     when one workflow built in the app holds the name, else Global's
+             *     repository's. A Git workflow's steps carry none: sync removes it.
+             */
+            workflowUid?: string;
         };
         Workflow: {
             readonly id?: number;
+            /** @description v2.4.0 — the repository a Git workflow is of; absent for one built in the app. */
+            readonly repoId?: string;
+            /**
+             * @description v2.4.0 — the id of the agency the workflow belongs to. A Git
+             *     workflow's is its repository's agency. One built in the app records
+             *     it when it is saved, from the scopes of the jobs it runs (`global`
+             *     when they are of several agencies or of none), and it is as of that
+             *     save.
+             */
+            readonly ownerAgency?: string;
             /** @description AF-4a — stable surrogate identity; see Job.uid. */
             readonly uid?: string;
             readonly name?: string;
@@ -5540,6 +6100,16 @@ export interface components {
                     y?: number;
                 };
             } | null;
+            /**
+             * @description v2.4.2 (question 52). Whose a workflow being CREATED is while it has no
+             *     jobs: read on a create only. A workflow's agency follows its jobs once it
+             *     has any (GR-6); with none, an edit keeps the agency it has. Omitted, a new
+             *     jobless workflow is its creator's one agency to compose in (Global's for a
+             *     global administrator; 422 `ambiguous_owner` for a composer in several
+             *     agencies). Naming an agency the caller may not compose in is 403; an agency
+             *     that does not exist is 422 `unknown_agency`.
+             */
+            ownerAgency?: string;
         };
         /** @description Result of the WB-A1 dry-run validate endpoint. Returned with 200; `ok` is false when `errors` is non-empty. */
         WorkflowValidationResult: {
@@ -5558,11 +6128,25 @@ export interface components {
         /**
          * @description Request body for authoring (POST) or editing (PUT) an cronomicon-source
          *     first-class Schedule (schedule-builder). On edit, name is taken from the path
-         *     and is immutable; cron/env propagate to every referencing job/workflow.
+         *     and is immutable; cron/env propagate to every referencing job/workflow of
+         *     the schedule's own agency (v2.4.0: another agency's definition bound to
+         *     it before keeps the timing it copied; `global_schedule_bound`).
+         *
+         *     A schedule built in the app belongs to one agency (v2.4.0), named by
+         *     `ownerAgency` on create (Global's when absent). Creating, editing or
+         *     deleting one takes compose on that agency (403 otherwise); until v2.4.0
+         *     every one was Global's and only an administrator holding compose and
+         *     configureApp on every agency wrote them. A job or workflow binds its own
+         *     agency's schedules only. The name is unique within the agency (409 when
+         *     the agency's schedule holds it, live or in the recycle bin); another
+         *     agency may have one of the same name, and the routes by name then take
+         *     ?agencyId.
          */
         ScheduleInput: {
             /** @description Schedule name (slug, [a-z0-9][a-z0-9_-]*). Required on create; immutable on edit. */
             name?: string;
+            /** @description The agency id the new schedule belongs to (create only; Global when absent). An unknown id is 422 unknown_agency. */
+            ownerAgency?: string;
             /** @description Cron expression (6-field with seconds */
             cron: string;
             /** @description Optional plaintext env injected when this schedule fires. */
@@ -5707,16 +6291,35 @@ export interface components {
         /**
          * @description A named set of wall-clock dates. Bound to schedule entries in two
          *     polarities; see ScheduleInput.skipCalendars / onlyCalendars.
+         *
+         *     A calendar belongs to one agency (v2.4.0). Writing it takes compose on
+         *     that agency (403 otherwise); until v2.4.0 every calendar was Global's
+         *     and only an installation administrator wrote them. An entry names its
+         *     own agency's calendars (another agency's reads as unknown). The name is
+         *     unique within its agency: two agencies may each have `holidays`, and
+         *     the routes that take `{name}` take `?agencyId=` to say whose; without
+         *     it, the one agency that has a calendar of the name, and 409
+         *     `ambiguous_calendar` when several do. The upgrade to v2.4.0 gave each
+         *     agency a copy of every global calendar of Global's, and of each
+         *     calendar its entries named of another agency's, under the same name.
          */
         Calendar: {
             name?: string;
+            /** @description The agency id the calendar belongs to (v2.4.0). */
+            ownerAgency?: string;
+            /** @description v2.4.2, on the list. The caller's writes to this calendar would pass: compose on its agency. */
+            canEdit?: boolean;
+            /** @description v2.4.2, on the list. As canEdit. */
+            canDelete?: boolean;
             /** @description Always 'cronomicon' — calendars are operator-authored, never Git-authored. */
             source?: string;
             description?: string;
             /**
-             * @description Union this calendar's days into EVERY entry's skip set, whether or not
-             *     the entry names it — the change-freeze case, one flag instead of N
-             *     schedule edits. SKIP POLARITY ONLY: a global calendar may not be bound
+             * @description Union this calendar's days into the skip set of every entry of its
+             *     OWN agency, whether or not the entry names it — the change-freeze
+             *     case, one flag instead of N schedule edits (until v2.4.0 every
+             *     entry of every agency; a freeze of the whole installation is
+             *     /settings/freeze since). SKIP POLARITY ONLY: a global calendar may not be bound
              *     as a run-day (only) calendar, and a calendar already bound that way
              *     cannot be made global.
              */
@@ -5764,10 +6367,19 @@ export interface components {
             /** @enum {string} */
             polarity?: "skip" | "only";
         };
+        InstallationFreeze: {
+            on: boolean;
+            reason: string;
+            setBy?: string;
+            /** Format: date-time */
+            setAt?: string;
+        };
         /** @description Request body for creating or updating a calendar. */
         CalendarInput: {
             /** @description Calendar name (slug). Required on create; immutable on edit. */
             name?: string;
+            /** @description The agency id a new calendar belongs to (create only; Global when absent). An unknown id is 422 unknown_agency. */
+            ownerAgency?: string;
             description?: string;
             global?: boolean;
             recordSuppressed?: boolean;
@@ -6362,8 +6974,16 @@ export interface components {
         };
         SchedulePush: {
             readonly id?: string;
+            /** @description v2.4.0 — the repository the publish was to; `global` for Global's. */
+            readonly repoId?: string;
             readonly userEmail?: string;
             readonly commitSha?: string | null;
+            /**
+             * @description In the answer to a publish, the branch it was pushed to. In the list
+             *     of past publishes, the branch of the repository's connection as it
+             *     is now: a publish records no branch (until v2.4.0 the list said
+             *     `main` whatever the branch).
+             */
             branch?: string;
             filesChanged?: string[];
             /** @description Human summary of the schedule diff. */
@@ -6389,8 +7009,14 @@ export interface components {
              * @default false
              */
             new: boolean;
+            /**
+             * @description v2.4.0 (GR-24) — the repository to publish to (see `GET /git-repos`).
+             *     Omitted, or `global`: Global's repository, as a publish always meant.
+             *     If-Match is then that repository's last synced commit.
+             */
+            repoId?: string;
         };
-        Scope: {
+        Scope: components["schemas"]["RowFlags"] & {
             /**
              * Format: uuid
              * @description UUIDv7.
@@ -6645,6 +7271,140 @@ export interface components {
              *       the offer to restore a lost runner's bindings goes by name.
              *       Subject: `<agency id>:<name>`. Filed under the owning agency. It
              *       clears when one of them is renamed.
+             *     - `schedule_binding_ambiguous` — a job or workflow takes its timing
+             *       from a reusable schedule by name, and its entry is tied to no
+             *       schedule although a schedule of that name exists (v2.4.0).
+             *       Either the upgrade could not tell which of two same-named
+             *       schedules the entry was expanded from, and did not guess, or the
+             *       schedule it was bound to has been removed and another now holds
+             *       the name. It still fires, and follows no schedule's edits.
+             *       Subject: `<job|workflow>:<owner uid>:<entry name>`, with
+             *       `<source>:<owner name>` in place of the uid for an entry that
+             *       records no owner uid. Filed under the agency of the job's scope,
+             *       otherwise under Global. It clears when the definition is saved
+             *       again.
+             *     - `git_sync_problems` — the last sync of a repository reported
+             *       errors about its files, or the repository could not be fetched
+             *       (v2.4.0). The detail counts the errors and the warnings and
+             *       quotes the first few errors, each with its file; a file with an
+             *       error was not synced. Warnings alone open no notice. Subject:
+             *       the repository's id (`global` for the installation's own). Filed
+             *       under the repository's agency. It is written by the sync itself
+             *       and clears at the first sync of that repository that reports no
+             *       error; an error that was not there before opens it again for
+             *       whoever had dismissed it.
+             *     - `schedule_gone` — a job or workflow built in the app takes its
+             *       timing from a reusable schedule that was removed from its Git
+             *       repository, and no schedule holds the name (v2.4.0). It was
+             *       left as it is and still fires at the timing it had; nothing will
+             *       change that timing again. Subject: `<job|workflow>:<owner
+             *       uid>:<entry name>`. Filed under the agency of the job's scope, or
+             *       the workflow's owner; otherwise under Global. It clears when the
+             *       definition is bound to another schedule or given a timing of its
+             *       own. (When another
+             *       schedule holds the name it is `schedule_binding_ambiguous`.)
+             *     - `workflow_spans_agencies` — a workflow built in the app runs jobs
+             *       of more than one agency. A workflow runs its own agency's jobs
+             *       only (v2.4.0): each of its steps on a scope that is not its
+             *       agency's fails when it runs, with the reason, and nobody may save
+             *       it as it is. Raised for the workflows the upgrade found so, and
+             *       for one that comes to span later (a scope given to another
+             *       agency). Subject: the workflow's uid. Filed under Global. It
+             *       clears when the workflow's jobs are all one agency's.
+             *     - `global_job_on_agency_scope` — a job of Global's repository names
+             *       a scope that is not Global's (allowed before v2.4.0). A job of
+             *       Global's repository runs on Global's scopes only: it does not
+             *       run (each run is refused, with the reason), and Global's sync
+             *       keeps it as it was rather than removing it. Subject: the job's
+             *       uid. Filed under Global. It clears when its file names a scope
+             *       of Global's, or none, or leaves the repository.
+             *     - `global_credential_bound` — a job of an agency binds a secret, a
+             *       variable or an SSH key by a name only Global holds (v2.4.0). A row
+             *       of Global's is used by Global's runs only: the job's runs do not
+             *       find it, and fail, naming it. Subject:
+             *       `<job uid>:<secret|var|key>:<name>`. Filed under the job's agency.
+             *       It clears when the agency has a row of the name, or the binding
+             *       goes.
+             *     - `global_host_record` — a host that an agency's scope lists has a
+             *       host record only Global wrote, and none of the agency's own
+             *       (v2.4.0). A record Global writes by hand is used by Global's runs
+             *       only (until then it answered to every scope, and won): the
+             *       agency's runs on that host find no record, and fail on that host.
+             *       Subject: `<agency id>:<hostname>`. Filed under the agency. It
+             *       clears when the agency has a record for the host, by hand or
+             *       imported for the scope, or no scope of its lists the host.
+             *     - `agency_no_repository` — an agency has no repository connected
+             *       (v2.4.0). Every agency has one, Global included: an agency is
+             *       created with it and cannot disconnect it, so this is an agency
+             *       from before, or Global's repository with no URL in its
+             *       connection and none in CRONOMICON_GITLAB_BASE_URL. Nothing is
+             *       refused; the agency cannot receive an assignment. Subject: the
+             *       agency's id. Filed under the agency. It clears when the
+             *       repository is connected.
+             *     - `global_calendar_scope` — a calendar of Global's is global. Until
+             *       v2.4.0 it froze every agency's fires; now it freezes Global's only
+             *       (the whole installation is /settings/freeze). Raised while there
+             *       is an agency besides Global. Subject: the calendar's name. Filed
+             *       under Global. It clears when the calendar is not global.
+             *     - `global_schedule_bound` — a job or workflow of an agency is bound
+             *       to a schedule of Global's (allowed before v2.4.0). A schedule's
+             *       edits reach its own agency's definitions only: this one keeps the
+             *       timing it copied, and fires on it. Subject:
+             *       `<definition uid>:<entry name>`. Filed under the definition's
+             *       agency. It clears when the entry is bound to a schedule of its own
+             *       agency's, given a timing of its own, or removed.
+             *     - `global_script_job` — a job an agency built in the app is built on
+             *       a script of Global's repository (allowed before v2.4.0). A
+             *       definition takes nothing from Global's: its runs are refused,
+             *       with the reason. Subject: the job's uid. Filed under the job's
+             *       agency. It clears when the job is built on a script of its own
+             *       agency's repository.
+             *     - `local_runner_served` — the local runner served this agency until
+             *       v2.4.0, and serves Global only now; the agency's shell jobs wait
+             *       for an agent of its own. Subject: the agency's id. Filed under the
+             *       agency. It clears when an agent the agency owns serves it.
+             *     - `reaction_other_agency` — a reaction is pinned to a definition of
+             *       another agency than its own (v2.4.0). A reaction watches its own
+             *       agency's definitions only: it does not fire, and each run of the
+             *       definition it watches is recorded as a refused delivery. Subject:
+             *       `<owner uid>:<reaction name>`. Filed under the owner's agency. It
+             *       clears when the reaction watches its own agency's definition, or
+             *       is removed.
+             *     - `schedule_entry_no_owner` — a schedule entry records no owner (it
+             *       was left by restoring a schedule from the recycle bin before
+             *       v2.4.0) and more than one definition holds its name. Until v2.4.0
+             *       it fired every one of them; it now fires none, because whose it
+             *       is cannot be told, and it is shown on none of them. The detail
+             *       names the entry, its timing and the agencies of the definitions.
+             *       The schedule is put back by adding it to the definition it
+             *       belongs to; the notice is then dismissed. Subject:
+             *       `<job|workflow>:<source>:<definition name>:<entry name>`. Filed
+             *       under Global. It clears by itself when one definition is left
+             *       with the name, which the entry is then joined to.
+             *     - `project_job_no_checkout_agent` — a job on a project (a script
+             *       that is a directory checked out by the agent), from Git or built
+             *       in the app, where no registered agent that serves the job is
+             *       started with `-allow-checkout`. From v2.4.0 a project job's run
+             *       requires such an agent (the `checkout` token) and waits for one
+             *       that is registered; with none registered the run is refused
+             *       where it is produced: a scheduled run is recorded as skipped, a
+             *       manual one answers 422 `checkout_requires_agent`, a workflow's
+             *       step fails. The local runner is not such an agent. A job built
+             *       in the app on a project is a checkout job from v2.4.0 (its runs
+             *       were handed the project's entry file alone). Subject: the job's
+             *       uid. Filed under the agency of the job's scope, or under Global.
+             *       It clears when an agent started with `-allow-checkout` serves
+             *       the job, or the job no longer uses a project.
+             *     - `job_script_gone` — a job built in the app whose script is no
+             *       longer there: removed from its repository, or renamed. From
+             *       v2.4.0 a job built in the app runs its script as the server last
+             *       synced it, so this job does not run: each run is refused ("the
+             *       script this job is built on has been removed"). Until v2.4.0 it
+             *       went on running the copy it held. Subject: the job's uid. Filed
+             *       under the agency of the job's scope, or under Global. It clears
+             *       when a script of that name is there for the job again (the next
+             *       sync joins it), when the job is saved on another script, or when
+             *       the job is removed.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.
@@ -6893,7 +7653,7 @@ export interface components {
         ReferenceUsageList: {
             usage: components["schemas"]["ReferenceUsage"][];
         };
-        EnvVar: {
+        EnvVar: components["schemas"]["RowFlags"] & {
             /**
              * Format: uuid
              * @description UUIDv7.
@@ -7106,7 +7866,7 @@ export interface components {
              */
             readonly token?: string;
         };
-        Agency: {
+        Agency: components["schemas"]["RowFlags"] & {
             readonly id?: string;
             /** @description Operator label; unique. The dispatch key snapshotted onto a run at enqueue (M3). */
             name?: string;
@@ -7119,8 +7879,10 @@ export interface components {
         AgencyInput: {
             name: string;
             description?: string | null;
+            /** @description The agency's repository connection. Required on create (v2.4.0, IN-2); not read by an update. */
+            repository?: components["schemas"]["GitlabConfig"];
         };
-        EnvSecret: {
+        EnvSecret: components["schemas"]["RowFlags"] & {
             /**
              * Format: uuid
              * @description UUIDv7.
@@ -7665,6 +8427,15 @@ export interface components {
             /** @description Normalised, sorted. Empty means the agency can name no Vault path. */
             prefixes: string[];
         };
+        /** @description What the caller may do with this row (v2.4.0 R8), worked out by the same check the row's write route makes, so a screen offers exactly what the server allows. Present on the rows of the scope, secret, variable, SSH key, host record, bastion and agency lists. */
+        RowFlags: {
+            /** @description The row's PUT/PATCH would pass its agency gate. */
+            readonly canEdit: boolean;
+            /** @description Its DELETE would (the same gate as the edit today). */
+            readonly canDelete: boolean;
+            /** @description A change of its agency would pass: a global administrator's repair (IN-7). */
+            readonly canRepair: boolean;
+        };
         /**
          * @description One entity's agency (migration 670). `id` is the scope / secret / env-var /
          *     ssh-credential id, depending on the endpoint. Since v2.3.0 each belongs to
@@ -7678,7 +8449,8 @@ export interface components {
          *     Refused: an empty list (422 `agency_required`), Global beside an agency
          *     (422 `global_mixed`), more than one agency (422 `one_agency`), and a move
          *     onto a name the target agency already owns in that scope (409
-         *     `owner_conflict`).
+         *     `owner_conflict`). A scope that a repository supplies belongs
+         *     to its agency and is not moved (409 `scope_agency_fixed`; Global's repository's too since v2.4.3).
          */
         AgencyMembership: {
             id: string;
@@ -8144,6 +8916,27 @@ export interface components {
                 /** @description Makes the timeout ABSOLUTE — measured from login, so activity does not extend it and everyone re-authenticates every N minutes. Off, the timeout is the idle cap. */
                 reauth?: boolean;
             };
+            /**
+             * @description v2.4.0 (GR-10) — the hosts an AGENCY's repository may be on. An
+             *     agency's administrator connects the agency's repository, which is
+             *     a URL this server then fetches; that URL must be `https://` (or
+             *     `http://`), carry no user or password, and name a host on this
+             *     list. Each entry is a host name, which allows that host on any
+             *     port, or `host:port`, which allows that port alone (an IPv6
+             *     address in brackets when it carries a port). No scheme, path, user
+             *     or wildcard: such an entry is rejected with 422. Compared without
+             *     regard to case; stored lower-cased, without duplicates, sorted.
+             *
+             *     An EMPTY list allows no host: no agency's repository can be
+             *     connected, and none is synced or published to, until a global
+             *     administrator names one. The list is asked again at every sync and
+             *     publish, so a host taken off it stops being fetched. Global's
+             *     repository is exempt.
+             *
+             *     Always present when read. On a write, OMITTING the field leaves
+             *     the list as it is; an empty list empties it.
+             */
+            gitAllowedHosts?: string[];
         } & components["schemas"]["AuditFields"];
         GitlabConfig: {
             /** @description Bot PAT. Masked on read; omit on write to keep stored value. */
@@ -8162,6 +8955,33 @@ export interface components {
                 tag?: boolean;
             };
         } & components["schemas"]["AuditFields"];
+        /**
+         * @description v2.4.0 — one repository of definitions: whose it is, its connection, its
+         *     last sync, and how much it supplies.
+         */
+        GitRepo: {
+            /** @description The repository's id; `global` for Global's. It is the `{repoId}` of the webhook route. */
+            id: string;
+            /** @description The agency the repository belongs to; `global` for Global's. */
+            agencyId: string;
+            agencyName?: string;
+            /** @description The commit of the last sync that fetched. */
+            lastSha?: string;
+            lastSyncedAt?: string;
+            /** @description success */
+            lastStatus?: string;
+            /**
+             * @description The rows this repository's sync has written, which go with the
+             *     connection when its agency is deleted (v2.4.0, IN-13).
+             */
+            supplies: {
+                jobs: number;
+                workflows: number;
+                scripts: number;
+                schedules: number;
+                scopes: number;
+            };
+        } & components["schemas"]["GitlabConfig"];
         VaultConfig: {
             addr?: string;
             /** @enum {string} */
@@ -8441,7 +9261,7 @@ export interface components {
             /** @enum {string} */
             readonly status?: "ok" | "error";
         };
-        SshHost: components["schemas"]["SshHostInput"] & {
+        SshHost: components["schemas"]["RowFlags"] & components["schemas"]["SshHostInput"] & {
             /**
              * Format: uuid
              * @description UUIDv7.
@@ -8484,10 +9304,14 @@ export interface components {
             /** @description First-class SSH key credential id; resolved before authKeyEnvVar. */
             authCredentialId?: string | null;
             user?: string;
+            /** @description Required (true) on an update that names another ownerAgency for a record written by hand: a global administrator's repair (v2.4.0, IN-7); 403 for anyone else, 409 `repair_required` without it. Not read on create. */
+            repair?: boolean;
+            /** @description The repair's reason */
+            reason?: string;
             /** @description The id of the agency the record belongs to (v2.3.0, LR-69). On a record written by hand it is settable: at create, and later to give the record to another agency. On a record imported for a scope it is READ-ONLY and reports that scope's agency. For a scope that predates v2.3.0 and is still in several agencies it reports `global`, though each of those agencies' administrators may edit the record, as they may the scope. A scope resolves a hand-written record only when the record is its own agency's or Global's, and a record routes only through a bastion of its own agency or Global's. */
             ownerAgency?: string;
         };
-        SshBastion: components["schemas"]["SshBastionInput"] & {
+        SshBastion: components["schemas"]["RowFlags"] & components["schemas"]["SshBastionInput"] & {
             /**
              * Format: uuid
              * @description UUIDv7.
@@ -8519,6 +9343,10 @@ export interface components {
             /** @description First-class SSH key credential id; resolved before authKeyEnvVar. */
             authCredentialId?: string | null;
             zone?: string;
+            /** @description Required (true) on an update that names another ownerAgency: a global administrator's repair (v2.4.0, IN-7); 403 for anyone else, 409 `repair_required` without it. Not read on create. */
+            repair?: boolean;
+            /** @description The repair's reason */
+            reason?: string;
             /** @description The id of the agency the bastion belongs to (v2.3.0, LR-69): the one named at create (the caller's only agency, or Global for a global administrator, when none is), changed later by naming another, with `configureApp` on both. Its administrators write it. A host routes through it only when the host record is the same agency's (any agency's, for a Global bastion), and the key it names must be its owner's or Global's. */
             ownerAgency?: string;
         };
@@ -8557,7 +9385,7 @@ export interface components {
             /** @description The ONE agency that owns the new SSH key, applied at CREATE only (a list for compatibility; more than one id is 422 `one_agency` since v2.3.0, LR-54). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity that is Global's is shared infrastructure and is a global administrator's for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure (it is Global's). The row is moved to another agency afterwards via PUT /ssh-credential-agencies. */
             agencyIds?: string[];
         };
-        SshCredential: {
+        SshCredential: components["schemas"]["RowFlags"] & {
             readonly id: string;
             label: string;
             /** @description Derived CRONOMICON_KEY_<label> reference (namespace contract); resolves to a key-file PATH on the executing host. Read-only; the credential keeps its bare label. */
@@ -8844,6 +9672,17 @@ export interface components {
         reactionOwnerKind: "job" | "workflow";
         /** @description The owning definition's name. */
         reactionOwnerName: string;
+        /**
+         * @description v2.4.0 — the owning definition's `uid`. A name can be held by a
+         *     definition in each agency, and the name alone does not then say which
+         *     definition's reactions are meant. With `uid`, it is that definition's
+         *     (404 when no definition of that kind and name has it). Without it the
+         *     name must be enough: a WRITE under a name that more than one definition
+         *     holds is refused 409 `ambiguous_definition`, and changes nothing. Until
+         *     v2.4.0 such a write replaced every reaction of every definition of the
+         *     name.
+         */
+        reactionOwnerUid: string;
         /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
         csrf: string;
         page: number;
@@ -8872,8 +9711,10 @@ export interface components {
          *     route, so multi-segment names resolve correctly.
          */
         scriptName: string;
-        /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist. */
+        /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist, and by ?agencyId when more than one agency has one of the name (v2.4.0). */
         scheduleDefName: string;
+        /** @description Whose schedule of the name (v2.4.0): required when more than one agency has one of the source (409 ambiguous_schedule otherwise); a live one is meant before one in the recycle bin. */
+        scheduleAgencyId: string;
         /** @description Backend-minted UUIDv7 trace ID (S11). Opaque to clients. */
         traceId: string;
         agencyId: string;
@@ -9519,6 +10360,30 @@ export interface operations {
              *     Scheduled, workflow, reaction and file-arrival fires of such a job
              *     record the same refusal as a skipped or failed run. Ansible and
              *     terraform runs are not refused: they wait for a capable agent.
+             *     `repo_scope_mismatch` (v2.4.0) — the job comes from an AGENCY's
+             *     repository and the run's effective scope does not belong to that
+             *     agency: it is another agency's, Global's, no scope at all, or the
+             *     job's own scope has been given to another agency since the job was
+             *     synced. A repository reaches its own agency's scopes and no other.
+             *     The same holds for a job built in the app that is joined to a
+             *     script of an agency's repository: it runs on that agency's scopes.
+             *     It is refused for a global administrator too; a job of the
+             *     installation's own repository, and a job built in the app on one
+             *     of its scripts or on none, are not held to it. Scheduled,
+             *     workflow, reaction and file-arrival fires of such a job, and a
+             *     deferred run when its time comes, record the same refusal.
+             *     `checkout_requires_agent` (v2.4.0) — the job is a project (a
+             *     directory the agent checks out at a pinned commit) and NO
+             *     registered agent that serves the run's effective scope is started
+             *     with `-allow-checkout` (none of its agency's is, or the scope is
+             *     bound and none of the runners named is). A project's run requires
+             *     such an agent and waits for one; with none to wait for it is
+             *     refused rather than queued for nobody, where it would count
+             *     against the concurrency cap for ever. An agent that exists and is
+             *     offline is an ordinary wait, not this. The local runner is not
+             *     such an agent. Scheduled, workflow, reaction and file-arrival
+             *     fires of such a job, and a deferred run when its time comes,
+             *     record the same refusal as a skipped, failed or missed run.
              */
             422: {
                 headers: {
@@ -9656,6 +10521,8 @@ export interface operations {
     listScripts: {
         parameters: {
             query?: {
+                /** @description v2.4.0 — one repository's scripts; omitted, every repository's the caller reads. */
+                repo?: string;
                 type?: components["schemas"]["RunType"];
                 /** @description Free-text search on name. */
                 q?: string;
@@ -9693,7 +10560,15 @@ export interface operations {
     };
     getScript: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description v2.4.0 — which repository's script of this name (see
+                 *     `GET /git-repos`); omitted, Global's. A name is a script in each
+                 *     repository that has one. 404 when the caller does not read that
+                 *     repository, as when it is not there (GR-26).
+                 */
+                repo?: string;
+            };
             header?: never;
             path: {
                 /**
@@ -9723,7 +10598,15 @@ export interface operations {
     };
     getScriptContent: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description v2.4.0 — which repository's script of this name (see
+                 *     `GET /git-repos`); omitted, Global's. A name is a script in each
+                 *     repository that has one. 404 when the caller does not read that
+                 *     repository, as when it is not there (GR-26).
+                 */
+                repo?: string;
+            };
             header?: never;
             path: {
                 /**
@@ -10239,13 +11122,15 @@ export interface operations {
             query?: {
                 /** @description Schedule origin (default git). */
                 source?: "git" | "cronomicon";
+                /** @description Whose schedule of the name (v2.4.0): required when more than one agency has one of the source (409 ambiguous_schedule otherwise); a live one is meant before one in the recycle bin. */
+                agencyId?: components["parameters"]["scheduleAgencyId"];
             };
             header: {
                 /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
                 "X-CSRF-Token": components["parameters"]["csrf"];
             };
             path: {
-                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist. */
+                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist, and by ?agencyId when more than one agency has one of the name (v2.4.0). */
                 name: components["parameters"]["scheduleDefName"];
             };
             cookie?: never;
@@ -10344,10 +11229,12 @@ export interface operations {
         parameters: {
             query?: {
                 source?: "git" | "cronomicon";
+                /** @description Whose schedule of the name (v2.4.0): required when more than one agency has one of the source (409 ambiguous_schedule otherwise); a live one is meant before one in the recycle bin. */
+                agencyId?: components["parameters"]["scheduleAgencyId"];
             };
             header?: never;
             path: {
-                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist. */
+                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist, and by ?agencyId when more than one agency has one of the name (v2.4.0). */
                 name: components["parameters"]["scheduleDefName"];
             };
             cookie?: never;
@@ -10369,10 +11256,13 @@ export interface operations {
     };
     updateScheduleDef: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whose schedule of the name (v2.4.0): required when more than one agency has one of the source (409 ambiguous_schedule otherwise); a live one is meant before one in the recycle bin. */
+                agencyId?: components["parameters"]["scheduleAgencyId"];
+            };
             header?: never;
             path: {
-                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist. */
+                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist, and by ?agencyId when more than one agency has one of the name (v2.4.0). */
                 name: components["parameters"]["scheduleDefName"];
             };
             cookie?: never;
@@ -10402,12 +11292,14 @@ export interface operations {
     deleteScheduleDef: {
         parameters: {
             query?: {
+                /** @description Whose schedule of the name (v2.4.0): required when more than one agency has one of the source (409 ambiguous_schedule otherwise); a live one is meant before one in the recycle bin. */
+                agencyId?: components["parameters"]["scheduleAgencyId"];
                 /** @description Delete even when referenced; detaches the expansions and resyncs the legacy mirror. */
                 force?: boolean;
             };
             header?: never;
             path: {
-                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist. */
+                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist, and by ?agencyId when more than one agency has one of the name (v2.4.0). */
                 name: components["parameters"]["scheduleDefName"];
             };
             cookie?: never;
@@ -10556,7 +11448,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WorkflowComposeInput"];
+                "application/json": components["schemas"]["WorkflowComposeInput"] & {
+                    /** @description Required (true) when the save changes the workflow's agency. */
+                    repair?: boolean;
+                    /** @description The repair's reason */
+                    reason?: string;
+                };
             };
         };
         responses: {
@@ -10849,7 +11746,19 @@ export interface operations {
     };
     getDefinitionReactions: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description v2.4.0 — the owning definition's `uid`. A name can be held by a
+                 *     definition in each agency, and the name alone does not then say which
+                 *     definition's reactions are meant. With `uid`, it is that definition's
+                 *     (404 when no definition of that kind and name has it). Without it the
+                 *     name must be enough: a WRITE under a name that more than one definition
+                 *     holds is refused 409 `ambiguous_definition`, and changes nothing. Until
+                 *     v2.4.0 such a write replaced every reaction of every definition of the
+                 *     name.
+                 */
+                uid?: components["parameters"]["reactionOwnerUid"];
+            };
             header?: never;
             path: {
                 /** @description Which kind of definition owns the reaction — the one that RUNS. */
@@ -10875,7 +11784,19 @@ export interface operations {
     };
     replaceDefinitionReactions: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description v2.4.0 — the owning definition's `uid`. A name can be held by a
+                 *     definition in each agency, and the name alone does not then say which
+                 *     definition's reactions are meant. With `uid`, it is that definition's
+                 *     (404 when no definition of that kind and name has it). Without it the
+                 *     name must be enough: a WRITE under a name that more than one definition
+                 *     holds is refused 409 `ambiguous_definition`, and changes nothing. Until
+                 *     v2.4.0 such a write replaced every reaction of every definition of the
+                 *     name.
+                 */
+                uid?: components["parameters"]["reactionOwnerUid"];
+            };
             header: {
                 /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
                 "X-CSRF-Token": components["parameters"]["csrf"];
@@ -10935,7 +11856,19 @@ export interface operations {
     };
     deleteReaction: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description v2.4.0 — the owning definition's `uid`. A name can be held by a
+                 *     definition in each agency, and the name alone does not then say which
+                 *     definition's reactions are meant. With `uid`, it is that definition's
+                 *     (404 when no definition of that kind and name has it). Without it the
+                 *     name must be enough: a WRITE under a name that more than one definition
+                 *     holds is refused 409 `ambiguous_definition`, and changes nothing. Until
+                 *     v2.4.0 such a write replaced every reaction of every definition of the
+                 *     name.
+                 */
+                uid?: components["parameters"]["reactionOwnerUid"];
+            };
             header: {
                 /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
                 "X-CSRF-Token": components["parameters"]["csrf"];
@@ -11035,7 +11968,10 @@ export interface operations {
     };
     getCalendar: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whose calendar of the name (v2.4.0): required when more than one agency has one (409 ambiguous_calendar otherwise). */
+                agencyId?: string;
+            };
             header?: never;
             path: {
                 name: string;
@@ -11059,7 +11995,10 @@ export interface operations {
     };
     updateCalendar: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whose calendar of the name (v2.4.0): required when more than one agency has one (409 ambiguous_calendar otherwise). */
+                agencyId?: string;
+            };
             header?: never;
             path: {
                 name: string;
@@ -11090,6 +12029,8 @@ export interface operations {
     deleteCalendar: {
         parameters: {
             query?: {
+                /** @description Whose calendar of the name (v2.4.0): required when more than one agency has one (409 ambiguous_calendar otherwise). */
+                agencyId?: string;
                 /** @description Delete even while bound */
                 force?: boolean;
             };
@@ -11116,7 +12057,10 @@ export interface operations {
     };
     replaceCalendarDays: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whose calendar of the name (v2.4.0): required when more than one agency has one (409 ambiguous_calendar otherwise). */
+                agencyId?: string;
+            };
             header?: never;
             path: {
                 name: string;
@@ -11656,6 +12600,8 @@ export interface operations {
     listSchedulePushes: {
         parameters: {
             query?: {
+                /** @description v2.4.0 — one repository's publishes; omitted, every repository's. */
+                repo?: string;
                 status?: "success" | "failed";
                 /** @description Inclusive ISO 8601 lower bound. */
                 from?: components["parameters"]["from"];
@@ -11717,7 +12663,38 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description base_sha mismatch — file changed since the edit was based. */
+            /**
+             * @description `branch_protected` (v2.4.0): the remote refused the push because the
+             *     branch the connection writes to is protected and its token may not
+             *     push to it. On GitLab a project's default branch is protected and
+             *     only Maintainers may push to it: give the token Maintainer access,
+             *     allow Developers to push to the branch, or point the connection's
+             *     write branch at one the token may push to. The connection test's
+             *     push check cannot see this (`pushNote` says so). Nothing was
+             *     published; retrying does not help until the connection changes.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        code: "branch_protected";
+                        /** @description What to change. */
+                        message: string;
+                        /** @description The branch the push was refused on. */
+                        branch: string;
+                        /** @description The remote's own words. */
+                        remote?: string;
+                    };
+                };
+            };
+            /**
+             * @description base_sha mismatch — the edit is not based on the branch's head, or
+             *     the branch has commits that have not been synced (a sync is then
+             *     started; retry with `currentSha` once it has run).
+             */
             412: {
                 headers: {
                     [name: string]: unknown;
@@ -11727,7 +12704,11 @@ export interface operations {
                 };
             };
             422: components["responses"]["Validation"];
-            /** @description GitLab unreachable — retry later (§11.4 degradation matrix). */
+            /**
+             * @description GitLab unreachable, or the fetch or the push failed or was refused
+             *     by the remote for another reason — retry later (§11.4 degradation
+             *     matrix). Nothing of the publish is left on the server.
+             */
             503: {
                 headers: {
                     "Retry-After"?: number;
@@ -12019,7 +13000,10 @@ export interface operations {
     };
     resyncScopes: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The repository's id; Global's when absent. */
+                repo?: string;
+            };
             header: {
                 /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
                 "X-CSRF-Token": components["parameters"]["csrf"];
@@ -12157,7 +13141,16 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description A workflow's restore that changes its agency: true, by a global administrator. */
+                    repair?: boolean;
+                    /** @description The repair's reason */
+                    reason?: string;
+                };
+            };
+        };
         responses: {
             /** @description Restored; the response is the rewritten definition. */
             200: {
@@ -12499,7 +13492,8 @@ export interface operations {
              * @description Validation failed — the same `Error.code` set as `POST
              *     /jobs/{id}/run`, including `key_binding_requires_runner` (KB): a
              *     key-bound shell job with no agent to deliver the key is refused for
-             *     a token exactly as for a click.
+             *     a token exactly as for a click. So are `repo_scope_mismatch` and
+             *     `checkout_requires_agent`.
              */
             422: {
                 headers: {
@@ -12593,13 +13587,15 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created. */
+            /** @description Created, with its repository. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Agency"];
+                    "application/json": components["schemas"]["Agency"] & {
+                        repository: components["schemas"]["GitRepo"];
+                    };
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -12718,6 +13714,55 @@ export interface operations {
             422: components["responses"]["Validation"];
         };
     };
+    cloneScope: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                scopeId: components["parameters"]["scopeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The agency the clone is for; omitted or empty */
+                    agencyId?: string;
+                    /** @description The clone's own name. */
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The clone. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        scope: components["schemas"]["Scope"];
+                        copied: {
+                            hosts?: number;
+                            groups?: number;
+                            hostVars?: number;
+                            groupVars?: number;
+                            hostRecords?: number;
+                        };
+                        note: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Validation"];
+        };
+    };
     setScopeAgency: {
         parameters: {
             query?: never;
@@ -12735,6 +13780,10 @@ export interface operations {
                 "application/json": {
                     /** @description Agency id to bind */
                     agencyId?: string | null;
+                    /** @description Required (true) when the request changes the scope's agency: a global administrator's repair (v2.4.0, IN-7). */
+                    repair?: boolean;
+                    /** @description The repair's reason */
+                    reason?: string;
                 };
             };
         };
@@ -13757,6 +14806,10 @@ export interface operations {
                 "application/json": {
                     /** @description The agency the runner is handed to; the one it serves. */
                     agencyId: string;
+                    /** @description Required (true): handing a runner on is a global administrator's repair (v2.4.0, IN-7); 403 for anyone else, 409 `repair_required` without it. */
+                    repair?: boolean;
+                    /** @description The repair's reason */
+                    reason?: string;
                 };
             };
         };
@@ -13771,6 +14824,13 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description `repair_required`: a global administrator's request without `repair: true`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             422: components["responses"]["Validation"];
         };
     };
@@ -14830,6 +15890,60 @@ export interface operations {
             };
         };
     };
+    getInstallationFreeze: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The freeze. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallationFreeze"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    setInstallationFreeze: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    on: boolean;
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The freeze as written. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallationFreeze"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
     getGeneralSettings: {
         parameters: {
             query?: never;
@@ -15657,6 +16771,13 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description `repair_required`: a change of the bastion's agency is a global administrator's repair (v2.4.0, IN-7), and the request did not say `repair: true`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             422: components["responses"]["Validation"];
         };
     };
@@ -16081,6 +17202,231 @@ export interface operations {
             };
         };
     };
+    listGitRepos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The repositories. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["GitRepo"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listGitRepoNames: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The repositories. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            /** @description The repository's id; `global` for Global's. */
+                            id: string;
+                            agencyId: string;
+                            agencyName: string;
+                            /** @description v2.4.2. The caller's POST /git/sync?repo= would be accepted: configureApp on the repository's agency. */
+                            canSync?: boolean;
+                            /** @description v2.4.2. The caller may publish to this repository at all (a job's scope is asked at the publish): publishSchedule on its agency, or everywhere; Global's takes only the latter. */
+                            canPublish?: boolean;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getAgencyGitRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The agency's id; `global` for Global's repository. */
+                agencyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The repository; `pat` is always masked on read. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitRepo"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    putAgencyGitRepo: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                /** @description The agency's id; `global` for Global's repository. */
+                agencyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitlabConfig"];
+            };
+        };
+        responses: {
+            /** @description The connection was edited. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitRepo"];
+                };
+            };
+            /** @description A repository was connected. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitRepo"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    testAgencyGitRepo: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["GitlabConfig"];
+            };
+        };
+        responses: {
+            /** @description The test was made. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description The remote answered and listed its refs. */
+                        ok: boolean;
+                        /** @description The branch the connection names. */
+                        branch: string;
+                        /** @description That branch is on the remote. */
+                        branchFound: boolean;
+                        branches: string[];
+                        /** @description The remote's own words when it did not answer. */
+                        error?: string;
+                        /** @description The remote offered to receive a push with this token: the handshake `git push` makes before it sends anything; nothing is sent (v2.4.0, IN-2). A protected branch's rule is not part of it and shows at the first push. */
+                        canPush: boolean;
+                        /** @description The remote's words when it refused the push handshake. */
+                        pushError?: string;
+                        /** @description With canPush: what it does not cover. Whether the token may push to the BRANCH named is known only at the first publish; on GitLab a project's default branch is protected and only Maintainers may push to it (v2.4.0). A publish refused for it answers 409 `branch_protected`. */
+                        pushNote?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    rotateAgencyGitRepoWebhookSecret: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @default true */
+                    updateGitlab?: boolean;
+                    /** @default 5 */
+                    overlapMinutes?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Rotated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        secret?: string;
+                        gitlabUpdated?: boolean;
+                        /** Format: date-time */
+                        overlapUntil?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+            /** @description The repository's host could not be reached to update the hook. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     getAgencyVaultPrefixes: {
         parameters: {
             query?: never;
@@ -16164,6 +17510,10 @@ export interface operations {
                 "application/json": {
                     /** @description The desired complete member list for this agency. */
                     members: components["schemas"]["AgencyMemberRef"][];
+                    /** @description Required (true) when the list differs from the agency's: any addition or removal changes an object's agency, a global administrator's repair (v2.4.0, IN-7); 409 `repair_required` otherwise. */
+                    repair?: boolean;
+                    /** @description The repair's reason */
+                    reason?: string;
                 };
             };
         };
@@ -16216,7 +17566,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RunnerAgencies"][];
+                "application/json": components["schemas"]["RunnerAgencies"][] | {
+                    /** @enum {boolean} */
+                    repair: true;
+                    reason: string;
+                    assignments: components["schemas"]["RunnerAgencies"][];
+                };
             };
         };
         responses: {
@@ -16267,7 +17622,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AgencyMembership"][];
+                "application/json": components["schemas"]["AgencyMembership"][] | {
+                    /** @enum {boolean} */
+                    repair: true;
+                    reason: string;
+                    assignments: components["schemas"]["AgencyMembership"][];
+                };
             };
         };
         responses: {
@@ -16318,7 +17678,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AgencyMembership"][];
+                "application/json": components["schemas"]["AgencyMembership"][] | {
+                    /** @enum {boolean} */
+                    repair: true;
+                    reason: string;
+                    assignments: components["schemas"]["AgencyMembership"][];
+                };
             };
         };
         responses: {
@@ -16369,7 +17734,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AgencyMembership"][];
+                "application/json": components["schemas"]["AgencyMembership"][] | {
+                    /** @enum {boolean} */
+                    repair: true;
+                    reason: string;
+                    assignments: components["schemas"]["AgencyMembership"][];
+                };
             };
         };
         responses: {
@@ -16420,7 +17790,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AgencyMembership"][];
+                "application/json": components["schemas"]["AgencyMembership"][] | {
+                    /** @enum {boolean} */
+                    repair: true;
+                    reason: string;
+                    assignments: components["schemas"]["AgencyMembership"][];
+                };
             };
         };
         responses: {
@@ -16761,9 +18136,47 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
+    getGitSyncStatus: {
+        parameters: {
+            query?: {
+                /**
+                 * @description v2.4.0 — the repository's id (see `GET /git-repos`). Omitted, or
+                 *     `global`: Global's repository, as this route always meant.
+                 */
+                repo?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The last sync. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        lastSHA?: string;
+                        lastSyncedAt?: string;
+                        lastStatus?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     triggerGitSync: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description v2.4.0 — the repository's id (see `GET /git-repos`). Omitted, or
+                 *     `global`: Global's repository, as this route always meant.
+                 */
+                repo?: string;
+            };
             header: {
                 /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
                 "X-CSRF-Token": components["parameters"]["csrf"];
@@ -16787,6 +18200,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             /** @description GitLab unreachable; serving stale clone (§11.4). */
             503: {
                 headers: {
@@ -16798,9 +18212,51 @@ export interface operations {
             };
         };
     };
+    listGitRepoProblems: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The repository's id; `global` for Global's. */
+                repoId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The problems. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        repoId: string;
+                        items: {
+                            /** @description The file */
+                            path: string;
+                            kind: string;
+                            /** @enum {string} */
+                            severity: "error" | "warning";
+                            message: string;
+                            firstSeen?: string;
+                            lastSeen?: string;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listGitHistory: {
         parameters: {
             query?: {
+                /**
+                 * @description v2.4.0 — the repository's id (see `GET /git-repos`). Omitted, or
+                 *     `global`: Global's repository, as this route always meant.
+                 */
+                repo?: string;
                 /** @description Sort column (TS-20; see /runs sort). Omitted ⇒ newest first. */
                 sort?: "timestamp" | "action" | "status";
                 /** @description Direction for `sort` (TS-20): asc or desc, default asc. Ignored when no sort key is sent. Status-keyed sorts order by severity rank (worst first ascending), not alphabetically; empty cells sort last in both directions. Any other value is a 400. */
@@ -16862,6 +18318,53 @@ export interface operations {
                 };
             };
             /** @description Webhook delivery is disabled in Settings → Integrations (Webhook Enabled). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    receiveRepositoryWebhook: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Gitlab-Token": string;
+                /** @description GitLab's event name, used to select the Webhook Events flag. Absent is treated as a push. */
+                "X-Gitlab-Event"?: string;
+            };
+            path: {
+                /** @description The repository's id; `global` for the installation's own. */
+                repoId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Delivery accepted. A sync of the repository was triggered unless the event's Webhook Events flag is off, in which case it was accepted and ignored. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid X-Gitlab-Token, or no such repository. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Webhook delivery is disabled for this repository. */
             403: {
                 headers: {
                     [name: string]: unknown;

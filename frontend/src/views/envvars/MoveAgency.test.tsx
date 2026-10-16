@@ -2,17 +2,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-// Moving a secret, variable or SSH key to another agency (v2.3.0).
+// Changing the agency of a secret, variable or SSH key (v2.3.0; a repair
+// since 2.4.0 I4, IN-7; the owner's answer to question 48).
 //
-// Each belongs to exactly one agency. The server moves one when the caller
-// holds the kind's permission on the agency that has it AND on the one it goes
-// to; the control offers what that rule would accept and no more, says whose
-// the row is when it is not the caller's to move, and is absent when there is
-// nowhere to move it to. It was missing altogether: the server could move a
-// row and nothing in the UI reached the route.
+// Each belongs to exactly one agency. Since 2.4.0 an agency administrator does
+// not move one: another agency gets one by making it again. A global
+// administrator repairs a placement that was a mistake, with a reason the
+// server writes to the audit log; the control is theirs alone, and anyone else
+// reads that the agency does not change.
 
 let CAPS: Record<string, boolean> = {};
-let ACCESS: unknown = null;
 const puts: { path: string; body: unknown }[] = [];
 let putError: unknown = null;
 
@@ -36,26 +35,22 @@ vi.mock("../../api/client", async (importOriginal) => {
     } as unknown as typeof actual.api,
   };
 });
-vi.mock("../../api/access", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../api/access")>();
-  return { ...actual, useMyAccess: () => ACCESS };
-});
 
 import { MoveAgency } from "./MoveAgency";
 
-const grant = (id: string, name: string, permissions = ["manageEnvVars", "configureApp"]) => ({
-  role: "admin", allScopes: false, agencyId: id, agencyName: name, scopes: [], permissions, groups: [], origin: "group",
-});
 const moved = vi.fn();
 const failed = vi.fn();
 const show = (over: Partial<Parameters<typeof MoveAgency>[0]> = {}) =>
-  render(<MoveAgency kind="secret" id="s1" name="DB_PASS" ownerName="Finance" permission="manageEnvVars" onMoved={moved} onError={failed} {...over} />);
-const select = () => screen.findByRole("combobox", { name: "Move DB_PASS to another agency" }) as Promise<HTMLSelectElement>;
+  render(<MoveAgency kind="secret" id="s1" name="DB_PASS" ownerName="Finance" onMoved={moved} onError={failed} {...over} />);
+const select = () => screen.findByRole("combobox", { name: "Repair: move DB_PASS to another agency" }) as Promise<HTMLSelectElement>;
 const options = (el: HTMLSelectElement) => Array.from(el.options).map((o) => o.textContent);
+const repair = async (reason: string, confirm: string) => {
+  fireEvent.change(await screen.findByLabelText("Reason"), { target: { value: reason } });
+  fireEvent.click(screen.getByRole("button", { name: confirm }));
+};
 
 beforeEach(() => {
-  CAPS = {};
-  ACCESS = { grants: [grant("ag-fin", "Finance"), grant("ag-tax", "Tax")] };
+  CAPS = { configureAppGlobal: true };
   puts.length = 0;
   putError = null;
   moved.mockClear();
@@ -63,79 +58,71 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe("MoveAgency", () => {
-  it("offers an administrator of both agencies the other one, never Global, and moves after a confirmation", async () => {
+describe("MoveAgency — a repair", () => {
+  it("offers a global administrator every other agency, Global included, and sends the repair with its reason", async () => {
     show();
     const el = await select();
-    await waitFor(() => expect(options(el)).toEqual(["Move to another agency…", "Tax"]));
-    expect(el.disabled).toBe(false);
+    await waitFor(() => expect(options(el)).toEqual(["Repair: move to another agency…", "Global", "Tax"]));
 
     fireEvent.change(el, { target: { value: "ag-tax" } });
     expect(puts).toHaveLength(0);
-    // The confirmation says what stops working.
+    // The dialog says what stops working, and asks why.
     expect(await screen.findByText(/Finance's runs that bind this secret will stop resolving it/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Move to Tax" }));
+    const confirm = screen.getByRole("button", { name: "Move to Tax" }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true); // no reason yet
+    await repair("  created in the wrong agency  ", "Move to Tax");
     await waitFor(() => expect(puts).toHaveLength(1));
-    // One agency, on the kind's own route.
-    expect(puts[0]).toEqual({ path: "/secret-agencies", body: [{ id: "s1", agencyIds: ["ag-tax"] }] });
+    expect(puts[0]).toEqual({
+      path: "/secret-agencies",
+      body: { repair: true, reason: "created in the wrong agency", assignments: [{ id: "s1", agencyIds: ["ag-tax"] }] },
+    });
     await waitFor(() => expect(moved).toHaveBeenCalledWith("DB_PASS now belongs to Tax"));
   });
 
   it("uses each kind's own route", async () => {
-    show({ kind: "ssh-credential", permission: "configureApp" });
+    show({ kind: "ssh-credential" });
     fireEvent.change(await select(), { target: { value: "ag-tax" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Move to Tax" }));
+    await repair("wrong agency", "Move to Tax");
     await waitFor(() => expect(puts[0]?.path).toBe("/ssh-credential-agencies"));
     cleanup();
     puts.length = 0;
     show({ kind: "env-var" });
     fireEvent.change(await select(), { target: { value: "ag-tax" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Move to Tax" }));
+    await repair("wrong agency", "Move to Tax");
     await waitFor(() => expect(puts[0]?.path).toBe("/env-var-agencies"));
   });
 
-  it("offers a global administrator Global and every other agency, and says what Global means", async () => {
-    CAPS = { manageEnvVarsGlobal: true };
-    ACCESS = { grants: [] };
+  it("says what Global means", async () => {
     show();
-    const el = await select();
-    await waitFor(() => expect(options(el)).toEqual(["Move to another agency…", "Global", "Tax"]));
-    fireEvent.change(el, { target: { value: "global" } });
-    expect(await screen.findByText(/It becomes Global's: every agency's runs may use it, and only global administrators change it\./)).toBeTruthy();
+    fireEvent.change(await select(), { target: { value: "global" } });
+    // §0a (IN-6): Global's is Global's runs' only (until 2.4.2 the dialog said every agency's).
+    expect(await screen.findByText(/It becomes Global's: only Global's runs may use it, and only global administrators change it\./)).toBeTruthy();
   });
 
-  it("is disabled, with whose row it is, for someone who does not administer its owner", async () => {
-    ACCESS = { grants: [grant("ag-tax", "Tax")] };
+  it("is not offered to an agency's administrator, who reads that the agency does not change", async () => {
+    CAPS = {};
     show();
-    const el = await select();
-    expect(el.disabled).toBe(true);
-    expect(el.title).toBe("This secret belongs to Finance — moving it takes authority over that agency too.");
+    expect(await screen.findByText(/Its agency does not change: another agency gets one by a copy/)).toBeTruthy();
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  it("follows the row's own canRepair over the capability", async () => {
+    CAPS = {};
+    show({ canRepair: true });
+    expect(await select()).toBeTruthy();
     cleanup();
-    show({ ownerName: "Global" });
-    expect((await select()).title).toMatch(/This secret is Global's — only a global administrator/);
+    CAPS = { configureAppGlobal: true };
+    show({ canRepair: false });
+    expect(await screen.findByText(/Its agency does not change/)).toBeTruthy();
   });
 
-  it("is absent when there is nowhere to move the row to", async () => {
-    ACCESS = { grants: [grant("ag-fin", "Finance")] };
-    show();
-    await new Promise((r) => setTimeout(r, 20));
-    expect(screen.queryByRole("combobox")).toBeNull();
-  });
-
-  it("counts only the agencies the caller holds THIS permission on", async () => {
-    // configureApp on Tax is not manageEnvVars on Tax: not somewhere they may put a secret.
-    ACCESS = { grants: [grant("ag-fin", "Finance"), grant("ag-tax", "Tax", ["configureApp"])] };
-    show();
-    await new Promise((r) => setTimeout(r, 20));
-    expect(screen.queryByRole("combobox")).toBeNull();
-  });
-
-  it("reports the server's refusal and moves nothing", async () => {
+  it("keeps the dialog open with the server's refusal, and moves nothing", async () => {
     putError = { code: "vault_path_not_allowed", message: "the path is outside the Vault paths assigned to Tax" };
     show();
     fireEvent.change(await select(), { target: { value: "ag-tax" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Move to Tax" }));
-    await waitFor(() => expect(failed).toHaveBeenCalledWith("Move failed: the path is outside the Vault paths assigned to Tax"));
+    await repair("wrong agency", "Move to Tax");
+    await waitFor(() => expect(failed).toHaveBeenCalledWith("Repair failed: the path is outside the Vault paths assigned to Tax"));
+    expect(screen.getByRole("alert").textContent).toMatch(/outside the Vault paths/);
     expect(moved).not.toHaveBeenCalled();
   });
 });

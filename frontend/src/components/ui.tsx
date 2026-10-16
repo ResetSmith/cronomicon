@@ -403,7 +403,7 @@ export function DerivedAgencies({
   if (scope != null && scope === "") {
     return (
       <span
-        title="No scope (Global) — every agency can see this, and it runs on a runner that serves Global."
+        title="No scope (Global) — it is Global's, and runs on a runner that serves Global."
         style={{ fontSize: c.fontXs, padding: "1px 6px", borderRadius: c.radiusChip, border: `1px dashed ${c.borderStrong}`, color: c.textSec, whiteSpace: "nowrap" }}
       >
         Global
@@ -694,7 +694,9 @@ export function EmptyCell() {
 // cronomicon keeps the tinted chip. The interesting value is the minority one,
 // and the ink is now spent on it. Where source is a constant (Scripts is
 // all-git) the column correctly degrades to plain muted text.
-export function SourceBadge({ source }: { source?: string }) {
+// `owner` (2.4.0, R8): the owning agency's name, shown on a Git row
+// ("git · Finance") — every agency has a repository, and the row's is its owner's.
+export function SourceBadge({ source, owner }: { source?: string; owner?: string }) {
   const isGit = source !== "cronomicon";
   return (
     <span
@@ -711,6 +713,7 @@ export function SourceBadge({ source }: { source?: string }) {
       }}
     >
       {source ?? "git"}
+      {isGit && owner ? ` · ${owner}` : ""}
     </span>
   );
 }

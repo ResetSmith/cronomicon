@@ -97,8 +97,8 @@ func Pattern(target string) string { return knownhosts.Normalize(target) }
 // bastion cannot be dialled directly, and scanning through a bastion is not
 // supported: its key has to be provided. Both are returned, with the reason;
 // nothing is dropped silently.
-func PlanScope(ctx context.Context, database *sql.DB, scopeName string) ([]ScopeHost, error) {
-	return PlanScopeFor(ctx, database, scopeName, false)
+func PlanScope(ctx context.Context, database *sql.DB, agency, scopeName string) ([]ScopeHost, error) {
+	return PlanScopeFor(ctx, database, agency, scopeName, false)
 }
 
 // UnresolvedBastion is the ViaPattern of a host whose bastion the server cannot
@@ -112,14 +112,15 @@ const UnresolvedBastion = "\x00unresolved-bastion"
 // stands for (execspec.BastionByRef), at that record's address and port. So for
 // the local runner the bastion's known_hosts host, and the target a scan of it
 // dials, come from the record — the machine the engine will actually verify.
-func PlanScopeFor(ctx context.Context, database *sql.DB, scopeName string, server bool) ([]ScopeHost, error) {
-	names, err := execspec.ScopeHosts(ctx, database, scopeName)
+// agency is the scope's owner: a scope's name is unique within an agency only (I2).
+func PlanScopeFor(ctx context.Context, database *sql.DB, agency, scopeName string, server bool) ([]ScopeHost, error) {
+	names, err := execspec.ScopeHosts(ctx, database, agency, scopeName)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]ScopeHost, 0, len(names))
 	for _, n := range names {
-		t, err := execspec.HostByName(ctx, database, scopeName, n)
+		t, err := execspec.HostByName(ctx, database, agency, scopeName, n)
 		if err != nil {
 			return nil, err
 		}
@@ -155,13 +156,13 @@ func PlanScopeFor(ctx context.Context, database *sql.DB, scopeName string, serve
 
 // PlanScopeForRunner is PlanScopeFor with the kind read from the runner's row
 // (an id with no row is an agent's: a deregistered one).
-func PlanScopeForRunner(ctx context.Context, database *sql.DB, scopeName, runnerID string) ([]ScopeHost, error) {
+func PlanScopeForRunner(ctx context.Context, database *sql.DB, agency, scopeName, runnerID string) ([]ScopeHost, error) {
 	var server bool
 	if err := database.QueryRowContext(ctx,
 		`SELECT kind = 'server' FROM runners WHERE id = ?`, runnerID).Scan(&server); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	return PlanScopeFor(ctx, database, scopeName, server)
+	return PlanScopeFor(ctx, database, agency, scopeName, server)
 }
 
 // Trusted is what a runner is known to trust.
@@ -350,8 +351,8 @@ func wildcardMatch(pattern, s string) bool {
 
 // Missing counts the hosts of a scope a runner does not trust, with the scope's
 // host count, so a caller can say "3 of 12".
-func Missing(ctx context.Context, database *sql.DB, scopeName, runnerID string) (missing, total int, err error) {
-	hosts, err := PlanScopeForRunner(ctx, database, scopeName, runnerID)
+func Missing(ctx context.Context, database *sql.DB, agency, scopeName, runnerID string) (missing, total int, err error) {
+	hosts, err := PlanScopeForRunner(ctx, database, agency, scopeName, runnerID)
 	if err != nil {
 		return 0, 0, err
 	}

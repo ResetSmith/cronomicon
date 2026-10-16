@@ -54,3 +54,17 @@ describe("step identity round-trip", () => {
     expect(out.map((s) => s.jobUid)).toEqual(["uid-fin", "uid-dss"]);
   });
 });
+
+// Present defect 54 (2.4.2): a sub-workflow step's pinned identity survives an
+// open-and-save. It was dropped, so the server re-resolved the child by name:
+// refused when two agencies hold the name, or re-pinned to another workflow.
+describe("a sub-workflow step keeps its workflowUid", () => {
+  it("round-trips the pin", () => {
+    const steps = [{ type: "workflow", name: "go", workflow: "nightly", workflowUid: "wf-uid-1" }];
+    expect(toSteps(toCanvasTree(steps))).toEqual([{ type: "workflow", name: "go", workflow: "nightly", workflowUid: "wf-uid-1" }]);
+  });
+  it("emits none for a step that had none", () => {
+    const steps = [{ type: "workflow", name: "go", workflow: "nightly" }];
+    expect(toSteps(toCanvasTree(steps))[0]).not.toHaveProperty("workflowUid");
+  });
+});

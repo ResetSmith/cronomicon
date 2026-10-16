@@ -81,6 +81,7 @@ func composeRBACServer(t *testing.T) (http.Handler, *sql.DB) {
 	// deliberately global one.
 	exec(`INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
 	      VALUES('backup-db','bash','pg_dump mydb','ssh','sha256:aaa','scripts/backup-db.yaml','t')`)
+	agenciesGetTheirOwnRepository(t, pool)
 	seedJob := func(name string, scope any) {
 		exec(`INSERT INTO jobs(name, source, run_type, command, scope, content_hash, created_at)
 		      VALUES(?,'cronomicon','bash','pg_dump mydb',?,'sha256:bbb','2026-01-01T00:00:00Z')`, name, scope)
@@ -185,8 +186,11 @@ func TestComposeIsBoundToTheActorsAgencies(t *testing.T) {
 		finID := composeJobID(t, pool, "fin-job")
 		rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+finID, "fin-composers",
 			`{"name":"fin-job","scriptRef":"backup-db","scope":"tax-prod"}`)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("FIN composer pushing its job into tax-prod = %d, want 403", rec.Code)
+		// Since I2 a job is its agency's and finds its scope there: TAX's scope is
+		// a name FIN has no scope of, refused as a rule for everyone (422
+		// scope_not_in_agency) before any grant is asked (until then 403).
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "scope_not_in_agency") {
+			t.Errorf("FIN composer pushing its job into tax-prod = %d %s, want 422 scope_not_in_agency", rec.Code, rec.Body)
 		}
 	})
 
@@ -297,13 +301,12 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 func TestSharedAuthoringSurfacesStayAdminOnly(t *testing.T) {
 	h, _ := composeRBACServer(t)
 
+	// (Schedules built in the app and calendars left this list with §0a,
+	// question 32 and SO-1: each has an owner, and writing it takes compose on
+	// that owner. TestI1_AScheduleIsItsOwnersToWrite, TestI1_ACalendarIsItsAgencys.
+	// Reactions left it in 2.4.2, question 61: they are their definition's
+	// agency's, TestRV_ADefinitionsReactionsAreItsAgencysToWrite.)
 	for _, tc := range []struct{ what, method, path, body string }{
-		{"schedule-def create", http.MethodPost, "/api/v1/schedule-defs", `{"name":"nightly","cron":"0 2 * * *"}`},
-		{"schedule-def update", http.MethodPut, "/api/v1/schedule-defs/nightly", `{"name":"nightly","cron":"0 3 * * *"}`},
-		{"schedule-def delete", http.MethodDelete, "/api/v1/schedule-defs/nightly", ""},
-		{"calendar create", http.MethodPost, "/api/v1/calendars", `{"name":"holidays"}`},
-		{"calendar delete", http.MethodDelete, "/api/v1/calendars/holidays", ""},
-		{"reactions replace", http.MethodPut, "/api/v1/reactions/job/fin-job", `{"reactions":[]}`},
 		{"recycle bin list", http.MethodGet, "/api/v1/recycle-bin", ""},
 	} {
 		// Even the UNRESTRICTED composer is refused: this is about the surface, not

@@ -104,42 +104,91 @@ func TestTwinBindingsAreNotUnioned(t *testing.T) {
 	}
 }
 
-// Scripts keep name identity permanently (they stayed outside AF-4b), so the name
-// arm must still serve them — including when a JOB of the same name exists, whose
-// uid must not be borrowed for the script's rows.
-func TestScriptBindingsKeepNameIdentity(t *testing.T) {
+// A script's bindings are filed under the SCRIPT's uid (migration 1290, GR-5),
+// and under nothing else. Two repositories may each hold a script of one name,
+// so the name is no longer an identity: an owner that carries only the name
+// reads nothing and cannot write, and a job that shares the script's name is
+// not confused with it.
+func TestScriptBindingsAreKeyedByTheScriptsUID(t *testing.T) {
 	pool := openDB(t)
 	ctx := context.Background()
 	const now = "2026-01-01T00:00:00Z"
-	if _, err := pool.Exec(`INSERT INTO scripts(name, run_type, command, content_hash, synced_at)
-		VALUES('build','bash','echo','sha256:y',?)`, now); err != nil {
-		t.Fatalf("seed script: %v", err)
+	// Two scripts of one name, in two repositories.
+	for _, sc := range [][2]string{{"uid-s-global", "global"}, {"uid-s-other", "repo-b"}} {
+		if _, err := pool.Exec(`INSERT INTO scripts(uid, repo_id, name, run_type, command, content_hash, synced_at)
+			VALUES(?, ?, 'build','bash','echo','sha256:y',?)`, sc[0], sc[1], now); err != nil {
+			t.Fatalf("seed script: %v", err)
+		}
 	}
-	seedTwinJobs(t, pool, "build") // same name, different catalog
+	seedTwinJobs(t, pool, "build") // jobs of the same name, in two catalogs
 
-	// A uid on a script owner is a caller error and must be ignored, not written:
-	// filed under a job's identity, these rows would never be read back.
-	script := Owner{Kind: "script", Name: "build", UID: "uid-build-a"}
-	if err := ReplaceBindings(ctx, pool, script, []Binding{{Kind: KindSecret, Name: "SIGNING_KEY"}}, "alice"); err != nil {
-		t.Fatalf("save script bindings: %v", err)
+	global := Owner{Kind: "script", Name: "build", UID: "uid-s-global"}
+	other := Owner{Kind: "script", Name: "build", UID: "uid-s-other"}
+	if err := ReplaceBindings(ctx, pool, global, []Binding{{Kind: KindSecret, Name: "SIGNING_KEY"}}, "alice"); err != nil {
+		t.Fatalf("save global's script bindings: %v", err)
 	}
+	if err := ReplaceBindings(ctx, pool, other, []Binding{{Kind: KindSecret, Name: "OTHER_KEY"}}, "bob"); err != nil {
+		t.Fatalf("save the other repository's script bindings: %v", err)
+	}
+
+	// Each script reads its own and not the other's.
+	for _, tc := range []struct {
+		owner Owner
+		want  string
+	}{{global, "SIGNING_KEY"}, {other, "OTHER_KEY"}} {
+		got, err := ListBindings(ctx, pool, tc.owner)
+		if err != nil {
+			t.Fatalf("list %s: %v", tc.owner.UID, err)
+		}
+		if len(got) != 1 || got[0].Name != tc.want {
+			t.Errorf("%s sees %v, want [%s] only", tc.owner.UID, bindingNames(got), tc.want)
+		}
+	}
+	// The rows carry the uid.
+	var n int
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM reference_bindings WHERE owner_kind='script' AND owner_uid IS NULL`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("%d script bindings were written without a uid", n)
+	}
+
+	// The name alone reads NOTHING: not one script's bindings, and above all not
+	// both. This is the reader that was missed; it must fail closed.
 	got, err := ListBindings(ctx, pool, Owner{Kind: "script", Name: "build"})
 	if err != nil {
-		t.Fatalf("list script: %v", err)
+		t.Fatalf("list by name: %v", err)
 	}
-	if len(got) != 1 || got[0].Name != "SIGNING_KEY" {
-		t.Errorf("script bindings = %v, want [SIGNING_KEY]", bindingNames(got))
+	if len(got) != 0 {
+		t.Errorf("a script owner with no uid read %v, want nothing", bindingNames(got))
 	}
-	var uid sql.NullString
-	if err := pool.QueryRow(`SELECT owner_uid FROM reference_bindings WHERE owner_kind='script'`).Scan(&uid); err != nil {
-		t.Fatalf("read owner_uid: %v", err)
+	// And it cannot write: there is nowhere to file the row.
+	if err := ReplaceBindings(ctx, pool, Owner{Kind: "script", Name: "build"}, []Binding{{Kind: KindVar, Name: "REGION"}}, "alice"); err == nil {
+		t.Error("a script owner with no uid was allowed to save bindings")
 	}
-	if uid.Valid {
-		t.Errorf("script binding stamped owner_uid = %q, want NULL", uid.String)
+	// Nor was anything deleted by that refused save.
+	if got, _ := ListBindings(ctx, pool, global); len(got) != 1 {
+		t.Errorf("the refused save disturbed global's bindings: %v", bindingNames(got))
 	}
-	// The job twins must be unaffected by the script's name collision.
+
+	// The job twins are unaffected by the script's name.
 	if got, _ := ListBindings(ctx, pool, Owner{Kind: "job", Source: "cronomicon", Name: "build", UID: "uid-build-a"}); len(got) != 0 {
-		t.Errorf("job twin sees the script's bindings: %v", bindingNames(got))
+		t.Errorf("job twin sees a script's bindings: %v", bindingNames(got))
+	}
+	// A uid-less JOB owner of that name does not reach the scripts' rows either.
+	if got, _ := ListBindings(ctx, pool, Owner{Kind: "job", Source: "", Name: "build"}); len(got) != 0 {
+		t.Errorf("a job owner matched by name read a script's bindings: %v", bindingNames(got))
+	}
+
+	// Deleting one script takes its bindings and leaves the other's.
+	if _, err := pool.Exec(`DELETE FROM scripts WHERE uid = 'uid-s-global'`); err != nil {
+		t.Fatalf("delete script: %v", err)
+	}
+	if got, _ := ListBindings(ctx, pool, global); len(got) != 0 {
+		t.Errorf("the deleted script still has bindings: %v", bindingNames(got))
+	}
+	if got, _ := ListBindings(ctx, pool, other); len(got) != 1 {
+		t.Errorf("deleting global's script removed the other repository's bindings: %v", bindingNames(got))
 	}
 }
 

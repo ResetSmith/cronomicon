@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
@@ -652,6 +653,10 @@ func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimReq
 			              WHERE rag.run_id = runs.id
 			                AND rag.agency IN (SELECT a.name FROM runner_agencies ra
 			                                   JOIN agencies a ON a.id = ra.agency_id
+			                                   -- §0a (IN-6): its owner's work only. A
+			                                   -- legacy placement's other agencies (MA-9)
+			                                   -- are listed, and not served.
+			                                   JOIN runners rown ON rown.id = ra.runner_id AND rown.owner_agency = ra.agency_id
 			                                   WHERE ra.runner_id = ?))
 			  -- SB-1 scope binding (mig. 1180). A scope with rows in scope_runners
 			  -- is claimable only by a runner named there; a scope with none, and
@@ -676,15 +681,15 @@ func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimReq
 			  -- NOT IN (scopes bound to somebody else)" — rebuilds three list
 			  -- subqueries and two bloom filters on every poll and cost +40%,
 			  -- with nothing bound at all. These two probes are keyed seeks
-			  -- (scopes.name is UNIQUE, scope_runners' PK leads with scope_id)
+			  -- (scopes is UNIQUE on (owner_agency, name) since 1420, scope_runners' PK leads with scope_id)
 			  -- that run only for candidate rows, and cost ~10%.
 			  AND (runs.scope IS NULL
 			       OR NOT EXISTS (SELECT 1 FROM scope_runners sr
 			                        JOIN scopes sc ON sc.id = sr.scope_id
-			                       WHERE sc.name = runs.scope)
+			                       WHERE sc.name = runs.scope AND sc.owner_agency = `+agencyid.RunScopeOwnerSQL("runs.agencies_json")+`)
 			       OR EXISTS (SELECT 1 FROM scope_runners sr
 			                    JOIN scopes sc ON sc.id = sr.scope_id
-			                   WHERE sc.name = runs.scope AND sr.runner_id = ?))
+			                   WHERE sc.name = runs.scope AND sc.owner_agency = `+agencyid.RunScopeOwnerSQL("runs.agencies_json")+` AND sr.runner_id = ?))
 			  -- secret-injection gate: a run whose job/script declares reference
 			  -- bindings — or that carries a per-run ssh_credential (CA-3b, an
 			  -- implicit key binding whose material ships in the manifest) — is
@@ -703,7 +708,10 @@ func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimReq
 			                         THEN rb.owner_uid = runs.job_uid
 			                         ELSE rb.owner_source = COALESCE(NULLIF(runs.job_source, ''), 'git')
 			                              AND rb.owner_name = runs.job_name END)
-			           OR (rb.owner_kind = 'script' AND rb.owner_name = runs.script_ref))
+			           -- The script by the run's frozen script_uid, never by its
+			           -- name (1290): a name is a script in every repository that
+			           -- has one. NULL matches nothing.
+			           OR (rb.owner_kind = 'script' AND rb.owner_uid = runs.script_uid))
 			    )
 			  )
 			  -- LR-47: the local runner does not take a run that binds an SSH key

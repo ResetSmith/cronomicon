@@ -14,14 +14,20 @@ import (
 // two-arm shape the R2 band standardised (same CASE form as the scheduler's and
 // the reaction path's job reads). When the owner carries a uid that uid IS the
 // match — no name arm at all, so a same-named sibling's rows are invisible here.
-// When it does not, the legacy (kind, source, name) arm serves script owners
-// (permanently name-identified) and callers that never resolved a row.
+// When it does not, the legacy (kind, source, name) arm serves job callers that
+// never resolved a row.
 //
 // The arms are exclusive by construction — the CASE picks one — so no caller can
 // accidentally get the UNION, which is precisely what the pre-R2F-1 name-only
 // query returned for two same-named cronomicon siblings.
+//
+// The name arm serves JOB owners only. A script's rows all carry its uid since
+// migration 1290, and the arm refuses the kind outright rather than rely on
+// that: a script owner that reaches it has no uid, and matching it by name
+// would return the bindings of every repository's script of that name, which
+// is another agency's secrets injected into this run. It gets nothing instead.
 const ownerMatch = `CASE WHEN ? != '' THEN owner_uid = ?
-		      ELSE owner_kind = ? AND owner_source = ? AND owner_name = ? END`
+		      ELSE owner_kind = ? AND owner_kind != 'script' AND owner_source = ? AND owner_name = ? END`
 
 // ownerArgs binds ownerMatch's five parameters, in order.
 func ownerArgs(owner Owner) []any {
@@ -152,6 +158,12 @@ func ReplaceBindings(ctx context.Context, database *sql.DB, owner Owner, binding
 	if ownerUID == "" && owner.Kind == "job" {
 		ownerUID = resolveUniqueJobUID(ctx, database, owner.Name, owner.Source)
 	}
+	// A script's bindings are filed under its uid and nowhere else (1290). A row
+	// written without one could never be read back, and a writer that reached
+	// here without resolving its script has a bug worth hearing about.
+	if ownerUID == "" && owner.Kind == "script" {
+		return fmt.Errorf("replace bindings of script %q: the script's uid is required", owner.Name)
+	}
 
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
@@ -169,10 +181,9 @@ func ReplaceBindings(ctx context.Context, database *sql.DB, owner Owner, binding
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, b := range clean {
 		if _, err := tx.ExecContext(ctx,
-			// R2-2: owner_uid is stamped for JOB owners only — a script's identity
-			// is still its name (scripts keep PRIMARY KEY (name) and stay outside
-			// AF-4b), which UIDKey enforces. See ownerUID above for where it comes
-			// from and why the caller's beats a subquery's.
+			// owner_uid is stamped for a job and for a script (the script's since
+			// 1290). See ownerUID above for where it comes from and why the
+			// caller's beats a subquery's.
 			`INSERT INTO reference_bindings
 			   (owner_kind, owner_source, owner_name, ref_kind, ref_name, alias, created_by, created_at, owner_uid)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`,

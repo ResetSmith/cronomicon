@@ -10,7 +10,7 @@
 // discovering at 09:00 on a Sunday that the manual run went through anyway is
 // worse learned from the run log than from the dialog.
 import { c } from "../../theme";
-import { dayInAppZone, suppressionFor, useCalendarDays, useCalendars } from "./calendars";
+import { dayInAppZone, suppressionFor, useAgencyCalendars, useCalendars } from "./calendars";
 
 export interface EntryBinding {
   scheduleName?: string;
@@ -23,11 +23,13 @@ export interface EntryBinding {
  * job's (or workflow's) schedule entries — the note speaks for whichever of them
  * carries a binding, since a manual run has no entry of its own.
  */
-export function RunCalendarNote({ entries, at }: { entries: EntryBinding[]; at: string | null }) {
+export function RunCalendarNote({ entries, at, agency }: { entries: EntryBinding[]; at: string | null; agency?: string }) {
+  // `agency` (2.4.1): the definition's agency, whose calendars the entries are
+  // judged by (see useAgencyCalendars). The Run dialog passes it (2.4.2,
+  // present defect 68: it passed none, and every agency's calendars were asked).
   const { calendars } = useCalendars();
-  const globals = calendars.filter((cal) => cal.global).map((cal) => cal.name ?? "");
   const bound = entries.flatMap((e) => [...(e.skipCalendars ?? []), ...(e.onlyCalendars ?? [])]);
-  const { days } = useCalendarDays([...bound, ...globals]);
+  const { globals, daysByName: days } = useAgencyCalendars(calendars, agency, bound);
 
   if (bound.length === 0 && globals.length === 0) return null;
   const day = dayInAppZone(at ?? Date.now());

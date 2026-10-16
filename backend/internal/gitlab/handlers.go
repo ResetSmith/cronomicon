@@ -1,37 +1,90 @@
 package gitlab
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/metrics"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/sortparam"
 )
 
-// Handlers wraps Service and exposes http.HandlerFunc methods for each route.
+// Handlers exposes http.HandlerFunc methods for each route. It answers either
+// from one fixed Service, or from a Registry that it asks at every request,
+// because a repository's Service is replaced whenever its connection is
+// written (GR-11) and a handler that kept the one it was built with would go on
+// syncing with the old URL and token.
 type Handlers struct {
 	svc *Service
+	reg *Registry
 }
 
-// NewHandlers creates handler wrappers around the Service.
-func NewHandlers(svc *Service) *Handlers {
-	return &Handlers{svc: svc}
+// NewRegistryHandlers creates handler wrappers that ask the registry.
+func NewRegistryHandlers(reg *Registry) *Handlers {
+	return &Handlers{reg: reg}
+}
+
+// service is the Service a request is answered by. Every route mounted here
+// existed before a repository was a row, and means Global's (GR-20, GR-27):
+// the routes that name a repository are Phase R6's. It answers 503 and returns
+// nil when there is none: the server is shutting down, or the repository's row
+// could not be read when the server started. (A restart swaps one Service for
+// the next in one step, so a saved connection is never such a moment.)
+func (h *Handlers) service(w http.ResponseWriter) *Service {
+	svc := h.serviceOf(repoid.Global)
+	if svc == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable",
+			"the repository's sync service is not running; try again in a moment")
+	}
+	return svc
+}
+
+// serviceOf is the running Service of one repository, or nil when it has none.
+// It writes nothing. (Handlers built around one fixed Service answer for that
+// Service's repository and for no other.)
+func (h *Handlers) serviceOf(repoID string) *Service {
+	if h.reg != nil {
+		return h.reg.Service(repoID)
+	}
+	if h.svc != nil && h.svc.repo() == repoID {
+		return h.svc
+	}
+	return nil
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // GET /api/v1/git/sync — sync status
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (h *Handlers) GetSyncStatus(w http.ResponseWriter, r *http.Request) {
-	state, err := h.svc.GetSyncState(r.Context())
+// repoService is the running Service of a repository the caller has already
+// been found to have a right to, or nil with 503 written: the server is
+// shutting down, or the repository was disconnected a moment ago.
+func (h *Handlers) repoService(w http.ResponseWriter, repoID string) *Service {
+	svc := h.serviceOf(repoID)
+	if svc == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable",
+			"the repository's sync service is not running; try again in a moment")
+	}
+	return svc
+}
+
+// GetSyncStatusOf is GetSyncStatus for a named repository (GR-9). The caller
+// decides who may ask.
+func (h *Handlers) GetSyncStatusOf(repoID string, w http.ResponseWriter, r *http.Request) {
+	svc := h.repoService(w, repoID)
+	if svc == nil {
+		return
+	}
+	state, err := svc.GetSyncState(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 		return
@@ -47,9 +100,14 @@ func (h *Handlers) GetSyncStatus(w http.ResponseWriter, r *http.Request) {
 // POST /api/v1/git/sync — trigger resync
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (h *Handlers) PostSync(w http.ResponseWriter, r *http.Request) {
+// PostSyncOf starts a sync of a named repository.
+func (h *Handlers) PostSyncOf(repoID string, w http.ResponseWriter, r *http.Request) {
+	svc := h.repoService(w, repoID)
+	if svc == nil {
+		return
+	}
 	startedAt := time.Now().UTC()
-	h.svc.TriggerSync(r.Context(), "manual")
+	svc.TriggerSync(r.Context(), "manual")
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"startedAt": startedAt.Format(time.RFC3339),
 	})
@@ -82,7 +140,12 @@ func pageParams(r *http.Request) (page, pageSize int) {
 // GET /api/v1/git/history — list sync events
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (h *Handlers) ListGitHistory(w http.ResponseWriter, r *http.Request) {
+// ListGitHistoryOf lists a named repository's syncs, and no other's.
+func (h *Handlers) ListGitHistoryOf(repoID string, w http.ResponseWriter, r *http.Request) {
+	svc := h.repoService(w, repoID)
+	if svc == nil {
+		return
+	}
 	page, pageSize := pageParams(r)
 	// TS-20: allowlisted ?sort=&order=. `id` is the chronological tiebreak (the
 	// table's insert order); timestamp maps to started_at, action to the
@@ -96,7 +159,7 @@ func (h *Handlers) ListGitHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_sort", sortErr.Error())
 		return
 	}
-	events, total, err := h.svc.ListSyncEvents(r.Context(), page, pageSize, orderBy)
+	events, total, err := svc.ListSyncEvents(r.Context(), page, pageSize, orderBy)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 		return
@@ -129,13 +192,43 @@ func (h *Handlers) ListGitHistory(w http.ResponseWriter, r *http.Request) {
 // operator debugging "why did my push not sync" actually looks. An event type
 // that is merely unselected ACCEPTS (202) and does nothing: the delivery is not
 // an error, it is simply not one we react to.
+//
+// Which repository a delivery is for is in the path (GR-20):
+// /webhooks/gitlab/{repoId}. The route with no id is the one that existed
+// before a repository had one, and means Global's: the hooks installations
+// already have point at it. A delivery is checked against THAT repository's
+// secret set and policy, and starts that repository's sync and no other.
+//
+// A repository that does not exist answers exactly as a wrong token does. The
+// route is unauthenticated, and "no such repository" would tell anyone who can
+// reach it which ids are real.
 func (h *Handlers) WebhookGitLab(w http.ResponseWriter, r *http.Request) {
+	repoID := r.PathValue("repoId")
+	if repoID == "" {
+		repoID = repoid.Global
+	}
+	svc := h.serviceOf(repoID)
+	if svc == nil && repoID == repoid.Global {
+		// Global's always exists; with no Service it is the server that is not
+		// ready (see service), and a hook's sender should try again.
+		h.service(w)
+		return
+	}
 	token := r.Header.Get("X-Gitlab-Token")
-	if token == "" || !h.svc.ValidateWebhookToken(r.Context(), token) {
+	if svc == nil && token != "" && h.reg != nil && h.reg.db != nil {
+		// The read a real repository's check makes, made for one that is not
+		// there: without it "no such repository" answers sooner than "wrong
+		// token", and the clock says what the status does not.
+		var a, b, c sql.NullString
+		_ = h.reg.db.QueryRowContext(r.Context(), `
+			SELECT webhook_secret_enc, webhook_secret_prev_enc, webhook_overlap_until
+			FROM git_repos WHERE id=?`, repoID).Scan(&a, &b, &c)
+	}
+	if svc == nil || token == "" || !svc.ValidateWebhookToken(r.Context(), token) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid X-Gitlab-Token")
 		return
 	}
-	policy := settings.GetWebhookPolicy(r.Context(), h.svc.db)
+	policy := settings.GetWebhookPolicy(r.Context(), svc.db, svc.repo())
 	if !policy.Enabled {
 		metrics.WebhookSync("disabled")
 		writeError(w, http.StatusForbidden, "webhook_disabled",
@@ -147,7 +240,7 @@ func (h *Handlers) WebhookGitLab(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	h.svc.TriggerSync(r.Context(), "webhook")
+	svc.TriggerSync(r.Context(), "webhook")
 	metrics.WebhookSync("ok") // C.2
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -181,29 +274,62 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 		})
 		return
 	}
-	// GC-9: the route's permission says the caller may publish SOMEWHERE; this
-	// asks whether they may publish THIS file. Decided before Publish takes the
-	// sync mutex, and before anything is written.
+	// The repository the publish names (GR-24); none named is Global's, as it
+	// always was.
+	repoID := strings.TrimSpace(req.RepoID)
+	if repoID == "" {
+		repoID = repoid.Global
+	}
+	svc := h.serviceOf(repoID)
+	target := PublishTarget{Repo: repoID, NoSuchRepo: true}
+	if svc != nil {
+		target = svc.publishTarget(req)
+		target.Repo, target.Agency = repoID, svc.agency()
+	}
+	// GC-9, GR-24: the route's permission says the caller may publish
+	// SOMEWHERE; this asks whether they may publish THIS file to THIS
+	// repository. Decided before Publish takes its turn in the queue, and
+	// before anything is written; and before the caller is told whether the
+	// repository is there.
 	if authorize != nil {
-		if msg := authorize(r, h.svc.publishTarget(req)); msg != "" {
+		if msg := authorize(r, target); msg != "" {
 			writeError(w, http.StatusForbidden, "forbidden", msg)
 			return
 		}
 	}
+	if svc == nil {
+		if repoID == repoid.Global {
+			writeError(w, http.StatusServiceUnavailable, "unavailable",
+				"the repository's sync service is not running; try again in a moment")
+			return
+		}
+		writeError(w, http.StatusNotFound, "not_found", "no such repository")
+		return
+	}
 
-	result, err := h.svc.Publish(r.Context(), req, baseSHA, actor)
+	result, err := svc.Publish(r.Context(), req, baseSHA, actor)
 	if err != nil {
 		// Check for precondition failure (412).
 		if pe, ok := err.(*PreconditionError); ok {
+			msg := "File changed since your edit was based on this commit — review the diff and retry."
+			if pe.Unsynced {
+				// The branch has commits the last sync does not have. Nothing
+				// polls a repository on a timer, and whoever publishes may not
+				// be somebody who can start a sync, so one is started here: the
+				// retry this answer asks for then finds the clone caught up.
+				svc.TriggerSync(r.Context(), "poll")
+				msg = "The repository's branch has commits that had not been synced here. A sync has been started — " +
+					"wait for it, review what changed, and publish again."
+			}
 			writeJSON(w, http.StatusPreconditionFailed, map[string]any{
 				"code":       "base_sha_mismatch",
-				"message":    "File changed since your edit was based on this commit — review the diff and retry.",
+				"message":    msg,
 				"baseSha":    pe.BaseSHA,
 				"currentSha": pe.CurrentSHA,
 				"diff":       pe.Diff,
 			})
 			// Record failed push for audit.
-			_ = h.svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed",
+			_ = svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed",
 				"base_sha mismatch: current="+pe.CurrentSHA)
 			return
 		}
@@ -224,7 +350,23 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 				"message": ve.Message,
 				"errors":  errs,
 			})
-			_ = h.svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed", ve.Message)
+			_ = svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed", ve.Message)
+			return
+		}
+		// The branch is protected and the token may not push to it (409): a
+		// connection to change, not a remote to wait for. Said with what to do.
+		var pb *ProtectedBranchError
+		if errors.As(err, &pb) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"code": "branch_protected",
+				"message": "The repository refused the push to its branch " + pb.Branch + ": the branch is protected, and the " +
+					"connection's token may not push to it. On GitLab a project's default branch is protected and only " +
+					"Maintainers may push to it: give the token Maintainer access, allow Developers to push to " + pb.Branch +
+					", or point the connection's write branch at a branch the token may push to. Nothing was published.",
+				"branch": pb.Branch,
+				"remote": pb.Remote,
+			})
+			_ = svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed", pb.Error())
 			return
 		}
 		// GitLab unreachable or other push failure (503).
@@ -232,18 +374,19 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 			"code":    "gitlab_unreachable",
 			"message": "Failed to push to GitLab: " + err.Error(),
 		})
-		_ = h.svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed", err.Error())
+		_ = svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed", err.Error())
 		return
 	}
 
 	// Record successful push.
-	_ = h.svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, result.CommitSHA, "success", "")
+	_ = svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, result.CommitSHA, "success", "")
 	metrics.SchedulePublish() // C.2
 
 	// Return SchedulePush shape.
 	now := time.Now().UTC().Format(time.RFC3339)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":            result.CommitSHA, // use commit SHA as the push ID
+		"repoId":        repoID,
 		"userEmail":     actor,
 		"commitSha":     result.CommitSHA,
 		"branch":        result.Branch,
@@ -259,15 +402,22 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 // GET /api/v1/schedule-pushes — list push audit records
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (h *Handlers) ListSchedulePushes(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+// readable is the caller's condition on which repositories' publishes are
+// listed (GR-26), as SQL beginning " AND …" over the column repo_id, with its
+// arguments; empty for a caller who reads every repository's.
+func (h *Handlers) ListSchedulePushes(db *sql.DB, readable string, readableArgs []any, w http.ResponseWriter, r *http.Request) {
 	statusFilter := r.URL.Query().Get("status")
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
 	page, pageSize := pageParams(r)
 	offset := (page - 1) * pageSize
 
-	args := []any{}
-	where := "1=1"
+	args := append([]any{}, readableArgs...)
+	where := "1=1" + readable
+	if repo := strings.TrimSpace(r.URL.Query().Get("repo")); repo != "" {
+		where += " AND repo_id=?"
+		args = append(args, repo)
+	}
 	if statusFilter != "" {
 		where += " AND status=?"
 		args = append(args, statusFilter)
@@ -302,7 +452,11 @@ func (h *Handlers) ListSchedulePushes(db *sql.DB, w http.ResponseWriter, r *http
 
 	listArgs := append(args, pageSize, offset)
 	rows, err := db.QueryContext(r.Context(),
-		"SELECT id, at, actor, schedule_file, base_sha, new_sha, status, details FROM schedule_pushes WHERE "+where+orderBy+" LIMIT ? OFFSET ?",
+		"SELECT id, at, actor, schedule_file, base_sha, new_sha, status, details, repo_id, "+
+			// The branch of the repository's connection as it is NOW: a publish
+			// records no branch. (It was the literal \"main\", whatever the branch.)
+			"COALESCE((SELECT NULLIF(g.branch, '') FROM git_repos g WHERE g.id = schedule_pushes.repo_id), 'main') "+
+			"FROM schedule_pushes WHERE "+where+orderBy+" LIMIT ? OFFSET ?",
 		listArgs...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
@@ -312,6 +466,7 @@ func (h *Handlers) ListSchedulePushes(db *sql.DB, w http.ResponseWriter, r *http
 
 	type push struct {
 		ID            int      `json:"id"`
+		RepoID        string   `json:"repoId"`
 		UserEmail     string   `json:"userEmail"`
 		CommitSha     any      `json:"commitSha"`
 		Branch        string   `json:"branch"`
@@ -333,15 +488,18 @@ func (h *Handlers) ListSchedulePushes(db *sql.DB, w http.ResponseWriter, r *http
 			newSHA    sql.NullString
 			status    string
 			details   sql.NullString
+			repo      string
+			branch    string
 		)
-		if err := rows.Scan(&id, &at, &actor, &schedFile, &baseSHA, &newSHA, &status, &details); err != nil {
+		if err := rows.Scan(&id, &at, &actor, &schedFile, &baseSHA, &newSHA, &status, &details, &repo, &branch); err != nil {
 			writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 			return
 		}
 		p := push{
 			ID:            id,
+			RepoID:        repo,
 			UserEmail:     actor,
-			Branch:        "main",
+			Branch:        branch,
 			FilesChanged:  []string{schedFile},
 			ScheduleSlots: schedFile,
 			Status:        status,
@@ -401,23 +559,59 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 // POST /api/v1/scopes/resync — trigger scope resync (blocking)
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (h *Handlers) ResyncScopes(actor string, w http.ResponseWriter, r *http.Request) {
+// ResyncScopesOf syncs one repository at once and says which of ITS scopes the
+// sync added or removed (2.4.2, the owner's answer to question 53: it synced
+// Global's only, and compared the scopes of every repository by name, so an
+// agency's scopes could not be resynced and a name another agency held hid a
+// change of Global's).
+func (h *Handlers) ResyncScopesOf(repoID, actor string, w http.ResponseWriter, r *http.Request) {
+	svc := h.serviceOf(repoID)
+	if svc == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable",
+			"the repository's sync service is not running; try again in a moment")
+		return
+	}
+	ofRepo := func() ([]settings.Scope, error) {
+		rows, err := settings.ListScopes(r.Context(), svc.db, "git")
+		if err != nil {
+			return nil, err
+		}
+		ids := map[string]bool{}
+		q, err := svc.db.QueryContext(r.Context(), `SELECT id FROM scopes WHERE source = 'git' AND COALESCE(repo_id, ?) = ?`, repoid.Global, repoID)
+		if err != nil {
+			return nil, err
+		}
+		defer q.Close()
+		for q.Next() {
+			var id string
+			if q.Scan(&id) == nil {
+				ids[id] = true
+			}
+		}
+		var out []settings.Scope
+		for _, sc := range rows {
+			if ids[sc.ID] {
+				out = append(out, sc)
+			}
+		}
+		return out, q.Err()
+	}
 	// 1. Get scopes before sync
-	beforeScopes, err := settings.ListScopes(r.Context(), h.svc.db, "git")
+	beforeScopes, err := ofRepo()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list scopes before sync: "+err.Error())
 		return
 	}
 
-	// 2. Call h.svc.SyncBlocking(...)
+	// 2. Call svc.SyncBlocking(...)
 	// "manual", not the actor: git_sync_events.triggered_by is CHECKed to
 	// poll/webhook/manual, and the insert error is discarded, so passing an
 	// email here left a scope resync with no history row at all.
 	_ = actor
-	res := h.svc.SyncBlocking(r.Context(), "manual")
+	res := svc.SyncBlocking(r.Context(), "manual")
 
 	// 3. Get scopes after sync
-	afterScopes, err := settings.ListScopes(r.Context(), h.svc.db, "git")
+	afterScopes, err := ofRepo()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list scopes after sync: "+err.Error())
 		return
@@ -485,15 +679,4 @@ func (h *Handlers) ResyncScopes(actor string, w http.ResponseWriter, r *http.Req
 		"errors":       errs,
 		"deltas":       deltas,
 	})
-}
-
-// contextKey is a package-local context key type.
-type contextKey int
-
-const _ contextKey = iota
-
-// StartBackgroundSync kicks off the first sync in the background.
-// Call this once at startup after the service is initialized.
-func StartBackgroundSync(ctx context.Context, svc *Service) {
-	svc.TriggerSync(ctx, "poll")
 }

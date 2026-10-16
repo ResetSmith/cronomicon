@@ -20,9 +20,10 @@ import (
 //
 // One shape predates that rule and is allowed to go on existing: a runner that
 // served several agencies in 2.2 is Global-owned with its serve list unchanged,
-// a "legacy placement" (LR-64, MA-9). It keeps working, can be narrowed, and can
-// never be widened; narrowed to one agency it can be handed to that agency,
-// which ends it.
+// a "legacy placement" (LR-64, MA-9). Since §0a (I1) it serves its owner only
+// (the claim joins on owner_agency): the other agencies on its list are listed
+// in the notice, not served. It can be narrowed, never widened; narrowed to one
+// agency it can be handed to that agency, which ends it.
 
 var (
 	// ErrServeListFixed is returned when a write would give an agent a serve
@@ -36,6 +37,12 @@ var (
 	// that agency. Mapped 422 `owner_change_refused`.
 	ErrOwnerChangeRefused = errors.New("an agent's owner changes only one way: a Global-owned agent that serves exactly one agency " +
 		"may be handed to that agency. To move an agent any other way, deregister it and enrol it again")
+
+	// ErrLocalRunnerGlobalOnly is returned when a write would give the local
+	// runner any serve list but Global (§0a, IN-3). Mapped 422
+	// `local_runner_global_only`.
+	ErrLocalRunnerGlobalOnly = errors.New("the local runner is Global's and serves Global only. " +
+		"An agency's shell jobs run on an agent of that agency's own")
 )
 
 // CheckRunnerPlacement is THE invariant (MA-11), called by every writer of
@@ -47,14 +54,18 @@ var (
 // non-empty subset of the list before it. Never empty. So a new shape is
 // impossible and an old one only shrinks.
 //
-// local is the local runner (Phase A), whose serve list is whatever non-empty
-// list a global administrator gives it.
+// local is the local runner (Phase A), whose serve list is Global and nothing
+// else (§0a, IN-3; until then whatever non-empty list a global administrator
+// gave it, MA-11).
 func CheckRunnerPlacement(local bool, owner string, before, after []string) error {
 	after = dedupeIDs(after)
 	if len(after) == 0 {
 		return ErrAgencyRequired
 	}
 	if local {
+		if len(after) != 1 || after[0] != agencyid.Global {
+			return ErrLocalRunnerGlobalOnly
+		}
 		return nil
 	}
 	if len(after) == 1 && after[0] == owner {

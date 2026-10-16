@@ -140,7 +140,7 @@ func TestResolveRun_GroupExpansion(t *testing.T) {
 	}
 
 	// ScopeGroups + GroupHosts readers.
-	if g, err := execspec.ScopeGroups(ctx, pool, "Prod"); err != nil || len(g) != 1 || g[0] != "web" {
+	if g, err := execspec.ScopeGroups(ctx, pool, ownerOf(t, pool, "Prod"), "Prod"); err != nil || len(g) != 1 || g[0] != "web" {
 		t.Errorf("ScopeGroups = %v (err %v), want [web]", g, err)
 	}
 	if h, err := execspec.GroupHosts(ctx, pool, "Prod", "web"); err != nil || len(h) != 2 {
@@ -148,7 +148,7 @@ func TestResolveRun_GroupExpansion(t *testing.T) {
 	}
 
 	// Group expansion → its member hosts as Targets, plus the --limit by NAME.
-	targets, limit, err := execspec.ResolveRun(ctx, pool, "Prod", "", nil, []string{"web"})
+	targets, limit, err := execspec.ResolveRun(ctx, pool, ownerOf(t, pool, "Prod"), "Prod", "", nil, []string{"web"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestResolveRun_GroupExpansion(t *testing.T) {
 	}
 
 	// Union of explicit host + group members; limit = host UNION group NAMES.
-	targets, limit, err = execspec.ResolveRun(ctx, pool, "Prod", "", []string{"db1"}, []string{"web"})
+	targets, limit, err = execspec.ResolveRun(ctx, pool, ownerOf(t, pool, "Prod"), "Prod", "", []string{"db1"}, []string{"web"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestResolveRun_GroupExpansion(t *testing.T) {
 	}
 
 	// No hosts/groups → full fan-out + no limit (legacy default).
-	targets, limit, err = execspec.ResolveRun(ctx, pool, "Prod", "", nil, nil)
+	targets, limit, err = execspec.ResolveRun(ctx, pool, ownerOf(t, pool, "Prod"), "Prod", "", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestResolveRun_NestedGroups(t *testing.T) {
 
 	// Child-only group expands transitively to web1,web2,db1 — NOT mon1, and NOT a
 	// full-scope fan-out.
-	targets, limit, err := execspec.ResolveRun(ctx, pool, "Prod", "", nil, []string{"allservers"})
+	targets, limit, err := execspec.ResolveRun(ctx, pool, ownerOf(t, pool, "Prod"), "Prod", "", nil, []string{"allservers"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestResolveRun_NestedGroups(t *testing.T) {
 	}
 
 	// An EMPTY group (no hosts, no children) must run NOTHING — never the full scope.
-	targets, _, err = execspec.ResolveRun(ctx, pool, "Prod", "", nil, []string{"empty"})
+	targets, _, err = execspec.ResolveRun(ctx, pool, ownerOf(t, pool, "Prod"), "Prod", "", nil, []string{"empty"})
 	if err != nil {
 		t.Fatal(err)
 	}

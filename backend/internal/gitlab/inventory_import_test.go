@@ -40,7 +40,7 @@ func TestImportGitHosts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := svc.upsertScopes(ctx, tx, scopes, ts, "sha"); err != nil {
+		if _, err := svc.upsertScopes(ctx, tx, scopes, ts, "sha"); err != nil {
 			t.Fatalf("upsertScopes: %v", err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -145,7 +145,7 @@ func TestImportGitHosts_DegradePreserves(t *testing.T) {
 			t.Fatalf("parse errs (a degrade is NOT a parse err): %v", errs)
 		}
 		tx, _ := pool.Begin()
-		if err := svc.upsertScopes(ctx, tx, scopes, ts, "sha"); err != nil {
+		if _, err := svc.upsertScopes(ctx, tx, scopes, ts, "sha"); err != nil {
 			t.Fatalf("upsert: %v", err)
 		}
 		tx.Commit()

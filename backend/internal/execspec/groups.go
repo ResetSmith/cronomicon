@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/inventory"
 )
 
@@ -123,13 +124,13 @@ func ValidName(name string) bool { return inventory.ValidName(name) }
 
 // ScopeGroups returns the group names of a scope's parsed projection, mirroring
 // ScopeHosts. It is the membership source for the trigger-boundary group check.
-func ScopeGroups(ctx context.Context, db *sql.DB, scope string) ([]string, error) {
+func ScopeGroups(ctx context.Context, db *sql.DB, agency, scope string) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT sg.name
 		FROM scope_groups sg
 		JOIN scopes s ON s.id = sg.scope_id
-		WHERE s.name = ?
-		ORDER BY sg.name`, scope)
+		WHERE `+agencyid.ScopeIn("s", "?", "?")+`
+		ORDER BY sg.name`, scope, ownerOrGlobal(agency))
 	if err != nil {
 		return nil, fmt.Errorf("read scope groups: %w", err)
 	}
@@ -157,7 +158,7 @@ func ScopeGroups(ctx context.Context, db *sql.DB, scope string) ([]string, error
 // empty or child-only group whose children have no members) must NOT fall through
 // to a full-scope fan-out — that would silently WIDEN the blast radius beyond the
 // operator's selection. We short-circuit to an empty target set instead.
-func ResolveRun(ctx context.Context, db *sql.DB, scope, targetHost string, hosts, groups []string) (targets []Target, limit string, err error) {
+func ResolveRun(ctx context.Context, db *sql.DB, agency, scope, targetHost string, hosts, groups []string) (targets []Target, limit string, err error) {
 	// TG-3: the pin is part of the limit, not just of the Target set. Before this,
 	// an ansible run pinned to one host shipped NO --limit and ran the whole
 	// inventory while the SSH executor dialed exactly one host — the precise
@@ -167,7 +168,7 @@ func ResolveRun(ctx context.Context, db *sql.DB, scope, targetHost string, hosts
 	requested := len(hosts) > 0 || len(groups) > 0
 	effective := dedupStrings(hosts)
 	if len(groups) > 0 {
-		members, gerr := expandGroupMembers(ctx, db, scope, groups)
+		members, gerr := expandGroupMembers(ctx, db, agency, scope, groups)
 		if gerr != nil {
 			return nil, "", gerr
 		}
@@ -190,7 +191,7 @@ func ResolveRun(ctx context.Context, db *sql.DB, scope, targetHost string, hosts
 		return nil, limit, nil
 	}
 
-	targets, err = ResolveTargets(ctx, db, scope, targetHost, effective)
+	targets, err = ResolveTargets(ctx, db, agency, scope, targetHost, effective)
 	return targets, limit, err
 }
 
@@ -199,14 +200,14 @@ func ResolveRun(ctx context.Context, db *sql.DB, scope, targetHost string, hosts
 // Target set equals what `ansible --limit <group>` resolves from the raw inventory.
 // It loads the scope's full group graph in two drained queries (no nested cursor —
 // SQLite pool rule), then walks it in memory.
-func expandGroupMembers(ctx context.Context, db *sql.DB, scope string, groups []string) ([]string, error) {
-	childMap, err := readGroupEdges(ctx, db, scope,
-		`SELECT sgc.parent, sgc.child FROM scope_group_children sgc JOIN scopes s ON s.id = sgc.scope_id WHERE s.name = ?`)
+func expandGroupMembers(ctx context.Context, db *sql.DB, agency, scope string, groups []string) ([]string, error) {
+	childMap, err := readGroupEdges(ctx, db, agency, scope,
+		`SELECT sgc.parent, sgc.child FROM scope_group_children sgc JOIN scopes s ON s.id = sgc.scope_id WHERE `+agencyid.ScopeIn("s", "?", "?"))
 	if err != nil {
 		return nil, err
 	}
-	hostMap, err := readGroupEdges(ctx, db, scope,
-		`SELECT sgh.group_name, sgh.host FROM scope_group_hosts sgh JOIN scopes s ON s.id = sgh.scope_id WHERE s.name = ?`)
+	hostMap, err := readGroupEdges(ctx, db, agency, scope,
+		`SELECT sgh.group_name, sgh.host FROM scope_group_hosts sgh JOIN scopes s ON s.id = sgh.scope_id WHERE `+agencyid.ScopeIn("s", "?", "?"))
 	if err != nil {
 		return nil, err
 	}
@@ -237,8 +238,8 @@ func expandGroupMembers(ctx context.Context, db *sql.DB, scope string, groups []
 
 // readGroupEdges runs a (key, value) query and groups values by key, fully
 // draining the cursor before returning (so the next query gets a free connection).
-func readGroupEdges(ctx context.Context, db *sql.DB, scope, query string) (map[string][]string, error) {
-	rows, err := db.QueryContext(ctx, query, scope)
+func readGroupEdges(ctx context.Context, db *sql.DB, agency, scope, query string) (map[string][]string, error) {
+	rows, err := db.QueryContext(ctx, query, scope, ownerOrGlobal(agency))
 	if err != nil {
 		return nil, err
 	}

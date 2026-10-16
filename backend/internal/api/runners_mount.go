@@ -396,6 +396,7 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 	// so SIGTERM unwinds it, and registered with the shutdown WaitGroup (PP-L15)
 	// so in-flight runs finalize before the pool closes.
 	sshSvc := sshexec.New(s.db, s.cfg, s.log, gitlab.DefaultCloneDir(), logDir).
+		WithCloneDirs(gitlab.CloneDirFor). // GR-22: each repository's own clone
 		WithShutdownWG(s.shutdownWG)
 	s.sshExec = sshSvc
 	sshSvc.Start(s.runCtx)
@@ -802,22 +803,38 @@ func (s *Server) handleSetRunnerOwner(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		AgencyID string `json:"agencyId"`
+		repairInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.AgencyID == "" {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_error", "agencyId is required")
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "agencyId is required")
+		return
+	}
+	// What is not there is said first (2.4.2, present defect 65): an unknown
+	// runner reads as Global's to the owner gate, so a global administrator
+	// was asked for a repair of a runner that does not exist.
+	var known int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM runners WHERE id = ?`, r.PathValue("id")).Scan(&known); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if known == 0 {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "runner not found")
 		return
 	}
 	if !s.requireKnownAgency(w, r, body.AgencyID) {
 		return
 	}
-	if !id.CanAgency(auth.PermConfigureApp, body.AgencyID) {
-		s.denyEntityAgency(w, r, id, auth.PermConfigureApp, body.AgencyID,
-			"you do not have "+auth.PermConfigureApp+" on agency "+body.AgencyID+", so you cannot hand this runner to it")
+	// Handing a Global agent to the agency it serves repairs a placement from
+	// before 2.3.0 (I4; IN-7; question 43): a global administrator's, with a
+	// reason. (A global administrator holds configureApp on every agency, so
+	// the agency it goes to asks nothing more.)
+	if !s.requireRepair(w, r, id, body.repairInput, "this runner") {
 		return
 	}
 	err := settings.SetRunnerOwner(r.Context(), s.db, r.PathValue("id"), body.AgencyID, id.Email)
 	switch {
 	case err == nil:
+		s.auditRepair(r.Context(), id.Email, "runner "+r.PathValue("id"), "owner set to "+body.AgencyID, body.repairInput)
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, settings.ErrUnknownRunner):
 		httpx.Fail(w, http.StatusNotFound, "not_found", "runner not found")

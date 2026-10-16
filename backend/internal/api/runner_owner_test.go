@@ -301,6 +301,11 @@ func TestG3_EveryRunnerRouteIsTheOwners(t *testing.T) {
 		{gRoot, "ag:FIN", "r-legacy"},
 	} {
 		for i, r := range routes {
+			// The hand-off is a repair since I4 (IN-7; question 43): a
+			// global administrator's, not the owner's.
+			if r.path == "/api/v1/runners/{id}/owner" && tc.who != gRoot {
+				continue
+			}
 			if code := call(tc.who, tc.runner, tc.agency, i); code == 403 || code == 401 {
 				t.Errorf("%s on their own %s — %s %s = %d, want past the gate", tc.who, tc.runner, r.method, r.path, code)
 			}
@@ -356,7 +361,7 @@ func TestG3_NobodyWidensAServeList(t *testing.T) {
 	put := func(who, runner string, agencies ...string) (int, string) {
 		t.Helper()
 		body, _ := json.Marshal([]map[string]any{{"runnerId": runner, "agencyIds": agencies}})
-		rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", who, string(body))
+		rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", who, asRepair(string(body)))
 		return rec.Code, errCode(rec.Body.Bytes())
 	}
 	for _, tc := range []struct {
@@ -400,7 +405,7 @@ func TestG3_NobodyWidensAServeList(t *testing.T) {
 			ms = append(ms, map[string]string{"kind": r[0], "id": r[1]})
 		}
 		body, _ := json.Marshal(map[string]any{"members": ms})
-		rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/"+agency+"/members", who, string(body))
+		rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/"+agency+"/members", who, asRepair(string(body)))
 		return rec.Code, errCode(rec.Body.Bytes())
 	}
 	taxNow := [][2]string{{"scope", "sc:tax"}, {"runner", "r-tax"}, {"runner", "r-legacy"}}
@@ -410,9 +415,14 @@ func TestG3_NobodyWidensAServeList(t *testing.T) {
 	if code, _ := members(gTaxAdmin, "ag:TAX", append(slices.Clone(taxNow), [2]string{"runner", "r-fin"})...); code != 403 {
 		t.Errorf("TAX adding FIN's agent to its own members = %d, want 403", code)
 	}
-	// TAX dropping its own agent would leave it serving nobody.
-	if code, ec := members(gTaxAdmin, "ag:TAX", [2]string{"scope", "sc:tax"}, [2]string{"runner", "r-legacy"}); code != 422 || ec != "owner_removal" {
-		t.Errorf("TAX dropping its own agent from its members = %d %s, want 422 owner_removal", code, ec)
+	// TAX dropping its own agent changes the agent's placement: a global
+	// administrator's repair since I4 (IN-7). (It was 422 owner_removal: it
+	// would leave the agent serving nobody, which a repair is refused for too.)
+	if code, ec := members(gTaxAdmin, "ag:TAX", [2]string{"scope", "sc:tax"}, [2]string{"runner", "r-legacy"}); code != 403 {
+		t.Errorf("TAX dropping its own agent from its members = %d %s, want 403", code, ec)
+	}
+	if code, ec := members(gRoot, "ag:TAX", [2]string{"scope", "sc:tax"}, [2]string{"runner", "r-legacy"}); code != 422 || ec != "owner_removal" {
+		t.Errorf("a global administrator's repair dropping TAX's own agent = %d %s, want 422 owner_removal", code, ec)
 	}
 	// TAX taking the legacy placement off its list is a write on a runner TAX
 	// does not own.
@@ -467,7 +477,7 @@ func TestG3_ALegacyPlacementIsNoticedAndHandedOver(t *testing.T) {
 
 	owner := func(who, runner, agency string) (int, string) {
 		t.Helper()
-		rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+runner+"/owner", who, `{"agencyId":"`+agency+`"}`)
+		rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+runner+"/owner", who, asRepair(`{"agencyId":"`+agency+`"}`))
 		return rec.Code, errCode(rec.Body.Bytes())
 	}
 	// Refused while it still serves two, whoever asks; and every other change.
@@ -492,7 +502,7 @@ func TestG3_ALegacyPlacementIsNoticedAndHandedOver(t *testing.T) {
 	// Narrow it to FIN. It is still a legacy placement (Global's, serving FIN),
 	// and the notice now says what settles it.
 	body, _ := json.Marshal([]map[string]any{{"runnerId": "r-legacy", "agencyIds": []string{"ag:FIN"}}})
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", gRoot, string(body)); rec.Code != 200 {
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", gRoot, asRepair(string(body))); rec.Code != 200 {
 		t.Fatalf("narrowing = %d (%s)", rec.Code, rec.Body)
 	}
 	check()
@@ -629,13 +639,21 @@ func TestG3_BindingTakesTheScopeNotTheRunner(t *testing.T) {
 		rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/"+scope+"/runners", who, string(body))
 		return rec.Code, errCode(rec.Body.Bytes())
 	}
-	// FIN binds its scope to the legacy placement, which serves FIN and is
-	// Global's. Until 2.3.0 this needed authority over the runner.
-	if code, ec := bind(gFinAdmin, "sc:fin", "r-legacy", "r-fin"); code != 200 {
-		t.Fatalf("FIN binding its scope to a runner that serves FIN = %d %s, want 200", code, ec)
+	// FIN binds its scope to its own agent.
+	if code, ec := bind(gFinAdmin, "sc:fin", "r-fin"); code != 200 {
+		t.Fatalf("FIN binding its scope to its own agent = %d %s, want 200", code, ec)
 	}
+	// Not to the legacy placement, listed as serving FIN and Global's: since
+	// §0a (the owner's yes to question 29) it takes its owner's work only, so
+	// it does not serve FIN. (Until then FIN might bind its scope to it.)
+	if code, ec := bind(gFinAdmin, "sc:fin", "r-legacy", "r-fin"); code != 422 || ec != "runner_not_eligible" {
+		t.Errorf("FIN binding its scope to the legacy placement = %d %s, want 422 runner_not_eligible", code, ec)
+	}
+	// A binding to it from before stays, for the replace below.
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_at) VALUES ('sc:fin', 'r-legacy', 'legacy', 't')`)
 	if n := count(t, pool, `SELECT COUNT(*) FROM scope_runners WHERE scope_id = 'sc:fin'`); n != 2 {
-		t.Errorf("%d bindings written, want 2", n)
+		t.Errorf("%d bindings, want 2", n)
 	}
 	// Not to a runner that does not serve FIN, whoever owns it.
 	for _, r := range []string{"r-tax", "r-global"} {
@@ -665,7 +683,6 @@ func TestG3_BindingTakesTheScopeNotTheRunner(t *testing.T) {
 	if code, ec := replace(gFinAdmin, "r-legacy", "r-tax"); code != 422 || ec != "runner_not_eligible" {
 		t.Errorf("FIN replacing with a runner that does not serve FIN = %d %s, want 422 runner_not_eligible", code, ec)
 	}
-	exec := mustExec(t, pool)
 	seedBindingRunner(exec, "r-fin-2", "fin-agent-2", "ag:FIN")
 	if code, ec := replace(gFinAdmin, "r-legacy", "r-fin-2"); code != 200 {
 		t.Errorf("FIN replacing the legacy placement on its scope with its own agent = %d %s, want 200", code, ec)
@@ -1049,5 +1066,21 @@ func TestG4_TheRetiredPinListIsByAuthority(t *testing.T) {
 		if banner := len(list(who)); banner != inbox {
 			t.Errorf("%s: the Scopes banner counts %d pins and the inbox shows %d", who, banner, inbox)
 		}
+	}
+}
+
+// Present defect 65 (found by the review of 2.4.x): handing on a runner that
+// does not exist answered a global administrator 409 repair_required (an
+// unknown runner reads as Global's to the owner gate), and a body without
+// agencyId answered a code the contract does not have.
+func TestRV_HandingOnAnUnknownRunnerIsNotFoundFirst(t *testing.T) {
+	h, _ := gateServer(t)
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/no-such-runner/owner", gRoot, `{"agencyId":"ag:FIN"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("handing on a runner that does not exist, without a repair = %d %s, want 404", rec.Code, rec.Body)
+	}
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/runners/no-such-runner/owner", gRoot, `{}`)
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "validation_failed" {
+		t.Errorf("a body without agencyId = %d %q, want 422 validation_failed", rec.Code, errCode(rec.Body.Bytes()))
 	}
 }

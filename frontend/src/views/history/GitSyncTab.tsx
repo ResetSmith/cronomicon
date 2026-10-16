@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useState } from "react";
-import { api, csrfHeader, fetchCapabilities } from "../../api/client";
-import { GLOBAL_ADMIN_SYNC_ONLY, globalOnly } from "../../api/globalAdmin";
+import { Fragment, useState } from "react";
+import { api, csrfHeader } from "../../api/client";
+import { RepoSelect, useRepoAdmin, useRepos } from "../../components/RepoPicker";
 import { useGet, paged, useColumnWidths, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { type SortColumn } from "../../utils/sort";
@@ -63,16 +63,21 @@ export function GitSyncTab() {
   const [bump, setBump] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [syncErr, setSyncErr] = useState<string | null>(null);
-  // GC (v2.2.2) — POST /git/sync re-reads the whole definitions repo, every
-  // agency's files included, so it takes a global administrator for
-  // configureApp. The log itself is readable by anyone who can open History, so
-  // the button stays for everyone and is disabled with the reason for a caller
-  // the server would refuse — it used to be live for all of them and 403.
-  const [canSync, setCanSync] = useState(false);
-  useEffect(() => {
-    fetchCapabilities().then((caps) => setCanSync(!!caps.configureAppGlobal));
-  }, []);
-  const syncWhy = globalOnly(canSync, GLOBAL_ADMIN_SYNC_ONLY);
+  // 2.4.0 (I3; R8) — every agency has a repository, and its log is read one
+  // repository at a time (`?repo=`; Global's when none is named). Syncing one
+  // is its agency's administrators' (GR-9), Global's a global
+  // administrator's; the button stays for everyone and is disabled with the
+  // reason for a caller the server would refuse.
+  const { repos } = useRepos();
+  const [repoRaw, setRepoRaw] = useState("");
+  const repo = repoRaw || repos[0]?.id || "global";
+  const current = repos.find((r) => r.id === repo);
+  const administers = useRepoAdmin();
+  const syncWhy = administers(current?.agencyId ?? "global")
+    ? ""
+    : current && current.agencyId !== "global"
+      ? `Only ${current.agencyName ?? current.agencyId}'s administrators (or a global administrator) can sync its repository.`
+      : "Only a global administrator (a role on every agency) can sync Global's repository.";
   const [search, setSearchRaw] = useState("");
   const [action, setActionRaw] = useState("All");
   const [status, setStatusRaw] = useState("All");
@@ -102,6 +107,7 @@ export function GitSyncTab() {
       api.GET("/git/history", {
         params: {
           query: {
+            repo,
             page: pager.page + 1,
             pageSize: pager.pageSize,
             ...(sort.sortKey
@@ -113,7 +119,7 @@ export function GitSyncTab() {
           },
         },
       }),
-    [bump, pager.page, pager.pageSize, sort.sortKey, sort.sortDir],
+    [bump, repo, pager.page, pager.pageSize, sort.sortKey, sort.sortDir],
   );
   const pg = paged<GitSyncEvent>(data);
   const items = pg.items;
@@ -158,7 +164,7 @@ export function GitSyncTab() {
   async function syncNow() {
     setSyncing(true);
     setSyncErr(null);
-    const { error: err } = await api.POST("/git/sync", { params: { header: csrfHeader } });
+    const { error: err } = await api.POST("/git/sync", { params: { header: csrfHeader, query: { repo } } });
     setSyncing(false);
     if (err) setSyncErr((err as { message?: string })?.message ?? "sync failed");
     else setBump((b) => b + 1);
@@ -209,6 +215,15 @@ export function GitSyncTab() {
   return (
     <div>
       <div style={filterBar}>
+        <RepoSelect
+          repos={repos}
+          value={repo}
+          onChange={(id) => {
+            setRepoRaw(id);
+            setExpanded(null);
+            pager.setPage(0);
+          }}
+        />
         <SearchInput value={search} onChange={setSearch} placeholder="Search this page by file, message, or author…" />
         <FilterSelect label="Action" value={action} options={ACTIONS} onChange={setAction} />
         <FilterSelect label="Status" value={status} options={STATUSES} onChange={setStatus} />
@@ -251,7 +266,7 @@ export function GitSyncTab() {
                   <EmptyRow
                     colSpan={cols.visible.length}
                     title="No Git sync events yet"
-                    hint="Sync events appear after the first GitLab pull or push."
+                    hint="Sync events appear after the first pull or push."
                     action={
                       <Btn small onClick={syncNow} disabled={syncing || !!syncWhy} title={syncWhy || undefined}>
                         {syncing ? "Syncing…" : "Sync now"}

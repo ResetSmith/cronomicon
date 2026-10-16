@@ -300,6 +300,17 @@ func TestMigrate1220ResolvesEveryReferenceAsBefore(t *testing.T) {
 							gotID = ""
 						}
 						checked++
+						// §0a (IN-6): a row of Global's is Global's runs' only. Where 2.2
+						// gave an agency's run Global's row (or found Global's rows
+						// ambiguous), nothing of Global's may resolve for it now; any
+						// other resolution is unchanged.
+						if len(run.agencies) > 0 && (wantAmbiguous || (wantID != "" && ownerOf(t, pool, tb.kind, wantID) == "global")) {
+							if gotID != "" && ownerOf(t, pool, tb.kind, gotID) == "global" {
+								failures++
+								t.Errorf("%s %s, run in scope %q with agencies %v: resolved Global's row %q", tb.kind, key, run.scope, run.agencies, gotID)
+							}
+							continue
+						}
 						if gotID != wantID || gotAmbiguous != wantAmbiguous {
 							failures++
 							if failures <= 12 {
@@ -336,6 +347,18 @@ func TestMigrate1220ResolvesEveryReferenceAsBefore(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ownerOf is the owner of a row of a kind by its id, now.
+func ownerOf(t *testing.T, pool *sql.DB, kind runref.Kind, id string) string {
+	t.Helper()
+	table := map[runref.Kind]string{runref.KindSecret: "secrets", runref.KindVar: "env_vars", runref.KindKey: "ssh_credentials"}[kind]
+	var owner string
+	//nolint:gosec // the table is one of three literals
+	if err := pool.QueryRow(`SELECT owner_agency FROM `+table+` WHERE id = ?`, id).Scan(&owner); err != nil {
+		return "(" + err.Error() + ")"
+	}
+	return owner
 }
 
 func ownersNow(t *testing.T, pool *sql.DB, kind runref.Kind, key string) string {

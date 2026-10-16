@@ -53,6 +53,7 @@ func becomeGateServer(t *testing.T) (http.Handler, *sql.DB) {
 	exec(`INSERT INTO secrets(id,key,source,scope,owner_agency,created_at)
 	      VALUES('sec-fin','BECOME_PASSWORD','stored','finance','ag-fin','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO secret_agencies(secret_id,agency_id) VALUES('sec-fin','ag-fin')`)
+	agenciesGetTheirOwnRepository(t, pool)
 	return h, pool
 }
 

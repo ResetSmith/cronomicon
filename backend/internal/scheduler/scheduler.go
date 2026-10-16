@@ -17,12 +17,15 @@ package scheduler
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 
 	"github.com/robfig/cron/v3"
 
@@ -46,7 +49,22 @@ const (
 // WorkflowFirer dispatches a scheduled workflow. It is injected via
 // SetWorkflowFirer so the scheduler need not import the workflow package
 // (which itself imports scheduler).
-type WorkflowFirer func(ctx context.Context, source, workflowName, scheduleName, envJSON string)
+type WorkflowFirer func(ctx context.Context, f WorkflowFire)
+
+// WorkflowFire is one scheduled fire of a workflow, as the firer is handed it.
+//
+// UID is WHICH workflow: the row the schedule entry belongs to. Until 2.4.0
+// the firer was handed a source and a name and looked the workflow up by
+// them, and two agencies may each hold a workflow of one name: one agency's
+// schedule ran the other's steps, and its own workflow never ran on its
+// schedule (present defect 34). Source and Name are what the run is called.
+type WorkflowFire struct {
+	UID          string
+	Source       string
+	Name         string
+	ScheduleName string
+	EnvJSON      string
+}
 
 // Scheduler wraps the cron engine and the enqueue logic.
 type Scheduler struct {
@@ -54,14 +72,27 @@ type Scheduler struct {
 	log *slog.Logger
 	cr  *cron.Cron
 
+	// reloadMu makes a reload one step: read the entries, remove the old, add the
+	// new. Reloads are asked for from several goroutines (every in-app save, the
+	// hook after every sync, the backstop), and two that overlapped could each
+	// remove the entries and then each add its set: every schedule in the engine
+	// twice, and every job on the default concurrency policy enqueued twice at
+	// each of its times, until the next reload. Taken before mu, never after.
+	reloadMu sync.Mutex
+
 	mu                sync.Mutex
 	loc               *time.Location       // effective app zone the engine fires in (never nil)
-	loadedSHA         string               // git SHA the current cron entries were loaded from
+	loadedGeneration  string               // definitions generation the current cron entries were loaded at
 	loadedFingerprint string               // DB fingerprint of the loaded job/workflow definitions
 	reloads           int                  // count of reloads (for testing reload gating)
 	wfFirer           WorkflowFirer        // set via SetWorkflowFirer; nil ⇒ workflows don't fire
 	pendingWfFirer    PendingWorkflowFirer // set via SetPendingWorkflowFirer; nil ⇒ pending workflow rows retry
 	notifier          notify.Notifier      // SL — set via SetNotifier; nil ⇒ no SLA/missed-run alerts
+
+	// ownerlessLogged is the schedule entries already reported by
+	// logOwnerlessEntries, so that each is said once and not at every reload.
+	// Read and written under reloadMu.
+	ownerlessLogged map[string]bool
 }
 
 // newCronEngine builds a cron engine that fires in loc. robfig/cron fixes its
@@ -124,6 +155,12 @@ func (s *Scheduler) RebuildWithLocation(ctx context.Context, newLoc *time.Locati
 	// zone is then a safe no-op (idempotency check) because the backstop converges.
 	s.cr.Start()
 	if reloadErr != nil {
+		// The new engine has no entries (the old one's went with it), so what
+		// the backstop compares is forgotten: its next pass finds a difference
+		// and reloads. Without this it found none, and the engine stayed empty.
+		s.mu.Lock()
+		s.loadedGeneration, s.loadedFingerprint = "", ""
+		s.mu.Unlock()
 		s.log.Error("scheduler: timezone rebuild reload failed; engine started, entries reload via backstop", "zone", newLoc.String(), "err", reloadErr)
 		return reloadErr
 	}
@@ -171,8 +208,8 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	return nil
 }
 
-// backstopLoop periodically reloads if the git SHA advanced, as a fallback for a
-// missed/failed onSyncComplete callback.
+// backstopLoop periodically reloads if the definitions generation advanced or
+// the tables changed, as a fallback for a missed/failed onSyncComplete callback.
 func (s *Scheduler) backstopLoop(ctx context.Context) {
 	t := time.NewTicker(reloadBackstopInterval)
 	defer t.Stop()
@@ -181,31 +218,37 @@ func (s *Scheduler) backstopLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.ReloadIfChanged(ctx, s.currentSHA(ctx))
+			s.ReloadIfChanged(ctx, s.currentGeneration(ctx))
 		}
 	}
 }
 
-// currentSHA reads the last-synced git SHA from git_sync_state (empty if unknown).
-func (s *Scheduler) currentSHA(ctx context.Context) string {
-	var sha sql.NullString
-	_ = s.db.QueryRowContext(ctx, `SELECT last_sha FROM git_sync_state WHERE id = 1`).Scan(&sha)
-	return sha.String
+// currentGeneration reads the definitions generation: a counter that every
+// sync of every repository advances in its transaction (GR-29, migration
+// 1330). Empty if it cannot be read. Until 2.4.0 this half of the reload gate
+// was the commit of the last sync, of the one repository there was.
+func (s *Scheduler) currentGeneration(ctx context.Context) string {
+	var n sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT n FROM definitions_generation WHERE id = 1`).Scan(&n); err != nil || !n.Valid {
+		return ""
+	}
+	return strconv.FormatInt(n.Int64, 10)
 }
 
-// ReloadIfChanged reloads only when sha differs from the SHA the current cron
-// entries were loaded from, or if the database-level fingerprint has drifted.
-// This is the onSyncComplete hook — it avoids tearing down and re-adding all
-// entries on every no-op poll. An empty sha forces a reload.
-func (s *Scheduler) ReloadIfChanged(ctx context.Context, sha string) {
+// ReloadIfChanged reloads only when generation differs from the one the
+// current cron entries were loaded at, or if the database-level fingerprint has
+// drifted. This is the onSyncComplete hook — it avoids tearing down and
+// re-adding all entries when nothing changed. An empty generation forces a
+// reload.
+func (s *Scheduler) ReloadIfChanged(ctx context.Context, generation string) {
 	fp := s.dbFingerprint(ctx)
 
 	s.mu.Lock()
-	cur := s.loadedSHA
+	cur := s.loadedGeneration
 	curFP := s.loadedFingerprint
 	s.mu.Unlock()
 
-	if sha != "" && sha == cur && fp == curFP {
+	if generation != "" && generation == cur && fp == curFP {
 		return
 	}
 	if err := s.Reload(ctx); err != nil {
@@ -213,30 +256,116 @@ func (s *Scheduler) ReloadIfChanged(ctx context.Context, sha string) {
 	}
 }
 
-// Reload removes all existing entries and re-registers them from the DB.
-// Safe to call multiple times (e.g. after a git sync rebuilds the definition
-// tables). It reads jobs and workflows from definition_schedules.
+// scheduleEntry is one cron entry read from the tables and ready to be
+// registered: its schedule, what it fires, and the log line that says so.
+type scheduleEntry struct {
+	sched      cron.Schedule
+	job        cron.Job
+	registered func()
+}
+
+// Reload replaces the cron entries with what the tables say now. Safe to call
+// multiple times (e.g. after a git sync rebuilds the definition tables). It
+// reads jobs and workflows from definition_schedules.
+//
+// It READS FIRST and removes the entries that are firing only once the new set
+// is in hand. A reload whose read fails returns its error and changes nothing:
+// what was firing goes on firing. Until 2.4.0 it removed every entry and then
+// read, so a read that failed (its context had ended: the request that asked
+// for the reload was abandoned) left the scheduler with no entries; and since
+// what it compares to decide whether to reload was as it had been, neither the
+// next caller nor the backstop put them back. Every schedule had stopped.
+//
+// One reload at a time (reloadMu). The read is inside it too, so that of two
+// reloads asked for together the one that swaps last is also the one that read
+// last, and the entries left are the newest reading of the tables.
 func (s *Scheduler) Reload(ctx context.Context) error {
-	// Remove all existing entries.
-	for _, e := range s.cr.Entries() {
-		s.cr.Remove(e.ID)
-	}
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
 
-	if err := s.reloadJobs(ctx); err != nil {
-		return err
-	}
-	if err := s.reloadWorkflows(ctx); err != nil {
-		return err
-	}
-
+	// What this reload will be remembered as having loaded, read BEFORE the
+	// entries: a sync that commits while the entries are being read or swapped
+	// is then newer than what is remembered, and its hook (or the backstop)
+	// reloads. Read afterwards, as it was until 2.4.0, such a sync was
+	// remembered as loaded when it was not, and nothing loaded it.
+	gen := s.currentGeneration(ctx)
 	fp := s.dbFingerprint(ctx)
 
+	jobs, err := s.loadJobEntries(ctx)
+	if err != nil {
+		return err
+	}
+	wfs, err := s.loadWorkflowEntries(ctx)
+	if err != nil {
+		return err
+	}
+	s.logOwnerlessEntries(ctx)
+
+	// The engine as it is now. A timezone change swaps the engine for a new one
+	// and then reloads; if it swaps while this reload is under way, this one
+	// fills the engine that was replaced and the timezone change's own reload,
+	// which waits its turn behind this one, fills the new.
 	s.mu.Lock()
-	s.loadedSHA = s.currentSHA(ctx)
+	cr := s.cr
+	s.mu.Unlock()
+	for _, e := range cr.Entries() {
+		cr.Remove(e.ID)
+	}
+	for _, e := range append(jobs, wfs...) {
+		cr.Schedule(e.sched, e.job)
+		e.registered()
+	}
+
+	s.mu.Lock()
+	s.loadedGeneration = gen
 	s.loadedFingerprint = fp
 	s.reloads++
 	s.mu.Unlock()
 	return nil
+}
+
+// logOwnerlessEntries says, once for each, which schedule entries the two
+// loaders left out because they record no owner and two definitions hold
+// their name (see loadJobEntries). Such an entry does not fire. The notice
+// schedule_entry_no_owner says so in the inbox, with the agencies of the
+// definitions; this line is the server's own record of it. Called by Reload,
+// under reloadMu.
+func (s *Scheduler) logOwnerlessEntries(ctx context.Context) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ds.owner_kind, ds.owner_source, ds.owner_name, ds.name
+		  FROM definition_schedules ds
+		 WHERE ds.owner_uid IS NULL
+		   AND CASE ds.owner_kind
+		         WHEN 'job' THEN (SELECT COUNT(*) FROM jobs o WHERE o.name = ds.owner_name AND o.source = ds.owner_source)
+		         ELSE            (SELECT COUNT(*) FROM workflows o WHERE o.name = ds.owner_name AND o.source = ds.owner_source)
+		       END > 1
+		 ORDER BY ds.owner_kind, ds.owner_source, ds.owner_name, ds.name`)
+	if err != nil {
+		s.log.Error("scheduler: read schedule entries with no owner", "err", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, source, owner, entry string
+		if err := rows.Scan(&kind, &source, &owner, &entry); err != nil {
+			s.log.Error("scheduler: read schedule entries with no owner", "err", err)
+			return
+		}
+		key := kind + "\x00" + source + "\x00" + owner + "\x00" + entry
+		if s.ownerlessLogged[key] {
+			continue
+		}
+		if s.ownerlessLogged == nil {
+			s.ownerlessLogged = map[string]bool{}
+		}
+		s.ownerlessLogged[key] = true
+		s.log.Warn("scheduler: a schedule entry records no owner and more than one definition holds its name: it does not fire. "+
+			"Add the schedule to the definition it belongs to; the notice schedule_entry_no_owner names the entry and the definitions",
+			"kind", kind, "source", source, "definition", owner, "entry", entry)
+	}
+	if err := rows.Err(); err != nil {
+		s.log.Error("scheduler: read schedule entries with no owner", "err", err)
+	}
 }
 
 // dbFingerprint generates a simple string fingerprint of the jobs, workflows, and
@@ -253,7 +382,9 @@ func (s *Scheduler) dbFingerprint(ctx context.Context) string {
 	return fmt.Sprintf("%d:%d:%d:%s:%s", jobCount, wfCount, schedCount, maxJobTime.String, maxWfTime.String)
 }
 
-func (s *Scheduler) reloadJobs(ctx context.Context) error {
+// loadJobEntries reads every job schedule that should fire and builds its
+// entry. It registers nothing.
+func (s *Scheduler) loadJobEntries(ctx context.Context) ([]scheduleEntry, error) {
 	type jobRow struct {
 		schedName, cron   string
 		envJSON           sql.NullString
@@ -276,20 +407,30 @@ func (s *Scheduler) reloadJobs(ctx context.Context) error {
 	// with no error and nothing in the log, so a uid-only join would turn any
 	// missed writer into silently unscheduled work. Same shape as the cascade
 	// triggers (migration 1020), for the same reason.
+	//
+	// The name arm holds only where ONE job holds the name (2.4.0; the owner's
+	// decision of 2026-10-13, R5's question 11). Since a name can be held by a
+	// job in each agency, an entry with no owner under a name two jobs hold
+	// joined them both, and each ran at the other's times, on its own hosts.
+	// Which of them the entry belongs to is not recorded (the upgrade to
+	// schedule identity, migration 1300, left such an entry as it found it),
+	// so it fires neither, and logOwnerlessEntries says so. Every job of the
+	// name counts, one in the recycle bin too: the entry may be its.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ds.name, ds.cron, ds.env, ds.start_at, ds.end_at, ds.interval,
 		       j.name, j.source, j.run_type, j.scope, j.concurrency_policy, j.concurrency_key,
 		       COALESCE(j.uid,'')
 		FROM definition_schedules ds
 		JOIN jobs j ON (ds.owner_uid IS NOT NULL AND j.uid = ds.owner_uid)
-		            OR (ds.owner_uid IS NULL AND j.name = ds.owner_name AND j.source = ds.owner_source)
+		            OR (ds.owner_uid IS NULL AND j.name = ds.owner_name AND j.source = ds.owner_source
+		                AND (SELECT COUNT(*) FROM jobs o WHERE o.name = ds.owner_name AND o.source = ds.owner_source) = 1)
 		-- RH: a binned definition must stop firing. The soft delete is an UPDATE,
 		-- so the AFTER DELETE cascade never ran and ds still has its rows — this
 		-- filter is what actually retires the entry.
 		WHERE ds.owner_kind = 'job' AND j.enabled = 1 AND j.deleted_at IS NULL
 	`)
 	if err != nil {
-		return fmt.Errorf("query scheduled jobs: %w", err)
+		return nil, fmt.Errorf("query scheduled jobs: %w", err)
 	}
 	defer rows.Close()
 
@@ -305,9 +446,10 @@ func (s *Scheduler) reloadJobs(ctx context.Context) error {
 		jobs = append(jobs, j)
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate scheduled jobs: %w", err)
+		return nil, fmt.Errorf("iterate scheduled jobs: %w", err)
 	}
 
+	entries := make([]scheduleEntry, 0, len(jobs))
 	for _, j := range jobs {
 		// One seam for all three modes (cron / interval / once): ParseSpec
 		// resolves the mode and applies the activation window, so the engine
@@ -323,53 +465,64 @@ func (s *Scheduler) reloadJobs(ctx context.Context) error {
 		if j.scope.Valid {
 			scope = j.scope.String
 		}
-		concKey := cronutil.ConcurrencyKey(j.concurrencyKey.String, j.uid, j.source, j.name)
+		concKey := cronutil.ConcurrencyKey(j.concurrencyKey.String, keyAgency(ctx, s.db, j.concurrencyKey.String, j.uid, j.source, j.name), j.uid, j.source, j.name)
 		envJSON := j.envJSON.String
-		s.cr.Schedule(sched, cron.FuncJob(func() {
-			s.fire(j.source, j.name, j.uid, j.runType, scope, j.concurrencyPolicy, concKey, j.schedName, envJSON)
-		}))
-		s.log.Info("scheduler: registered job schedule", "job", j.name, "schedule", j.schedName,
-			"spec", cronutil.DescribeSpec(spec), "window", windowLogState(spec.Window, time.Now()))
+		entries = append(entries, scheduleEntry{
+			sched: sched,
+			job: cron.FuncJob(func() {
+				s.fire(j.source, j.name, j.uid, j.runType, scope, j.concurrencyPolicy, concKey, j.schedName, envJSON)
+			}),
+			registered: func() {
+				s.log.Info("scheduler: registered job schedule", "job", j.name, "schedule", j.schedName,
+					"spec", cronutil.DescribeSpec(spec), "window", windowLogState(spec.Window, time.Now()))
+			},
+		})
 	}
-	return nil
+	return entries, nil
 }
 
-func (s *Scheduler) reloadWorkflows(ctx context.Context) error {
+// loadWorkflowEntries is loadJobEntries for workflows.
+func (s *Scheduler) loadWorkflowEntries(ctx context.Context) ([]scheduleEntry, error) {
 	type wfRow struct {
 		schedName, cron string
 		envJSON         sql.NullString
 		startAt, endAt  sql.NullString
 		interval        sql.NullString
 		name, source    string
+		uid             string
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ds.name, ds.cron, ds.env, ds.start_at, ds.end_at, ds.interval, w.name, w.source
+		SELECT ds.name, ds.cron, ds.env, ds.start_at, ds.end_at, ds.interval, w.name, w.source,
+		       COALESCE(w.uid, '')
 		FROM definition_schedules ds
-		-- R2-3 — uid-keyed with a name arm, exactly as reloadJobs above; see the
-		-- comment there for why the fallback is mandatory rather than defensive.
+		-- R2-3 — uid-keyed with a name arm, exactly as loadJobEntries above; see the
+		-- comment there for why the fallback is mandatory rather than defensive,
+		-- and why it holds only where one workflow holds the name.
 		JOIN workflows w ON (ds.owner_uid IS NOT NULL AND w.uid = ds.owner_uid)
-		                 OR (ds.owner_uid IS NULL AND w.name = ds.owner_name AND w.source = ds.owner_source)
+		                 OR (ds.owner_uid IS NULL AND w.name = ds.owner_name AND w.source = ds.owner_source
+		                     AND (SELECT COUNT(*) FROM workflows o WHERE o.name = ds.owner_name AND o.source = ds.owner_source) = 1)
 		WHERE ds.owner_kind = 'workflow' AND w.enabled = 1 AND w.deleted_at IS NULL -- RH
 	`)
 	if err != nil {
-		return fmt.Errorf("query scheduled workflows: %w", err)
+		return nil, fmt.Errorf("query scheduled workflows: %w", err)
 	}
 	defer rows.Close()
 
 	var wfs []wfRow
 	for rows.Next() {
 		var wf wfRow
-		if err := rows.Scan(&wf.schedName, &wf.cron, &wf.envJSON, &wf.startAt, &wf.endAt, &wf.interval, &wf.name, &wf.source); err != nil {
+		if err := rows.Scan(&wf.schedName, &wf.cron, &wf.envJSON, &wf.startAt, &wf.endAt, &wf.interval, &wf.name, &wf.source, &wf.uid); err != nil {
 			s.log.Error("scheduler: scan workflow schedule row", "err", err)
 			continue
 		}
 		wfs = append(wfs, wf)
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate scheduled workflows: %w", err)
+		return nil, fmt.Errorf("iterate scheduled workflows: %w", err)
 	}
 
+	entries := make([]scheduleEntry, 0, len(wfs))
 	for _, wf := range wfs {
 		spec := cronutil.Spec{Cron: wf.cron, Interval: wf.interval.String, Window: parseWindowCols(wf.startAt, wf.endAt)}
 		sched, err := cronutil.ParseSpec(spec)
@@ -379,13 +532,20 @@ func (s *Scheduler) reloadWorkflows(ctx context.Context) error {
 			continue
 		}
 		envJSON := wf.envJSON.String
-		s.cr.Schedule(sched, cron.FuncJob(func() {
-			s.fireWorkflow(wf.source, wf.name, wf.schedName, envJSON)
-		}))
-		s.log.Info("scheduler: registered workflow schedule", "workflow", wf.name, "schedule", wf.schedName,
-			"spec", cronutil.DescribeSpec(spec), "window", windowLogState(spec.Window, time.Now()))
+		entries = append(entries, scheduleEntry{
+			sched: sched,
+			job: cron.FuncJob(func() {
+				// The uid of the row this entry joined: the entry's own workflow,
+				// whatever else is called the same.
+				s.fireWorkflow(wf.uid, wf.source, wf.name, wf.schedName, envJSON)
+			}),
+			registered: func() {
+				s.log.Info("scheduler: registered workflow schedule", "workflow", wf.name, "schedule", wf.schedName,
+					"spec", cronutil.DescribeSpec(spec), "window", windowLogState(spec.Window, time.Now()))
+			},
+		})
 	}
-	return nil
+	return entries, nil
 }
 
 // fire is called by the cron engine on each tick.  It honors operator pause,
@@ -403,7 +563,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 
 	// Operator pause (migration 030; 170 made it source/owner_kind aware): a
 	// paused job's cron fires are skipped.
-	if s.isPaused(ctx, source, "job", jobName) {
+	if s.isPaused(ctx, source, "job", jobName, jobUID) {
 		s.log.Info("scheduler: skip fire — job paused", "job", jobName, "source", source, "schedule", scheduleName)
 		// SL-A: record it. A pause is an EXPECTED miss, and the missed-run
 		// detector can only call a fire expected if the suppression left a row —
@@ -424,7 +584,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	// BEFORE the concurrency cap on purpose: a fire suppressed by policy must be
 	// recorded as suppressed-by-policy, not swallowed by a cap that happened to be
 	// full at the same moment. Bindings are read fresh per fire (calendar_gate.go).
-	if g := s.calendarVerdict(ctx, source, "job", jobName, scheduleName); g.Suppressed() {
+	if g := s.calendarVerdict(ctx, source, "job", jobName, jobUID, scheduleName); g.Suppressed() {
 		v := g.Verdict
 		s.log.Info("scheduler: skip fire — suppressed by calendar",
 			"job", jobName, "source", source, "schedule", scheduleName, "day", g.Day,
@@ -487,11 +647,17 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	// R2-5 — the per-fire read keys on the identity the reload resolved, never
 	// on the (name, source) pair a sibling may now share.
 	var jobEnv, jobTargetHost, jobSSHUser, jobSSHCred sql.NullString
-	_ = s.db.QueryRowContext(ctx,
+	// A read that fails stops the fire (2.4.2, present defect 66): read as
+	// nothing, the run lost its target host (and fanned out over the whole
+	// scope, the TG-1 class) and its connect-as identity.
+	if err := s.db.QueryRowContext(ctx,
 		`SELECT env_json, target_host, ssh_user, ssh_credential FROM jobs
 		  WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
 		jobUID, jobUID, jobName, source).
-		Scan(&jobEnv, &jobTargetHost, &jobSSHUser, &jobSSHCred)
+		Scan(&jobEnv, &jobTargetHost, &jobSSHUser, &jobSSHCred); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		s.log.Error("scheduler: read the job — fire not enqueued", "job", jobName, "err", err)
+		return
+	}
 	if !execspec.IdentityCapableRunType(runType) {
 		jobSSHUser.String, jobSSHCred.String = "", ""
 	}
@@ -512,9 +678,9 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	}
 	// M3/T3.6 — snapshot the agency SET the effective scope belongs to onto the run,
 	// frozen at enqueue and intersected against runner membership at claim time
-	// (hard isolation). The scalar ScopeAgency is gone: a scope may now belong to
-	// several agencies, so there is no single answer to snapshot.
-	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, scope)
+	// (hard isolation). A scope belongs to one agency (a shared one is Global's
+	// since 1410), and the set is kept because a run's agencies are a set.
+	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, jobAgencyFor(ctx, s.db, jobUID, source, jobName), scope)
 	if aerr != nil {
 		// Not enqueued: a run written with a guessed agency set would be dispatched
 		// to the wrong runners. Missed-run detection reports the fire that did not
@@ -542,11 +708,15 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	// R2F-1 — by identity, like every other per-fire read above: the script whose
 	// bindings this probe checks must be the one THIS job references, not a
 	// same-named sibling's.
-	var scriptRef sql.NullString
-	_ = s.db.QueryRowContext(ctx,
-		`SELECT script_ref FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
-		jobUID, jobUID, jobName, source).Scan(&scriptRef)
-	owners := runref.RunOwners(source, jobName, jobUID, scriptRef.String)
+	var scriptRef, scriptUID sql.NullString
+	// As above: read as nothing, the script's bindings were not asked about.
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT script_ref, script_uid FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
+		jobUID, jobUID, jobName, source).Scan(&scriptRef, &scriptUID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		s.log.Error("scheduler: read the job's script — fire not enqueued", "job", jobName, "err", err)
+		return
+	}
+	owners := runref.RunOwners(source, jobName, jobUID, scriptRef.String, scriptUID.String)
 	blocked, berr := runref.UnboundRunBlocked(ctx, s.db, owners, scope, scopeAgencies)
 	if berr != nil {
 		s.log.Error("scheduler: check unbound references", "job", jobName, "err", berr)
@@ -564,6 +734,25 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 		}
 		return
 	}
+	// GR-15 — a job of an agency's repository whose scope is not that agency's
+	// (the scope was given to another agency after the sync that accepted the
+	// job). Recorded as skipped like the refusals around it, and as a STANDING
+	// refusal: it holds until somebody moves the scope back or the repository
+	// syncs, and one row a day says so.
+	if stranded, serr := runref.RepoScopeMismatch(ctx, s.db, jobUID, source, jobName, scope); serr != nil {
+		s.log.Error("scheduler: check the job's repository against its scope", "job", jobName, "err", serr)
+		return
+	} else if stranded {
+		s.log.Warn("scheduler: skip fire — the job's scope does not belong to its repository's agency",
+			"job", jobName, "scope", scope)
+		if err := s.recordSuppression(ctx, EnqueueParams{
+			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
+			TargetHost: jobTargetHost.String, ScheduleName: scheduleName, Executor: executor,
+		}, s.standingRefusal(runref.ReasonRepoScopeMismatch)); err != nil {
+			s.log.Error("scheduler: record repository-scope skip", "job", jobName, "err", err)
+		}
+		return
+	}
 	// SB — the executor could not be resolved, or the resolution refuses the
 	// fire. An unreadable binding must not be guessed at: the one wrong guess
 	// available is "this scope is not bound", which sends a confined job out
@@ -575,7 +764,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	// runner cannot, so the fire is recorded as skipped (same shape as the
 	// unbound refusal above, same argument — nobody is watching a cron fire, and
 	// a row that waits for a runner that does not exist holds the fleet cap).
-	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType, scope)
+	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType, jobAgencyFor(ctx, s.db, jobUID, source, jobName), scope)
 	if kerr != nil {
 		s.log.Error("scheduler: check key bindings", "job", jobName, "err", kerr)
 		return
@@ -591,6 +780,24 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 			TargetHost: jobTargetHost.String, ScheduleName: scheduleName, Executor: executor,
 		}, s.standingRefusal(runref.ReasonKeyBindingNeedsAgent)); err != nil {
 			s.log.Error("scheduler: record key-binding skip", "job", jobName, "err", err)
+		}
+		return
+	}
+	// Present defect 44 — a project job with no agent that allows checkout to
+	// wait for. The same shape and the same argument as the key-bound job
+	// above: nobody is watching a cron fire, and a run that waits for an agent
+	// that does not exist holds the installation's cap at every fire.
+	if stuck, cerr := runref.CheckoutNeedsAgent(ctx, s.db, jobUID, source, jobName, scope); cerr != nil {
+		s.log.Error("scheduler: check for an agent that allows checkout", "job", jobName, "err", cerr)
+		return
+	} else if stuck {
+		s.log.Warn("scheduler: skip fire — a project job with no agent that allows checkout",
+			"job", jobName, "scope", scope)
+		if err := s.recordSuppression(ctx, EnqueueParams{
+			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
+			TargetHost: jobTargetHost.String, ScheduleName: scheduleName, Executor: executor,
+		}, s.standingRefusal(runref.ReasonCheckoutNeedsAgent)); err != nil {
+			s.log.Error("scheduler: record checkout skip", "job", jobName, "err", err)
 		}
 		return
 	}
@@ -717,7 +924,9 @@ func (s *Scheduler) standingRefusal(reason string) skipRecord {
 
 // fireWorkflow dispatches a scheduled workflow via the injected firer, honoring
 // the workflow pause sentinel ("__wf__"+name) and the global concurrency cap.
-func (s *Scheduler) fireWorkflow(source, workflowName, scheduleName, envJSON string) {
+// uid is the workflow the entry belongs to ("" only where a caller has none):
+// it is what the firer starts and what a suppressed fire is stamped with.
+func (s *Scheduler) fireWorkflow(uid, source, workflowName, scheduleName, envJSON string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -729,11 +938,11 @@ func (s *Scheduler) fireWorkflow(source, workflowName, scheduleName, envJSON str
 		return
 	}
 
-	if s.isPaused(ctx, source, "workflow", workflowName) {
+	if s.isPaused(ctx, source, "workflow", workflowName, uid) {
 		s.log.Info("scheduler: skip fire — workflow paused", "workflow", workflowName, "source", source, "schedule", scheduleName)
 		// SL-A — the workflow half. CAL-32 already argued why this cannot reuse
 		// recordSkippedFire: that one is job-shaped throughout.
-		if err := s.recordWorkflowSuppression(ctx, source, workflowName, scheduleName,
+		if err := s.recordWorkflowSuppression(ctx, uid, source, workflowName, scheduleName,
 			skipRecord{Reason: reasonWorkflowPaused, Mode: dedupeEpisodeReason}); err != nil {
 			s.log.Error("scheduler: record paused skip", "workflow", workflowName, "err", err)
 		}
@@ -744,13 +953,13 @@ func (s *Scheduler) fireWorkflow(source, workflowName, scheduleName, envJSON str
 	// own schedule entry suppresses the WHOLE run; the step jobs' calendars are
 	// deliberately not consulted (§2.6), because a per-step calendar would mean a
 	// workflow that half-runs, which is worse than either outcome.
-	if g := s.calendarVerdict(ctx, source, "workflow", workflowName, scheduleName); g.Suppressed() {
+	if g := s.calendarVerdict(ctx, source, "workflow", workflowName, uid, scheduleName); g.Suppressed() {
 		v := g.Verdict
 		s.log.Info("scheduler: skip fire — suppressed by calendar",
 			"workflow", workflowName, "source", source, "schedule", scheduleName, "day", g.Day,
 			"calendar", v.Calendar, "polarity", v.Polarity, "label", v.Label, "recorded", v.Record)
 		if v.Record {
-			if err := s.recordWorkflowSuppression(ctx, source, workflowName, scheduleName, g.record()); err != nil {
+			if err := s.recordWorkflowSuppression(ctx, uid, source, workflowName, scheduleName, g.record()); err != nil {
 				s.log.Error("scheduler: record calendar suppression", "workflow", workflowName, "err", err)
 			}
 		}
@@ -768,34 +977,44 @@ func (s *Scheduler) fireWorkflow(source, workflowName, scheduleName, envJSON str
 			"workflow", workflowName, "active", active, "cap", maxConcurrent)
 		// SL-A. CAL-32's header noted fireWorkflow "dropped even its
 		// concurrency-cap skips with a log line" — this is that gap closed.
-		if err := s.recordWorkflowSuppression(ctx, source, workflowName, scheduleName,
+		if err := s.recordWorkflowSuppression(ctx, uid, source, workflowName, scheduleName,
 			skipRecord{Reason: reasonConcurrencyCap, Mode: dedupeEpisodeReason}); err != nil {
 			s.log.Error("scheduler: record capped skip", "workflow", workflowName, "err", err)
 		}
 		return
 	}
 
-	firer(ctx, source, workflowName, scheduleName, envJSON)
+	firer(ctx, WorkflowFire{UID: uid, Source: source, Name: workflowName, ScheduleName: scheduleName, EnvJSON: envJSON})
 }
 
 // isPaused reports whether a paused_jobs row exists for a definition, keyed by
 // (source, owner_kind, name) since migration 170 (Q-G retired the "__wf__" name
 // prefix in favor of an explicit owner_kind column).
-func (s *Scheduler) isPaused(ctx context.Context, source, ownerKind, name string) bool {
-	return IsPaused(ctx, s.db, source, ownerKind, name)
+//
+// By the definition's IDENTITY where the caller has it (2.4.0): see IsPausedUID.
+func (s *Scheduler) isPaused(ctx context.Context, source, ownerKind, name, uid string) bool {
+	return IsPausedUID(ctx, s.db, source, ownerKind, name, uid)
 }
 
-// IsPaused is the DB-level twin of (*Scheduler).isPaused, exported for trigger
-// paths that live outside this package (ET-D's file-arrival watcher).
+// IsPausedUID is IsPaused for ONE definition (2.4.0).
 //
-// Nothing downstream of Enqueue consults paused_jobs — the pause is checked by
-// each trigger path, one gate per producer (see the reaction.go note). A new
-// producer that skips this check fires paused jobs.
-func IsPaused(ctx context.Context, database *sql.DB, source, ownerKind, name string) bool {
+// A pause is written with the identity of the definition it pauses
+// (paused_jobs.owner_uid), and was read by source, kind and NAME. A name can be
+// held by a definition in each agency: pausing one agency's `nightly` paused
+// every agency's, and resuming it resumed none of the others' own pauses
+// correctly either. A caller that has the definition's uid is answered for
+// that definition: the pause that records it, or a pause of the name that
+// records no owner (written before a pause recorded one, when there was one
+// definition of the name). A caller with no uid is answered by the name, as
+// before.
+func IsPausedUID(ctx context.Context, database *sql.DB, source, ownerKind, name, uid string) bool {
 	var n int
-	_ = database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM paused_jobs WHERE source = ? AND owner_kind = ? AND name = ?`,
-		source, ownerKind, name).Scan(&n)
+	_ = database.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM paused_jobs
+		 WHERE owner_kind = ?1
+		   AND ((?2 <> '' AND owner_uid = ?2)
+		        OR ((owner_uid IS NULL OR ?2 = '') AND source = ?3 AND name = ?4))`,
+		ownerKind, uid, source, name).Scan(&n)
 	return n > 0
 }
 
@@ -919,9 +1138,14 @@ func resolveEnqueueUID(ctx context.Context, database *sql.DB, p EnqueueParams) s
 	if p.JobUID != "" {
 		return p.JobUID
 	}
+	// Only when ONE job holds the name (2.4.2, with present defect 58): this
+	// took whichever row of the name SQLite returned first, so a producer with
+	// no identity was stamped with one of two agencies' twins — and a workflow
+	// step refused for being another agency's, written with no identity on
+	// purpose, was stamped with that agency's job again.
 	var uid sql.NullString
 	_ = database.QueryRowContext(ctx,
-		`SELECT uid FROM jobs WHERE name = ? AND source = ?`,
+		`SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs WHERE name = ? AND source = ?`,
 		p.JobName, p.jobSourceOrDefault()).Scan(&uid)
 	return uid.String
 }
@@ -1056,8 +1280,8 @@ func (s *Scheduler) recordSuppression(ctx context.Context, p EnqueueParams, rec 
 // recordWorkflowSuppression is recordSuppression's twin. Written at the same
 // time deliberately: a guard added to one of these and not the other is how the
 // last several defects in this area survived review.
-func (s *Scheduler) recordWorkflowSuppression(ctx context.Context, source, workflowName, scheduleName string, rec skipRecord) error {
-	wrote, err := recordSkippedWorkflowFire(ctx, s.db, source, workflowName, scheduleName, rec)
+func (s *Scheduler) recordWorkflowSuppression(ctx context.Context, uid, source, workflowName, scheduleName string, rec skipRecord) error {
+	wrote, err := recordSkippedWorkflowFire(ctx, s.db, uid, source, workflowName, scheduleName, rec)
 	if err != nil || !wrote {
 		return err
 	}
@@ -1143,6 +1367,11 @@ func recordSkippedFire(ctx context.Context, database *sql.DB, p EnqueueParams, r
 // suppressions swallows neither, and vice versa. That independence is the actual
 // fix behind CAL-8; before it, "the most recent run is already skipped" made
 // every reason inherit whichever one happened to fire last.
+//
+// "The definition" is p.JobUID where the caller has one (2.4.0), as the
+// workflow arm's is: one agency's recorded skip does not stand for another
+// agency's job of the same name. A row that carries no identity is still found
+// by its name and source.
 func skipAlreadyRecorded(ctx context.Context, database *sql.DB, p EnqueueParams, rec skipRecord) (bool, error) {
 	switch rec.Mode {
 	case dedupeDay:
@@ -1168,10 +1397,10 @@ func skipAlreadyRecorded(ctx context.Context, database *sql.DB, p EnqueueParams,
 		// clock rollback leaves dozens of future-dated rows ahead of today's.
 		rows, err := database.QueryContext(ctx, `
 			SELECT created_at FROM runs
-			 WHERE job_name = ? AND job_source = ? AND COALESCE(schedule_name,'') = ?
+			 WHERE `+jobRowsOfEntrySQL+` AND COALESCE(schedule_name,'') = ?4
 			   AND status = 'skipped' AND suppressed_by_calendar IS NOT NULL
 			 ORDER BY created_at DESC, rowid DESC LIMIT 50`,
-			p.JobName, p.jobSourceOrDefault(), p.ScheduleName)
+			p.JobUID, p.JobName, p.jobSourceOrDefault(), p.ScheduleName)
 		if err != nil {
 			return false, fmt.Errorf("check recorded calendar skips: %w", err)
 		}
@@ -1201,10 +1430,10 @@ func skipAlreadyRecorded(ctx context.Context, database *sql.DB, p EnqueueParams,
 		var status, reason, createdAt string
 		err := database.QueryRowContext(ctx, `
 			SELECT status, COALESCE(queued_reason,''), created_at FROM runs
-			 WHERE job_name = ? AND job_source = ? AND COALESCE(schedule_name,'') = ?
+			 WHERE `+jobRowsOfEntrySQL+` AND COALESCE(schedule_name,'') = ?4
 			   AND suppressed_by_calendar IS NULL
 			 ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-			p.JobName, p.jobSourceOrDefault(), p.ScheduleName).Scan(&status, &reason, &createdAt)
+			p.JobUID, p.JobName, p.jobSourceOrDefault(), p.ScheduleName).Scan(&status, &reason, &createdAt)
 		if err != nil {
 			return false, nil // no prior run (or unreadable): record it
 		}
@@ -1247,8 +1476,8 @@ func skipAlreadyRecorded(ctx context.Context, database *sql.DB, p EnqueueParams,
 // workflow_runs.status has always permitted 'skipped' (migration 001), so no
 // table rebuild was needed; queued_reason and suppressed_by_calendar arrive with
 // migration 870.
-func recordSkippedWorkflowFire(ctx context.Context, database *sql.DB, source, workflowName, scheduleName string, rec skipRecord) (bool, error) {
-	dupe, err := workflowSkipAlreadyRecorded(ctx, database, source, workflowName, scheduleName, rec)
+func recordSkippedWorkflowFire(ctx context.Context, database *sql.DB, uid, source, workflowName, scheduleName string, rec skipRecord) (bool, error) {
+	dupe, err := workflowSkipAlreadyRecorded(ctx, database, uid, source, workflowName, scheduleName, rec)
 	if err != nil {
 		return false, err
 	}
@@ -1281,10 +1510,15 @@ func recordSkippedWorkflowFire(ctx context.Context, database *sql.DB, source, wo
 			 triggered_by, trigger_kind, schedule_name, suppressed_by_calendar,
 			 started_at, completed_at, created_at, workflow_uid)
 		VALUES (?, ?, ?, 'skipped', ?, 'scheduler', 'scheduled', ?, ?, ?, ?, ?,
-			(SELECT uid FROM workflows WHERE name = ? AND source = ?))`,
+			-- The workflow whose fire this was, when the caller knows (the clock
+			-- does: present defect 34). A caller that has only the name (the
+			-- missed-fire detector) gets the uid when one workflow holds the name
+			-- and none when two do: a row that names nobody, not the wrong one.
+			COALESCE(NULLIF(?, ''),
+			         (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)))`,
 		traceID, workflowName, source, rec.Reason,
 		nullStr(scheduleName), nullStr(rec.Calendar), now, now, now,
-		workflowName, source)
+		uid, workflowName, source)
 	if err != nil {
 		return false, fmt.Errorf("insert skipped workflow run: %w", err)
 	}
@@ -1295,19 +1529,29 @@ func recordSkippedWorkflowFire(ctx context.Context, database *sql.DB, source, wo
 // dedupeEpisodeReason rules, keyed on the workflow instead of the job. There is
 // still no plain episode mode: workflows have no Forbid path, so no workflow
 // skip ever carries a concurrency key.
-func workflowSkipAlreadyRecorded(ctx context.Context, database *sql.DB, source, workflowName, scheduleName string, rec skipRecord) (bool, error) {
+//
+// THIS workflow's rows (2.4.0): a row is stamped with the workflow it is of
+// (workflow_uid), and the question was asked by name and source. Two agencies'
+// workflows of one name, each with a schedule entry of one name: one's recorded
+// skip passed for the other's, whose own was then never written. With the
+// workflow's uid the rows are the ones stamped with it, and the ones of the
+// name that are stamped with none (written before a row was stamped). With no
+// uid, by the name, as before.
+func workflowSkipAlreadyRecorded(ctx context.Context, database *sql.DB, uid, source, workflowName, scheduleName string, rec skipRecord) (bool, error) {
 	if source == "" {
 		source = "git"
 	}
+	const mine = `((?1 <> '' AND workflow_uid = ?1)
+	               OR ((workflow_uid IS NULL OR ?1 = '') AND workflow_name = ?2 AND COALESCE(workflow_source,'git') = ?3))`
 	if rec.Mode == dedupeEpisodeReason {
 		var status, reason string
 		err := database.QueryRowContext(ctx, `
 			SELECT status, COALESCE(queued_reason,'') FROM workflow_runs
-			 WHERE workflow_name = ? AND COALESCE(workflow_source,'git') = ?
-			   AND COALESCE(schedule_name,'') = ?
+			 WHERE `+mine+`
+			   AND COALESCE(schedule_name,'') = ?4
 			   AND suppressed_by_calendar IS NULL
 			 ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-			workflowName, source, scheduleName).Scan(&status, &reason)
+			uid, workflowName, source, scheduleName).Scan(&status, &reason)
 		if err != nil {
 			return false, nil // no prior run (or unreadable): record it
 		}
@@ -1318,11 +1562,11 @@ func workflowSkipAlreadyRecorded(ctx context.Context, database *sql.DB, source, 
 	}
 	rows, err := database.QueryContext(ctx, `
 		SELECT created_at FROM workflow_runs
-		 WHERE workflow_name = ? AND COALESCE(workflow_source,'git') = ?
-		   AND COALESCE(schedule_name,'') = ?
+		 WHERE `+mine+`
+		   AND COALESCE(schedule_name,'') = ?4
 		   AND status = 'skipped' AND suppressed_by_calendar IS NOT NULL
 		 ORDER BY created_at DESC, rowid DESC LIMIT 50`,
-		workflowName, source, scheduleName)
+		uid, workflowName, source, scheduleName)
 	if err != nil {
 		return false, fmt.Errorf("check recorded workflow calendar skips: %w", err)
 	}
@@ -1366,10 +1610,23 @@ func EnqueueRunWithID(ctx context.Context, database *sql.DB, p EnqueueParams) (s
 		_ = rerr
 	}
 	if err := execspec.SyncRunAgencies(ctx, database, traceID, p.agenciesJSONOrDefault()); err != nil {
+		// The row is committed and its agencies are not: no runner would ever
+		// claim it, and it counted toward the cap until retention (2.4.2,
+		// present defect 66). It is closed, failed, with the reason.
+		now := time.Now().UTC().Format(time.RFC3339)
+		if _, uerr := database.ExecContext(ctx,
+			`UPDATE runs SET status = 'failure', queued_reason = ?, started_at = COALESCE(started_at, ?), completed_at = ?
+			  WHERE id = ? AND status = 'queued'`, ReasonRunAgenciesUnwritten, now, now, traceID); uerr != nil {
+			return "", fmt.Errorf("%w (and the run %s could not be closed: %v)", err, traceID, uerr)
+		}
 		return "", err
 	}
 	return traceID, nil
 }
+
+// ReasonRunAgenciesUnwritten is the stored reason of a run closed because the
+// agencies it runs for could not be written.
+const ReasonRunAgenciesUnwritten = "Refused: the agencies this run runs for could not be recorded, so no runner could claim it"
 
 // IsForbidConflict reports whether err is a UNIQUE constraint violation on the
 // runs.concurrency_key partial index (uq_runs_active_concurrency), indicating a

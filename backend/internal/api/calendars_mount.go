@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
@@ -48,15 +49,95 @@ func (s *Server) mountCalendars(mux *http.ServeMux) {
 	requireSession := s.auth.RequireSession
 	mux.Handle("GET /api/v1/calendars", requireSession(http.HandlerFunc(s.listCalendars)))
 	mux.Handle("GET /api/v1/calendars/{name}", requireSession(http.HandlerFunc(s.getCalendar)))
-	mux.Handle("POST /api/v1/calendars", s.requireComposeAdmin(http.HandlerFunc(s.createCalendar)))
-	mux.Handle("PUT /api/v1/calendars/{name}", s.requireComposeAdmin(http.HandlerFunc(s.updateCalendar)))
-	mux.Handle("DELETE /api/v1/calendars/{name}", s.requireComposeAdmin(http.HandlerFunc(s.deleteCalendar)))
-	mux.Handle("PUT /api/v1/calendars/{name}/days", s.requireComposeAdmin(http.HandlerFunc(s.replaceCalendarDays)))
+	// A calendar is its agency's (§0a, 2.4.0; SO-1): writing one takes compose
+	// on its owner, checked in each handler (requireCalendarOwner). Until then
+	// every calendar was Global's, a compose administrator over every agency's
+	// alone to write, and a global one froze every agency.
+	compose := func(h http.HandlerFunc) http.Handler {
+		return s.requirePerm(auth.PermCompose, func(p rolePermissions) bool { return p.Compose })(h)
+	}
+	owned := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			owner, _, ok := s.calendarRef(w, r)
+			if !ok || !s.requireCalendarOwner(w, r, owner) {
+				return
+			}
+			h(w, r)
+		}
+	}
+	mux.Handle("POST /api/v1/calendars", compose(s.createCalendar))
+	mux.Handle("PUT /api/v1/calendars/{name}", compose(owned(s.updateCalendar)))
+	mux.Handle("DELETE /api/v1/calendars/{name}", compose(owned(s.deleteCalendar)))
+	mux.Handle("PUT /api/v1/calendars/{name}/days", compose(owned(s.replaceCalendarDays)))
+}
+
+// calendarRef is the calendar a {name} route means: the name in the agency
+// ?agencyId= names, else in the one agency that has a calendar of the name. A
+// calendar's name is unique within its agency only (I2, IN-5), so two agencies
+// may each have `holidays`, and a route by name alone cannot tell them apart:
+// 409 ambiguous_calendar asks for the agency. 404 when no agency has one.
+// Written on false.
+func (s *Server) calendarRef(w http.ResponseWriter, r *http.Request) (owner, name string, ok bool) {
+	name = r.PathValue("name")
+	if a := strings.TrimSpace(r.URL.Query().Get("agencyId")); a != "" {
+		var n int
+		if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM calendars WHERE owner_agency = ? AND name = ?`, a, name).Scan(&n); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return "", "", false
+		}
+		if n == 0 {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "calendar not found")
+			return "", "", false
+		}
+		return a, name, true
+	}
+	rows, err := s.db.QueryContext(r.Context(), `SELECT owner_agency FROM calendars WHERE name = ? ORDER BY owner_agency`, name)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return "", "", false
+	}
+	defer rows.Close()
+	var owners []string
+	for rows.Next() {
+		var o string
+		if rows.Scan(&o) == nil {
+			owners = append(owners, o)
+		}
+	}
+	switch len(owners) {
+	case 0:
+		httpx.Fail(w, http.StatusNotFound, "not_found", "calendar not found")
+		return "", "", false
+	case 1:
+		return owners[0], name, true
+	}
+	httpx.Fail(w, http.StatusConflict, "ambiguous_calendar",
+		"more than one agency has a calendar of this name; say whose with ?agencyId=")
+	return "", "", false
+}
+
+// calKey is the key a calendar's bindings are filed under: its owner and name
+// (I2: a name is unique within an agency only).
+func calKey(owner, name string) string { return owner + "\x00" + name }
+
+// requireCalendarOwner answers 403 unless the caller holds compose on the
+// agency a calendar is (or is to be) owned by.
+func (s *Server) requireCalendarOwner(w http.ResponseWriter, r *http.Request, owner string) bool {
+	id, _ := auth.IdentityFrom(r.Context())
+	if id.CanAgency(auth.PermCompose, owner) {
+		return true
+	}
+	s.denyEntityAgency(w, r, id, auth.PermCompose, auth.AllScopes,
+		"a calendar belongs to one agency, and writing it takes compose on that agency")
+	return false
 }
 
 // calendarInput is the create/update request body (the CalendarInput schema).
 type calendarInput struct {
-	Name        string `json:"name"`
+	Name string `json:"name"`
+	// OwnerAgency is the agency a new calendar belongs to (§0a, 2.4.0):
+	// Global's when empty. Read on create only.
+	OwnerAgency string `json:"ownerAgency,omitempty"`
 	Description string `json:"description"`
 	// Global unions this calendar's days into every entry's skip set (§2.8).
 	// Skip-polarity only — see validateGlobalUsable.
@@ -76,8 +157,15 @@ type calendarDayInput struct {
 
 // calendarRow is the JSON shape of the Calendar schema.
 type calendarRow struct {
-	Name             string `json:"name"`
-	Source           string `json:"source"`
+	Name   string `json:"name"`
+	Source string `json:"source"`
+	// OwnerAgency is the agency the calendar belongs to (§0a, 2.4.0).
+	OwnerAgency string `json:"ownerAgency"`
+	// CanEdit and CanDelete say what the caller's writes would answer (2.4.2,
+	// question 55): compose on the owner (requireCalendarOwner). Set on the
+	// list.
+	CanEdit          bool   `json:"canEdit"`
+	CanDelete        bool   `json:"canDelete"`
 	Description      string `json:"description,omitempty"`
 	Global           bool   `json:"global"`
 	RecordSuppressed bool   `json:"recordSuppressed"`
@@ -119,7 +207,7 @@ type calendarBinding struct {
 const calendarExpiryWarningDays = 60
 
 func (s *Server) listCalendars(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.loadCalendarRows(r.Context(), "")
+	rows, err := s.loadCalendarRows(r.Context(), "", "")
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -130,9 +218,12 @@ func (s *Server) listCalendars(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := make([]calendarRow, 0, len(rows))
+	caller, _ := auth.IdentityFrom(r.Context())
 	for _, c := range rows {
-		c.UsedBy = bindings[c.Name]
+		c.UsedBy = bindings[calKey(c.OwnerAgency, c.Name)]
 		c.Days = nil // the list view carries counts and coverage, not every date
+		c.CanEdit = caller.CanAgency(auth.PermCompose, c.OwnerAgency)
+		c.CanDelete = c.CanEdit
 		items = append(items, c)
 	}
 	// The threshold ships with the data so the badge in the UI and any future
@@ -144,8 +235,11 @@ func (s *Server) listCalendars(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getCalendar(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	rows, err := s.loadCalendarRows(r.Context(), name)
+	owner, name, ok := s.calendarRef(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.loadCalendarRows(r.Context(), owner, name)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -160,7 +254,7 @@ func (s *Server) getCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	c.UsedBy = bindings[c.Name]
+	c.UsedBy = bindings[calKey(c.OwnerAgency, c.Name)]
 	httpx.JSON(w, http.StatusOK, c)
 }
 
@@ -176,15 +270,31 @@ func (s *Server) createCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid calendar name (want "+composeNameRe.String()+")")
 		return
 	}
+	in.OwnerAgency = ownerOrGlobal(in.OwnerAgency)
+	var known int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, in.OwnerAgency).Scan(&known); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if known == 0 {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "ownerAgency names no agency")
+		return
+	}
+	if !s.requireCalendarOwner(w, r, in.OwnerAgency) {
+		return
+	}
 	days, verr := normalizeCalendarDays(in.Days)
 	if verr != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
 		return
 	}
+	// A name is held once per agency (I2, the owner's answer to question 30;
+	// across the installation until then): another agency's calendar of the
+	// name is no obstacle.
 	var exists int
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM calendars WHERE name=?`, in.Name).Scan(&exists)
+	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM calendars WHERE owner_agency = ? AND name = ?`, in.OwnerAgency, in.Name).Scan(&exists)
 	if exists > 0 {
-		httpx.Fail(w, http.StatusConflict, "conflict", "a calendar with this name already exists")
+		httpx.Fail(w, http.StatusConflict, "conflict", "a calendar with this name already exists in this agency")
 		return
 	}
 	// CAL-27's first refusal applies on CREATE too, not only on update: a
@@ -192,7 +302,7 @@ func (s *Server) createCalendar(w http.ResponseWriter, r *http.Request) {
 	// re-creating that same name as global is a reachable path to the very state
 	// the refusal exists to prevent.
 	if in.Global {
-		if verr, err := s.calendarUsedAsOnly(r.Context(), in.Name); err != nil {
+		if verr, err := s.calendarUsedAsOnly(r.Context(), in.OwnerAgency, in.Name); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		} else if verr != "" {
@@ -210,14 +320,14 @@ func (s *Server) createCalendar(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := tx.ExecContext(r.Context(), `
 		INSERT INTO calendars(source, name, description, global, record_suppressed,
-		                      created_by, created_at, last_modified_by, last_modified_at)
-		VALUES('cronomicon', ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                      created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+		VALUES('cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.Name, nullStrIf(in.Description), boolInt(in.Global), boolInt(in.RecordSuppressed),
-		id.Email, now, id.Email, now); err != nil {
+		id.Email, now, id.Email, now, in.OwnerAgency); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	if err := writeCalendarDays(r.Context(), tx, in.Name, days); err != nil {
+	if err := writeCalendarDays(r.Context(), tx, in.OwnerAgency, in.Name, days); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -226,16 +336,13 @@ func (s *Server) createCalendar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auditCalendar(r, id.Email, "Created", in.Name, "Calendar created with "+strconv.Itoa(len(days))+" day(s)")
-	s.writeCalendar(w, r, in.Name, http.StatusCreated)
+	s.writeCalendar(w, r, in.OwnerAgency, in.Name, http.StatusCreated)
 }
 
 func (s *Server) updateCalendar(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.IdentityFrom(r.Context())
-	name := r.PathValue("name")
-	var exists int
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM calendars WHERE name=?`, name).Scan(&exists)
-	if exists == 0 {
-		httpx.Fail(w, http.StatusNotFound, "not_found", "calendar not found")
+	owner, name, ok := s.calendarRef(w, r)
+	if !ok {
 		return
 	}
 	var in calendarInput
@@ -248,7 +355,7 @@ func (s *Server) updateCalendar(w http.ResponseWriter, r *http.Request) {
 	// into every skip set", and a calendar that is simultaneously somebody's
 	// run-day list would then both permit and forbid the same day.
 	if in.Global {
-		if verr, err := s.calendarUsedAsOnly(r.Context(), name); err != nil {
+		if verr, err := s.calendarUsedAsOnly(r.Context(), owner, name); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		} else if verr != "" {
@@ -260,14 +367,14 @@ func (s *Server) updateCalendar(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.db.ExecContext(r.Context(), `
 		UPDATE calendars SET description=?, global=?, record_suppressed=?,
 		                     last_modified_by=?, last_modified_at=?
-		 WHERE name=?`,
+		 WHERE owner_agency=? AND name=?`,
 		nullStrIf(in.Description), boolInt(in.Global), boolInt(in.RecordSuppressed),
-		id.Email, now, name); err != nil {
+		id.Email, now, owner, name); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
 	s.auditCalendar(r, id.Email, "Updated", name, "Calendar updated")
-	s.writeCalendar(w, r, name, http.StatusOK)
+	s.writeCalendar(w, r, owner, name, http.StatusOK)
 }
 
 // replaceCalendarDays is the bulk day-replacement route. Days are replaced
@@ -275,11 +382,8 @@ func (s *Server) updateCalendar(w http.ResponseWriter, r *http.Request) {
 // list", and a per-day diff API would make an eleven-row edit eleven calls.
 func (s *Server) replaceCalendarDays(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.IdentityFrom(r.Context())
-	name := r.PathValue("name")
-	var exists int
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM calendars WHERE name=?`, name).Scan(&exists)
-	if exists == 0 {
-		httpx.Fail(w, http.StatusNotFound, "not_found", "calendar not found")
+	owner, name, ok := s.calendarRef(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -300,17 +404,17 @@ func (s *Server) replaceCalendarDays(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(r.Context(), `DELETE FROM calendar_days WHERE calendar_name=?`, name); err != nil {
+	if _, err := tx.ExecContext(r.Context(), `DELETE FROM calendar_days WHERE calendar_owner=? AND calendar_name=?`, owner, name); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	if err := writeCalendarDays(r.Context(), tx, name, days); err != nil {
+	if err := writeCalendarDays(r.Context(), tx, owner, name, days); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
 	if _, err := tx.ExecContext(r.Context(),
-		`UPDATE calendars SET last_modified_by=?, last_modified_at=? WHERE name=?`,
-		id.Email, time.Now().UTC().Format(time.RFC3339), name); err != nil {
+		`UPDATE calendars SET last_modified_by=?, last_modified_at=? WHERE owner_agency=? AND name=?`,
+		id.Email, time.Now().UTC().Format(time.RFC3339), owner, name); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -319,7 +423,7 @@ func (s *Server) replaceCalendarDays(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auditCalendar(r, id.Email, "Updated", name, "Calendar days replaced ("+strconv.Itoa(len(days))+" day(s))")
-	s.writeCalendar(w, r, name, http.StatusOK)
+	s.writeCalendar(w, r, owner, name, http.StatusOK)
 }
 
 // deleteCalendar removes a calendar and (by cascade) its days.
@@ -331,11 +435,8 @@ func (s *Server) replaceCalendarDays(w http.ResponseWriter, r *http.Request) {
 // 409 is the default and force has to be asked for.
 func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.IdentityFrom(r.Context())
-	name := r.PathValue("name")
-	var exists int
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM calendars WHERE name=?`, name).Scan(&exists)
-	if exists == 0 {
-		httpx.Fail(w, http.StatusNotFound, "not_found", "calendar not found")
+	owner, name, ok := s.calendarRef(w, r)
+	if !ok {
 		return
 	}
 	// FX2-C1 — the guard counts BINNED owners' bindings too, unlike every read
@@ -348,7 +449,7 @@ func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	used := bindings[name]
+	used := bindings[calKey(owner, name)]
 	if len(used) > 0 && r.URL.Query().Get("force") != "true" {
 		refs := make([]string, 0, len(used))
 		for _, b := range used {
@@ -363,7 +464,7 @@ func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request) {
 				" — pass ?force=true to delete and leave those bindings dangling")
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM calendars WHERE name=?`, name); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM calendars WHERE owner_agency=? AND name=?`, owner, name); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -377,16 +478,19 @@ func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request) {
 // derived coverage fields. One query for the calendars, one for the days — the
 // day rows are drained fully before anything else runs, since a nested query on
 // this pool with an iterator still open is the documented deadlock.
-func (s *Server) loadCalendarRows(ctx context.Context, only string) ([]calendarRow, error) {
+//
+// owner and only name one calendar (I2: a name is unique within an agency);
+// both empty, every calendar.
+func (s *Server) loadCalendarRows(ctx context.Context, owner, only string) ([]calendarRow, error) {
 	q := `SELECT source, name, COALESCE(description,''), global, record_suppressed,
-	             COALESCE(created_by,''), COALESCE(created_at,'')
+	             COALESCE(created_by,''), COALESCE(created_at,''), owner_agency
 	        FROM calendars`
 	var args []any
 	if only != "" {
-		q += ` WHERE name = ?`
-		args = append(args, only)
+		q += ` WHERE owner_agency = ? AND name = ?`
+		args = append(args, owner, only)
 	}
-	q += ` ORDER BY name`
+	q += ` ORDER BY name, owner_agency`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -396,7 +500,7 @@ func (s *Server) loadCalendarRows(ctx context.Context, only string) ([]calendarR
 	for rows.Next() {
 		var c calendarRow
 		var global, record int
-		if err := rows.Scan(&c.Source, &c.Name, &c.Description, &global, &record, &c.CreatedBy, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.Source, &c.Name, &c.Description, &global, &record, &c.CreatedBy, &c.CreatedAt, &c.OwnerAgency); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -411,17 +515,17 @@ func (s *Server) loadCalendarRows(ctx context.Context, only string) ([]calendarR
 	}
 	rows.Close()
 	for i := range out {
-		byName[out[i].Name] = &out[i]
+		byName[calKey(out[i].OwnerAgency, out[i].Name)] = &out[i]
 	}
 	if len(out) == 0 {
 		return out, nil
 	}
 
-	dq := `SELECT calendar_name, day, COALESCE(label,'') FROM calendar_days`
+	dq := `SELECT calendar_owner, calendar_name, day, COALESCE(label,'') FROM calendar_days`
 	var dargs []any
 	if only != "" {
-		dq += ` WHERE calendar_name = ?`
-		dargs = append(dargs, only)
+		dq += ` WHERE calendar_owner = ? AND calendar_name = ?`
+		dargs = append(dargs, owner, only)
 	}
 	dq += ` ORDER BY calendar_name, day`
 	drows, err := s.db.QueryContext(ctx, dq, dargs...)
@@ -430,11 +534,11 @@ func (s *Server) loadCalendarRows(ctx context.Context, only string) ([]calendarR
 	}
 	defer drows.Close()
 	for drows.Next() {
-		var cname, day, label string
-		if err := drows.Scan(&cname, &day, &label); err != nil {
+		var cowner, cname, day, label string
+		if err := drows.Scan(&cowner, &cname, &day, &label); err != nil {
 			return nil, err
 		}
-		if c, ok := byName[cname]; ok {
+		if c, ok := byName[calKey(cowner, cname)]; ok {
 			c.Days = append(c.Days, calendarDayInput{Day: day, Label: label})
 		}
 	}
@@ -510,10 +614,13 @@ func collectCalendarBindings(ctx context.Context, database *sql.DB) (map[string]
 // silently fires on every holiday it was configured to skip. FX2-Q1 split the
 // old blanket ruling (FX-Q9) over exactly this asymmetry.
 func allCalendarBindings(ctx context.Context, database *sql.DB) (map[string][]calendarBinding, error) {
+	// Filed under the binding's agency and the calendar's name (calKey): the
+	// calendar an entry names is its own agency's of that name (I2).
 	out := map[string][]calendarBinding{}
-	addFlag := func(kind, owner, src, sched string, names []string, polarity string, binned bool, uid string, agencies []string) {
+	addFlag := func(agencyID, kind, owner, src, sched string, names []string, polarity string, binned bool, uid string, agencies []string) {
 		for _, n := range names {
-			out[n] = append(out[n], calendarBinding{
+			k := calKey(agencyID, n)
+			out[k] = append(out[k], calendarBinding{
 				OwnerKind: kind, OwnerName: owner, OwnerSource: src,
 				ScheduleName: sched, Polarity: polarity, BinnedOwner: binned,
 				OwnerUID: uid, OwnerAgencies: agencies,
@@ -522,8 +629,8 @@ func allCalendarBindings(ctx context.Context, database *sql.DB) (map[string][]ca
 	}
 	// A first-class schedule is its OWN owner — it has no job/workflow identity to
 	// carry, so these bindings never badge (nothing to tell apart).
-	add := func(kind, owner, src, sched string, names []string, polarity string) {
-		addFlag(kind, owner, src, sched, names, polarity, false, "", nil)
+	add := func(agencyID, kind, owner, src, sched string, names []string, polarity string) {
+		addFlag(agencyID, kind, owner, src, sched, names, polarity, false, "", nil)
 	}
 
 	// Runtime entries — what actually fires (or would, once a binned owner is
@@ -537,12 +644,9 @@ func allCalendarBindings(ctx context.Context, database *sql.DB) (map[string][]ca
 		       -- R2F-3: the owner's identity + derived agencies, in the same
 		       -- select rather than a per-binding lookup.
 		       COALESCE(ds.owner_uid,''),
-		       (SELECT GROUP_CONCAT(a.name, '\x1f')
-		          FROM jobs j
-		          JOIN scopes sc         ON sc.name = j.scope
-		          JOIN scope_agencies sa ON sa.scope_id = sc.id
-		          JOIN agencies a        ON a.id = sa.agency_id
-		         WHERE ds.owner_kind = 'job' AND j.source = ds.owner_source AND j.name = ds.owner_name)
+		       -- the owner's agency (a job's since 1400; until I2 its scope's)
+		       (SELECT a.name FROM agencies a WHERE a.id = `+scheduleOwnerAgencySQL+`),
+		       COALESCE(`+scheduleOwnerAgencySQL+`, '`+agencyid.Global+`')
 		  FROM definition_schedules ds
 		 WHERE (skip_calendars IS NOT NULL OR only_calendars IS NOT NULL)
 		 ORDER BY owner_source, owner_kind, owner_name, name`)
@@ -550,16 +654,16 @@ func allCalendarBindings(ctx context.Context, database *sql.DB) (map[string][]ca
 		return nil, err
 	}
 	for rows.Next() {
-		var src, kind, owner, sched, skipRaw, onlyRaw, ownerUID string
+		var src, kind, owner, sched, skipRaw, onlyRaw, ownerUID, agencyID string
 		var binned bool
 		var agencies sql.NullString
-		if err := rows.Scan(&src, &kind, &owner, &sched, &skipRaw, &onlyRaw, &binned, &ownerUID, &agencies); err != nil {
+		if err := rows.Scan(&src, &kind, &owner, &sched, &skipRaw, &onlyRaw, &binned, &ownerUID, &agencies, &agencyID); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		ag := splitAgencies(agencies)
-		addFlag(kind, owner, src, sched, calendar.ParseNames(skipRaw), "skip", binned, ownerUID, ag)
-		addFlag(kind, owner, src, sched, calendar.ParseNames(onlyRaw), "only", binned, ownerUID, ag)
+		addFlag(agencyID, kind, owner, src, sched, calendar.ParseNames(skipRaw), "skip", binned, ownerUID, ag)
+		addFlag(agencyID, kind, owner, src, sched, calendar.ParseNames(onlyRaw), "only", binned, ownerUID, ag)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -572,7 +676,7 @@ func allCalendarBindings(ctx context.Context, database *sql.DB) (map[string][]ca
 	// promoted to global) out from under a schedule that names it, and the damage
 	// would only appear when somebody bound the ref to a job.
 	srows, err := database.QueryContext(ctx, `
-		SELECT source, name, COALESCE(skip_calendars,''), COALESCE(only_calendars,'')
+		SELECT source, name, COALESCE(skip_calendars,''), COALESCE(only_calendars,''), owner_agency
 		  FROM schedules
 		 WHERE skip_calendars IS NOT NULL OR only_calendars IS NOT NULL
 		 ORDER BY source, name`)
@@ -581,12 +685,12 @@ func allCalendarBindings(ctx context.Context, database *sql.DB) (map[string][]ca
 	}
 	defer srows.Close()
 	for srows.Next() {
-		var src, name, skipRaw, onlyRaw string
-		if err := srows.Scan(&src, &name, &skipRaw, &onlyRaw); err != nil {
+		var src, name, skipRaw, onlyRaw, agencyID string
+		if err := srows.Scan(&src, &name, &skipRaw, &onlyRaw, &agencyID); err != nil {
 			return nil, err
 		}
-		add("schedule", name, src, name, calendar.ParseNames(skipRaw), "skip")
-		add("schedule", name, src, name, calendar.ParseNames(onlyRaw), "only")
+		add(agencyID, "schedule", name, src, name, calendar.ParseNames(skipRaw), "skip")
+		add(agencyID, "schedule", name, src, name, calendar.ParseNames(onlyRaw), "only")
 	}
 	return out, srows.Err()
 }
@@ -602,12 +706,12 @@ func allCalendarBindings(ctx context.Context, database *sql.DB) (map[string][]ca
 // never fires again. Judging on live bindings alone let an operator reach that
 // state by binning the sole referrer first, and the damage appeared silently on
 // its restore. Binned bindings are annotated so the refusal is actionable.
-func (s *Server) calendarUsedAsOnly(ctx context.Context, name string) (string, error) {
+func (s *Server) calendarUsedAsOnly(ctx context.Context, owner, name string) (string, error) {
 	bindings, err := allCalendarBindings(ctx, s.db)
 	if err != nil {
 		return "", err
 	}
-	for _, b := range bindings[name] {
+	for _, b := range bindings[calKey(owner, name)] {
 		if b.Polarity == "only" {
 			where := b.OwnerKind + ":" + b.OwnerName + "/" + b.ScheduleName
 			if b.BinnedOwner {
@@ -639,19 +743,19 @@ func normalizeCalendarDays(in []calendarDayInput) ([]calendarDayInput, string) {
 	return out, ""
 }
 
-func writeCalendarDays(ctx context.Context, tx *sql.Tx, name string, days []calendarDayInput) error {
+func writeCalendarDays(ctx context.Context, tx *sql.Tx, owner, name string, days []calendarDayInput) error {
 	for _, d := range days {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO calendar_days(calendar_source, calendar_name, day, label)
-			VALUES('cronomicon', ?, ?, ?)`, name, d.Day, nullStrIf(d.Label)); err != nil {
+			INSERT INTO calendar_days(calendar_owner, calendar_source, calendar_name, day, label)
+			VALUES(?, 'cronomicon', ?, ?, ?)`, owner, name, d.Day, nullStrIf(d.Label)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Server) writeCalendar(w http.ResponseWriter, r *http.Request, name string, status int) {
-	rows, err := s.loadCalendarRows(r.Context(), name)
+func (s *Server) writeCalendar(w http.ResponseWriter, r *http.Request, owner, name string, status int) {
+	rows, err := s.loadCalendarRows(r.Context(), owner, name)
 	if err != nil || len(rows) == 0 {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return

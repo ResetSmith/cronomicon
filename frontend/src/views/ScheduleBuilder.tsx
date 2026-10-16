@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, fetchCapabilities } from "../api/client";
-import { COMPOSE_ADMIN_ONLY } from "../api/globalAdmin";
+import { CreationAgencyPicker, useCreationAgencies } from "../components/CreationAgencyPicker";
 import { c } from "../theme";
 import type { components } from "../api/schema";
 import {
@@ -32,22 +32,21 @@ export function ScheduleBuilder() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const editName = params.get("name");
+  // 2.4.0 (I2; R8) — a schedule is one agency's, and two agencies may each
+  // have one of a name: the Schedules page names whose (`?agencyId=`).
+  const editAgency = params.get("agencyId") ?? undefined;
   const isEdit = !!editName;
 
-  // GC (v2.2.2) — the gate is `composeAdmin`, not `compose`. A reusable schedule
-  // belongs to no agency (it retimes every definition that references it), so
-  // the server takes its writes only from compose AND configureApp on one
-  // all-agencies grant. `composes` is kept apart so the refusal below can tell a
-  // departmental composer WHY, rather than telling them they lack a permission
-  // they hold.
+  // 2.4.0 (I2) — an in-app schedule belongs to one agency (`ownerAgency`), and
+  // its writes take Compose on that agency. Until then a schedule belonged to
+  // none and was a global composer's (`composeAdmin`, GC in 2.2.2).
   const [canCompose, setCanCompose] = useState<boolean | null>(null);
-  const [composes, setComposes] = useState(false);
   useEffect(() => {
-    fetchCapabilities().then((caps) => {
-      setCanCompose(!!caps.composeAdmin);
-      setComposes(caps.compose);
-    });
+    fetchCapabilities().then((caps) => setCanCompose(!!caps.compose));
   }, []);
+  // Whose a new schedule is: an agency the caller composes on, or Global for a
+  // global composer (its default).
+  const ownerPick = useCreationAgencies(isEdit, "compose");
 
   const [name, setName] = useState("");
   const [cron, setCron] = useState("");
@@ -71,7 +70,7 @@ export function ScheduleBuilder() {
     let cancelled = false;
     (async () => {
       const { data, error } = await api.GET("/schedule-defs/{name}", {
-        params: { path: { name: editName }, query: { source: "cronomicon" } },
+        params: { path: { name: editName }, query: { source: "cronomicon", ...(editAgency ? { agencyId: editAgency } : {}) } },
       });
       if (cancelled) return;
       if (error || !data) {
@@ -91,7 +90,7 @@ export function ScheduleBuilder() {
     return () => {
       cancelled = true;
     };
-  }, [editName]);
+  }, [editName, editAgency]);
 
   // The shared cron toolkit (cron.ts) speaks the classic 5-field subset; the backend
   // also accepts 6-field (sec min hr dom mon dow). cronPreview projects a 6-field
@@ -116,6 +115,7 @@ export function ScheduleBuilder() {
     if (specErr) return setErr(specErr);
     const calErr = bindingError(calendarBinding);
     if (calErr) return setErr(calErr);
+    if (ownerPick.blockedReason) return setErr(`${ownerPick.blockedReason}.`);
     const envMap: Record<string, string> = {};
     for (const row of env) {
       const k = row.key.trim();
@@ -138,11 +138,12 @@ export function ScheduleBuilder() {
     let error: unknown;
     if (isEdit) {
       ({ response: resp, error } = await api.PUT("/schedule-defs/{name}", {
-        params: { path: { name: editName! } },
+        params: { path: { name: editName! }, query: editAgency ? { agencyId: editAgency } : {} } as never,
         body: body as never,
       }));
     } else {
       body.name = name.trim();
+      Object.assign(body, ownerPick.ownerBody);
       ({ response: resp, error } = await api.POST("/schedule-defs", { body: body as never }));
     }
     setBusy(false);
@@ -156,17 +157,8 @@ export function ScheduleBuilder() {
   if (canCompose === false) {
     return (
       <div role="note" style={{ color: c.textSec, maxWidth: 560 }}>
-        {composes ? (
-          <>
-            {COMPOSE_ADMIN_ONLY} A schedule you put directly on one of your own jobs or workflows, in its composer,
-            is yours to author.
-          </>
-        ) : (
-          <>
-            In-app schedule authoring requires the <strong>Compose</strong> capability on every agency. Git-defined
-            schedules are authored through the GitLab publish flow.
-          </>
-        )}
+        In-app schedule authoring requires the <strong>Compose</strong> capability on the agency the schedule belongs to.
+        Git-defined schedules are authored through the publish flow.
       </div>
     );
   }
@@ -215,6 +207,7 @@ export function ScheduleBuilder() {
           disabled={isEdit}
         />
         {isEdit && <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 4 }}>Name is the identity — immutable on edit.</div>}
+        <CreationAgencyPicker label="schedule" pick={ownerPick} />
       </Field>
 
       <Field label="How it runs">
@@ -290,7 +283,7 @@ export function ScheduleBuilder() {
       </Field>
 
       <Field label="Working calendars (optional)">
-        <CalendarPicker value={calendarBinding} onChange={setCalendarBinding} spec={spec} />
+        <CalendarPicker value={calendarBinding} onChange={setCalendarBinding} spec={spec} agency={editAgency ?? (ownerPick.selected || undefined)} />
       </Field>
 
       <Field label="Env (optional)">

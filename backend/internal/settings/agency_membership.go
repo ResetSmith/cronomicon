@@ -174,6 +174,13 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 			return ErrUnknownAgency
 		}
 		targets[i] = ids[0]
+		if kind == MemberScope {
+			if fixed, err := ScopeAgencyFixedTo(ctx, database, a.ID); err != nil {
+				return err
+			} else if fixed != "" && fixed != ids[0] {
+				return fmt.Errorf("%w (scope %s)", ErrScopeAgencyFixed, a.ID)
+			}
+		}
 	}
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
@@ -183,6 +190,11 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 	for i, a := range assignments {
 		if err := moveOwner(ctx, tx, t, a.ID, targets[i]); err != nil {
 			return err
+		}
+		if kind == MemberScope {
+			if err := presetScopeOwner(ctx, tx, a.ID, targets[i]); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+t.join+` WHERE `+t.col+`=?`, a.ID); err != nil {
 			return err
@@ -201,6 +213,45 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 	audit(ctx, database, actor, "Agencies", "membership-updated",
 		t.label+" agencies", membershipAuditDetail(assignments))
 	return nil
+}
+
+// presetScopeOwner makes agencyID the owner of a scope whose membership is
+// about to be rewritten to that one agency (I2, migration 1440). The rewrite
+// deletes the membership and inserts the new row, and the owner triggers
+// follow each step with UPDATE OR IGNORE; the step between the two would make
+// the scope Global's, which a name Global holds refuses, and the ignored step
+// must never be the last. Setting the owner first makes the last step a
+// no-op, and a name the target agency already has is refused here, as
+// ErrScopeNameTaken, rather than as a constraint failure half-way through.
+func presetScopeOwner(ctx context.Context, tx *sql.Tx, scopeID, agencyID string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE scopes SET owner_agency = ? WHERE id = ?`, agencyID, scopeID); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return fmt.Errorf("%w in that agency", ErrScopeNameTaken)
+		}
+		return fmt.Errorf("set the scope's owner: %w", err)
+	}
+	return nil
+}
+
+// MemberOwner reads an entity of a membership kind: whether it exists, and
+// its owner_agency ("" for a kind whose catalog has none to compare: a
+// scope's is its membership). For the move gate (2.4.0 Phase I4): a write
+// that leaves the membership as it is still changes the row's agency when it
+// changes its owner, which the setter does (moveOwner).
+func MemberOwner(ctx context.Context, database *sql.DB, kind MemberKind, id string) (exists bool, owner string, err error) {
+	t, ok := memberTableFor(kind)
+	if !ok {
+		return false, "", fmt.Errorf("unknown member kind %q", kind)
+	}
+	col := "''"
+	if _, _, owned := ownedCatalog(t.catalog); owned {
+		col = "owner_agency"
+	}
+	err = database.QueryRowContext(ctx, `SELECT `+col+` FROM `+t.catalog+` WHERE id = ?`, id).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, "", nil
+	}
+	return err == nil, owner, err
 }
 
 // dedupeIDs drops repeats and blanks, keeping first-seen order.
@@ -551,6 +602,12 @@ func BuildAgencyDetail(ctx context.Context, database *sql.DB, agencyID string) (
 // on a pre-830 schema (where the column does not exist yet). `table` is a
 // compile-time constant from memberTableFor, never input.
 func entityOwner(ctx context.Context, database *sql.DB, table, id string) string {
+	if table == "scopes" {
+		// A scope's owner_agency (1410) is its membership, kept equal to it by
+		// triggers, not an owner of its own: taking an agency out of a scope is
+		// the membership change itself, which LR-26 governs.
+		return ""
+	}
 	var owner string
 	if err := database.QueryRowContext(ctx,
 		`SELECT COALESCE(owner_agency,'') FROM `+table+` WHERE id = ?`, id).Scan(&owner); err != nil {
@@ -695,6 +752,29 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 
 	delta, err := ComputeAgencyMembersDelta(ctx, database, agencyID, desired)
 	if err != nil {
+		return nil, err
+	}
+	// GR-18 before the rest: a scope from an agency's repository is that
+	// agency's, whichever way this save would move it.
+	scopeFixed := func(refs []AgencyMemberRef, refused func(fixed string) bool) error {
+		for _, m := range refs {
+			if m.Kind != string(MemberScope) {
+				continue
+			}
+			fixed, err := ScopeAgencyFixedTo(ctx, database, m.ID)
+			if err != nil {
+				return err
+			}
+			if fixed != "" && refused(fixed) {
+				return fmt.Errorf("%w (scope %s)", ErrScopeAgencyFixed, m.ID)
+			}
+		}
+		return nil
+	}
+	if err := scopeFixed(delta.Removed, func(fixed string) bool { return fixed == agencyID }); err != nil {
+		return nil, err
+	}
+	if err := scopeFixed(delta.Added, func(fixed string) bool { return fixed != agencyID }); err != nil {
 		return nil, err
 	}
 	for _, m := range delta.Removed {

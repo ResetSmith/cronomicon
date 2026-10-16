@@ -39,6 +39,18 @@ vi.mock("../api/client", async (importOriginal) => {
         if (path === "/settings/general") return { data: GENERAL };
         if (path === "/settings/observability") return { data: { enabled: true, path: "/metrics", authType: "none" } };
         if (path === "/settings/gitlab") return { data: { repoUrl: "https://gitlab.example/defs.git", writeBranch: "main" } };
+        if (path === "/git-repos")
+          return {
+            data: {
+              items: [
+                {
+                  id: "global", agencyId: "global", agencyName: "Global", repoUrl: "https://gitlab.example/defs.git", writeBranch: "main",
+                  supplies: { jobs: 3, workflows: 0, scripts: 2, schedules: 1, scopes: 1 },
+                },
+              ],
+            },
+          };
+        if (path === "/git-repos/{repoId}/problems") return { data: { repoId: "global", items: [] } };
         if (path === "/settings/vault") return { data: { addr: "https://vault.internal:8200", status: "ok", authMethod: "approle" } };
         if (path === "/recycle-bin") return { data: { items: [], retentionDays: 30 } };
         return { data: [] };
@@ -58,8 +70,10 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-const INSTALLATION = ["General", "Notifications", "GitLab Connection", "Vault", "Observability", "Log Storage", "Audit & Compliance", "Local runner"];
-const AGENCY = ["Users & Access", "Service Accounts", "SSH Targets", "Recycle Bin"];
+// 2.4.0 R8 (question 47): GitLab Connection (Installation) is replaced by
+// Repositories (Agency), which an agency's administrator opens for their own.
+const INSTALLATION = ["General", "Notifications", "Vault", "Observability", "Log Storage", "Audit & Compliance", "Local runner"];
+const AGENCY = ["Users & Access", "Service Accounts", "Repositories", "SSH Targets", "Recycle Bin"];
 
 const open = async (at = "/settings") => {
   render(
@@ -135,19 +149,21 @@ describe("Settings — a global administrator", () => {
     expect((screen.getByDisplayValue("Cronomicon") as HTMLInputElement).closest("fieldset")!.disabled).toBe(false);
   });
 
-  it("loads the GitLab and Vault connections and the Recycle Bin", async () => {
+  it("loads the repositories, the Vault connection and the Recycle Bin", async () => {
     await open();
-    go("GitLab Connection");
-    await waitFor(() => expect(screen.getByDisplayValue("https://gitlab.example/defs.git")).toBeTruthy());
-    expect(saveBtn().disabled).toBe(false);
-    expect(screen.queryByRole("note")).toBeNull();
+    go("Repositories");
+    await waitFor(() => expect(screen.getByText("Global's repository")).toBeTruthy());
+    expect(screen.getByText("https://gitlab.example/defs.git")).toBeTruthy();
+    // The hosts an agency's repository may be on: a global administrator's.
+    expect(screen.getByText("Allowed hosts")).toBeTruthy();
 
     go("Vault");
     await waitFor(() => expect(screen.getByDisplayValue("https://vault.internal:8200")).toBeTruthy());
 
     go("Recycle Bin");
     await waitFor(() => expect(screen.getByText(/Nothing has been deleted/)).toBeTruthy());
-    expect(gets).toContain("/settings/gitlab");
+    expect(gets).toContain("/git-repos");
+    expect(gets).not.toContain("/settings/gitlab"); // the deprecated route is not called
     expect(gets).toContain("/settings/vault");
     expect(gets).toContain("/recycle-bin");
   });

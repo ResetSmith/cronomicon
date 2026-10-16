@@ -74,9 +74,12 @@ func TestGC_SharedAuthoringNeedsComposeAndConfigureOnEveryAgency(t *testing.T) {
 		deny bool
 		why  string
 	}{
-		{gFinAdmin, true, "the built-in admin role on ONE agency passed RequireRole(\"admin\")"},
-		{gAllComposer, true, "compose on every agency, without configureApp, is not an installation administrator"},
-		{gMixed, true, "compose and configureApp must come from the SAME unrestricted grant"},
+		// Since §0a (2.4.0) a calendar is its agency's, and this one is
+		// Global's: creating it takes compose on Global. Until then it took an
+		// installation administrator (compose and configureApp on every agency).
+		{gFinAdmin, true, "the built-in admin role on ONE agency holds no compose on Global"},
+		{gAllComposer, false, "compose on every agency includes Global"},
+		{gMixed, true, "an all-scopes viewer who administers FIN holds no compose on Global"},
 		{gAllFull, false, "a custom role holding both on every agency is; the gate names no role"},
 		{gRoot, false, "the built-in admin on every agency"},
 	} {
@@ -199,8 +202,10 @@ func TestGC_ScopesAreAdministeredByTheirOwnAgency(t *testing.T) {
 		// Taking a scope that is Global's is a move out of Global.
 		{"/api/v1/scopes/sc:shared/agency", `{"agencyId":"ag:FIN"}`, http.StatusForbidden},
 		{"/api/v1/agencies/ag:FIN/members", `{"members":[{"kind":"scope","id":"sc:fin"},{"kind":"scope","id":"sc:shared"}]}`, http.StatusForbidden},
-		// Dropping its own scope from its agency would leave the scope in none.
-		{"/api/v1/agencies/ag:FIN/members", `{"members":[]}`, http.StatusUnprocessableEntity},
+		// Dropping its own scope from its agency changes the scope's agency:
+		// a global administrator's repair since I4 (IN-7). (It was 422: it
+		// would leave the scope in none, which a repair is refused for too.)
+		{"/api/v1/agencies/ag:FIN/members", `{"members":[]}`, http.StatusForbidden},
 	} {
 		if rec := gateReq(t, h, http.MethodPut, c.path, gFinAdmin, c.body); rec.Code != c.want {
 			t.Errorf("fin admin PUT %s %s = %d, want %d (%s)", c.path, c.body, rec.Code, c.want, rec.Body)
@@ -215,14 +220,51 @@ func TestGC_ScopesAreAdministeredByTheirOwnAgency(t *testing.T) {
 		}
 	}
 
-	// Someone who administers both agencies moves a scope between them, and it
-	// is in exactly one afterwards. A scope never has two (LR-7).
+	// Somebody with no authority over the scope is told what they were always
+	// told (whose it is), and not the rule for moving one.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:tax/agency", gFinAdmin, `{"agencyId":"ag:FIN"}`); rec.Code != http.StatusForbidden ||
+		!strings.Contains(rec.Body.String(), "on the agency that has this scope") {
+		t.Errorf("FIN's administrator pulling TAX's scope in = %d %s, want 403 saying they hold nothing on the agency that has it", rec.Code, rec.Body)
+	}
+	// Somebody who administers BOTH agencies does not move a scope between
+	// them either: a scope is moved by a global administrator only (the
+	// owner's decision of 2026-10-13; it was the two-sided rule from 2.3.0,
+	// LR-7). On each of the three setters, and nothing moves. A request that
+	// names where the scope already is moves nothing, and is theirs.
 	both := gFinAdmin + "," + gTaxAdmin
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scope-agencies", both, `[{"id":"sc:fin","agencyIds":["ag:FIN","ag:TAX"]}]`); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "one_agency" {
+	for _, c := range []struct{ path, body string }{
+		{"/api/v1/scopes/sc:fin/agency", `{"agencyId":"ag:TAX"}`},
+		{"/api/v1/scope-agencies", `[{"id":"sc:fin","agencyIds":["ag:TAX"]}]`},
+		{"/api/v1/scope-agencies", `[{"id":"sc:fin","agencyIds":["ag:FIN","ag:TAX"]}]`},
+		{"/api/v1/agencies/ag:TAX/members", `{"members":[{"kind":"scope","id":"sc:tax"},{"kind":"scope","id":"sc:fin"}]}`},
+	} {
+		// Since I4 (IN-7) a move of anything is a global administrator's
+		// repair, and asking for one as an administrator of both changes nothing.
+		rec := gateReq(t, h, http.MethodPut, c.path, both, asRepair(c.body))
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "global administrator's repair") {
+			t.Errorf("an administrator of both agencies moving a scope: PUT %s %s = %d, want 403 naming a global administrator (%s)", c.path, c.body, rec.Code, rec.Body)
+		}
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id='sc:fin' AND agency_id='ag:FIN'`); n != 1 {
+		t.Fatal("the scope moved under an administrator of both agencies")
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", both, `{"agencyId":"ag:FIN"}`); rec.Code != http.StatusOK {
+		t.Errorf("naming the agency the scope is in already = %d, want 200: nothing moves (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", gFinAdmin, `{"agencyId":"ag:FIN"}`); rec.Code != http.StatusOK {
+		t.Errorf("FIN's administrator naming the agency its scope is in already = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	// A global administrator moves it, and it is in exactly one agency
+	// afterwards. A scope never has two (LR-7).
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scope-agencies", gRoot, asRepair(`[{"id":"sc:fin","agencyIds":["ag:FIN","ag:TAX"]}]`)); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "one_agency" {
 		t.Errorf("putting a scope in two agencies = %d %s, want 422 one_agency (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
 	}
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", both, `{"agencyId":"ag:TAX"}`); rec.Code != http.StatusOK {
-		t.Fatalf("an administrator of both agencies moving a scope = %d, want 200 (%s)", rec.Code, rec.Body)
+	// Without saying it is a repair, it is refused, and told so (I4).
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", gRoot, `{"agencyId":"ag:TAX"}`); rec.Code != http.StatusConflict || errCode(rec.Body.Bytes()) != "repair_required" {
+		t.Errorf("a global administrator moving a scope without a repair = %d %s, want 409 repair_required", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", gRoot, asRepair(`{"agencyId":"ag:TAX"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("a global administrator moving a scope = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id='sc:fin' AND agency_id='ag:TAX'`); n != 1 {
 		t.Error("the scope did not move")
@@ -236,10 +278,10 @@ func TestGC_ScopesAreAdministeredByTheirOwnAgency(t *testing.T) {
 	}
 	// The agency editor adds only what is Global's; a scope that is another
 	// agency's is moved on the scope itself.
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/members", gRoot, `{"members":[{"kind":"scope","id":"sc:fin"}]}`); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "one_agency" {
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/members", gRoot, asRepair(`{"members":[{"kind":"scope","id":"sc:fin"}]}`)); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "one_agency" {
 		t.Errorf("adding TAX's scope to FIN through the agency editor = %d %s, want 422 one_agency (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
 	}
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/members", gRoot, `{"members":[{"kind":"scope","id":"sc:shared"}]}`); rec.Code != http.StatusOK {
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/members", gRoot, asRepair(`{"members":[{"kind":"scope","id":"sc:shared"}]}`)); rec.Code != http.StatusOK {
 		t.Errorf("a global administrator adding a Global scope to FIN = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id='sc:shared'`); n != 1 {
@@ -413,11 +455,26 @@ func TestGC_HostAndBastionRecords(t *testing.T) {
 	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/"+finHost, gRoot, `{"hostname":"x01","port":22,"ownerAgency":"no-such-agency"}`); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("giving a host record to an agency that does not exist = %d, want 422 (%s)", rec.Code, rec.Body)
 	}
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/"+finHost, gFinAdmin+","+gTaxAdmin, `{"hostname":"x01","port":22,"ownerAgency":"ag:TAX"}`); rec.Code != http.StatusOK {
-		t.Errorf("an administrator of both agencies moving a host record = %d, want 200 (%s)", rec.Code, rec.Body)
+	// An administrator of both agencies does not move a host record (I4;
+	// IN-7; question 42: until then they could), even asking for a repair;
+	// a global administrator's repair does, and is audited with its reason.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/"+finHost, gFinAdmin+","+gTaxAdmin, asRepair(`{"hostname":"x01","port":22,"ownerAgency":"ag:TAX"}`)); rec.Code != http.StatusForbidden {
+		t.Errorf("an administrator of both agencies moving a host record = %d, want 403 (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/"+finHost, gRoot, `{"hostname":"x01","port":22,"ownerAgency":"ag:TAX"}`); rec.Code != http.StatusConflict || errCode(rec.Body.Bytes()) != "repair_required" {
+		t.Errorf("a global administrator moving a host record without saying it is a repair = %d, want 409 repair_required (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_hosts WHERE id=? AND owner_agency='ag:FIN'`, finHost); n != 1 {
+		t.Fatal("a refused move changed the host record's owner")
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/"+finHost, gRoot, `{"repair":true,"reason":"given to the wrong agency at the upgrade","hostname":"x01","port":22,"ownerAgency":"ag:TAX"}`); rec.Code != http.StatusOK {
+		t.Errorf("a global administrator's repair of a host record = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_hosts WHERE id=? AND owner_agency='ag:TAX'`, finHost); n != 1 {
 		t.Error("the host record did not change owner")
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM change_log WHERE action = 'Repaired' AND target = ? AND details LIKE '%given to the wrong agency at the upgrade%'`, "host record "+finHost); n != 1 {
+		t.Errorf("the repair's audit row with its reason: %d, want 1", n)
 	}
 	// An imported record's owner is its scope's: naming one changes nothing.
 	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/h-fin", gRoot, `{"hostname":"fin01","port":22,"ownerAgency":"ag:TAX"}`); rec.Code != http.StatusOK {
@@ -472,7 +529,7 @@ func TestGC_ARecordNamesOnlyAKeyItsOwnerMayUse(t *testing.T) {
 			want             int
 		}{
 			{gFinAdmin, "k-fin", "ag:FIN", http.StatusCreated},
-			{gFinAdmin, "k-shared", "ag:FIN", http.StatusCreated},
+			{gFinAdmin, "k-shared", "ag:FIN", http.StatusUnprocessableEntity}, // §0a (IN-6): Global's key is not FIN's
 			{gFinAdmin, "k-tax", "ag:FIN", http.StatusUnprocessableEntity},
 			{gFinAdmin, "k-nope", "ag:FIN", http.StatusUnprocessableEntity},
 			{gRoot, "k-tax", "ag:FIN", http.StatusUnprocessableEntity},
@@ -496,11 +553,11 @@ func TestGC_ARecordNamesOnlyAKeyItsOwnerMayUse(t *testing.T) {
 		t.Errorf("changing a Global record's key to TAX's = %d, want 422 (%s)", rec.Code, rec.Body)
 	}
 	// Moving it to the agency whose key it names makes it whole.
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/h-legacy", gRoot, `{"hostname":"legacy01","port":22,"authCredentialId":"k-fin","ownerAgency":"ag:FIN"}`); rec.Code != http.StatusOK {
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/h-legacy", gRoot, asRepair(`{"hostname":"legacy01","port":22,"authCredentialId":"k-fin","ownerAgency":"ag:FIN"}`)); rec.Code != http.StatusOK {
 		t.Errorf("giving the record to FIN, whose key it names = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
 	// And moving a record away from the agency whose key it names is refused.
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/h-legacy", gRoot, `{"hostname":"legacy01","port":22,"authCredentialId":"k-fin","ownerAgency":"ag:TAX"}`); rec.Code != http.StatusUnprocessableEntity {
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/h-legacy", gRoot, asRepair(`{"hostname":"legacy01","port":22,"authCredentialId":"k-fin","ownerAgency":"ag:TAX"}`)); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("giving FIN's record, with FIN's key, to TAX = %d, want 422 (%s)", rec.Code, rec.Body)
 	}
 }
@@ -566,8 +623,14 @@ func publishBody(path, content string) string {
 	return string(b)
 }
 
-// GC-9 — publish is checked per file. The route itself only asks whether the
-// caller may publish somewhere.
+// GC-9, then GR-24 — a publish is checked past the route, which only asks
+// whether the caller may publish somewhere.
+//
+// This server has one repository, Global's, and Global's takes publishes from
+// a global publisher only (2.4.0; the owner's decision of 2026-10-13). From
+// v2.2.2 to 2.3.x an agency's approver could publish there a job file of their
+// own scope (GC-9), checked per file; that check is now of an agency's own
+// repository (TestAPublishNamesARepositoryAndIsGatedByItsAgency).
 func TestGC_PublishIsCheckedPerFile(t *testing.T) {
 	clone := t.TempDir()
 	t.Setenv("CRONOMICON_GIT_CACHE_DIR", clone)
@@ -601,14 +664,22 @@ func TestGC_PublishIsCheckedPerFile(t *testing.T) {
 			t.Errorf("fin approver publishing %s = %d, want 403", c.name, code)
 		}
 	}
-	// Its own job in its own scope passes the gate. (What happens next depends on
-	// a real repository, which this test does not have — anything but 403.)
-	if code := publish(gFinApprover, "jobs/fin-new.yaml", jobYAML("fin-new", "fin-hosts")); code == http.StatusForbidden {
-		t.Errorf("fin approver publishing its own job = 403, want the gate to pass")
+	// Its own job in its own scope too: Global's repository is not an
+	// agency's to publish to. And an administrator of an agency, the same.
+	for who, name := range map[string]string{gFinApprover: "FIN's approver", gFinAdmin: "FIN's administrator"} {
+		if code := publish(who, "jobs/fin-new.yaml", jobYAML("fin-new", "fin-hosts")); code != http.StatusForbidden {
+			t.Errorf("%s publishing its own job to Global's repository = %d, want 403", name, code)
+		}
 	}
-	// A global publisher is not narrowed.
-	if code := publish(gRoot, "schedules/nightly.yaml", "apiVersion: cronomicon.io/v1\nkind: Schedule\n"); code == http.StatusForbidden {
-		t.Errorf("root publishing a schedule file = 403, want the gate to pass")
+	// A global publisher is not narrowed: any file. (What happens next depends
+	// on a real repository, which this test does not have — anything but 403.)
+	for path, content := range map[string]string{
+		"schedules/nightly.yaml": "apiVersion: cronomicon.io/v1\nkind: Schedule\n",
+		"jobs/fin-new.yaml":      jobYAML("fin-new", "fin-hosts"),
+	} {
+		if code := publish(gRoot, path, content); code == http.StatusForbidden {
+			t.Errorf("root publishing %s = 403, want the gate to pass", path)
+		}
 	}
 }
 
@@ -993,10 +1064,12 @@ func TestGC_AHostRecordMayNotNameAnotherAgencysKey(t *testing.T) {
 	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_hosts WHERE id='h-fin' AND auth_credential_id IS NOT NULL`); n != 0 {
 		t.Fatal("a refused write changed the host record's key")
 	}
-	for _, cred := range []string{"k-fin", "k-shared"} {
-		if rec := put(gFinAdmin, cred); rec.Code != http.StatusOK {
-			t.Errorf("fin admin naming %s = %d, want 200 (%s)", cred, rec.Code, rec.Body)
-		}
+	if rec := put(gFinAdmin, "k-fin"); rec.Code != http.StatusOK {
+		t.Errorf("fin admin naming k-fin = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	// Global's key is not FIN's record's (§0a, IN-6; until then it was).
+	if rec := put(gFinAdmin, "k-shared"); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("fin admin naming Global's key k-shared = %d, want 422 (%s)", rec.Code, rec.Body)
 	}
 	// A global administrator is bound by it too since 2.3.0 (LR-72): the record
 	// is FIN's scope's, and TAX's key is not FIN's to use whoever names it. An
@@ -1080,6 +1153,7 @@ func TestGC_ARunsTargetHostMustBeInTheScope(t *testing.T) {
 	// The composer refuses to author one, and accepts a host of the scope.
 	exec(`INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
 	      VALUES ('say-hi','bash','true','ssh','h1','scripts/say-hi.yaml','2026-01-01T00:00:00Z')`)
+	agenciesGetTheirOwnRepository(t, pool)
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs", gFinAdmin,
 		`{"name":"fin-new","scriptRef":"say-hi","scope":"fin-hosts","targetHost":"tax01"}`)
 	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "scope_membership") {

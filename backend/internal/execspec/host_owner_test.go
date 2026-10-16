@@ -3,6 +3,7 @@ package execspec_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,7 +67,7 @@ func TestAScopeResolvesItsOwnAgencysHostRecordsAndGlobalsOnly(t *testing.T) {
 
 	resolve := func(scope, host string) string {
 		t.Helper()
-		tgt, err := execspec.HostByName(ctx, pool, scope, host)
+		tgt, err := execspec.HostByName(ctx, pool, ownerOf(t, pool, scope), scope, host)
 		if err != nil {
 			t.Fatalf("HostByName(%q, %q): %v", scope, host, err)
 		}
@@ -80,8 +81,11 @@ func TestAScopeResolvesItsOwnAgencysHostRecordsAndGlobalsOnly(t *testing.T) {
 		{"tax-prod", "db01", "h-tax2", "Tax's scope takes Tax's"},
 		{"fin-prod", "web01", "h-fin3", "each agency's own"},
 		{"tax-prod", "web01", "h-tax4", "each agency's own"},
-		{"fin-prod", "only-global", "h-glb5", "Global's record answers to every scope"},
-		{"tax-prod", "only-global", "h-glb5", "Global's record answers to every scope"},
+		// §0a (IN-6; question 33): Global's record is Global's runs' only. Until
+		// then it answered to every scope.
+		{"fin-prod", "only-global", "", "Global's record is not Finance's"},
+		{"tax-prod", "only-global", "", "Global's record is not Tax's"},
+		{"shared", "only-global", "h-glb5", "a Global scope sees Global's records"},
 		{"fin-prod", "only-tax", "", "another agency's record does not exist for this scope"},
 		{"shared", "only-tax", "", "a Global scope sees Global's records only"},
 		{"shared", "db01", "", "a Global scope sees Global's records only"},
@@ -94,24 +98,25 @@ func TestAScopeResolvesItsOwnAgencysHostRecordsAndGlobalsOnly(t *testing.T) {
 		}
 	}
 
-	// A global administrator's record still wins everywhere, deliberately: it is
-	// how the installation corrects a host for every agency at once.
+	// A record Global writes for a host is Global's runs': each agency keeps its
+	// own (§0a, question 33). Until then a global administrator's record won
+	// everywhere, as the way to correct a host for every agency at once.
 	manualHost(exec, "h-glb7", "db01", "global", "2025-01-01T00:00:00Z")
-	for _, scope := range []string{"fin-prod", "tax-prod", "shared", ""} {
-		if got := resolve(scope, "db01"); got != "h-glb7" {
-			t.Errorf("scope %q resolved %q for db01 once Global wrote a record, want Global's", scope, got)
+	for scope, want := range map[string]string{"fin-prod": "h-fin1", "tax-prod": "h-tax2", "shared": "h-glb7", "": "h-glb7"} {
+		if got := resolve(scope, "db01"); got != want {
+			t.Errorf("scope %q resolved %q for db01 once Global wrote a record, want %q", scope, got, want)
 		}
 	}
 
 	// The record says whose bastions it may route through.
-	tgt, _ := execspec.HostByName(ctx, pool, "fin-prod", "web01")
+	tgt, _ := execspec.HostByName(ctx, pool, ownerOf(t, pool, "fin-prod"), "fin-prod", "web01")
 	if tgt == nil || len(tgt.Owners) != 1 || tgt.Owners[0] != "ag-fin" {
 		t.Errorf("Finance's hand-written record answers to %v, want [ag-fin]", tgt)
 	}
 	// An imported record answers to its scope's agency, whatever its column says.
 	exec(`INSERT INTO ssh_hosts (id, source, scope_id, hostname, address, port, created_at, last_modified_at)
 	      VALUES ('h-imp8', 'cronomicon', 's-tax', 'imported01', '10.0.0.8', 22, 't', 't')`)
-	tgt, _ = execspec.HostByName(ctx, pool, "tax-prod", "imported01")
+	tgt, _ = execspec.HostByName(ctx, pool, ownerOf(t, pool, "tax-prod"), "tax-prod", "imported01")
 	if tgt == nil || len(tgt.Owners) != 1 || tgt.Owners[0] != "ag-tax" {
 		t.Errorf("a record imported for Tax's scope answers to %v, want [ag-tax]", tgt)
 	}
@@ -120,23 +125,58 @@ func TestAScopeResolvesItsOwnAgencysHostRecordsAndGlobalsOnly(t *testing.T) {
 	}
 }
 
+// LR-70 — a host record routes only through its own agency's bastion. Since
+// §0a (question 33) that holds for Global's too: until then every record could
+// route through Global's, after its agency's own.
+func TestARecordRoutesThroughItsOwnAgencysBastionOnly(t *testing.T) {
+	pool, exec := hostOwnerDB(t)
+	ctx := context.Background()
+	exec(`INSERT INTO bastions (id, name, hostname, address, port, created_at, owner_agency) VALUES
+	      ('b-glob', 'jump', 'jump', '10.9.0.1', 22, 't', 'global'),
+	      ('b-glob2', 'global-jump', 'global-jump', '10.9.0.2', 22, 't', 'global'),
+	      ('b-fin', 'fin-jump', 'fin-jump', '10.9.0.3', 22, 't', 'ag-fin')`)
+	for _, c := range []struct {
+		ref    string
+		owners []string
+		want   string
+	}{
+		{"fin-jump", []string{"ag-fin"}, "b-fin"},
+		{"jump", []string{"ag-fin"}, ""},        // Global's: not Finance's records' (until §0a it was)
+		{"global-jump", []string{"ag-tax"}, ""}, // the same for Tax
+		{"fin-jump", []string{"ag-tax"}, ""},    // another agency's, as always
+		{"jump", []string{"global"}, "b-glob"},  // Global's record, Global's bastion
+		{"global-jump", nil, "b-glob2"},         // a record with no owner to name is Global's
+		{"fin-jump", nil, ""},
+	} {
+		b, err := execspec.BastionByRef(ctx, pool, c.ref, c.owners)
+		got := ""
+		if b != nil {
+			got = b.ID
+		}
+		if got != c.want || (c.want == "" && !errors.Is(err, execspec.ErrNoBastion)) || (c.want != "" && err != nil) {
+			t.Errorf("BastionByRef(%q, %v) = %q, %v; want %q", c.ref, c.owners, got, err, c.want)
+		}
+	}
+}
+
 // LR-71 — a job's fixed target_host must be one of its scope's hosts. This is
 // the one function every producer's run resolves through.
 func TestAFixedTargetHostMustBeAMemberOfTheScope(t *testing.T) {
 	pool, exec := hostOwnerDB(t)
 	ctx := context.Background()
-	manualHost(exec, "h-glb1", "db01", "global", "t")
+	manualHost(exec, "h-fin1", "db01", "ag-fin", "t")
 	manualHost(exec, "h-glb2", "elsewhere", "global", "t") // a real record, in no scope's inventory
+	manualHost(exec, "h-fin4", "fin-side", "ag-fin", "t")  // Finance's, in no scope's inventory
 
 	one := func(scope, host string) execspec.Target {
 		t.Helper()
-		ts, err := execspec.ResolveTargets(ctx, pool, scope, host, nil)
+		ts, err := execspec.ResolveTargets(ctx, pool, ownerOf(t, pool, scope), scope, host, nil)
 		if err != nil || len(ts) != 1 {
 			t.Fatalf("ResolveTargets(%q, %q) = %v, %v; want one target", scope, host, ts, err)
 		}
 		return ts[0]
 	}
-	if got := one("fin-prod", "db01"); got.ResolveErr != "" || got.ID != "h-glb1" {
+	if got := one("fin-prod", "db01"); got.ResolveErr != "" || got.ID != "h-fin1" {
 		t.Errorf("a member host did not resolve: %+v", got)
 	}
 	got := one("fin-prod", "elsewhere")
@@ -144,7 +184,7 @@ func TestAFixedTargetHostMustBeAMemberOfTheScope(t *testing.T) {
 		t.Errorf("a host outside the scope resolved, or failed without saying why: %+v", got)
 	}
 	// It fails as a per-host error, never by widening to the scope.
-	if ts, _ := execspec.ResolveTargets(ctx, pool, "fin-prod", "elsewhere", nil); len(ts) != 1 {
+	if ts, _ := execspec.ResolveTargets(ctx, pool, ownerOf(t, pool, "fin-prod"), "fin-prod", "elsewhere", nil); len(ts) != 1 {
 		t.Errorf("a refused target became %d targets", len(ts))
 	}
 	// A job with no scope, and one whose scope the catalog does not hold, have
@@ -161,8 +201,12 @@ func TestAFixedTargetHostMustBeAMemberOfTheScope(t *testing.T) {
 	exec(`INSERT INTO scopes (id, name, source, created_at) VALUES ('s-empty', 'runner-side', 'cronomicon', 't')`)
 	exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-empty', 'ag-fin')`)
 	manualHost(exec, "h-tax3", "tax-only", "ag-tax", "t")
-	if got := one("runner-side", "elsewhere"); got.ResolveErr != "" || got.ID != "h-glb2" {
+	if got := one("runner-side", "fin-side"); got.ResolveErr != "" || got.ID != "h-fin4" {
 		t.Errorf("a pinned host of a scope with no host list did not resolve: %+v", got)
+	}
+	// Global's record is not Finance's scope's (§0a, question 33).
+	if got := one("runner-side", "elsewhere"); got.ID != "" {
+		t.Errorf("a scope of Finance's with no host list resolved Global's record: %+v", got)
 	}
 	if got := one("runner-side", "tax-only"); got.ID != "" {
 		t.Errorf("a scope with no host list resolved another agency's record: %+v", got)
@@ -175,7 +219,7 @@ func TestAFixedTargetHostMustBeAMemberOfTheScope(t *testing.T) {
 		{"", "db01", false, false}, {"no-such-scope", "db01", false, false},
 		{"runner-side", "db01", false, false},
 	} {
-		in, known, err := execspec.HostInScope(ctx, pool, c.scope, c.host)
+		in, known, err := execspec.HostInScope(ctx, pool, ownerOf(t, pool, c.scope), c.scope, c.host)
 		if err != nil || in != c.in || known != c.known {
 			t.Errorf("HostInScope(%q, %q) = %v, %v, %v; want %v, %v", c.scope, c.host, in, known, err, c.in, c.known)
 		}

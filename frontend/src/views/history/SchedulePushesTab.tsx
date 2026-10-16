@@ -20,6 +20,7 @@ import {
   usePager,
 } from "./shared";
 import { Btn, SkeletonRows, TableSurface } from "../../components/ui";
+import { RepoSelect, repoLabel, useRepos } from "../../components/RepoPicker";
 
 interface SchedulePush {
   id?: string;
@@ -31,6 +32,7 @@ interface SchedulePush {
   status?: string;
   errorMessage?: string | null;
   timestamp?: string;
+  repoId?: string; // 2.4.0 — the repository published to; `global` for Global's
 }
 
 const STATUSES = ["All", "success", "failed"];
@@ -51,6 +53,7 @@ const SORT_COLS: SortColumn<SchedulePush>[] = [
 // useColumnWidths and rendered at intrinsic widths.
 const COL_W: Record<string, number> = {
   timestamp: 150,
+  repo: 130,
   user: 170,
   file: 200,
   slots: 240,
@@ -61,6 +64,10 @@ const COL_W: Record<string, number> = {
 export function SchedulePushesTab() {
   const [search, setSearchRaw] = useState("");
   const [status, setStatusRaw] = useState("All");
+  // 2.4.0 (R8) — every agency publishes to its own repository: a column, and a
+  // filter the server applies (`?repo=`). "" is every repository the caller reads.
+  const { repos } = useRepos();
+  const [repo, setRepoRaw] = useState("");
   const pager = usePager();
   const cw = useColumnWidths("history-schedulepushes");
 
@@ -85,6 +92,7 @@ export function SchedulePushesTab() {
           query: {
             page: pager.page + 1,
             pageSize: pager.pageSize,
+            ...(repo ? { repo } : {}),
             ...(status !== "All" ? { status: status as "success" | "failed" } : {}),
             ...(sort.sortKey
               ? {
@@ -95,7 +103,7 @@ export function SchedulePushesTab() {
           },
         },
       }),
-    [pager.page, pager.pageSize, status, sort.sortKey, sort.sortDir],
+    [pager.page, pager.pageSize, repo, status, sort.sortKey, sort.sortDir],
   );
   const pg = paged<SchedulePush>(data);
   const items = pg.items;
@@ -122,9 +130,10 @@ export function SchedulePushesTab() {
 
   // VU-14 — `status` is a server param, so an empty page under a status filter is
   // a no-match rather than "nothing has ever been pushed".
-  const filtersActive = !!search || status !== "All";
+  const filtersActive = !!search || status !== "All" || !!repo;
   const clearFilters = () => {
     setSearchRaw("");
+    setRepoRaw("");
     setStatusRaw("All");
     pager.setPage(0);
   };
@@ -143,6 +152,16 @@ export function SchedulePushesTab() {
       pin: "first",
       tdStyle: { color: c.textSec, fontSize: c.fontSm, whiteSpace: "nowrap" },
       cell: (r) => fmtTime(r.timestamp),
+    },
+    {
+      key: "repo",
+      label: "Repository",
+      width: COL_W.repo,
+      tdStyle: { color: c.textSec, fontSize: c.fontSm },
+      cell: (r) => {
+        const row = repos.find((x) => x.id === (r.repoId || "global"));
+        return row ? repoLabel(row) : r.repoId || "Global";
+      },
     },
     { key: "user", label: "User", sortKey: "user", width: COL_W.user, tdStyle: { color: c.textSec, fontSize: c.fontSm }, cell: (r) => r.userEmail ?? "—" },
     {
@@ -183,6 +202,15 @@ export function SchedulePushesTab() {
     <div>
       <div style={filterBar}>
         <SearchInput value={search} onChange={setSearch} placeholder="Search this page by user, file, or schedule…" />
+        <RepoSelect
+          repos={repos}
+          value={repo}
+          all="All"
+          onChange={(id) => {
+            setRepoRaw(id);
+            pager.setPage(0);
+          }}
+        />
         <FilterSelect label="Status" value={status} options={STATUSES} onChange={setStatus} />
         <ColumnsMenu cols={cols} cw={cw} />
       </div>
@@ -200,7 +228,7 @@ export function SchedulePushesTab() {
                   <EmptyRow
                     colSpan={cols.visible.length}
                     title="No schedule pushes yet"
-                    hint="A push is recorded here when a schedule is published to GitLab."
+                    hint="A push is recorded here when a schedule is published to its repository."
                     action={
                       <Link to="/schedules" style={{ textDecoration: "none" }}>
                         <Btn small>Go to Schedules</Btn>

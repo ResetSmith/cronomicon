@@ -99,7 +99,9 @@ func TestAgencyInUseOwnershipNamesTheMoveAndWarnsAgainstTheDelete(t *testing.T) 
 		t.Errorf("Owned() = %d, want 1", inUse.Owned())
 	}
 	got := strings.Join(inUse.Blockers(), "; ")
-	for _, want := range []string{"set its agency", "to Global", "do NOT delete it", "destroys its value"} {
+	// A move is a global administrator's repair since 2.4.0 (IN-7); the
+	// remedy said "set its agency … to Global" until 2.4.2.
+	for _, want := range []string{"repair its agency", "do NOT delete it", "destroys its value"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("blockers = %q, want it to contain %q", got, want)
 		}

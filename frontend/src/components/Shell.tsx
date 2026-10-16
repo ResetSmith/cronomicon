@@ -48,7 +48,7 @@ export const meta: Record<string, { label: string; subtitle: string; icon: React
   "/": { label: "Dashboard", subtitle: "Jobs, workflows and recent activity at a glance", icon: <IcGrid /> },
   "/jobs": { label: "Jobs", subtitle: "Run your scripts on a schedule, across your hosts", icon: <IcList /> },
   "/compose": { label: "Compose", subtitle: "Build an in-app job from a script, schedules and a scope", icon: <IcCode /> },
-  "/jobs/publish": { label: "Publish to GitLab", subtitle: "Author a job's schedule and publish it to GitLab", icon: <IcCode /> },
+  "/jobs/publish": { label: "Publish to the repository", subtitle: "Author a job's schedule and publish it to its repository", icon: <IcCode /> },
   "/scripts": { label: "Scripts", subtitle: "Reusable executable units referenced by jobs", icon: <IcCode /> },
   "/schedules": { label: "Schedules", subtitle: "Schedule catalog, live inventory and upcoming runs", icon: <IcCal /> },
   "/schedule-builder": { label: "Schedule Builder", subtitle: "Author an in-app schedule referenced by jobs and workflows", icon: <IcCal /> },

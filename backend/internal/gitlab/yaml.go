@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/inventory"
+	"github.com/ResetSmith/cronomicon/internal/workflow"
 	"gopkg.in/yaml.v3"
 
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
@@ -100,6 +102,12 @@ type ScheduleEntry struct {
 	// neither parsed from YAML nor serialized; mergeScheduleRefs sets it so
 	// writeDefinitionSchedules can record definition_schedules.source_ref.
 	SourceRef string `yaml:"-" json:"-"`
+	// SourceUID is WHICH schedule that name means: the uid of the first-class
+	// schedule this entry was expanded from (migration 1300, GR-8). Internal like
+	// SourceRef, and set beside it. It is what definition_schedules.schedule_uid
+	// is written from, so that a schedule finds the entries expanded from IT and
+	// not those of another schedule of the same name.
+	SourceUID string `yaml:"-" json:"-"`
 }
 
 // scheduleNameRe constrains schedule entry names to a slug form.
@@ -875,21 +883,35 @@ func ContentHash(body []byte) string {
 // Repo-wide validation (T11 / ValidateRepo) — cross-file script_ref resolution
 // ──────────────────────────────────────────────────────────────────────────────
 
-// ValidateRepo validates a whole job-definitions checkout rooted at dir. Unlike
-// ValidateFile (one file, no cross-file context) it parses scripts/ first, then
-// validates jobs/ INCLUDING script_ref resolution — a job whose script_ref names
-// no scripts/<name>.yaml is a hard, line-attributed error (risk #1: caught at MR
-// time, not run time). Orphan scripts (referenced by zero jobs) are returned
-// separately as non-fatal warnings. A missing scripts/ or jobs/ dir is not an
-// error (a repo may have only one).
-func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationError, err error) {
-	isYAML := func(name string) bool {
-		return strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml")
+// ValidateOptions says what a checkout is (2.4.0, GR-14, GR-25). A checkout
+// cannot say which repository it is, and the rules differ.
+type ValidateOptions struct {
+	// Agency: the checkout is an AGENCY's repository. A job must name a scope
+	// (GR-14: sync refuses one with none), and should name one of the
+	// checkout's own (a scope its agency owns, built in the app, is accepted by
+	// sync too, and cannot be seen here: a warning). A reference resolves in
+	// the checkout or nowhere, for every repository (§0a, IN-8): from R7 until
+	// then one that named nothing here might be Global's, and was a warning
+	// unless `-library` gave a checkout of Global's to look in.
+	Agency bool
+}
+
+// ValidateRepoWith is ValidateRepo for a checkout that opt describes.
+func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, warnings []ValidationError, err error) {
+	// unresolved says that a reference names nothing in the checkout: the
+	// error it is at sync.
+	unresolved := func(file, field, msg string) {
+		errs = append(errs, ValidationError{File: file, Field: field, Message: msg})
 	}
 
 	// 1. scripts/ — collect declared names (and flag duplicates).
 	scriptNames := map[string]bool{}
-	scripts, sErrs := discoverScripts(filepath.Join(dir, "scripts"))
+	// Every file is read as sync reads its clone (containedReader): a symbolic
+	// link that leads out of the checkout, or into its .git, is not followed,
+	// and is the error it is at sync. (Until the review of R7 the validator
+	// followed one, and passed what sync refuses.)
+	read := containedReader(dir)
+	scripts, sErrs := discoverScriptsWith(filepath.Join(dir, "scripts"), read)
 	for _, se := range sErrs {
 		if ve, ok := se.(ValidationError); ok {
 			errs = append(errs, ve)
@@ -915,7 +937,7 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 		// script's `executor` was the one a job that referenced it ran under.
 		if strings.TrimSpace(sc.Spec.Executor) != "" {
 			path := filepath.Join(dir, sc.SourcePath)
-			if data, rErr := os.ReadFile(path); rErr == nil { //nolint:gosec // a sidecar discoverScripts found under dir
+			if data, rErr := read(path); rErr == nil {
 				warnings = append(warnings, retiredJobKeyWarnings(path, data)...)
 			}
 		}
@@ -941,22 +963,23 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 		}
 	}
 
+	// walk reads one of the three definition directories as sync reads it
+	// (walkManifests): every YAML file, in sub-folders too. Until 2.4.0 this
+	// read the top level only, so a definition in a sub-folder was synced and
+	// never validated.
+	walk := func(sub string) ([]manifestFile, error) {
+		files, werrs := walkManifests(filepath.Join(dir, sub), read)
+		for _, we := range werrs {
+			errs = append(errs, ValidationError{File: filepath.Join(dir, sub), Message: we.Error()})
+		}
+		return files, nil
+	}
+
 	// 1b. schedules/ — collect declared first-class schedule names (A10a).
 	scheduleNames := map[string]bool{}
-	schedEntries, schErr := os.ReadDir(filepath.Join(dir, "schedules"))
-	if schErr != nil && !os.IsNotExist(schErr) {
-		return nil, nil, fmt.Errorf("read schedules dir: %w", schErr)
-	}
-	for _, e := range schedEntries {
-		if e.IsDir() || !isYAML(e.Name()) {
-			continue
-		}
-		path := filepath.Join(dir, "schedules", e.Name())
-		data, rErr := os.ReadFile(path)
-		if rErr != nil {
-			errs = append(errs, ValidationError{File: path, Message: rErr.Error()})
-			continue
-		}
+	schedFiles, _ := walk("schedules")
+	for _, f := range schedFiles {
+		path, data := f.path, f.data
 		ve, _ := validateYAMLBytes(path, data)
 		errs = append(errs, ve...)
 		var sd ScheduleYAML
@@ -970,14 +993,94 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 	}
 	referencedSchedules := map[string]bool{}
 
+	// References that name a job or a workflow, held until every file has
+	// been read (a job's reaction may name a workflow read after it).
+	//
+	//   - A reaction's upstream (spec.reactions[].onName), as sync checks it
+	//     (badReactions): a definition of this repository, of the kind named; one
+	//     that names none is an ERROR, and sync does not write the definition. One
+	//     whose onSource is `cronomicon` names a definition built in the app, which
+	//     a checkout cannot see, and is not checked. A definition that reacts to
+	//     itself is an error, as at sync.
+	//   - A workflow's step: its job (collectStepRefs) and its sub-workflow
+	//     (collectWorkflowRefs). Sync does not check these; the engine resolves
+	//     them when the workflow runs, and a step whose source is not given falls
+	//     back to the definitions built in the app. So one that names nothing in
+	//     the checkout is a WARNING: an error would fail CI on a workflow that sync
+	//     accepts. A step that says `jobSource: cronomicon` is not checked.
+	seenJobNames := map[string]string{}      // job name → the file that defines it
+	seenWorkflowNames := map[string]string{} // workflow name → the file that defines it
+	type pendingRef struct {
+		file, field, kind, name string
+		step, sourceGiven       bool
+	}
+	var pending []pendingRef
+	pendReactions := func(file, ownerKind, ownerName string, rs []ReactionEntry) {
+		norm, _ := NormalizeReactions(rs) // shape errors are validateYAMLBytes's
+		for _, e := range norm {
+			if e.OnSourceOrDefault() != "git" {
+				continue
+			}
+			field := "spec.reactions[" + e.Name + "].onName"
+			if e.OnKind == ownerKind && e.OnName == ownerName {
+				errs = append(errs, ValidationError{File: file, Field: field, Message: "a definition cannot react to itself"})
+				continue
+			}
+			pending = append(pending, pendingRef{file: file, field: field, kind: e.OnKind, name: e.OnName})
+		}
+	}
+	pendSteps := func(file string, raw []any) {
+		data, jerr := json.Marshal(raw)
+		if jerr != nil {
+			return
+		}
+		var steps []workflow.Step
+		if json.Unmarshal(data, &steps) != nil {
+			return
+		}
+		for _, ref := range workflow.CollectStepRefs(steps) {
+			if ref.Source == "cronomicon" {
+				continue
+			}
+			pending = append(pending, pendingRef{file: file, field: "spec.steps", kind: "job", name: ref.Name,
+				step: true, sourceGiven: ref.Source == "git"})
+		}
+		for _, ref := range workflow.CollectWorkflowRefs(steps) {
+			pending = append(pending, pendingRef{file: file, field: "spec.steps", kind: "workflow", name: ref.Name, step: true})
+		}
+	}
+	resolvePending := func() {
+		for _, p := range pending {
+			var ok bool
+			if p.kind == "workflow" {
+				_, ok = seenWorkflowNames[p.name]
+			} else {
+				_, ok = seenJobNames[p.name]
+			}
+			if ok {
+				continue
+			}
+			switch {
+			case !p.step:
+				unresolved(p.file, p.field, fmt.Sprintf("no such %s %q (source git)", p.kind, p.name))
+			case p.sourceGiven:
+				warnings = append(warnings, ValidationError{File: p.file, Field: p.field,
+					Message: fmt.Sprintf("step job %q is not a job of this repository: the step fails when the workflow runs", p.name)})
+			default:
+				warnings = append(warnings, ValidationError{File: p.file, Field: p.field,
+					Message: fmt.Sprintf("step %s %q is not a %s of this repository: when the workflow runs it is looked for "+
+						"among the %ss built in the app, and the step fails if there is none", p.kind, p.name, p.kind, p.kind)})
+			}
+		}
+	}
+
 	// resolveScheduleRefs validates each scheduleRef of an owner against the
 	// collected schedule set (dangling = hard error), marking each referenced.
 	resolveScheduleRefs := func(path string, refs []string) {
 		for _, ref := range refs {
 			referencedSchedules[ref] = true
 			if !scheduleNames[ref] {
-				errs = append(errs, ValidationError{File: path, Field: "spec.scheduleRefs",
-					Message: fmt.Sprintf("scheduleRef %q does not resolve to any schedules/*.yaml", ref)})
+				unresolved(path, "spec.scheduleRefs", fmt.Sprintf("scheduleRef %q does not resolve to any schedules/*.yaml", ref))
 			}
 		}
 	}
@@ -998,22 +1101,11 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 	// same metadata.name silently WON (last file iterated replaced the first),
 	// which was survivable-by-luck while the DB's PK also enforced uniqueness
 	// and is a data-loss hazard now that only this validator stands in the way.
-	seenJobNames := map[string]string{}
 	referenced := map[string]bool{}
-	jobEntries, jErr := os.ReadDir(filepath.Join(dir, "jobs"))
-	if jErr != nil && !os.IsNotExist(jErr) {
-		return nil, nil, fmt.Errorf("read jobs dir: %w", jErr)
-	}
-	for _, e := range jobEntries {
-		if e.IsDir() || !isYAML(e.Name()) {
-			continue
-		}
-		path := filepath.Join(dir, "jobs", e.Name())
-		data, rErr := os.ReadFile(path)
-		if rErr != nil {
-			errs = append(errs, ValidationError{File: path, Message: rErr.Error()})
-			continue
-		}
+	var jobScopes [][2]string // each job's file and the scope it names, for GR-14
+	jobFiles, _ := walk("jobs")
+	for _, f := range jobFiles {
+		path, data := f.path, f.data
 		ve, _ := validateYAMLBytes(path, data)
 		errs = append(errs, ve...)
 		warnings = append(warnings, retiredJobKeyWarnings(path, data)...)
@@ -1029,10 +1121,10 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 			if j.Spec.ScriptRef != "" {
 				referenced[j.Spec.ScriptRef] = true
 				if !scriptNames[j.Spec.ScriptRef] {
-					errs = append(errs, ValidationError{File: path, Field: "spec.script_ref",
-						Message: fmt.Sprintf("script_ref %q does not resolve to any script in scripts/", j.Spec.ScriptRef)})
+					unresolved(path, "spec.script_ref", fmt.Sprintf("script_ref %q does not resolve to any script in scripts/", j.Spec.ScriptRef))
 				}
 			}
+			jobScopes = append(jobScopes, [2]string{path, strings.TrimSpace(j.Spec.Scope)})
 			// TG-4 — an ansible job's target_host is passed verbatim to `ansible
 			// --limit`, which refuses any name carrying a pattern metacharacter. A
 			// refused pin means NO --limit, so the run would widen to the full
@@ -1056,25 +1148,14 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 					Message: fmt.Sprintf("target_host %q contains an ansible pattern character; it cannot be expressed as a --limit, so runs of this job will be REFUSED (409) rather than silently targeting the full inventory", j.Spec.TargetHost)})
 			}
 			resolveScheduleRefs(path, j.Spec.ScheduleRefs)
+			pendReactions(path, "job", j.Metadata.Name, j.Spec.Reactions)
 		}
 	}
 
-	seenWorkflowNames := map[string]string{}
 	// 2b. workflows/ — validate each + resolve scheduleRefs (A10a).
-	wfEntries, wErr := os.ReadDir(filepath.Join(dir, "workflows"))
-	if wErr != nil && !os.IsNotExist(wErr) {
-		return nil, nil, fmt.Errorf("read workflows dir: %w", wErr)
-	}
-	for _, e := range wfEntries {
-		if e.IsDir() || !isYAML(e.Name()) {
-			continue
-		}
-		path := filepath.Join(dir, "workflows", e.Name())
-		data, rErr := os.ReadFile(path)
-		if rErr != nil {
-			errs = append(errs, ValidationError{File: path, Message: rErr.Error()})
-			continue
-		}
+	wfFiles, _ := walk("workflows")
+	for _, f := range wfFiles {
+		path, data := f.path, f.data
 		ve, _ := validateYAMLBytes(path, data)
 		errs = append(errs, ve...)
 		var wf WorkflowYAML
@@ -1086,19 +1167,61 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 				}
 				seenWorkflowNames[n] = path
 			}
-			// R2F-2/R2F-Q3 — names are the law in git. A step MAY carry `jobUid` in
-			// the API (the composer writes it, so a step can name one of two
-			// same-named jobs), but the git pool is name-unique by constraint, so an
-			// identity in a hand-edited file buys nothing and rots the first time the
-			// repo is replayed into a different installation. Warn and ignore rather
-			// than refuse: ignore-unknown is this parser's standing posture, and a
-			// hard error would break a repo exported from an API-composed workflow.
+			// R2F-2/R2F-Q3 — a Git workflow's step names its job. A step MAY carry
+			// `jobUid` in the API (the composer writes it, so a step can name one of
+			// two same-named jobs), but in a repository the step is resolved by name:
+			// the workflow's own repository's job of that name (until §0a, else Global's)
+			// (GR-16; a name is one job in each repository). An identity in a
+			// hand-edited file buys nothing and rots the first time the repo is
+			// replayed into a different installation. Warn and ignore rather than
+			// refuse: ignore-unknown is this parser's standing posture, and a hard
+			// error would break a repo exported from an API-composed workflow.
 			if step := firstStepWithJobUID(wf.Spec.Steps); step != "" {
 				warnings = append(warnings, ValidationError{File: path, Field: "spec.steps",
 					Message: fmt.Sprintf("step %q sets jobUid, which is ignored in git-sourced workflows — "+
-						"names identify jobs in a repository (one name per repo), and a stored identity would not survive replay into another installation", step)})
+						"a step names its job, which is looked for in the workflow's own repository, "+
+						"and a stored identity would not survive replay into another installation", step)})
 			}
 			resolveScheduleRefs(path, wf.Spec.ScheduleRefs)
+			pendReactions(path, "workflow", wf.Metadata.Name, wf.Spec.Reactions)
+			pendSteps(path, wf.Spec.Steps)
+		}
+	}
+
+	// 2d. The references sync resolves, and the ones the engine resolves when
+	// a workflow runs, now that every definition of the checkout is known
+	// (2.4.0; until then a workflow step's job and a reaction's upstream were
+	// checked by nothing here). See resolvePending.
+	resolvePending()
+
+	// 2c. inventory/ — each scope's file, checked as sync checks it
+	// (parseInventories): a file that carries a secret is refused, and the
+	// pragma and the sidecar beside it are resolved together. The TOP LEVEL
+	// only, as sync reads it: a file in a sub-folder of inventory/ is never a
+	// scope, and is said to be one that sync does not read.
+	invErrs, invWarnings, ownScopes, invErr := validateInventoryDir(dir, read)
+	if invErr != nil {
+		return nil, nil, invErr
+	}
+	errs = append(errs, invErrs...)
+	warnings = append(warnings, invWarnings...)
+
+	// 2e. Confinement, in an agency's repository (GR-14, confineJobs): a job
+	// with no scope is refused by sync. A job whose scope is not one of the
+	// checkout's is accepted by sync only if the scope is one its agency owns
+	// that was built in the app, which this run cannot see: a warning.
+	if opt.Agency {
+		for _, js := range jobScopes {
+			switch {
+			case js[1] == "":
+				errs = append(errs, ValidationError{File: js[0], Field: "spec.scope",
+					Message: "a job in an agency's repository must name one of that agency's scopes (spec.scope): " +
+						"with none it would be Global's, and sync refuses it"})
+			case !ownScopes[js[1]]:
+				warnings = append(warnings, ValidationError{File: js[0], Field: "spec.scope",
+					Message: fmt.Sprintf("the scope %q is not one of this repository's (inventory/): sync accepts the job only "+
+						"if the scope is one its agency owns that was built in the app, which this run cannot see", js[1])})
+			}
 		}
 	}
 
@@ -1123,6 +1246,113 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 // ──────────────────────────────────────────────────────────────────────────────
 // Inventory pragma parsing (S10)
 // ──────────────────────────────────────────────────────────────────────────────
+
+// validateInventoryDir checks a checkout's inventory/ directory as Git sync
+// reads it (Service.parseInventories): each top-level .ini file is a scope; one
+// that carries a secret is refused (inventory.ValidateSecrets), and its pragma
+// and its sidecar (<name>.cronomicon.yaml) are resolved together
+// (resolveInventoryMeta). A missing directory is not an error.
+//
+// Sync reads the top level only, so a file in a sub-folder is not a scope. That
+// is said, as a warning, for each .ini or sidecar found there: it was put there
+// to be one.
+//
+// scopes is the names of the scopes the directory supplies: the .ini files
+// sync would accept as one (a file refused for a secret is not).
+func validateInventoryDir(root string, read fileReader) (errs, warnings []ValidationError, scopes map[string]bool, err error) {
+	scopes = map[string]bool{}
+	dir := filepath.Join(root, "inventory")
+	// inventory/ itself may be a link: sync refuses one that leads out of the
+	// repository, or into its .git, before listing it (parseInventories).
+	if fi, lerr := os.Lstat(dir); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		if cerr := directoryInside(root, dir); cerr != nil {
+			return []ValidationError{{File: dir, Message: cerr.Error()}}, nil, scopes, nil
+		}
+	}
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		if os.IsNotExist(rerr) {
+			return nil, nil, scopes, nil
+		}
+		return nil, nil, nil, fmt.Errorf("read inventory dir: %w", rerr)
+	}
+	sidecars := map[string]*sidecarYAML{}
+	sidecarPaths := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			_ = filepath.WalkDir(filepath.Join(dir, e.Name()), func(p string, d os.DirEntry, werr error) error {
+				if werr != nil || d.IsDir() {
+					return nil
+				}
+				if n := d.Name(); strings.HasSuffix(n, ".ini") || strings.HasSuffix(n, ".cronomicon.yaml") {
+					warnings = append(warnings, ValidationError{File: p,
+						Message: "is in a sub-folder of inventory/, which Git sync does not read: it is not a scope. " +
+							"Move it to inventory/ itself"})
+				}
+				return nil
+			})
+			continue
+		}
+		if !strings.HasSuffix(e.Name(), ".cronomicon.yaml") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, derr := read(path)
+		if derr != nil {
+			// Sync skips a sidecar it cannot read, in silence: so does this,
+			// aloud.
+			warnings = append(warnings, ValidationError{File: path,
+				Message: "cannot be read (" + derr.Error() + "): Git sync ignores it"})
+			continue
+		}
+		var sc sidecarYAML
+		if yerr := yaml.Unmarshal(data, &sc); yerr != nil {
+			// A WARNING: sync skips a sidecar that is not YAML and takes the
+			// scope's owner and description from its pragma alone, and an error
+			// would fail CI on what sync accepts (found by the review of R7).
+			warnings = append(warnings, ValidationError{File: path,
+				Message: "is not YAML (" + yerr.Error() + "): Git sync ignores it, and the scope's owner and description come from its pragma alone"})
+			continue
+		}
+		base := strings.TrimSuffix(e.Name(), ".cronomicon.yaml")
+		sidecars[base] = &sc
+		sidecarPaths[base] = path
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ini") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, derr := read(path)
+		if derr != nil {
+			errs = append(errs, ValidationError{File: path, Message: derr.Error()})
+			continue
+		}
+		content := string(data)
+		if secErrs := inventory.ValidateSecrets(content, path); len(secErrs) > 0 {
+			for _, se := range secErrs {
+				errs = append(errs, ValidationError{File: se.File, Line: se.Line, Message: se.Message})
+			}
+			continue // refused whole, as sync refuses it: nothing else of it is read
+		}
+		base := strings.TrimSuffix(e.Name(), ".ini")
+		scopes[base] = true
+		meta := resolveInventoryMeta(content, sidecars[base], sidecarPaths[base])
+		for _, me := range meta.Errors {
+			if me.File == "" {
+				me.File = path
+			}
+			errs = append(errs, me)
+		}
+		for _, w := range meta.Warnings {
+			if w.File == "" {
+				w.File = path
+			}
+			warnings = append(warnings, w)
+		}
+	}
+	return errs, warnings, scopes, nil
+}
 
 // validRunTypes is the allowed set of run-type strings for a Script's
 // spec.runType (mirrors VALID_RUN_TYPES in prototype). It lives in this section
@@ -1298,14 +1528,10 @@ type projectClaim struct {
 	wrapper string
 }
 
-// discoverScripts walks scripts/ and returns one ScriptYAML per catalog entry.
-// It is TWO-PASS (§7 / review R1): a single WalkDir cannot both auto-synthesize
-// bare files and honor project grouping, because WalkDir visits lexically — a
-// project's member file (e.g. roles/x/tasks/main.yml) can be reached BEFORE the
-// wrapper that claims its tree. Pass 1 collects every project_root claim; pass 2
-// synthesizes and filters, skipping files inside a claimed root. Correctness no
-// longer depends on visit order.
-func discoverScripts(dir string) ([]ScriptYAML, []error) {
+// discoverScriptsWith is discoverScripts reading through read: sync's contained
+// reader (containedReader), or os.ReadFile for `cronomicon validate`, which is
+// run by a person on a directory of their own.
+func discoverScriptsWith(dir string, read fileReader) ([]ScriptYAML, []error) {
 	var scripts []ScriptYAML
 	var errs []error
 
@@ -1325,7 +1551,7 @@ func discoverScripts(dir string) ([]ScriptYAML, []error) {
 		if ext := strings.ToLower(filepath.Ext(rel)); ext != ".yaml" && ext != ".yml" {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		data, err := read(path)
 		if err != nil {
 			return nil // pass 2 reports read errors
 		}
@@ -1387,9 +1613,9 @@ func discoverScripts(dir string) ([]ScriptYAML, []error) {
 
 		// 1. YAML files: Cronomicon Script wrappers, or raw Ansible playbooks.
 		if ext == ".yaml" || ext == ".yml" {
-			data, err := os.ReadFile(path)
+			data, err := read(path)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("read %s: %w", rel, err))
+				errs = append(errs, fmt.Errorf("read %s: %w", repoRel, err))
 				return nil
 			}
 			var hdr cronomiconHeader
@@ -1527,6 +1753,7 @@ func stripStepJobUIDs(steps []any) {
 			continue
 		}
 		delete(m, "jobUid")
+		delete(m, "workflowUid") // the same, for a sub-workflow step (2.4.0)
 		for _, key := range []string{"jobs", "steps"} {
 			if nested, ok := m[key].([]any); ok {
 				stripStepJobUIDs(nested)

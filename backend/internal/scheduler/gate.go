@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 )
 
@@ -172,6 +173,11 @@ type GateRequest struct {
 	Source    string // git | cronomicon
 	OwnerKind string // job | workflow
 	Name      string
+	// UID is the definition's identity, where the producer has it (2.4.0). The
+	// catalog state and the pause are then THAT definition's: a name can be
+	// held by a definition in each agency, and by the name one's pause, or its
+	// being switched off, was the other's too.
+	UID string
 }
 
 // GateOutcome is what the gates decided.
@@ -215,16 +221,16 @@ func Evaluate(ctx context.Context, database *sql.DB, log logger, req GateRequest
 	// Catalog state first: "this definition must not run at all" outranks "not
 	// right now", and reporting the weaker reason for the stronger condition
 	// sends an operator to resume a job that would still not have run.
-	if pol.enabledCheck && definitionDisabled(ctx, database, kind, req.Source, req.Name) {
+	if pol.enabledCheck && definitionDisabled(ctx, database, kind, req.Source, req.Name, req.UID) {
 		return GateOutcome{Gate: "disabled", Reason: reasonDefinitionDisabled}
 	}
 
-	if pol.pause && IsPaused(ctx, database, req.Source, kind, req.Name) {
+	if pol.pause && IsPausedUID(ctx, database, req.Source, kind, req.Name, req.UID) {
 		return GateOutcome{Gate: "pause", Reason: reasonJobPaused}
 	}
 
 	if pol.globalFreeze {
-		if v, day, ok := globalFreezeVerdict(ctx, database, log, appLoc); ok && v.Suppressed {
+		if v, day, ok := globalFreezeVerdict(ctx, database, log, appLoc, definitionAgency(ctx, database, req.UID, kind)); ok && v.Suppressed {
 			return GateOutcome{
 				Gate:     "calendar",
 				Reason:   calendarReason(v),
@@ -283,15 +289,19 @@ const reasonDefinitionDisabled = "Skipped: the definition is disabled"
 // its own handling (FX-A3 holds the row and names the bin on expiry), and
 // collapsing it into "disabled" would report the wrong remedy — restore, not
 // re-enable.
-func definitionDisabled(ctx context.Context, database *sql.DB, kind, source, name string) bool {
+func definitionDisabled(ctx context.Context, database *sql.DB, kind, source, name, uid string) bool {
 	table := "jobs"
 	if kind == "workflow" {
 		table = "workflows"
 	}
 	var enabled int
+	q, args := "SELECT enabled FROM "+table+" WHERE source = ? AND name = ?", []any{source, name}
+	if uid != "" {
+		// The definition itself, where the producer says which.
+		q, args = "SELECT enabled FROM "+table+" WHERE uid = ?", []any{uid}
+	}
 	//nolint:gosec // table is a package-local constant chosen by the kind switch
-	err := database.QueryRowContext(ctx,
-		"SELECT enabled FROM "+table+" WHERE source = ? AND name = ?", source, name).Scan(&enabled)
+	err := database.QueryRowContext(ctx, q, args...).Scan(&enabled)
 	if err != nil {
 		return false // absent, or unreadable — not this gate's question
 	}
@@ -335,14 +345,76 @@ func appLocationOrDB(ctx context.Context, database *sql.DB, loc *time.Location) 
 //
 // A load failure returns ok=false rather than a suppression: a calendar the
 // process cannot read must not become an outage that stops every run.
-func globalFreezeVerdict(ctx context.Context, database *sql.DB, log logger, loc *time.Location) (calendar.Verdict, string, bool) {
+//
+// Since §0a (2.4.0) it is the installation-wide freeze first, then the global
+// calendars of the definition's OWN agency (until then every global calendar,
+// whoever's).
+func globalFreezeVerdict(ctx context.Context, database *sql.DB, log logger, loc *time.Location, agency string) (calendar.Verdict, string, bool) {
 	day := calendar.DayOf(time.Now(), appLocationOrDB(ctx, database, loc))
-	sets, err := calendar.Load(ctx, database, nil)
+	v, err := freezeTier(ctx, database, agency, nil, nil, day)
 	if err != nil {
 		logErr(log, "gate: load calendars — admitting the run without calendar suppression", "err", err)
 		return calendar.Verdict{}, day, false
 	}
-	return calendar.Evaluate(sets, nil, nil, day), day, true
+	return v, day, true
+}
+
+// freezeTier is the verdict for a fire of an agency's definition on a day: the
+// installation-wide freeze when it is on, else the calendars (the entry's
+// own, skip and only, and its agency's global ones).
+func freezeTier(ctx context.Context, database *sql.DB, agency string, skip, only []string, day string) (calendar.Verdict, error) {
+	f, err := calendar.ReadFreeze(ctx, database)
+	if err != nil {
+		return calendar.Verdict{}, err
+	}
+	if v, on := calendar.FreezeVerdict(f); on {
+		return v, nil
+	}
+	sets, err := calendar.Load(ctx, database, agency, append(append([]string{}, skip...), only...))
+	if err != nil {
+		return calendar.Verdict{}, err
+	}
+	return calendar.EvaluateFor(sets, agency, skip, only, day), nil
+}
+
+// jobAgencyFor is the agency of the job a fire runs, found as the fire finds
+// it: by uid, or by source and name for a row with none. The agency its scope
+// is looked for in (I2). Global's when it cannot be told.
+func jobAgencyFor(ctx context.Context, database *sql.DB, uid, source, name string) string {
+	var agency sql.NullString
+	err := database.QueryRowContext(ctx, `SELECT `+agencyid.JobSQL("j")+` FROM jobs j
+		WHERE CASE WHEN ?1 != '' THEN j.uid = ?1 ELSE j.name = ?2 AND j.source = ?3 END
+		ORDER BY j.rowid LIMIT 1`, uid, name, source).Scan(&agency)
+	if err != nil || !agency.Valid {
+		return agencyid.Global
+	}
+	return agency.String
+}
+
+// keyAgency is the agency a job's custom concurrency key is shared within
+// (question 56), read only when the job has one: a key it composes itself is
+// its own identity, which no other agency's job holds.
+func keyAgency(ctx context.Context, database *sql.DB, custom, uid, source, name string) string {
+	if custom == "" {
+		return ""
+	}
+	return jobAgencyFor(ctx, database, uid, source, name)
+}
+
+// definitionAgency is the agency of a definition by uid and kind; Global's when
+// it cannot be told (no uid, a row that is gone), as such a run is.
+func definitionAgency(ctx context.Context, database *sql.DB, uid, kind string) string {
+	if uid == "" {
+		return agencyid.Global
+	}
+	if kind == "" {
+		kind = "job"
+	}
+	var agency sql.NullString
+	if err := database.QueryRowContext(ctx, `SELECT `+agencyid.DefinitionSQL, uid, kind).Scan(&agency); err != nil || !agency.Valid {
+		return agencyid.Global
+	}
+	return agency.String
 }
 
 // calendarReason renders a calendar verdict in the SAME vocabulary the cron path

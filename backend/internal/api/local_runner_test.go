@@ -187,7 +187,7 @@ func TestLocalRunner_ItsServeListIsAGlobalAdministratorsAndAgenciesBindToIt(t *t
 	set := func(who string, agencies ...string) (int, string) {
 		t.Helper()
 		body, _ := json.Marshal([]map[string]any{{"runnerId": id, "agencyIds": agencies}})
-		rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", who, string(body))
+		rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", who, asRepair(string(body)))
 		return rec.Code, errCode(rec.Body.Bytes())
 	}
 	bind := func(who, scope string) (int, string) {
@@ -211,36 +211,33 @@ func TestLocalRunner_ItsServeListIsAGlobalAdministratorsAndAgenciesBindToIt(t *t
 		t.Fatalf("a refused write changed the serve list to %v", got)
 	}
 
-	// A global administrator widens it, Global beside an agency.
-	if code, ec := set(gRoot, "global", "ag:FIN"); code != 200 {
-		t.Fatalf("a global admin adding FIN = %d %s", code, ec)
+	// A global administrator cannot widen it either: the local runner is
+	// Global's and serves Global only (§0a, IN-3; until then a global
+	// administrator gave it any agencies).
+	if code, ec := set(gRoot, "global", "ag:FIN"); code != 422 || ec != "local_runner_global_only" {
+		t.Errorf("a global admin adding FIN = %d %s, want 422 local_runner_global_only", code, ec)
 	}
-	if got := served(t, pool, id); !slices.Equal(got, []string{"ag:FIN", "global"}) {
-		t.Fatalf("it serves %v, want FIN and Global", got)
+	if code, ec := set(gRoot, "ag:FIN"); code != 422 || ec != "local_runner_global_only" {
+		t.Errorf("a global admin giving it FIN alone = %d %s, want 422 local_runner_global_only", code, ec)
+	}
+	if got := served(t, pool, id); !slices.Equal(got, []string{"global"}) {
+		t.Fatalf("it serves %v, want Global alone", got)
 	}
 	if code, ec := set(gRoot); code != 422 || ec != "agency_required" {
 		t.Errorf("an empty serve list = %d %s, want 422 agency_required", code, ec)
 	}
-	// It is not a legacy placement, whatever it serves.
+	// It is not a legacy placement.
 	for k := range listNotices(t, h, gRoot) {
 		if k == "legacy_placement/"+id {
 			t.Error("the local runner was reported as a legacy placement")
 		}
 	}
-
-	// Now it serves FIN: FIN binds its own scope to it, with no authority over
-	// the runner; TAX still cannot bind theirs.
-	if code, ec := bind(gFinAdmin, "sc:fin"); code != 200 {
-		t.Errorf("FIN binding its scope to the local runner that serves it = %d %s, want 200", code, ec)
-	}
-	if code, ec := bind(gTaxAdmin, "sc:tax"); code != 422 || ec != "runner_not_eligible" {
-		t.Errorf("TAX binding its scope to a local runner that does not serve TAX = %d %s, want 422 runner_not_eligible", code, ec)
-	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM scope_runners WHERE runner_id = ? AND scope_id = 'sc:fin'`, id); n != 1 {
-		t.Errorf("FIN's scope has %d binding(s) to the local runner, want 1", n)
+	// FIN still cannot bind its scope to it.
+	if code, ec := bind(gFinAdmin, "sc:fin"); code != 422 || ec != "runner_not_eligible" {
+		t.Errorf("FIN binding its scope to the local runner = %d %s, want 422 runner_not_eligible", code, ec)
 	}
 	// Its owner never changes.
-	rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/owner", gRoot, `{"agencyId":"ag:FIN"}`)
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/owner", gRoot, asRepair(`{"agencyId":"ag:FIN"}`))
 	if rec.Code != 422 || errCode(rec.Body.Bytes()) != "owner_change_refused" {
 		t.Errorf("handing the local runner to an agency = %d %s, want 422 owner_change_refused", rec.Code, errCode(rec.Body.Bytes()))
 	}
@@ -343,17 +340,17 @@ func TestLocalRunner_ItsHostKeysAreAGlobalAdministratorsToDecide(t *testing.T) {
 	h, pool := gateServer(t)
 	exec := mustExec(t, pool)
 	id := localRunnerID(t, pool)
-	exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES (?, 'ag:FIN')`, id) // it serves FIN
+	// Since §0a (IN-3) the local runner serves Global only, so FIN is no guest
+	// of it: until then it might serve FIN, and FIN scan its own scope with it.
 	exec(`INSERT INTO ssh_hosts (id, hostname, address, port, scope_id, source, created_by, created_at, last_modified_by, last_modified_at)
 	      VALUES ('h-fin1', 'fin1', '10.5.0.1', 22, 'sc:fin', 'git', 't', 't', 't', 't')`)
 	exec(`INSERT OR IGNORE INTO scope_hosts (scope_id, host) VALUES ('sc:fin', 'fin1')`)
 
-	// FIN may queue a scan of its own scope with it...
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/keyscan", gFinAdmin, `{"scopeId":"sc:fin"}`)
-	if rec.Code != http.StatusAccepted {
-		t.Errorf("FIN scanning its own scope with the local runner = %d (%s), want 202", rec.Code, rec.Body)
+	if rec.Code == http.StatusAccepted {
+		t.Errorf("FIN scanning its own scope with the local runner = %d (%s), want it refused", rec.Code, rec.Body)
 	}
-	// ...and nothing else: not typed hosts, not another agency's scope.
+	// Nor anything else: not typed hosts, not another agency's scope.
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/keyscan", gFinAdmin, `{"hosts":["10.5.0.9"]}`); rec.Code != http.StatusForbidden {
 		t.Errorf("FIN scanning typed hosts from the server = %d, want 403", rec.Code)
 	}
@@ -361,17 +358,16 @@ func TestLocalRunner_ItsHostKeysAreAGlobalAdministratorsToDecide(t *testing.T) {
 		t.Errorf("FIN scanning TAX's scope with the local runner = %d", rec.Code)
 	}
 
-	// A key found for FIN's host: FIN sees it and cannot approve it — not even
-	// a first key.
+	// A key found for a host (from before): FIN neither sees nor approves it.
 	line, keyType, fp := realHostKey(t, "10.5.0.1")
 	exec(`INSERT OR REPLACE INTO pending_host_keys (id, runner_id, host, key_type, fingerprint, known_hosts_line, scanned_at, scope_id, scope_name, host_name)
 	      VALUES ('pk-local', ?, '10.5.0.1', ?, ?, ?, '2026-01-01T00:00:00Z', 'sc:fin', 'fin-hosts', 'fin1')`, id, keyType, fp, line)
-	if rec := gateReq(t, h, http.MethodGet, "/api/v1/runners/"+id+"/host-keys/pending", gFinAdmin, ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), fp) {
-		t.Errorf("FIN listing what its scan found = %d (%s), want the key", rec.Code, rec.Body)
+	if rec := gateReq(t, h, http.MethodGet, "/api/v1/runners/"+id+"/host-keys/pending", gFinAdmin, ""); rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), fp) {
+		t.Errorf("FIN listed the local runner's pending key (%s)", rec.Body)
 	}
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/host-keys/resolve-batch", gFinAdmin, `{"approve":["pk-local"]}`)
-	if rec.Code != http.StatusForbidden || errCode(rec.Body.Bytes()) != "owner_required" {
-		t.Fatalf("FIN approving a key on the local runner = %d %s, want 403 owner_required (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("FIN approving a key on the local runner = %d (%s), want 403", rec.Code, rec.Body)
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM host_key_ledger WHERE runner_id = ?`, id); n != 0 {
 		t.Fatalf("a refused approval wrote %d ledger row(s)", n)

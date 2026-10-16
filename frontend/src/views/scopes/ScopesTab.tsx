@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "../../api/client";
-import { GLOBAL_ADMIN_SYNC_ONLY, globalOnly } from "../../api/globalAdmin";
-import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../../api/access";
+import { RepoSelect, repoLabel, useRepoAdmin, useRepos } from "../../components/RepoPicker";
+import { GLOBAL_AGENCY, type AgencyRef } from "../../api/access";
+import { REPAIR_HINT, RepairDialog, type RepairBody } from "../../components/RepairDialog";
+import { CloneScopeDialog } from "./CloneScope";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
 import { useColumnWidths, useGet, useInlineTags, rows, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
@@ -51,6 +53,10 @@ export interface ScopeRow {
   // restricts.
   boundRunners?: BoundRunner[];
   lastChangedAt?: string | null;
+  // R8 — what the caller may do with this row, from the server.
+  canEdit?: boolean;
+  canDelete?: boolean;
+  canRepair?: boolean;
 }
 
 // InventoryDoc mirrors the GET /scopes/{id}/inventory response (advisory parsed
@@ -135,46 +141,56 @@ export function ScopesTab({
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<ScopeRow | null>(null);
   const [deleting, setDeleting] = useState<ScopeRow | null>(null);
+  const [cloning, setCloning] = useState<ScopeRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [resyncing, setResyncing] = useState(false);
   const [notice, setNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
   // Agency options for the per-scope binding selector (agency-support.md M1).
   const { data: agencyData } = useGet<unknown>(() => api.GET("/agencies"), []);
-  // The agencies a scope could be moved to by this caller: every agency and
-  // Global for a global administrator; otherwise the agencies they administer,
-  // beside whatever the scope is in now (so the select can show its value).
-  const access = useMyAccess();
-  // May this caller move the scope at all? It takes authority over EVERY agency
-  // the scope is in today (and over the one it goes to, which the options are
-  // limited to). "" when they may; otherwise whose scope it is. Unknown access
-  // (still loading, or unreadable) is not second-guessed: the server decides.
-  const moveWhy = (current: { id: string; name: string }[]): string => {
-    if (globalAdmin || access == null) return "";
-    const held = new Set(agenciesFor(access, "configureApp").map((a) => a.id));
-    const others = current.filter((a) => !held.has(a.id));
-    if (others.length === 0) return "";
-    const names = others.map((a) => a.name).join(", ");
-    return others.some((a) => a.id === GLOBAL_AGENCY)
-      ? "This scope is Global's — only a global administrator (a role on every agency) can move it."
-      : `This scope belongs to ${names} — moving it takes authority over ${others.length === 1 ? "that agency" : "those agencies"} too.`;
-  };
+  // Changing a scope's agency is a global administrator's repair since 2.4.0
+  // (I4, IN-7; question 48): another agency gets a scope by a clone. The
+  // row's own canRepair says whether this caller may (R8); a server that does
+  // not send it is read by the global flag. The options are every agency, and
+  // whatever the scope is in now so the select can show it even when the
+  // catalog could not be read.
+  const mayRepair = (s: ScopeRow) => s.canRepair ?? globalAdmin;
   const agencyOptionsFor = (current: { id: string; name: string }[]): AgencyRef[] => {
     const all = rows<{ id: string; name: string }>(agencyData);
     const out = new Map<string, string>();
-    if (globalAdmin) {
-      out.set(GLOBAL_AGENCY, "Global");
-      for (const a of all) if (a.id !== GLOBAL_AGENCY) out.set(a.id, a.name);
-      // Whatever the scope is in now, so the select can show it even when the
-      // catalog could not be read.
-      for (const a of current) if (!out.has(a.id)) out.set(a.id, a.name);
-    } else {
-      for (const a of current) out.set(a.id, a.name);
-      for (const a of agenciesFor(access ?? null, "configureApp")) out.set(a.id, a.name);
-    }
+    out.set(GLOBAL_AGENCY, "Global");
+    for (const a of all) if (a.id !== GLOBAL_AGENCY) out.set(a.id, a.name);
+    for (const a of current) if (!out.has(a.id)) out.set(a.id, a.name);
     return [...out].map(([id, name]) => ({ id, name }));
   };
+  const [scopeRepair, setScopeRepair] = useState<{ scope: ScopeRow; target: AgencyRef } | null>(null);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [repairError, setRepairError] = useState("");
+  const sendScopeRepair = async (rep: RepairBody) => {
+    if (!scopeRepair) return;
+    const { scope, target } = scopeRepair;
+    setRepairBusy(true);
+    setRepairError("");
+    const { error: er } = await api.PUT("/scopes/{scopeId}/agency", {
+      params: { path: { scopeId: scope.id! }, header: csrfHeader },
+      body: { agencyId: target.id, ...rep },
+    });
+    setRepairBusy(false);
+    if (er) {
+      setRepairError(errMsg(er));
+      return;
+    }
+    setScopeRepair(null);
+    setNotice({ kind: "info", text: `${scope.scope} now belongs to ${target.name}` });
+    refetch();
+  };
   const cw = useColumnWidths("envvars-scopes");
-  const globalWhy = globalOnly(globalAdmin);
+  // A resync is of one repository (2.4.2, question 55 and 53): the ones the
+  // caller may sync, with a choice when there are several.
+  const { repos } = useRepos();
+  const maySync = useRepoAdmin();
+  const syncable = repos.filter((r) => maySync(r.agencyId));
+  const [resyncRepoRaw, setResyncRepo] = useState("");
+  const resyncRepo = syncable.find((r) => r.id === resyncRepoRaw) ?? syncable[0];
 
   // Operator-owned scope tags (migration 1160) — optimistic edits via the
   // dedicated PUT /scope-tags/{scopeId}; the override map resets on every list
@@ -188,8 +204,9 @@ export function ScopesTab({
   );
 
   const resync = async () => {
+    if (!resyncRepo) return;
     setResyncing(true);
-    const { data, error: e } = await api.POST("/scopes/resync", { params: { header: csrfHeader } });
+    const { data, error: e } = await api.POST("/scopes/resync", { params: { header: csrfHeader, query: { repo: resyncRepo.id } } });
     setResyncing(false);
     if (e) {
       setNotice({ kind: "error", text: `Re-sync failed: ${errMsg(e)}` });
@@ -199,8 +216,8 @@ export function ScopesTab({
     setNotice({
       kind: "info",
       text: r
-        ? `Re-synced ${r.scopesSynced ?? 0} scopes — ${r.deltas?.length ?? 0} scope changes — ${r.errors?.length ?? 0} pragma errors`
-        : "Re-synced inventories from GitLab",
+        ? `Re-synced ${resyncRepo ? repoLabel(resyncRepo) + " repository" : "the repository"}: ${r.scopesSynced ?? 0} scopes — ${r.deltas?.length ?? 0} scope changes — ${r.errors?.length ?? 0} pragma errors`
+        : "Re-synced inventories from the repository",
     });
     refetch();
   };
@@ -407,8 +424,15 @@ export function ScopesTab({
         <ColumnsMenu cols={cols} cw={cw} />
         {canEdit && (
           <>
-            <Btn onClick={resync} disabled={resyncing || !!globalWhy} title={globalWhy ? GLOBAL_ADMIN_SYNC_ONLY : undefined}>
-              {resyncing ? "Re-syncing…" : "↻ Re-sync from GitLab"}
+            {syncable.length > 1 && (
+              <RepoSelect repos={syncable} value={resyncRepo?.id ?? ""} onChange={setResyncRepo} label="Re-sync" />
+            )}
+            <Btn
+              onClick={resync}
+              disabled={resyncing || !resyncRepo}
+              title={resyncRepo ? undefined : "You may not sync any repository: its agency's configureApp is needed"}
+            >
+              {resyncing ? "Re-syncing…" : syncable.length === 1 ? `↻ Re-sync from ${repoLabel(syncable[0])} repository` : "↻ Re-sync from the repository"}
             </Btn>
             <Btn primary onClick={() => setAdding(true)}>
               + Add Scope
@@ -427,7 +451,7 @@ export function ScopesTab({
         <div style={{ color: c.textSec }}>
           {scopes.length === 0 ? (
             <>
-              <div>No scopes yet. Git-source scopes appear after the first GitLab sync of an inventories/ directory.</div>
+              <div>No scopes yet. Git-source scopes appear after the first sync of an inventories/ directory.</div>
               {canEdit && (
                 <div style={{ marginTop: 12 }}>
                   <Btn small onClick={() => setAdding(true)}>
@@ -528,13 +552,11 @@ export function ScopesTab({
                             SEVERAL agencies it would silently truncate the set, so
                             it is replaced by a read-only summary that names them and
                             points at the matrix. */}
-                        {/* A scope belongs to ONE agency (v2.3.0, LR-7). It is moved
-                            by whoever administers both the agency that has it and
-                            the one it goes to; Global is a global administrator's
-                            on either side. The server judges that, so the select
-                            offers what the caller could name and no more. A scope
-                            still in several agencies (from before 2.3.0) is
-                            settled here, by choosing its one agency. */}
+                        {/* A scope belongs to ONE agency (v2.3.0, LR-7). Since
+                            2.4.0 changing it is a global administrator's repair,
+                            with a reason (I4, IN-7; question 48), and so is
+                            settling a scope still in several agencies from before
+                            2.3.0 on its one agency. Anyone else reads its agency. */}
                         {s.id != null && (s.agencies?.length ?? 0) > 1 && (
                           <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                             <span style={{ ...labelStyle(), margin: 0 }}>Agencies</span>
@@ -547,44 +569,42 @@ export function ScopesTab({
                               </span>
                             ))}
                             <span style={{ color: c.warning, fontSize: c.fontSm }}>
-                              This scope is still in several agencies, from before 2.3.0. It runs for each of them until its
-                              one agency is set{canEdit ? " below" : ""}; that takes authority over every agency it is in.
+                              This scope is still in several agencies, from before 2.3.0. It runs for each of them until a
+                              global administrator settles its one agency, a repair.
                             </span>
                           </div>
                         )}
-                        {canEdit && s.id != null && (() => {
+                        {s.id != null && (() => {
                           const current = s.agencies ?? [];
-                          const options = agencyOptionsFor(current);
                           const single = current.length === 1 ? current[0].id : "";
-                          // Not theirs to move; or one option that is already the
-                          // scope's agency, which is not a choice.
-                          const notTheirs = moveWhy(current);
-                          const onlyOne = !globalAdmin && current.length === 1 && options.length <= 1;
-                          const fixed = !!notTheirs || onlyOne;
-                          const fixedWhy =
-                            notTheirs ||
-                            "You administer only this scope's agency. Moving a scope takes authority over the agency it goes to as well.";
+                          const effect =
+                            "Only a runner that serves this agency can execute this scope's jobs, and only this agency's secrets and keys are injectable.";
+                          if (!mayRepair(s)) {
+                            return (
+                              <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                                <span style={{ ...labelStyle(), margin: 0 }}>Agency</span>
+                                <span style={{ fontFamily: c.mono, fontSize: c.fontSm }}>{current.map((a) => a.name).join(", ") || "none"}</span>
+                                <span style={{ color: c.textSec, fontSize: c.fontSm }}>
+                                  {effect} {REPAIR_HINT}
+                                </span>
+                              </div>
+                            );
+                          }
+                          const options = agencyOptionsFor(current);
                           return (
                             <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                               <span style={{ ...labelStyle(), margin: 0 }}>Agency</span>
                               <select
                                 aria-label={`Agency for ${s.scope}`}
                                 value={single}
-                                disabled={fixed}
-                                title={fixed ? fixedWhy : undefined}
-                                onChange={async (e) => {
+                                onChange={(e) => {
                                   if (!e.target.value || e.target.value === single) return;
-                                  const { error: er } = await api.PUT("/scopes/{scopeId}/agency", {
-                                    params: { path: { scopeId: s.id! }, header: csrfHeader },
-                                    body: { agencyId: e.target.value },
-                                  });
-                                  if (er) setNotice({ kind: "error", text: `Agency update failed: ${errMsg(er)}` });
-                                  else {
-                                    setNotice({ kind: "info", text: `Agency updated: ${s.scope}` });
-                                    refetch();
-                                  }
+                                  const target = options.find((a) => a.id === e.target.value);
+                                  if (!target) return;
+                                  setRepairError("");
+                                  setScopeRepair({ scope: s, target });
                                 }}
-                                style={{ ...inputStyle(), cursor: fixed ? "not-allowed" : "pointer", maxWidth: 260 }}
+                                style={{ ...inputStyle(), cursor: "pointer", maxWidth: 260 }}
                               >
                                 {current.length !== 1 && <option value="">Choose its one agency…</option>}
                                 {options.map((a) => (
@@ -594,8 +614,7 @@ export function ScopesTab({
                                 ))}
                               </select>
                               <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-                                Only a runner that serves this agency can execute this scope's jobs, and only this agency's secrets
-                                and keys (and Global's) are injectable.{fixed ? ` ${fixedWhy}` : ""}
+                                {effect} Changing it is a repair of a placement that was a mistake.
                               </span>
                             </div>
                           );
@@ -684,11 +703,15 @@ export function ScopesTab({
                             this view is canEdit-gated, and without it a viewer saw a
                             Delete button that could only ever 403. Quiet danger here;
                             the solid fill is reserved for the confirm (VC.6). */}
-                        {isLocal && canEdit && (
-                          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-                            <Btn dangerQuiet onClick={() => setDeleting(s)}>
-                              Delete Scope
-                            </Btn>
+                        {canEdit && s.id != null && (
+                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                            {/* 2.4.0 (R8) — another agency gets a scope by a clone; the scope stays. */}
+                            {s.canEdit !== false && <Btn onClick={() => setCloning(s)}>Clone to an agency…</Btn>}
+                            {isLocal && s.canDelete !== false && (
+                              <Btn dangerQuiet onClick={() => setDeleting(s)}>
+                                Delete Scope
+                              </Btn>
+                            )}
                           </div>
                         )}
                         </DetailPanel>
@@ -742,6 +765,38 @@ export function ScopesTab({
           busy={busy}
           onConfirm={doDelete}
           onCancel={() => setDeleting(null)}
+        />
+      )}
+
+      {cloning && cloning.id != null && (
+        <CloneScopeDialog
+          scopeId={cloning.id}
+          scopeName={cloning.scope}
+          currentAgency={(cloning.agencies ?? []).length === 1 ? cloning.agencies![0].id : undefined}
+          globalAdmin={globalAdmin}
+          onClose={() => setCloning(null)}
+          onCloned={(text) => {
+            setCloning(null);
+            setNotice({ kind: "info", text });
+            refetch();
+          }}
+        />
+      )}
+
+      {scopeRepair && (
+        <RepairDialog
+          title={`Move ${scopeRepair.scope.scope} to ${scopeRepair.target.name}?`}
+          message={
+            <>
+              Its jobs will run only on runners that serve {scopeRepair.target.name}, and only {scopeRepair.target.name}'s secrets and keys
+              are injectable. A workflow that names it beside another agency's scopes is refused at its next run and save.
+            </>
+          }
+          confirmLabel={`Move to ${scopeRepair.target.name}`}
+          busy={repairBusy}
+          error={repairError}
+          onCancel={() => setScopeRepair(null)}
+          onConfirm={sendScopeRepair}
         />
       )}
     </div>
@@ -1085,9 +1140,18 @@ function ScopeFormModal({
       setFormError("Scope names must be alphanumeric (dashes/underscores allowed).");
       return;
     }
-    const dup = existing.some((s) => s.id !== initial?.id && s.scope.toLowerCase() === scopeName.toLowerCase());
+    // A scope's name is unique within its agency (2.4.0, I2): two agencies may
+    // each have one of a name. The agency is the one chosen (a new scope) or the
+    // scope's own (a rename); when it is not known yet, any match is a clash.
+    const agencyOf = initial ? (initial.agencies ?? [])[0]?.id : agencyPick.selected;
+    const dup = existing.some(
+      (s) =>
+        s.id !== initial?.id &&
+        s.scope.toLowerCase() === scopeName.toLowerCase() &&
+        (!agencyOf || (s.agencies ?? []).some((a) => a.id === agencyOf)),
+    );
     if (dup) {
-      setFormError(`A scope named '${scopeName}' already exists.`);
+      setFormError(`A scope named '${scopeName}' already exists in this agency.`);
       return;
     }
     if (agencyPick.blockedReason) {

@@ -120,7 +120,7 @@ func (s *Server) runAnalytics(w http.ResponseWriter, r *http.Request) {
 	// same fragment every other list endpoint uses, so analytics cannot become a
 	// side channel that reveals the existence of work in a scope the caller has
 	// no grant for.
-	scopeFrag, scopeArgs := s.scopeWhereFragment(r, "scope")
+	scopeFrag, scopeArgs := s.scopeWhereFragment(r, "scope", runScopeOwnerSQL)
 	if scopeFrag != "" {
 		// scopeWhereFragment returns its own leading " AND " (see listJobs).
 		// Prepending a second one produced `… AND  AND (…)` — a syntax error,

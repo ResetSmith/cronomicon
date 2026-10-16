@@ -9,6 +9,7 @@ import { c } from "../../theme";
 import { DOC_LINKS } from "../../components/docLinks";
 import { DetailPanel, InlineLoading, SkeletonRows, SortableLabel, DocLink } from "../../components/ui";
 import { RefreshScope } from "../../components/RefreshScope";
+import { REPAIR_HINT, RepairDialog, type RepairBody } from "../../components/RepairDialog";
 import {
   Btn,
   Chevron,
@@ -32,6 +33,10 @@ interface AgencyRow {
   onlineRunnerCount?: number; // M4 coverage — 0 means jobs bound here will wait
   createdBy?: string;
   lastModifiedAt?: string;
+  // R8 — what the caller may do with this row, from the server.
+  canEdit?: boolean;
+  canDelete?: boolean;
+  canRepair?: boolean;
 }
 
 // Sortable columns (Phase 2, the sorting-update plan §3.2), driven by
@@ -63,15 +68,14 @@ const SORT_COLS: SortColumn<AgencyRow>[] = [
 export function AgenciesTab({
   canEdit,
   globalAdmin,
-  envGlobal = globalAdmin,
 }: {
   canEdit: boolean;
-  /** A global administrator for configureApp: the catalog, Vault paths, and taking a scope or key out of Global. */
+  /** A global administrator for configureApp: the catalog, Vault paths, and a repair of what an agency holds. */
   globalAdmin: boolean;
-  /** A global administrator for manageEnvVars: taking a secret or variable out of Global. */
-  envGlobal?: boolean;
 }) {
   const globalWhy = globalOnly(globalAdmin);
+  const rowWhy = (a: AgencyRow, flag: boolean | undefined): string =>
+    globalWhy || (flag === false ? (a.id === GLOBAL_AGENCY ? "Global is built in: it is neither renamed nor deleted." : "You cannot change this agency.") : "");
   const [dep, setDep] = useState(0);
   const { data, error, loading } = useGet<unknown>(() => api.GET("/agencies"), [dep]);
   const items = rows<AgencyRow>(data);
@@ -124,9 +128,9 @@ export function AgenciesTab({
       )}
       <div style={{ marginBottom: 12, color: c.textSec, fontSize: c.fontSm, lineHeight: 1.55 }}>
         An agency is a department&rsquo;s isolation zone. Every scope, secret, variable, SSH key, host record and
-        runner belongs to exactly one, and <strong>Global</strong> holds what belongs to no department: Global&rsquo;s
-        rows are every agency&rsquo;s to use and a global administrator&rsquo;s to change. A run goes only to a runner
-        that serves its scope&rsquo;s agency, and receives only that agency&rsquo;s secrets and keys, or Global&rsquo;s.{" "}
+        runner belongs to exactly one, and <strong>Global</strong> is the global administrators&rsquo; own agency:
+        its rows are Global&rsquo;s runs&rsquo; to use and a global administrator&rsquo;s to change. A run goes only to a
+        runner that serves its scope&rsquo;s agency, and receives only that agency&rsquo;s secrets and keys.{" "}
         <strong>Expand a row to see and edit what it contains.</strong> To go the other way — which agency one secret,
         variable, key, scope or runner belongs to — that row&rsquo;s own catalog carries an Agency column.{" "}
         <DocLink href={DOC_LINKS.agencies}>How membership and ownership work</DocLink>
@@ -233,8 +237,12 @@ export function AgenciesTab({
                     <td style={{ ...tdStyle(), borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
                       {canEdit && (
                         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                          <Btn onClick={() => setEditing(a)} disabled={!!globalWhy} title={globalWhy || undefined}>Edit</Btn>
-                          <Btn danger onClick={() => setDeleting(a)} disabled={!!globalWhy} title={globalWhy || undefined}>
+                          {/* R8 — the row says what the caller may do with it;
+                              Global is neither renamed nor deleted. */}
+                          <Btn onClick={() => setEditing(a)} disabled={!!rowWhy(a, a.canEdit)} title={rowWhy(a, a.canEdit) || undefined}>
+                            Edit
+                          </Btn>
+                          <Btn danger onClick={() => setDeleting(a)} disabled={!!rowWhy(a, a.canDelete)} title={rowWhy(a, a.canDelete) || undefined}>
                             Delete
                           </Btn>
                         </div>
@@ -246,7 +254,7 @@ export function AgenciesTab({
                       <td style={{ borderBottom: "none" }} />
                       <td colSpan={5} style={{ padding: "2px 16px 16px", borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
                         <RefreshScope>
-                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} envGlobal={envGlobal} onMembersChanged={() => setDep((n) => n + 1)} />
+                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} onMembersChanged={() => setDep((n) => n + 1)} />
                         </RefreshScope>
                       </td>
                     </tr>
@@ -279,8 +287,10 @@ export function AgenciesTab({
           title="Delete Agency"
           message={
             <>
-              Delete agency <code style={{ fontFamily: c.mono }}>{deleting.name}</code>? A scope still bound
-              to it will block deletion.
+              Delete agency <code style={{ fontFamily: c.mono }}>{deleting.name}</code>, with its repository? An agency
+              is deleted only when it is empty: what its repository supplied goes with it (it is all still in Git), and
+              anything else it holds — definitions or calendars built in the app, scopes, secrets, keys, runners, host
+              records, grants — keeps it, and is named.
             </>
           }
           confirmLabel="Delete"
@@ -305,6 +315,11 @@ function AgencyFormModal({
   const isEdit = initial != null;
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
+  // An agency is created with its repository (2.4.0, IN-2): tested — it
+  // answers, and its token may push — before anything is written.
+  const [repoUrl, setRepoUrl] = useState("");
+  const [pat, setPat] = useState("");
+  const [branch, setBranch] = useState("main");
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -313,12 +328,22 @@ function AgencyFormModal({
       setFormError("Name is required");
       return;
     }
+    if (!isEdit && (!repoUrl.trim() || !pat)) {
+      setFormError("An agency is created with its repository: give its URL and a token that can push.");
+      return;
+    }
     setBusy(true);
     const body = { name: name.trim(), description: description || null };
     const res =
       isEdit && initial.id != null
         ? await api.PUT("/agencies/{agencyId}", { params: { path: { agencyId: initial.id }, header: csrfHeader }, body })
-        : await api.POST("/agencies", { params: { header: csrfHeader }, body });
+        : await api.POST("/agencies", {
+            params: { header: csrfHeader },
+            body: {
+              ...body,
+              repository: { repoUrl: repoUrl.trim(), pat, writeBranch: branch.trim() || "main", webhookEnabled: true, webhookEvents: { push: true, mr: true, tag: true } },
+            },
+          });
     setBusy(false);
     if (res.error) setFormError(errMsg(res.error));
     else onSaved(`Agency ${isEdit ? "updated" : "created"}: ${name.trim()}`);
@@ -364,6 +389,27 @@ function AgencyFormModal({
             style={inputStyle()}
           />
         </div>
+        {!isEdit && (
+          <>
+            <div style={{ fontSize: c.fontSm, color: c.textSec }}>
+              Its repository: where its definitions live, and where its publishes are committed. The host must be on the
+              allowed hosts (Settings → Repositories), and the token must be able to push — on GitLab, Maintainer access,
+              since the default branch is protected.
+            </div>
+            <div>
+              <label style={labelStyle()}>Repository URL *</label>
+              <input aria-label="Repository URL" value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} placeholder="https://gitlab.example.org/ops/definitions.git" style={inputStyle()} />
+            </div>
+            <div>
+              <label style={labelStyle()}>Token *</label>
+              <input aria-label="Token" type="password" value={pat} onChange={(e) => setPat(e.target.value)} style={inputStyle()} />
+            </div>
+            <div>
+              <label style={labelStyle()}>Working Branch</label>
+              <input aria-label="Working Branch" value={branch} onChange={(e) => setBranch(e.target.value)} style={inputStyle()} />
+            </div>
+          </>
+        )}
       </div>
     </Modal>
   );
@@ -384,10 +430,9 @@ function AgencyFormModal({
 // touches only this agency's rows, so two admins editing two different
 // departments cannot race on the same entity — the lost-update hazard a
 // read-modify-write through the entity-centric setters would reintroduce.
-function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, envGlobal, onMembersChanged }: {
+function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }: {
   agencyId: string;
   canEdit: boolean;
-  envGlobal: boolean;
   /** A global administrator assigns an agency its Vault paths (LR-80). Moving a
    *  scope is no longer theirs alone: since v2.3.0 it follows the same rule as
    *  a secret or a key (authority over both agencies), which the server checks. */
@@ -430,6 +475,11 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, envGlobal, onMember
   const [saved, setSaved] = useState<Detail | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Any addition or removal changes some object's agency: a global
+  // administrator's repair, with a reason (2.4.0 I4, IN-7; question 48). The
+  // change waits here for the reason.
+  const [pending, setPending] = useState<{ desired: { kind: string; id: string }[]; busyKey: string; title: string; message: string; confirm: string } | null>(null);
+  const [repairErr, setRepairErr] = useState("");
   if (loading) return <InlineLoading />;
   if (error) return <div style={{ fontSize: c.fontSm, color: c.danger }}>Could not load this agency: {error}</div>;
 
@@ -445,34 +495,48 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, envGlobal, onMember
     { kind: "runner", label: "Runners" },
   ];
 
-  const save = async (desired: { kind: string; id: string }[], busyKey: string) => {
+  const save = async (rep: RepairBody) => {
+    if (!pending) return;
+    const { desired, busyKey } = pending;
     setBusy(busyKey);
     setErr(null);
+    setRepairErr("");
     type MemberRef = { kind: "scope" | "secret" | "env-var" | "ssh-credential" | "runner"; id: string };
     const { data: next, error: e } = await api.PUT("/agencies/{agencyId}/members", {
       params: { path: { agencyId }, header: csrfHeader },
-      body: { members: desired as MemberRef[] },
+      body: { members: desired as MemberRef[], ...rep },
     });
     setBusy(null);
     if (e) {
-      setErr(errMsg(e));
+      setRepairErr(errMsg(e));
       return;
     }
+    setPending(null);
     setSaved(next as Detail);
     // The parent's runner-count column derives from membership; nudge it.
     onMembersChanged?.();
   };
 
-  const remove = (m: Member) =>
-    save(
-      members.filter((x) => !(x.kind === m.kind && x.id === m.id)).map((x) => ({ kind: x.kind, id: x.id })),
-      `${m.kind}-${m.id}`,
-    );
-  const add = (kind: string, id: string) =>
-    save(
-      [...members.map((x) => ({ kind: x.kind, id: x.id })), { kind, id }],
-      `add-${kind}`,
-    );
+  const remove = (m: Member) => {
+    setRepairErr("");
+    setPending({
+      desired: members.filter((x) => !(x.kind === m.kind && x.id === m.id)).map((x) => ({ kind: x.kind, id: x.id })),
+      busyKey: `${m.kind}-${m.id}`,
+      title: `Remove ${m.name} from this agency?`,
+      message: `${m.name} is still in several agencies, from before 2.3.0. Removing it here leaves it with the others, and this agency's runs stop resolving it.`,
+      confirm: "Remove",
+    });
+  };
+  const add = (kind: string, id: string, name: string) => {
+    setRepairErr("");
+    setPending({
+      desired: [...members.map((x) => ({ kind: x.kind, id: x.id })), { kind, id }],
+      busyKey: `add-${kind}`,
+      title: `Give ${name} to this agency?`,
+      message: `${name} is Global's. Adding it here makes this agency its owner: other agencies' runs that bind it stop resolving it the next time they start.`,
+      confirm: "Give it to this agency",
+    });
+  };
 
   // What can be ADDED here is what is Global's (one agency per row since
   // v2.3.0): the add takes it out of Global. A row that is another agency's is
@@ -538,13 +602,10 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, envGlobal, onMember
           // agent serves the agency whose token it enrolled with. The list is
           // shown, and the Runners page is where one is enrolled or removed.
           const readOnly = g.kind === "runner";
-          // ADDING here takes one of Global's rows out of Global, and Global is
-          // a global administrator's on either side of a move (requireMove): for
-          // anyone else the add is always refused, so it is disabled with why.
-          const kindGlobal = g.kind === "secret" || g.kind === "env-var" ? envGlobal : globalAdmin;
-          const why = kindGlobal
-            ? ""
-            : "Adding one of Global's here takes it out of Global — only a global administrator (a role on every agency) can do that.";
+          // ADDING here takes one of Global's rows out of Global: a repair, a
+          // global administrator's (configureApp on every agency) whatever the
+          // kind. For anyone else it is disabled with why.
+          const why = globalAdmin ? "" : `Adding one of Global's here changes its agency. ${REPAIR_HINT}`;
           // REMOVING is possible only for a row still in several agencies (from
           // before 2.3.0): a row in one agency cannot be left in none, and one
           // this agency owns is moved, not removed. So the control exists only
@@ -578,7 +639,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, envGlobal, onMember
                     >
                       {m.name}
                       {m.scope && <span style={{ color: c.textSec }}>@{m.scope}</span>}
-                      {canEdit && !readOnly && removable(m) && (
+                      {canEdit && globalAdmin && !readOnly && removable(m) && (
                         <button
                           onClick={() => remove(m)}
                           disabled={busy != null}
@@ -617,7 +678,8 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, envGlobal, onMember
                   title={why || undefined}
                   aria-label={`Add a ${g.label.replace(/s$/, "").toLowerCase()} to this agency`}
                   onChange={(e) => {
-                    if (e.target.value) add(g.kind, e.target.value);
+                    const r = avail.find((x) => x.id === e.target.value);
+                    if (r) add(g.kind, r.id, r.name);
                   }}
                   style={{
                     ...inputStyle(),
@@ -642,10 +704,21 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, envGlobal, onMember
         })}
       </div>
       <div style={{ fontSize: c.fontXs, color: c.textMuted }}>
-        A scope, secret, variable and key belongs to exactly one agency. A global administrator can add one of Global's
-        here, which makes this agency its owner. To move one between agencies, or back to Global, change its agency on
-        the row itself: the Agency select on a scope, and Move to another agency on a secret, variable or SSH key.
+        A scope, secret, variable and key belongs to exactly one agency, and another agency gets one by a copy. A global
+        administrator can repair a placement that was a mistake: add one of Global's here, which makes this agency its
+        owner, or change its agency on the row itself. A repair asks for a reason, written to the audit log.
       </div>
+      {pending && (
+        <RepairDialog
+          title={pending.title}
+          message={pending.message}
+          confirmLabel={pending.confirm}
+          busy={busy != null}
+          error={repairErr}
+          onCancel={() => setPending(null)}
+          onConfirm={save}
+        />
+      )}
       {agencyId !== GLOBAL_AGENCY && <VaultPathsEditor agencyId={agencyId} globalAdmin={globalAdmin} />}
     </DetailPanel>
   );

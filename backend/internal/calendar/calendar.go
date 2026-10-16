@@ -49,7 +49,11 @@ type DaySet map[string]string
 // govern how its suppressions apply and whether they are recorded.
 type Calendar struct {
 	Name string
-	// Global unions this calendar's days into EVERY entry's skip set (§2.8).
+	// Owner is the agency the calendar belongs to (§0a, 2.4.0); "" reads as
+	// Global's.
+	Owner string
+	// Global unions this calendar's days into the skip set of every entry of
+	// its OWN agency (§2.8; until §0a every entry of every agency).
 	Global bool
 	// RecordSuppressed governs only-mode suppressions ONLY (CAL-Q4): skip-mode
 	// suppressions always record, because those are the compliance question.
@@ -141,6 +145,18 @@ func ValidDay(s string) bool {
 // entries. So the veto is evaluated first, which is also the plainer reading of
 // "skip is a veto": skip wins whenever it applies.
 func Evaluate(sets Set, skip, only []string, day string) Verdict {
+	return EvaluateFor(sets, "global", skip, only, day)
+}
+
+// EvaluateFor is Evaluate for an entry of an agency: the global tier is that
+// agency's global calendars only (§0a, 2.4.0). Evaluate is EvaluateFor for
+// Global's entries. Bound calendars apply whoever owns them: an entry binds
+// its own agency's at a write, and one bound before §0a to Global's keeps
+// that binding rather than start firing on its days.
+func EvaluateFor(sets Set, agency string, skip, only []string, day string) Verdict {
+	if agency == "" {
+		agency = "global"
+	}
 	// (1) skip-polarity, the veto: bound calendars first, then the global tier.
 	// Bound names are checked in the operator's authored order so the reported
 	// reason is stable across evaluations.
@@ -155,7 +171,11 @@ func Evaluate(sets Set, skip, only []string, day string) Verdict {
 	// is randomised and an unstable suppression reason would be a bad audit row.
 	for _, name := range sortedNames(sets) {
 		c := sets[name]
-		if !c.Global {
+		owner := c.Owner
+		if owner == "" {
+			owner = "global"
+		}
+		if !c.Global || owner != agency {
 			continue
 		}
 		if label, ok := c.Days[day]; ok {
@@ -206,6 +226,12 @@ func Reason(v Verdict) string {
 	if v.Polarity == "only" {
 		return fmt.Sprintf("Skipped: not a run day in calendar %q", v.Calendar)
 	}
+	if v.Calendar == FreezeCalendar {
+		if v.Label != "" {
+			return "Skipped: the installation is frozen (" + v.Label + ")"
+		}
+		return "Skipped: the installation is frozen"
+	}
 	if v.Label != "" {
 		return fmt.Sprintf("Skipped: suppressed by calendar %q (%s)", v.Calendar, v.Label)
 	}
@@ -220,8 +246,15 @@ func Reason(v Verdict) string {
 // this read. Callers with many entries (the /schedules/upcoming projection)
 // must call Load ONCE for every name across every entry rather than per entry,
 // preserving the CC.9 fixed-query-count discipline.
-func Load(ctx context.Context, database *sql.DB, names []string) (Set, error) {
+//
+// agency is whose calendars: an entry names its own agency's (§0a), and a
+// calendar's name is unique within its agency only (I2), so the set is one
+// agency's, keyed by name. Global's for an empty agency.
+func Load(ctx context.Context, database *sql.DB, agency string, names []string) (Set, error) {
 	out := Set{}
+	if agency == "" {
+		agency = "global"
+	}
 
 	// Deduplicate and drop blanks so the IN list is minimal and stable.
 	seen := map[string]bool{}
@@ -235,18 +268,19 @@ func Load(ctx context.Context, database *sql.DB, names []string) (Set, error) {
 	}
 
 	// The global clause means this query is never pointless, even with no names.
-	q := `SELECT c.name, c.global, c.record_suppressed, d.day, d.label
+	q := `SELECT c.name, c.global, c.record_suppressed, d.day, d.label, c.owner_agency
 	        FROM calendars c
 	        LEFT JOIN calendar_days d
-	               ON d.calendar_source = c.source AND d.calendar_name = c.name
-	       WHERE c.global = 1`
-	args := []any{}
+	               ON d.calendar_owner = c.owner_agency AND d.calendar_source = c.source AND d.calendar_name = c.name
+	       WHERE c.owner_agency = ? AND (c.global = 1`
+	args := []any{agency}
 	if len(want) > 0 {
 		q += " OR c.name IN (" + strings.TrimSuffix(strings.Repeat("?,", len(want)), ",") + ")"
 		for _, n := range want {
 			args = append(args, n)
 		}
 	}
+	q += ")"
 
 	rows, err := database.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -259,13 +293,14 @@ func Load(ctx context.Context, database *sql.DB, names []string) (Set, error) {
 			global     int
 			recordSupp int
 			day, label sql.NullString
+			owner      string
 		)
-		if err := rows.Scan(&name, &global, &recordSupp, &day, &label); err != nil {
+		if err := rows.Scan(&name, &global, &recordSupp, &day, &label, &owner); err != nil {
 			return nil, fmt.Errorf("scan calendar day: %w", err)
 		}
 		c, ok := out[name]
 		if !ok {
-			c = Calendar{Name: name, Global: global == 1, RecordSuppressed: recordSupp == 1, Days: DaySet{}}
+			c = Calendar{Name: name, Owner: owner, Global: global == 1, RecordSuppressed: recordSupp == 1, Days: DaySet{}}
 		}
 		// A calendar with zero days still lands in the set (LEFT JOIN, NULL day)
 		// so callers can tell "exists but empty" from "does not exist" — CAL-16
@@ -281,11 +316,22 @@ func Load(ctx context.Context, database *sql.DB, names []string) (Set, error) {
 	return out, nil
 }
 
-// LoadFlags returns the set of existing calendar names and the subset that are
-// global — everything ValidateBinding needs, in one query. Separate from Load
-// because validation cares about existence and flags, never about days.
-func LoadFlags(ctx context.Context, database *sql.DB) (known, global map[string]bool, err error) {
-	rows, err := database.QueryContext(ctx, `SELECT name, global FROM calendars`)
+// LoadFlagsFor returns the set of one agency's calendar names and the subset
+// that are global — everything ValidateBinding needs, in one query. Separate
+// from Load because validation cares about existence and flags, never about
+// days. One agency's, because an entry binds its own agency's calendars only
+// (§0a, 2.4.0) and a name is unique within an agency only (I2): another
+// agency's calendar reads as one that is not there. (LoadFlags, over every
+// agency's, went with I2: nothing asks of the whole installation now.)
+func LoadFlagsFor(ctx context.Context, database *sql.DB, agency string) (known, global map[string]bool, err error) {
+	if agency == "" {
+		agency = "global"
+	}
+	return loadFlags(ctx, database, `SELECT name, global FROM calendars WHERE owner_agency = ?`, agency)
+}
+
+func loadFlags(ctx context.Context, database *sql.DB, q string, args ...any) (known, global map[string]bool, err error) {
+	rows, err := database.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load calendar flags: %w", err)
 	}

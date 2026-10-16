@@ -63,7 +63,7 @@ func TestAgencyMembersUnmemberedAddIsUnrestrictedOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := reqAs(t, h2, http.MethodPut, "/api/v1/agencies/ag-any/members", "sec-admins",
-		`{"members":[{"kind":"secret","id":"`+shared2+`"}]}`)
+		asRepair(`{"members":[{"kind":"secret","id":"`+shared2+`"}]}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("unrestricted admin saving members = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
@@ -86,7 +86,7 @@ func TestAgencyMembersUnknowns(t *testing.T) {
 		t.Errorf("unknown agency = %d, want 404", rec.Code)
 	}
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/agencies/ag-x/members", "sec-admins",
-		`{"members":[{"kind":"secret","id":"nope"}]}`); rec.Code != http.StatusUnprocessableEntity {
+		asRepair(`{"members":[{"kind":"secret","id":"nope"}]}`)); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("unknown entity = %d, want 422", rec.Code)
 	}
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/agencies/ag-x/members", "sec-admins",

@@ -43,8 +43,12 @@ func TestClaimRuleMirrorsAgreeWithTheClaim(t *testing.T) {
 	exec(`INSERT INTO scope_runners(scope_id, runner_id, runner_name, bound_by, bound_at) VALUES('sc-theirs', 'r-else', 'r-else', 'test', ?)`, now())
 	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
 	      VALUES('job', 'cronomicon', 'twin', 'uid-bound', 'secret', 'TOKEN', ?)`, now())
-	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-	      VALUES('script', 'git', 'scripts/bound.sh', 'secret', 'TOKEN', ?)`, now())
+	// A script's bindings are filed under the script's uid (migration 1290), and a
+	// run finds them by the uid it froze. Filed by name alone, this row would
+	// match no run, and every case below that says "the script declares one"
+	// would agree with the claim for the wrong reason.
+	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
+	      VALUES('script', '', 'scripts/bound.sh', 'uid-script-bound', 'secret', 'TOKEN', ?)`, now())
 	// An SSH key binding: an injection like any other for an agent, and the one
 	// thing the local runner does not take (LR-47).
 	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
@@ -62,13 +66,21 @@ func TestClaimRuleMirrorsAgreeWithTheClaim(t *testing.T) {
 	type injection struct {
 		name                    string
 		jobUID, script, sshCred string
+		// scriptUID is the script the run froze (runs.script_uid, 1290). The
+		// binding below is filed under uid-script-bound.
+		scriptUID string
 	}
 	injections := []injection{
 		{name: "nothing injected", jobUID: "uid-plain"},
 		{name: "the job declares a binding", jobUID: "uid-bound"},
 		// Same name and source as the bound job, another identity (R2F-1).
 		{name: "a same-named sibling declares one", jobUID: "uid-sibling"},
-		{name: "the script declares one", jobUID: "uid-plain", script: "scripts/bound.sh"},
+		{name: "the script declares one", jobUID: "uid-plain", script: "scripts/bound.sh", scriptUID: "uid-script-bound"},
+		// The same NAME, another script (another repository's, or one that has
+		// since been replaced), and a run that froze none. Matched by name, both
+		// would be gated; the claim and its mirrors must agree that neither is.
+		{name: "another script of that name declares one", jobUID: "uid-plain", script: "scripts/bound.sh", scriptUID: "uid-script-other"},
+		{name: "a script of that name declares one and the run froze none", jobUID: "uid-plain", script: "scripts/bound.sh"},
 		{name: "a per-run SSH credential", jobUID: "uid-plain", sshCred: "deploy-key"},
 		{name: "the job binds an SSH key", jobUID: "uid-key"},
 	}
@@ -81,17 +93,27 @@ func TestClaimRuleMirrorsAgreeWithTheClaim(t *testing.T) {
 		svc.cfg.SecretsInjectionEnabled = armed
 		execspec.SetInjectionGateArmed(armed)
 		for _, rs := range runners {
-			for _, runnerAgency := range []string{"global", "a1"} {
+			for _, runnerAgency := range []string{"global", "a1", "legacy-a1"} {
 				for _, allowInjection := range []bool{false, true} {
 					for _, kind := range kinds {
 						if kind == "server" && !allowInjection {
 							continue // LR-46: secret injection is fixed on for it
 						}
+						if kind == "server" && runnerAgency != "global" {
+							continue // §0a (IN-3): the local runner serves Global only, and cannot be placed in an agency
+						}
 						// One runner, rebuilt per shape: nothing else is ever online.
 						exec(`DELETE FROM runners`)
 						insertRunner(t, svc, "r1", "r1", "online", rs.caps)
 						exec(`UPDATE runners SET kind = ? WHERE id = 'r1'`, kind)
-						if runnerAgency != "global" {
+						switch runnerAgency {
+						case "global":
+						case "legacy-a1":
+							// A legacy placement (MA-9): listed for a1, owned by Global.
+							// It takes none of a1's work (§0a, question 29), and the
+							// mirrors must say so too (found by the review of I1).
+							exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES('r1', 'a1')`)
+						default:
 							addRunnerAgency(t, svc, "r1", runnerAgency)
 						}
 						if rs.mask != nil {
@@ -107,10 +129,11 @@ func TestClaimRuleMirrorsAgreeWithTheClaim(t *testing.T) {
 									for _, scope := range []string{"open", "mine", "theirs"} {
 										for _, inj := range injections {
 											exec(`DELETE FROM runs`)
-											exec(`INSERT INTO runs(id, job_name, job_source, job_uid, script_ref, ssh_credential, run_type, scope,
+											scriptUID := inj.scriptUID
+											exec(`INSERT INTO runs(id, job_name, job_source, job_uid, script_ref, script_uid, ssh_credential, run_type, scope,
 										                       requires_json, agencies_json, status, triggered_by, trigger_kind, executor, created_at)
-										      VALUES ('run', 'twin', 'cronomicon', ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, 'queued', 'test', 'manual', 'runner', ?)`,
-												inj.jobUID, inj.script, inj.sshCred, runType, scope, requires, `["`+runAgency+`"]`, now())
+										      VALUES ('run', 'twin', 'cronomicon', ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, 'queued', 'test', 'manual', 'runner', ?)`,
+												inj.jobUID, inj.script, scriptUID, inj.sshCred, runType, scope, requires, `["`+runAgency+`"]`, now())
 											exec(`INSERT OR IGNORE INTO run_agencies(run_id, agency) VALUES('run', ?)`, runAgency)
 
 											// The mirrors first: the claim moves the run to running.

@@ -110,7 +110,7 @@ func refTable(k Kind) (table, nameCol string, scoped bool, ok bool) {
 // would this binding resolve for a run in runScope? canRead is the caller's own
 // row-visibility filter (see CanReadScope); a nil canRead is treated as
 // "GLOBAL only", the fail-closed reading of a zero grant.
-func Validate(ctx context.Context, database *sql.DB, kind Kind, name, runScope string, canRead CanReadScope) (Validation, error) {
+func Validate(ctx context.Context, database *sql.DB, kind Kind, name, agency, runScope string, canRead CanReadScope) (Validation, error) {
 	v := Validation{Kind: kind, Name: name, Reference: kind.Reference(name), InjectReference: kind.Reference(name)}
 	if canRead == nil {
 		canRead = func(scope string) bool { return scope == "" }
@@ -149,7 +149,7 @@ func Validate(ctx context.Context, database *sql.DB, kind Kind, name, runScope s
 		// AG-Q5 (Phase 3): keys carry agency membership. A key that is Global's is
 		// usable from every agency — the state an upgrade leaves every key nobody
 		// assigned in, which is what kept the tightening from being a cliff.
-		runAgencies, err := scopeAgencyNames(ctx, database, runScope)
+		runAgencies, err := scopeAgencyNames(ctx, database, agency, runScope)
 		if err != nil {
 			return v, err
 		}
@@ -172,7 +172,7 @@ func Validate(ctx context.Context, database *sql.DB, kind Kind, name, runScope s
 		return v, nil
 	}
 
-	runAgencies, err := scopeAgencyNames(ctx, database, runScope)
+	runAgencies, err := scopeAgencyNames(ctx, database, agency, runScope)
 	if err != nil {
 		return v, err
 	}
@@ -218,10 +218,10 @@ func Validate(ctx context.Context, database *sql.DB, kind Kind, name, runScope s
 // but a malformed one is reported as OutcomeInvalid here rather than surfacing as
 // a 422 on save, and the collision check (RA-Q2) runs across the whole set so the
 // dialog shows the clash before the trigger refuses it.
-func ValidateAll(ctx context.Context, database *sql.DB, bindings []Binding, runScope string, canRead CanReadScope) ([]Validation, error) {
+func ValidateAll(ctx context.Context, database *sql.DB, bindings []Binding, agency, runScope string, canRead CanReadScope) ([]Validation, error) {
 	out := make([]Validation, 0, len(bindings))
 	for _, b := range bindings {
-		v, err := Validate(ctx, database, b.Kind, b.Name, runScope, canRead)
+		v, err := Validate(ctx, database, b.Kind, b.Name, agency, runScope, canRead)
 		if err != nil {
 			return nil, err
 		}
@@ -397,8 +397,8 @@ func resolvedReason(kind Kind, rowScope, runScope string, nameScope bool) string
 // an unreadable membership is an error, not an empty set. (It was a private copy
 // that answered "no agencies" for both until 2.3.0, which the Global arm of the
 // visibility rule would have read as "resolves Global's rows".)
-func scopeAgencyNames(ctx context.Context, database *sql.DB, scope string) ([]string, error) {
-	return execspec.ScopeAgencies(ctx, database, scope)
+func scopeAgencyNames(ctx context.Context, database *sql.DB, agency, scope string) ([]string, error) {
+	return execspec.ScopeAgencies(ctx, database, agency, scope)
 }
 
 // keyAgencyNames lists the agencies an SSH-key label belongs to, for the

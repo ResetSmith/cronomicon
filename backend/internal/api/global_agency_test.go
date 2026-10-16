@@ -20,7 +20,7 @@ func TestGlobalAgency_IsPermanentAndItsNameIsReserved(t *testing.T) {
 	}{
 		{"rename Global", http.MethodPut, "/api/v1/agencies/global", `{"name":"Everyone"}`, "builtin_agency"},
 		{"delete Global", http.MethodDelete, "/api/v1/agencies/global", ``, "builtin_agency"},
-		{"create another Global", http.MethodPost, "/api/v1/agencies", `{"name":"gLOBAL"}`, "name_reserved"},
+		{"create another Global", http.MethodPost, "/api/v1/agencies", `{"name":"gLOBAL","repository":{"repoUrl":"https://git.example.com/g.git"}}`, "name_reserved"},
 		{"rename an agency to Global", http.MethodPut, "/api/v1/agencies/ag:FIN", `{"name":"global"}`, "name_reserved"},
 	} {
 		rec := gateReq(t, h, c.method, c.path, gRoot, c.body)
@@ -109,9 +109,9 @@ func TestGlobalAgency_ARowIsInGlobalOrADepartmentNeverBothNeverNeither(t *testin
 	// secret and the scope, and refused for the runner.
 	body := func(kind, id, agencies string) string {
 		if kind == "runner" {
-			return `[{"runnerId":"` + id + `","agencyIds":` + agencies + `}]`
+			return asRepair(`[{"runnerId":"` + id + `","agencyIds":` + agencies + `}]`)
 		}
-		return `[{"id":"` + id + `","agencyIds":` + agencies + `}]`
+		return asRepair(`[{"id":"` + id + `","agencyIds":` + agencies + `}]`)
 	}
 	for _, rt := range routes {
 		if got := agenciesOf(rt.table, rt.col, rt.id); got != "global" {
@@ -166,7 +166,7 @@ func TestGlobalAgency_ARowIsInGlobalOrADepartmentNeverBothNeverNeither(t *testin
 	// owner rule speaks first when FIN owns the row, so take the owner away to
 	// reach the rule under test.
 	exec(`UPDATE secrets SET owner_agency = 'global' WHERE id = ?`, sec.ID)
-	rec = gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/members", gRoot, `{"members":[{"kind":"scope","id":"sc:fin"}]}`)
+	rec = gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/members", gRoot, asRepair(`{"members":[{"kind":"scope","id":"sc:fin"}]}`))
 	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "agency_required" {
 		t.Errorf("emptying a secret's agencies through the agency editor = %d %s, want 422 agency_required (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
 	}
@@ -182,7 +182,7 @@ func TestGlobalAgency_ARowIsInGlobalOrADepartmentNeverBothNeverNeither(t *testin
 		t.Fatalf("the local runner's row: %v", err)
 	}
 	rec = gateReq(t, h, http.MethodPut, "/api/v1/agencies/global/members", gRoot,
-		`{"members":[{"kind":"scope","id":"sc:shared"},{"kind":"runner","id":"r1"},{"kind":"runner","id":"`+localID+`"},{"kind":"secret","id":"`+sec.ID+`"}]}`)
+		asRepair(`{"members":[{"kind":"scope","id":"sc:shared"},{"kind":"runner","id":"r1"},{"kind":"runner","id":"`+localID+`"},{"kind":"secret","id":"`+sec.ID+`"}]}`))
 	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "global_mixed" {
 		t.Errorf("adding FIN's secret to Global = %d %s, want 422 global_mixed (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
 	}
@@ -285,8 +285,11 @@ func TestGlobalAgency_JobRowFlagsAnswerEachRoutesOwnQuestion(t *testing.T) {
 	      ('fin-job','cronomicon','bash','fin-hosts',1,'2026-01-01T00:00:00Z'),
 	      ('fin-job-tax-run','cronomicon','bash','fin-hosts',1,'2026-01-01T00:00:00Z')`)
 	run := func(job string, scope any) {
-		exec(`INSERT INTO runs (id, job_name, job_source, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
-		      VALUES (?, ?, 'cronomicon', 'bash', ?, 'running', 'u', 'manual', 'runner', '2026-01-02T00:00:00Z')`, "run-"+job, job, scope)
+		// The run is its scope's agency's, as a producer snapshots it (I2).
+		exec(`INSERT INTO runs (id, job_name, job_source, run_type, scope, status, triggered_by, trigger_kind, executor, created_at, agencies_json)
+		      VALUES (?, ?, 'cronomicon', 'bash', ?, 'running', 'u', 'manual', 'runner', '2026-01-02T00:00:00Z',
+		              COALESCE((SELECT json_array(a.name) FROM scopes sc JOIN agencies a ON a.id = sc.owner_agency WHERE sc.name = ?), '["Global"]'))`,
+			"run-"+job, job, scope, scope)
 	}
 	run("platform-unbound-run", nil)     // Global's own run of a Global job
 	run("platform-fin-run", "fin-hosts") // FIN ran the Global job against its scope
@@ -413,11 +416,11 @@ func TestGlobalAgency_AGlobalAdministratorCanReHomeARowInNoAgency(t *testing.T) 
 		t.Fatalf("a refused claim wrote %d membership rows", n)
 	}
 	// Nor can a global administrator use the repair to move it.
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", gRoot, `[{"runnerId":"r1","agencyIds":["ag:FIN"]}]`); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "serve_list_fixed" {
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", gRoot, asRepair(`[{"runnerId":"r1","agencyIds":["ag:FIN"]}]`)); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "serve_list_fixed" {
 		t.Errorf("root giving an orphaned Global runner to FIN = %d %s, want 422 serve_list_fixed (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
 	}
 	for path, body := range map[string]string{"/api/v1/secret-agencies": secretBody, "/api/v1/runner-agencies": runnerBody} {
-		if rec := gateReq(t, h, http.MethodPut, path, gRoot, body); rec.Code != http.StatusOK {
+		if rec := gateReq(t, h, http.MethodPut, path, gRoot, asRepair(body)); rec.Code != http.StatusOK {
 			t.Errorf("root re-homing an orphan through %s = %d, want 200 (%s)", path, rec.Code, rec.Body)
 		}
 	}

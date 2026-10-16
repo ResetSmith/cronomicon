@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { fetchCapabilities } from "../api/client";
-import { COMPOSE_ADMIN_ONLY, globalOnly } from "../api/globalAdmin";
 import { useGet, rows } from "../hooks";
 import { c } from "../theme";
 import { guideForRunType } from "../components/docLinks";
@@ -193,17 +192,14 @@ export function JobComposer() {
   // (RB-30). A departmental composer is offered named scopes only, rather than
   // being shown an option the server will refuse.
   const [canComposeUnbound, setCanComposeUnbound] = useState(false);
-  // GC (v2.2.2) — reactions are the one part of this form the server takes only
-  // from a compose ADMINISTRATOR (PUT /reactions/…): a reaction couples this job
-  // to another definition, whoever owns it. The job itself, and its inline
-  // schedules, stay per-scope compose.
-  const [composeAdmin, setComposeAdmin] = useState(false);
+  // Reactions were, from GC (v2.2.2) until 2.4.2, the one part of this form the
+  // server took only from a compose administrator; since question 61 they are
+  // the job's agency's, like the job.
   useEffect(() => {
     fetchCapabilities().then((caps) => {
       setCanCompose(caps.compose);
       setCanManageEnv(caps.manageEnvVars);
       setCanComposeUnbound(caps.composeUnbound);
-      setComposeAdmin(!!caps.composeAdmin);
     });
   }, []);
 
@@ -464,6 +460,11 @@ export function JobComposer() {
   // ansible may carry a declared "connect as"; terraform 422s.
   const identityCapable = isIdentityCapable(runType);
   const chosenScope = scopesList.find((s) => s.scope === scope);
+  // The job's agency is its scope's (2.4.0, I2): its schedule entries are
+  // judged by that agency's calendars (2.4.1). No scope is Global's; a scope
+  // not chosen yet, or in no single agency, leaves it unknown.
+  const jobAgency =
+    scope === "" ? "global" : (chosenScope?.agencies ?? []).length === 1 ? chosenScope!.agencies![0].id : undefined;
   const scopeHosts = chosenScope?.hosts ?? [];
 
   // JC-P4 — env context for the chosen scope. '*'/empty scope = a global (mirrors the
@@ -801,7 +802,7 @@ export function JobComposer() {
     return (
       <div style={{ color: c.textSec, maxWidth: 560 }}>
         In-app job composition requires the <strong>Compose</strong> capability (Admin-only in v20).
-        Git-defined jobs are authored through the GitLab publish flow.
+        Git-defined jobs are authored through the publish flow.
       </div>
     );
   }
@@ -1076,7 +1077,7 @@ export function JobComposer() {
             ) : (
               <>
                 Whichever runner that serves the job&rsquo;s scope asks first takes a run: an agent, or the local runner
-                (this server, over SSH) where it is switched on and serves the scope&rsquo;s agency.
+                (this server, over SSH) where it is switched on, for a job of Global&rsquo;s.
               </>
             )}{" "}
             To keep a scope&rsquo;s jobs on particular runners, bind them on Scopes → Runners.
@@ -1166,7 +1167,9 @@ export function JobComposer() {
           ownerKind="job"
           ownerName={isEdit ? name : ""}
           ownerSource="cronomicon"
-          disabledReason={globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY) || undefined}
+          // 2.4.2 (question 61): reactions are written by compose on the
+          // definition's agency, which whoever may save the job holds.
+          disabledReason={undefined}
           loadError={reactions.loadError}
         />
         {reactionsError({ kind: "job", name, source: "cronomicon" }, reactions.list) && (
@@ -1356,6 +1359,7 @@ export function JobComposer() {
                 onChange={(patch) => updateInline(i, patch)}
                 onRemove={() => removeInline(i)}
                 nameError={inlineErrors[i]}
+                agency={jobAgency}
               />
             ))}
           </div>
@@ -1718,11 +1722,14 @@ function InlineScheduleRow({
   onChange,
   onRemove,
   nameError,
+  agency,
 }: {
   entry: InlineSchedule;
   onChange: (patch: Partial<InlineSchedule>) => void;
   onRemove: () => void;
   nameError?: string | null;
+  /** The job's agency, whose calendars the entry is judged by (2.4.1). */
+  agency?: string;
 }) {
   const cronTrim = entry.cron.trim();
   const mode = modeOf(entry);
@@ -1816,6 +1823,7 @@ function InlineScheduleRow({
           onChange={(b) => onChange({ skipCalendars: b.skipCalendars, onlyCalendars: b.onlyCalendars })}
           spec={entry}
           compact
+          agency={agency}
         />
       </div>
 

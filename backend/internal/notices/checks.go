@@ -35,12 +35,27 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindVaultPathOutsidePrefix, checkVaultPathOutsidePrefix},
 		{KindLegacyPlacement, checkLegacyPlacement},
 		{KindRunnerNameShared, checkRunnerNameShared},
+		{KindScheduleBindingAmbiguous, checkScheduleBindingAmbiguous},
+		{KindScheduleGone, checkScheduleGone},
+		{KindWorkflowSpansAgencies, checkWorkflowSpansAgencies},
+		{KindReactionOtherAgency, checkReactionOtherAgency},
+		{KindGlobalJobOnAgencyScope, checkGlobalJobOnAgencyScope},
+		{KindGlobalCredentialBound, checkGlobalCredentialBound},
+		{KindGlobalHostRecord, checkGlobalHostRecord},
+		{KindAgencyNoRepository, checkAgencyNoRepository},
+		{KindLocalRunnerServed, checkLocalRunnerServed},
+		{KindGlobalScriptJob, checkGlobalScriptJob},
+		{KindGlobalScheduleBound, checkGlobalScheduleBound},
+		{KindGlobalCalendarScope, checkCalendarAgencies},
+		{KindScheduleEntryNoOwner, checkScheduleEntryNoOwner},
 		{"run_placement", checkRunPlacement},
 		{KindShellJobRequires, checkShellJobRequires},
 		{KindNoRunnerForShellJobs, checkNoRunnerForShellJobs},
 		{KindHostKeyConflict, checkCarriedKeyConflicts},
 		{KindLocalRunnerHostKeys, checkLocalRunnerHostKeys},
 		{KindLeftoverExecutorKey, checkLeftoverExecutorKey},
+		{KindProjectJobNoCheckoutAgent, checkProjectJobs},
+		{KindJobScriptGone, checkJobScriptGone},
 	} {
 		if err := c.run(ctx, database); err != nil {
 			errs = append(errs, c.name+": "+err.Error())
@@ -257,7 +272,7 @@ func checkTargetHostOutsideScope(ctx context.Context, database *sql.DB) error {
 		SELECT COALESCE(NULLIF(j.uid, ''), j.source || ':' || j.name), j.name, j.source, j.scope, j.target_host,
 		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
 		                   FROM scope_agencies sa WHERE sa.scope_id = sc.id), ?)
-		  FROM jobs j JOIN scopes sc ON sc.name = j.scope
+		  FROM jobs j JOIN scopes sc ON sc.name = j.scope AND sc.owner_agency = COALESCE(`+agencyid.JobSQL("j")+`, '`+agencyid.Global+`') -- the job's own scope of the name (I2)
 		 WHERE j.deleted_at IS NULL
 		   AND COALESCE(j.target_host, '') <> ''
 		   -- a scope that lists no hosts has no membership to be outside of
@@ -310,7 +325,8 @@ func SetRecordKeyNameCheck(fn func(ctx context.Context, database *sql.DB) ([]Fin
 }
 
 // checkRecordKeyOutsideOwner lists hand-written host records and bastions whose
-// SSH key is neither their owner's nor Global's (LR-72). A write refuses that
+// SSH key is not their owner's (LR-72; since §0a, IN-6, Global's is not usable by
+// another agency's record either). A write refuses that
 // now; a record from before 2.3.0, when it belonged to nobody, may still name
 // any key. What that costs differs by kind, and the notice says which:
 //
@@ -330,10 +346,14 @@ func checkRecordKeyOutsideOwner(ctx context.Context, database *sql.DB) error {
 		rows, err := database.QueryContext(ctx, `
 			SELECT t.id, t.`+k.nameCol+`, t.owner_agency, COALESCE((SELECT name FROM agencies WHERE id = t.owner_agency), t.owner_agency), c.label
 			  FROM `+k.table+` t JOIN ssh_credentials c ON c.id = t.auth_credential_id
-			 WHERE `+k.where+`NOT EXISTS (
+			 WHERE `+k.where+`(NOT EXISTS (
 			         SELECT 1 FROM ssh_credential_agencies m
-			          WHERE m.credential_id = c.id AND m.agency_id IN (t.owner_agency, ?))
-			 ORDER BY t.id`, agencyid.Global)
+			          WHERE m.credential_id = c.id AND m.agency_id = t.owner_agency)
+			        -- Another agency's key shared into this one by membership is
+			        -- still that agency's, and runref.KeyIDUsable refuses it (§0a,
+			        -- IN-6; the review of I1).
+			        OR c.owner_agency <> t.owner_agency)
+			 ORDER BY t.id`)
 		if err != nil {
 			return err
 		}
@@ -346,8 +366,8 @@ func checkRecordKeyOutsideOwner(ctx context.Context, database *sql.DB) error {
 			found = append(found, Finding{
 				AgencyID: owner,
 				Subject:  k.kind + ":" + id,
-				Detail: fmt.Sprintf("The %s %s belongs to %s and names the SSH key %s, which is neither %s's nor Global's. %s "+
-					"Give the %s a key of its own agency or one that is Global's, or give the %s to the agency whose key it names.",
+				Detail: fmt.Sprintf("The %s %s belongs to %s and names the SSH key %s, which is not %s's. %s "+
+					"Give the %s a key of its own agency, or give the %s to the agency whose key it names.",
 					k.noun, name, ownerName, label, ownerName, k.cost, k.noun, k.noun),
 			})
 		}
@@ -482,9 +502,10 @@ func checkLegacyPlacement(ctx context.Context, database *sql.DB) error {
 			rows.Close()
 			return err
 		}
-		detail := fmt.Sprintf("The runner %s serves %s and is owned by %s. Since 2.3.0 an agent serves exactly the agency "+
-			"that owns it; this one predates that and keeps working as it did, with the same toolchains and keys on a "+
-			"machine these agencies share. It can be narrowed and never widened, and only a global administrator manages it. ",
+		detail := fmt.Sprintf("The runner %s is listed as serving %s and is owned by %s. Since 2.3.0 an agent serves exactly "+
+			"the agency that owns it, and since 2.4.0 it takes that agency's work only: this one predates the rule, and the "+
+			"runs of the other agencies on its list wait for an agent of their own. It can be narrowed and never widened, "+
+			"and only a global administrator manages it. ",
 			name, serves.String, owner)
 		if n == 1 {
 			detail += "It serves one agency now: hand it to that agency (Hand to an agency) and this is settled."

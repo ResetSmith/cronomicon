@@ -115,12 +115,19 @@ func TestScheduledFireOfAScopedJobStillBindsItsScope(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := pool.ExecContext(ctx, `
-		INSERT INTO jobs (uid, name, source, run_type, scope, concurrency_policy, synced_at)VALUES ('uid-'||'tax-report', 'tax-report', 'git', 'bash', 'tax', 'Allow', '2026-01-01T00:00:00Z')`); err != nil {
-		t.Fatalf("seed job: %v", err)
-	}
-	if _, err := pool.ExecContext(ctx, `
 		INSERT INTO agencies (id, name, created_at) VALUES ('ag-tax','Tax','2026-01-01T00:00:00Z')`); err != nil {
 		t.Fatal(err)
+	}
+	// Tax's job, from Tax's repository: a scope's name is looked for in the job's
+	// agency (I2), and a job of Global's repository on Tax's scope is stopped
+	// since §0a (I1).
+	if _, err := pool.ExecContext(ctx, `
+		INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-tax', 'ag-tax', 'u', 'main')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.ExecContext(ctx, `
+		INSERT INTO jobs (uid, name, source, run_type, scope, concurrency_policy, synced_at, repo_id)VALUES ('uid-'||'tax-report', 'tax-report', 'git', 'bash', 'tax', 'Allow', '2026-01-01T00:00:00Z', 'repo-tax')`); err != nil {
+		t.Fatalf("seed job: %v", err)
 	}
 	if _, err := pool.ExecContext(ctx, `
 		INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-tax','tax','git','2026-01-01T00:00:00Z')`); err != nil {

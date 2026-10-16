@@ -1,16 +1,19 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/ResetSmith/cronomicon/internal/vaultpath"
+	"io"
 	"net/http"
-	"strconv"
 	"strings"
+
+	"github.com/ResetSmith/cronomicon/internal/vaultpath"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
+	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
@@ -33,6 +36,8 @@ func (s *Server) mountAgencies(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/agencies/{agencyId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateAgency)))
 	mux.Handle("DELETE /api/v1/agencies/{agencyId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleDeleteAgency)))
 	mux.Handle("PUT /api/v1/scopes/{scopeId}/agency", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleSetScopeAgency)))
+	// 2.4.0: a scope cloned to an agency, by whoever may move it there.
+	mux.Handle("POST /api/v1/scopes/{scopeId}/clone", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCloneScope)))
 	// RB-22: the agency-scoped member setter — replace ONE AGENCY's member list.
 	// The inverse of the per-kind matrices below; it touches only rows with this
 	// agency_id, so edits to two different agencies cannot race by construction.
@@ -176,8 +181,70 @@ func membershipAuthzFor(kind settings.MemberKind) (perm, joinTable, joinCol, lab
 //
 // An entity in NO agency may be placed by a global administrator (the repair
 // path; see requireEntityAgencyOrRepair).
+//
+// A SCOPE is moved by a global administrator only (the owner's decision of
+// 2026-10-13, on 2.4.0's question 21). A scope's agency decides whose
+// repository's jobs may name it and which workflows are one agency's (GR-7),
+// and a scope that comes from an agency's repository cannot be moved at all
+// (GR-18): what was left, a scope built in the app or one of Global's
+// repository passing between two agencies on the word of somebody who
+// administers both, was the one way round the rule that a save which makes a
+// workflow span agencies is a global administrator's. The two-sided rule is
+// asked first all the same, so a caller with no authority over the scope is
+// told what they were always told. A MOVE is a request that names an agency
+// the scope is not in today. One that names only where it is moves nothing,
+// and one that narrows a scope two agencies share from before 2.3.0 to one of
+// them is those agencies' to settle, as it was: both are held to the
+// two-sided rule alone. So is a CLONE of a scope (requireBothSides), which
+// leaves the scope where it is.
+//
+// Since 2.4.0 Phase I4 (IN-7) EVERY kind is so, and a move is any change of
+// the agency set — to another agency, or a narrowing of a set two agencies
+// share from before 2.3.0: it is a global administrator's repair, with
+// `repair: true` and a reason (requireRepair). A write that names the set as
+// it is changes nothing and is held to the two-sided rule alone. It returns
+// whether the write is a repair, for the caller's audit row.
 func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Identity,
-	kind settings.MemberKind, entityID string, targets []string) bool {
+	kind settings.MemberKind, entityID string, targets []string, rep repairInput) (repaired, ok bool) {
+
+	// An entity that is not there is the setter's to answer (422, or the
+	// handler's 404), before anything about repair (from the review of I4).
+	exists, owner, err := settings.MemberOwner(r.Context(), s.db, kind, entityID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false, false
+	}
+	if !exists {
+		if !id.GlobalAdmin(auth.PermConfigureApp) {
+			_, ok := s.requireBothSides(w, r, id, kind, entityID, targets)
+			return false, ok
+		}
+		return false, true
+	}
+	current, ok := s.requireBothSides(w, r, id, kind, entityID, targets)
+	if !ok {
+		return false, false
+	}
+	// Unchanged: the same agencies, and — for a row with an owner — the same
+	// owner. The setter makes the one agency named the owner (moveOwner), so a
+	// row Global owns that one agency uses (left by 1220) was claimed by
+	// posting its membership as it stood, with no repair (from the review of
+	// I4; possible before it under the two-sided rule).
+	if sameAgencySet(current, targets) && (owner == "" || len(targets) != 1 || owner == targets[0]) {
+		return false, true
+	}
+	_, _, _, label := membershipAuthzFor(kind)
+	if !s.requireRepair(w, r, id, rep, "this "+label) {
+		return false, false
+	}
+	return true, true
+}
+
+// requireBothSides is requireMove's two-sided rule on its own: the kind's
+// permission on every agency the entity is in today and on every agency
+// named. It returns the agencies the entity is in.
+func (s *Server) requireBothSides(w http.ResponseWriter, r *http.Request, id auth.Identity,
+	kind settings.MemberKind, entityID string, targets []string) ([]string, bool) {
 
 	perm, joinTable, joinCol, label := membershipAuthzFor(kind)
 	// The source side is EVERY agency the entity is in today, not any one of
@@ -190,7 +257,7 @@ func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Ide
 		`SELECT agency_id FROM `+joinTable+` WHERE `+joinCol+` = ? ORDER BY agency_id`, entityID)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
-		return false
+		return nil, false
 	}
 	var current []string
 	for rows.Next() {
@@ -198,21 +265,21 @@ func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Ide
 		if err := rows.Scan(&a); err != nil {
 			rows.Close()
 			httpx.Fail500(w, s.log, "db_error", err)
-			return false
+			return nil, false
 		}
 		current = append(current, a)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		httpx.Fail500(w, s.log, "db_error", err)
-		return false
+		return nil, false
 	}
 	rows.Close()
 	if len(current) == 0 {
 		// In no agency (damage: the repair path), or no such entity (the
 		// handler's 404 or 422, for a global administrator).
 		if !s.requireEntityAgencyOrRepair(w, r, id, perm, joinTable, joinCol, entityID, label) {
-			return false
+			return nil, false
 		}
 	}
 	for _, aid := range current {
@@ -222,7 +289,7 @@ func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Ide
 		if aid == agencyid.Global {
 			s.denyEntityAgency(w, r, id, perm, auth.AllScopes,
 				"this "+label+" is Global's, so only a global administrator may move it")
-			return false
+			return nil, false
 		}
 		msg := "you do not have " + perm + " on the agency that has this " + label
 		if len(current) > 1 {
@@ -230,16 +297,16 @@ func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Ide
 				" on all of them; moving it takes every one of them, or a global administrator"
 		}
 		s.denyEntityAgency(w, r, id, perm, aid, msg)
-		return false
+		return nil, false
 	}
 	for _, aid := range targets {
 		if !id.CanAgency(perm, aid) {
 			s.denyEntityAgency(w, r, id, perm, aid,
 				"you do not have "+perm+" on agency "+aid+", so you cannot move this "+label+" into it")
-			return false
+			return nil, false
 		}
 	}
-	return true
+	return current, true
 }
 
 // handleSetAgencyMembership replaces the agency set of each posted entity
@@ -250,9 +317,11 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 		return
 	}
+	// A bare array (the matrix as it is), or, for a repair (I4; question 44),
+	// {repair, reason, assignments}.
 	var body []settings.AgencyMembership
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+	var rep repairInput
+	if !decodeRepairable(w, r, &body, &rep) {
 		return
 	}
 	// 🔴 RF-1b (the RBAC-fixes plan): re-homing IS an authorization act, and
@@ -265,9 +334,16 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 	// secrets — re-home, then reveal — which is exactly the cross-department
 	// credential read RB-32 exists to prevent. So the caller must hold the
 	// permission on BOTH sides of the move (requireMove).
+	var repaired []settings.AgencyMembership
+	audited := map[string]bool{} // one row per entity, however often it is posted
 	for _, m := range body {
-		if !s.requireMove(w, r, id, kind, m.ID, m.AgencyIDs) {
+		isRepair, ok := s.requireMove(w, r, id, kind, m.ID, m.AgencyIDs, rep)
+		if !ok {
 			return
+		}
+		if isRepair && !audited[m.ID] {
+			audited[m.ID] = true
+			repaired = append(repaired, m)
 		}
 		// LR-80: a Vault-backed secret or key that moves to an agency must lie
 		// inside THAT agency's Vault paths, or the move would be the way to get
@@ -284,6 +360,8 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "a referenced agency does not exist")
 		case errors.Is(err, settings.ErrUnknownMember):
 			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_member", "a referenced "+string(kind)+" does not exist")
+		case errors.Is(err, settings.ErrScopeNameTaken):
+			httpx.Fail(w, http.StatusConflict, "conflict", "scope name already exists in that agency")
 		case errors.Is(err, settings.ErrOwnerRemoval):
 			// RA-15 — the message carries the entity id from the error because the
 			// matrix posts many rows at once and "one of these is owned" is not enough
@@ -294,6 +372,9 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 			httpx.Fail500(w, s.log, "update_failed", err)
 		}
 		return
+	}
+	for _, m := range repaired {
+		s.auditRepair(r.Context(), id.Email, string(kind)+" "+m.ID, agencySet(m.AgencyIDs), rep)
 	}
 	// Scope membership decides what an agency grant reaches. Since LR-78 that is
 	// resolved per request from the grant snapshot, which the setter itself
@@ -334,9 +415,32 @@ func (s *Server) handleEnvVarShadows(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]settings.ShadowFinding, 0, len(all))
 	for _, f := range all {
-		if auth.ScopeReadable(id, f.Scope) {
+		if auth.ScopeReadableIn(id, f.OwnerAgency, f.Scope) {
 			out = append(out, f)
 		}
+	}
+	// An ambiguity names its owners (agencies, by name): it is shown to a
+	// reader of the scope in any of them (I2: the scope is each owner's own).
+	agencyIDs := map[string]string{}
+	if rows, err := s.db.QueryContext(r.Context(), `SELECT id, name FROM agencies`); err == nil {
+		for rows.Next() {
+			var aid, name string
+			if rows.Scan(&aid, &name) == nil {
+				agencyIDs[name] = aid
+			}
+		}
+		rows.Close()
+	}
+	ambiguityReadable := func(f settings.AmbiguityFinding) bool {
+		if f.Kind == "key" || f.Scope == "" || id.Unrestricted() {
+			return true
+		}
+		for _, owner := range f.Owners {
+			if auth.ScopeReadableIn(id, agencyIDs[owner], f.Scope) {
+				return true
+			}
+		}
+		return false
 	}
 	// RA-18 — the multi-owner ambiguities ride the same response, so the Env Vars
 	// view can warn about a name that will fail closed for a cross-department run
@@ -349,7 +453,7 @@ func (s *Server) handleEnvVarShadows(w http.ResponseWriter, r *http.Request) {
 	}
 	ambOut := make([]settings.AmbiguityFinding, 0, len(amb))
 	for _, f := range amb {
-		if f.Kind == "key" || auth.ScopeReadable(id, f.Scope) {
+		if ambiguityReadable(f) {
 			ambOut = append(ambOut, f)
 		}
 	}
@@ -374,8 +478,45 @@ func (s *Server) handleSetRunnerAgencies(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var body []settings.RunnerAgencies
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+	var rep repairInput
+	if !decodeRepairable(w, r, &body, &rep) {
+		return
+	}
+	// A runner's placement that changes (MA-11 lets through only the
+	// narrowing of a legacy placement) is a repair (I4; IN-7). One that names
+	// the list as it is changes nothing.
+	current, err := settings.ListRunnerAgencies(r.Context(), s.db)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	serves := make(map[string][]string, len(current))
+	for _, c := range current {
+		serves[c.RunnerID] = c.AgencyIDs
+	}
+	var repaired []settings.RunnerAgencies
+	seen := map[string]bool{}
+	for _, m := range body {
+		was, listed := serves[m.RunnerID]
+		if !listed {
+			// A runner that is there and serves nobody (damage) is placed by a
+			// repair as well (from the review of I4); one that is not there is
+			// the setter's 422.
+			var n int
+			if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM runners WHERE id = ?`, m.RunnerID).Scan(&n); err != nil {
+				httpx.Fail500(w, s.log, "db_error", err)
+				return
+			}
+			if n == 0 {
+				continue
+			}
+		}
+		if !sameAgencySet(was, m.AgencyIDs) && !seen[m.RunnerID] {
+			seen[m.RunnerID] = true
+			repaired = append(repaired, m)
+		}
+	}
+	if len(repaired) > 0 && !s.requireRepair(w, r, id, rep, "a runner's placement") {
 		return
 	}
 	// The serve list is the runner's, so writing it takes the runner's OWNER
@@ -408,6 +549,9 @@ func (s *Server) handleSetRunnerAgencies(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
+	for _, m := range repaired {
+		s.auditRepair(r.Context(), id.Email, "runner "+m.RunnerID+" placement", agencySet(m.AgencyIDs), rep)
+	}
 	list, err := settings.ListRunnerAgencies(r.Context(), s.db)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -422,12 +566,33 @@ func (s *Server) handleListAgencies(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, list)
+	id, _ := auth.IdentityFrom(r.Context())
+	rows, err := withRowFlags(list, func(a settings.Agency) (rowFlags, error) { return agencyFlags(id, a.ID), nil })
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rows)
 }
 
 type agencyInputBody struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
+	// Repository is the agency's repository connection, required on create
+	// (§0a, IN-2; Phase I3): an agency is created together with it. Not read
+	// by an update; PUT /agencies/{agencyId}/git-repo changes a connection.
+	Repository *settings.GitlabConfig `json:"repository,omitempty"`
+}
+
+// errSyncUnavailable is a delete's answer while the repositories' sync
+// services are not running: its repository cannot be taken with it.
+var errSyncUnavailable = errors.New("the repositories' sync services are not running; try again in a moment")
+
+// agencyCreated is a create's answer: the agency, and the repository it was
+// created with.
+type agencyCreated struct {
+	*settings.Agency
+	Repository *settings.Repo `json:"repository"`
 }
 
 func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
@@ -445,6 +610,31 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "agency name is required")
 		return
 	}
+	// The name's own rules first: they need no remote.
+	if agencyid.IsGlobalName(strings.TrimSpace(inp.Name)) {
+		failAgencyRule(w, settings.ErrAgencyNameReserved)
+		return
+	}
+	var taken int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE name = ?`, strings.TrimSpace(inp.Name)).Scan(&taken); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if taken > 0 {
+		httpx.Fail(w, http.StatusConflict, "conflict", "an agency with this name already exists")
+		return
+	}
+	// An agency is created together with its repository (§0a, IN-2; Phase
+	// I3): the connection is tested — it answers, and its token may push —
+	// before anything is written, and written with the agency.
+	if inp.Repository == nil || strings.TrimSpace(inp.Repository.RepoUrl) == "" {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "repository_required",
+			"an agency is created together with its repository: give `repository` with at least its repoUrl and a token that can push")
+		return
+	}
+	if !s.requirePushableConnection(w, r, "repo-untested", false, *inp.Repository) {
+		return
+	}
 	a, err := settings.CreateAgency(r.Context(), s.db, settings.AgencyInput{Name: inp.Name, Description: inp.Description}, id.Email)
 	if err != nil {
 		if failAgencyRule(w, err) {
@@ -457,7 +647,45 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "create_failed", err)
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, a)
+	repo, _, err := settings.PutAgencyRepo(r.Context(), s.db, s.cfg, a.ID, *inp.Repository, id.Email)
+	if err != nil {
+		// An agency without its repository is what this route exists not to
+		// make: take the agency back (it holds nothing yet), with a repository
+		// row the write may have left before it failed (from the review of
+		// I3: a refusal for that row left both).
+		takeBack := func(ctx context.Context, repoID string) (func(*sql.Tx) error, func(bool), error) {
+			if s.git != nil {
+				if rm, fin, err := s.git.RemoveWithAgency(ctx, repoID, id.Email); err == nil {
+					return rm, fin, nil
+				}
+			}
+			rm := func(tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `DELETE FROM git_repos WHERE id = ?`, repoID)
+				return err
+			}
+			return rm, func(bool) {}, nil
+		}
+		if _, derr := settings.DeleteAgencyWith(r.Context(), s.db, a.ID, id.Email, takeBack); derr != nil {
+			s.log.Error("an agency whose repository could not be written could not be taken back",
+				"agency_id", a.ID, "error", derr)
+		}
+		switch {
+		case errors.Is(err, settings.ErrRepoURLNotAllowed):
+			httpx.Fail(w, http.StatusUnprocessableEntity, "repo_url_not_allowed", err.Error())
+		case errors.Is(err, settings.ErrValidation):
+			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+		default:
+			httpx.Fail500(w, s.log, "create_failed", err)
+		}
+		return
+	}
+	if s.git != nil {
+		if err := s.git.Restart(r.Context(), repo.ID); err != nil {
+			s.log.Error("the agency and its repository were created, but its sync service could not be started",
+				"repo_id", repo.ID, "actor", id.Email, "error", err)
+		}
+	}
+	httpx.JSON(w, http.StatusCreated, agencyCreated{Agency: a, Repository: repo})
 }
 
 func (s *Server) handleUpdateAgency(w http.ResponseWriter, r *http.Request) {
@@ -503,39 +731,33 @@ func (s *Server) handleDeleteAgency(w http.ResponseWriter, r *http.Request) {
 	}
 	aid := r.PathValue("agencyId")
 	// RB-17: an agency-shaped grant is ON DELETE CASCADE, so deleting an agency
-	// would silently revoke every grant authored against it. Refuse instead, with
-	// the same posture as the existing scope guard — quiet revocation is the exact
-	// failure this whole surface exists to prevent.
-	var grantRefs int
-	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM access_grants WHERE agency_id = ?`, aid).Scan(&grantRefs); err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return
+	// would silently revoke every grant authored against it; a service account
+	// bound to it is the same shape. DeleteAgencyWith refuses both, and an
+	// unspent registration token, inside the delete's transaction (2.4.2,
+	// present defect 62: until then they were asked here only, and the create
+	// route's rollback did not ask them).
+	//
+	// An empty agency is deleted with its repository (§0a, IN-13; Phase I3;
+	// question 37): the connection, and what the repository supplied, which
+	// is all still in Git, go in the same transaction as the agency.
+	takeRepo := func(ctx context.Context, repoID string) (func(*sql.Tx) error, func(bool), error) {
+		if s.git == nil {
+			return nil, nil, errSyncUnavailable
+		}
+		return s.git.RemoveWithAgency(ctx, repoID, id.Email)
 	}
-	if grantRefs > 0 {
-		httpx.Fail(w, http.StatusConflict, "agency_in_use",
-			"agency is referenced by "+strconv.Itoa(grantRefs)+" access grant(s); remove those grants first")
-		return
-	}
-	// A service account bound to this agency is the same shape as a grant —
-	// service_accounts.agency_id is ON DELETE CASCADE too — and it was not
-	// counted: deleting the agency deleted its tokens' rows, and an integration
-	// stopped authenticating with nothing said. Refuse while one is ACTIVE; a
-	// revoked account is already dead and goes with the agency.
-	var tokenRefs int
-	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM service_accounts WHERE agency_id = ? AND revoked_at IS NULL`, aid).Scan(&tokenRefs); err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return
-	}
-	if tokenRefs > 0 {
-		httpx.Fail(w, http.StatusConflict, "agency_in_use",
-			"agency is referenced by "+strconv.Itoa(tokenRefs)+" active service account(s); revoke those first")
-		return
-	}
-	found, err := settings.DeleteAgency(r.Context(), s.db, aid, id.Email)
+	found, err := settings.DeleteAgencyWith(r.Context(), s.db, aid, id.Email, takeRepo)
 	if err != nil {
 		if failAgencyRule(w, err) {
+			return
+		}
+		var busy *gitlab.ErrScopesBusy
+		if errors.As(err, &busy) {
+			httpx.Fail(w, http.StatusConflict, "scopes_busy", busy.Error())
+			return
+		}
+		if errors.Is(err, errSyncUnavailable) {
+			httpx.Fail(w, http.StatusServiceUnavailable, "unavailable", err.Error())
 			return
 		}
 		if errors.Is(err, settings.ErrAgencyInUse) {
@@ -576,6 +798,7 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 	sid := r.PathValue("scopeId")
 	var inp struct {
 		AgencyID *string `json:"agencyId"`
+		repairInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
@@ -590,7 +813,12 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 	if inp.AgencyID != nil && strings.TrimSpace(*inp.AgencyID) != "" {
 		target = strings.TrimSpace(*inp.AgencyID)
 	}
-	if !s.requireMove(w, r, id, settings.MemberScope, sid, []string{target}) {
+	// An agency that is not there is that, before it is a repair.
+	if target != agencyid.Global && !s.requireKnownAgency(w, r, target) {
+		return
+	}
+	isRepair, ok := s.requireMove(w, r, id, settings.MemberScope, sid, []string{target}, inp.repairInput)
+	if !ok {
 		return
 	}
 	sc, err := settings.SetScopeAgency(r.Context(), s.db, sid, inp.AgencyID, id.Email)
@@ -599,12 +827,22 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "the referenced agency does not exist")
 			return
 		}
+		if errors.Is(err, settings.ErrScopeNameTaken) {
+			httpx.Fail(w, http.StatusConflict, "conflict", "scope name already exists in that agency")
+			return
+		}
+		if failAgencyRule(w, err) {
+			return
+		}
 		httpx.Fail500(w, s.log, "update_failed", err)
 		return
 	}
 	if sc == nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
 		return
+	}
+	if isRepair {
+		s.auditRepair(r.Context(), id.Email, "scope "+sid, agencySet([]string{target}), inp.repairInput)
 	}
 	httpx.JSON(w, http.StatusOK, sc)
 }
@@ -638,6 +876,7 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 	agencyID := r.PathValue("agencyId")
 	var body struct {
 		Members []settings.AgencyMemberRef `json:"members"`
+		repairInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
@@ -660,6 +899,40 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
+	// Any change of what this agency holds changes some object's agency: an
+	// addition moves it here (one agency each since 2.3.0), a removal takes
+	// it away. A repair (I4; IN-7), whatever the kind.
+	repairing := len(delta.Added)+len(delta.Removed) > 0
+	if repairing {
+		// What is not there is said first, before anything about repair (from
+		// the review of I4): an agency that is not there, a member that is not.
+		var known int
+		if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, agencyID).Scan(&known); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if known == 0 {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+			return
+		}
+		for _, m := range delta.Added {
+			if m.Kind == "runner" {
+				continue // a runner addition is refused by its writer, whoever asks (MA-11)
+			}
+			exists, _, err := settings.MemberOwner(r.Context(), s.db, settings.MemberKind(m.Kind), m.ID)
+			if err != nil {
+				httpx.Fail500(w, s.log, "db_error", err)
+				return
+			}
+			if !exists {
+				httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_member", "a referenced "+m.Kind+" does not exist: "+m.ID)
+				return
+			}
+		}
+	}
+	if repairing && !s.requireRepair(w, r, id, body.repairInput, "what agency "+agencyID+" holds") {
+		return
+	}
 	// A scope is authorized like every other kind since 2.3.0 (LR-7): an add is
 	// a move INTO this agency, and needs authority on where the entity is today
 	// and on this agency.
@@ -673,7 +946,7 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 			}
 			continue
 		}
-		if !s.requireMove(w, r, id, settings.MemberKind(m.Kind), m.ID, []string{agencyID}) {
+		if _, ok := s.requireMove(w, r, id, settings.MemberKind(m.Kind), m.ID, []string{agencyID}, body.repairInput); !ok {
 			return
 		}
 		if !s.requireVaultRowFits(w, r, id, settings.MemberKind(m.Kind), m.ID, agencyID) {
@@ -715,6 +988,14 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 
 	// A scope moving in or out of this agency changes what grants reach; the
 	// setter told the grant snapshot (LR-78). No session is signed out.
+	if repairing {
+		for _, m := range delta.Added {
+			s.auditRepair(r.Context(), id.Email, m.Kind+" "+m.ID, "added to agency "+agencyID, body.repairInput)
+		}
+		for _, m := range delta.Removed {
+			s.auditRepair(r.Context(), id.Email, m.Kind+" "+m.ID, "removed from agency "+agencyID, body.repairInput)
+		}
+	}
 
 	d, err := settings.BuildAgencyDetail(r.Context(), s.db, agencyID)
 	if err != nil || d == nil {
@@ -739,6 +1020,8 @@ func failAgencyRule(w http.ResponseWriter, err error) bool {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "name_reserved", err.Error())
 	case errors.Is(err, settings.ErrOneAgency):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "one_agency", err.Error())
+	case errors.Is(err, settings.ErrScopeAgencyFixed):
+		httpx.Fail(w, http.StatusConflict, "scope_agency_fixed", err.Error())
 	case errors.Is(err, settings.ErrOwnerConflict):
 		httpx.Fail(w, http.StatusConflict, "owner_conflict", err.Error()+
 			": rename or remove one of the two before moving this one")
@@ -746,6 +1029,8 @@ func failAgencyRule(w http.ResponseWriter, err error) bool {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "serve_list_fixed", err.Error())
 	case errors.Is(err, settings.ErrOwnerChangeRefused):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "owner_change_refused", err.Error())
+	case errors.Is(err, settings.ErrLocalRunnerGlobalOnly):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "local_runner_global_only", err.Error())
 	default:
 		return false
 	}
@@ -868,4 +1153,65 @@ func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) 
 	default:
 		httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes})
 	}
+}
+
+// handleCloneScope clones a scope to an agency (the owner's decision of
+// 2026-10-13; settings.CloneScope says what is and is not copied).
+//
+// Who may: an administrator of the agency the scope is in and of the one the
+// clone is for, or a global administrator (requireBothSides). A clone shows
+// one agency's host list to another, so it takes both. It is NOT held to the
+// rule for moving a scope (a global administrator only, requireMove): the
+// scope stays where it is, and the clone is a new scope of the other agency.
+func (s *Server) handleCloneScope(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	sid := r.PathValue("scopeId")
+	var inp struct {
+		AgencyID string `json:"agencyId"`
+		Name     string `json:"name"`
+	}
+	// The gate first, on what the path and the body name, before the body is
+	// held to anything else: a caller who may not is told nothing more.
+	// A body that is not JSON says so (2.4.2: it was read as empty, and a
+	// clone into Global with no name was refused for its name). That tells a
+	// caller nothing about any agency.
+	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil && !errors.Is(err, io.EOF) {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return
+	}
+	target := strings.TrimSpace(inp.AgencyID)
+	if target == "" {
+		target = agencyid.Global
+	}
+	if _, ok := s.requireBothSides(w, r, id, settings.MemberScope, sid, []string{target}); !ok {
+		return
+	}
+	// The copy is created in the target agency (I2: a scope's name is unique there).
+	sc, copied, err := settings.CloneScope(r.Context(), s.db, sid, inp.Name, target, id.Email)
+	switch {
+	case errors.Is(err, settings.ErrNoSuchScope):
+		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
+		return
+	case errors.Is(err, settings.ErrUnknownAgency):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "the referenced agency does not exist")
+		return
+	case errors.Is(err, settings.ErrScopeNameTaken):
+		httpx.Fail(w, http.StatusConflict, "conflict", "scope name already exists")
+		return
+	case errors.Is(err, settings.ErrValidation):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+		return
+	case err != nil:
+		httpx.Fail500(w, s.log, "clone_failed", err)
+		return
+	}
+	note := "The clone is a scope of its own and does not follow the original. Its runners are not bound and no host key is approved for it."
+	if copied.HostRecords > 0 {
+		note += " Its host records were copied without their SSH keys and bastions: it connects to nothing until its agency sets its own."
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"scope": sc, "copied": copied, "note": note})
 }

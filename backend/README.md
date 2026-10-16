@@ -135,6 +135,6 @@ degrade gracefully — the server boots and serves with them absent.
   drop-in `.gitlab-ci.yml` snippet for the job-definitions repo that runs
   `cronomicon validate` on every MR (fail-fast, line-numbered; opt-in MR-comment
   job included). The template's header comments say how to use it: copy it into
-  the repository's `.gitlab-ci.yml` and pin `CRONOMICON_IMAGE` to the version
+  the repository's `.gitlab-ci.yml` and pin `CRONOMICON_VALIDATE_IMAGE` to the version
   the deployment runs. The CLI is covered by an
   e2e test (`cmd/cronomicon/validate_test.go`).

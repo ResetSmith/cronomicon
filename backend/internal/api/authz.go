@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/auth"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
@@ -136,7 +137,7 @@ func (s *Server) requireReadableJob(w http.ResponseWriter, r *http.Request, jobI
 		if jr.Scope != nil {
 			scope = *jr.Scope
 		}
-		if !auth.ScopeReadable(id, scope) {
+		if !auth.ScopeReadableIn(id, jr.OwnerAgency, scope) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 			return nil, false
 		}
@@ -144,8 +145,15 @@ func (s *Server) requireReadableJob(w http.ResponseWriter, r *http.Request, jobI
 	return jr, true
 }
 
-func (s *Server) requireCan(w http.ResponseWriter, r *http.Request, id auth.Identity, perm, scope string) bool {
-	if id.Can(perm, scope) {
+// agency is whose scope it is (I2: a scope's name is unique within an agency
+// only, and a grant of an agency covers that agency's scopes). It is not read
+// for the AllScopes sentinel, nor for the empty scope.
+func (s *Server) requireCan(w http.ResponseWriter, r *http.Request, id auth.Identity, perm, agency, scope string) bool {
+	if scope == auth.AllScopes || scope == "" {
+		if id.Can(perm, scope) {
+			return true
+		}
+	} else if id.CanIn(perm, agency, scope) {
 		return true
 	}
 	where := scope
@@ -372,11 +380,94 @@ func (s *Server) requireJobVisible(w http.ResponseWriter, r *http.Request, jobID
 	if jr.Scope != nil {
 		scope = *jr.Scope
 	}
-	if !id.Unrestricted() && !auth.ScopeReadable(id, scope) {
+	if !id.Unrestricted() && !auth.ScopeReadableIn(id, jr.OwnerAgency, scope) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return false
 	}
 	return true
+}
+
+// jobAgencyFor is whose a job is (agencyid.JobSQL), found by uid, or by source
+// and name for a caller with none: the agency its scope is looked for in and
+// whose grant is asked of it (I2). Global's when it cannot be told.
+func (s *Server) jobAgencyFor(ctx context.Context, uid, source, name string) string {
+	if source == "" {
+		source = "git"
+	}
+	var a sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT `+agencyid.JobSQL("j")+` FROM jobs j
+		WHERE CASE WHEN ?1 <> '' THEN j.uid = ?1 ELSE j.name = ?2 AND j.source = ?3 END
+		ORDER BY j.rowid LIMIT 1`, uid, name, source).Scan(&a)
+	if err != nil || !a.Valid {
+		return agencyid.Global
+	}
+	return a.String
+}
+
+// definitionAgencyFor is whose a definition is, by kind: a job's (jobAgencyFor),
+// a workflow's owner by uid, or by source and name for a row with none.
+func (s *Server) definitionAgencyFor(ctx context.Context, kind, uid, source, name string) string {
+	if kind != "workflow" {
+		return s.jobAgencyFor(ctx, uid, source, name)
+	}
+	if source == "" {
+		source = "git"
+	}
+	var a sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT `+agencyid.WorkflowSQL+` FROM workflows w
+		WHERE CASE WHEN ?1 <> '' THEN w.uid = ?1 ELSE w.name = ?2 AND w.source = ?3 END
+		ORDER BY w.rowid LIMIT 1`, uid, name, source).Scan(&a)
+	if err != nil || !a.Valid {
+		return agencyid.Global
+	}
+	return a.String
+}
+
+// pinAgency is the agency a retired runner pin's scope is in: its job's, or,
+// for a pin whose job is gone, the agency of the one scope of that name.
+func (s *Server) pinAgency(ctx context.Context, jobUID, jobSource, jobName, scope string) string {
+	var n int
+	if jobSource == "" {
+		jobSource = "git"
+	}
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs j
+		WHERE CASE WHEN ?1 <> '' THEN j.uid = ?1 ELSE j.name = ?2 AND j.source = ?3 END`, jobUID, jobName, jobSource).Scan(&n)
+	if n > 0 {
+		return s.jobAgencyFor(ctx, jobUID, jobSource, jobName)
+	}
+	a, err := execspec.ScopeOwnerByName(ctx, s.db, scope)
+	if err != nil {
+		return agencyid.Global
+	}
+	return a
+}
+
+// scopeOwnerByID is the agency a scope (by id) belongs to (owner_agency, 1410).
+// Global's for a scope that is gone.
+func (s *Server) scopeOwnerByID(ctx context.Context, scopeID string) string {
+	var owner string
+	if err := s.db.QueryRowContext(ctx, `SELECT owner_agency FROM scopes WHERE id = ?`, scopeID).Scan(&owner); err != nil {
+		return agencyid.Global
+	}
+	return owner
+}
+
+// agencyIDsByName maps every agency's name to its id, for a reader that has
+// rows that name their owner (I2: a grant is asked of a scope in an agency).
+func (s *Server) agencyIDsByName(ctx context.Context) map[string]string {
+	out := map[string]string{}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM agencies`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if rows.Scan(&id, &name) == nil {
+			out[name] = id
+		}
+	}
+	return out
 }
 
 // requireWorkflowVisible is requireJobVisible for a workflow, which has no scope
@@ -397,13 +488,16 @@ func (s *Server) requireWorkflowVisible(w http.ResponseWriter, r *http.Request, 
 	if id.Unrestricted() {
 		return true
 	}
-	scopes, err := workflow.New(s.db, s.log).JobScopes(r.Context(), wr.Steps, wr.Source)
+	// With the workflow's home (GR-16): the jobs the engine would run for THIS
+	// workflow, which for a Git workflow are its own repository's.
+	eng := workflow.New(s.db, s.log)
+	scopes, err := eng.JobAgencyScopesAt(r.Context(), wr.Steps, wr.Source, eng.Home(r.Context(), wr.ID))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
 	}
 	for _, sc := range scopes {
-		if !auth.ScopeReadable(id, sc) {
+		if !auth.ScopeReadableIn(id, sc.Agency, sc.Scope) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
 			return false
 		}
@@ -637,7 +731,7 @@ func (s *Server) requireCreationAgencies(w http.ResponseWriter, r *http.Request,
 	if len(agencyIDs) > 1 {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "one_agency",
 			"a new "+label+" belongs to exactly one agency: name the one that owns it. "+
-				"What several agencies need is a copy in each, or one that is Global's")
+				"What several agencies need is a copy in each")
 		return nil, false
 	}
 	for _, a := range agencyIDs {

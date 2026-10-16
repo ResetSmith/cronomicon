@@ -13,6 +13,222 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.4.3] - 2026-10-16
+
+A scope from Global's repository is Global's (the owner's answer to the
+review's question 58). One migration (1470, schema v1470); runner protocol 14 is
+unchanged.
+
+**Upgrading.** A scope of Global's repository that a repair gave to an agency
+before this release becomes that agency's own, built in the app, keeping its
+hosts, groups, variables, inventory and host records (the host records become
+the agency's too). The inventory file in Global's repository is then no
+scope's: its sync makes no second scope of the name for Global, and the
+repository's problems say so on the file until it is removed or renamed, or
+the agency deletes its scope. An installation without data has nothing to do.
+
+### Changed
+
+- **A scope from Global's repository cannot be repaired into an agency**: 409
+  `scope_agency_fixed`, as for a scope of an agency's repository since 2.4.0.
+  Another agency gets its hosts by **Clone to an agency**. Until now the repair
+  went through and the agency held a scope that Global's sync went on
+  writing, that it could not edit, and that it lost when the file left Global's
+  repository. A Git scope's row says `canRepair: false`, so the Scopes screen
+  offers no repair for it.
+
+### For developers
+
+- `scopes.released_from` names the repository a scope was released from
+  (1470); it goes with the row. `scope_agencies_repo_fixed` and
+  `settings.ScopeAgencyFixedTo` no longer make an exception of Global's
+  repository. 1470's down is lossy: a converted scope stays the agency's own.
+
+## [2.4.2] - 2026-10-16
+
+What the review of the 2.4 line found, put right before 2.5.0. Seventeen
+defects (the plan's present defects 52 to 68), eleven of the owner's answers
+to the review's questions, and the dead code and stale text the review listed.
+One migration (1460, schema v1460); runner protocol 14 is unchanged.
+
+**Upgrading.** Migration 1460 converts nothing: it adds triggers, and an owner
+an older binary left empty (none is expected) becomes Global's. **A custom
+concurrency key is now shared within its job's agency** (below): a run queued or
+running under the old key when you upgrade does not hold the gate against the
+next fire of the same job, once.
+
+### Fixed
+
+- **A workflow's agency changes only by a repair, whatever its jobs are now**
+  (52). Binning a workflow's jobs first let an administrator of two agencies
+  make it the other agency's with no repair and no audit row.
+- **A workflow step runs its own workflow's agency's job only** (57). When two
+  agencies each held a scope of one name, a workflow built in the app ran the
+  other agency's job by name, on that agency's runners, under its own schedule.
+  A step refused for this, or because its job is not found (61: it ran as a bash
+  job with no command), is the workflow's failure: filed under the workflow's
+  agency, with nothing of the other agency's job on it (58).
+- **Sync points a reaction at its own repository's upstream or none** (53), not
+  at Global's definition of the name.
+- **The check of a workflow that spans agencies resolves its steps as the
+  engine does** (59): a save could be refused, and the notice raised, because
+  another agency's job of the name was the older row.
+- **A reaction with no identity is compared with its upstream by their names**
+  (60): one written before identities fired on another agency's definition.
+  The notice `reaction_other_agency` lists a reaction by name too, and a Git
+  reaction whose upstream is only in Global's repository (it no longer fires).
+- **A deferred manual run is parked as its own job's** (56): with two agencies'
+  jobs of one name, the other agency's pause held it.
+- **An agency is deleted with its repository in one transaction** (63), and the
+  delete refuses what it would otherwise take silently, for every caller (62):
+  access grants, active service accounts, unspent registration tokens, and
+  runners it owns that serve nothing. A refused delete no longer leaves the
+  agency without its repository.
+- **No part of a repository's URL that could hold a credential reaches the sync
+  history** (64), the activity log or a sync's answer.
+- **Handing on a runner that does not exist is 404** (65), not a request for a
+  repair.
+- **A scheduled fire whose job cannot be read does not fire, and a run whose
+  agencies cannot be written is closed, failed, with the reason** (66). Read as
+  nothing, a fire lost its target host and fanned out over the whole scope.
+- **An owner column is never emptied** (67, migration 1460).
+- **The workflow editor keeps a sub-workflow step's pinned identity** (54) on an
+  open-and-save.
+- **A host record is offered its owner's keys only** (55): Global's were
+  offered, and the save refused.
+- **The Run dialog's calendar note judges a job's schedules by its own agency's
+  calendars** (68): it asked every agency's.
+
+### Changed
+
+- **A workflow with no jobs is its creator's agency's** (question 52), not
+  Global's: `ownerAgency` on a create, else the creator's one agency to compose
+  in (422 `ambiguous_owner` for a composer in several).
+- **Scopes → Re-sync works on one repository** (53), the caller's own:
+  `POST /scopes/resync?repo=`, gated as `POST /git/sync`.
+- **A repository's card points to where it is removed** (54), with its agency
+  under Scopes → Agencies, and sets its webhook's events again.
+- **The schedule, calendar and repository lists say what the caller may do**
+  (55): `canEdit`/`canDelete` on schedules and calendars, `canSync`/
+  `canPublish` on `/git-repo-names`; a Git scope says it is not edited here.
+  The screens read them.
+- **A job's custom concurrency key is shared within its agency** (56): two
+  agencies' `db` gates are two gates.
+- **A definition's reactions are written by compose on its agency** (61), no
+  longer only by an administrator of every agency.
+- **"Repository", not "GitLab"** (63), where any allowed host is meant.
+- An agency's delete names remedies its administrator can use (a copy, or a
+  global administrator's repair), and the screens no longer say Global's rows
+  are every agency's, or that the local runner serves the scope's agency.
+- The job detail carries `ownerAgency`.
+
+### Deprecated
+
+- `GET`/`PUT /settings/gitlab` and `POST /settings/gitlab/webhook-secret/rotate`
+  (Global's repository; use `/agencies/global/git-repo`) and the `executor`
+  field of a run request (ignored since 2.3.0) **go in 2.5.0** (question 60).
+
+### Not changed, and worth knowing
+
+- A job written with no owner by hand still takes the agency of the one scope
+  of its name (`jobs_born_owned`): taking that out broke 35 tests' fixtures,
+  and under per-agency names it is safe. Kept, by the owner's decision.
+- A scope repaired out of Global's repository into an agency still follows
+  Global's inventory file (question 58): waiting for the owner. (Done in 2.4.3.)
+- The workflow editor does not yet pick a sub-workflow by identity from a list,
+  nor offer an owner for a new empty workflow.
+- Routes other than the runner's owner still answer `validation_error`.
+
+### For developers
+
+- Dead code went (deadcode lists nothing in `api`, `gitlab`, `workflow`,
+  `scheduler`, `settings`); what only tests called moved into test files
+  (`NewHandlers`, `Registry.Global`, `ValidateRepo`, `DeleteAgency`, `IsPaused`,
+  `Engine.JobScopes` and its family). `Registry.Disconnect` is `RemoveWithAgency`,
+  a `settings.RepoTake` in two halves. `resolveEnqueueUID` names a job only when
+  one holds the name. `RunRow.NoDefinition`.
+- 1360's and 1380's downs remove their notices; 1420's and 1430's are tested
+  with rows.
+
+## [2.4.1] - 2026-10-15
+
+The screens' calendars, judged per agency (after 2.4.0's Phase R8). A global
+calendar's screens say it reaches its own agency's schedules; the active-global
+banner reads each calendar by its owner and name; the calendar picker and the
+Run dialog's note judge an entry by its own agency's calendars (the Run dialog
+passed no agency until 2.4.2). No server or schema change.
+
+## [2.4.0] - 2026-10-15
+
+A repository per agency, and agencies independent in every practical respect
+(the first step of the plan's §0a). Schema v1450 (migrations 1290 to 1450);
+runner protocol 14 is unchanged.
+
+**Upgrading.** What agencies shared before is not migrated (IN-14): it stays
+Global's, stops where it would reach another agency, and is listed in the
+Notices inbox for an administrator to copy into each agency that needs it:
+`workflow_spans_agencies`, `reaction_other_agency`, `global_job_on_agency_scope`,
+`global_script_job`, `global_schedule_bound`, `global_credential_bound`,
+`global_host_record`, `global_calendar_scope`, `local_runner_served`,
+`agency_no_repository`. Each agency had a copy made of Global's global
+calendars, and of each calendar its entries named of another agency's (1430).
+The single GitLab connection becomes Global's repository (1310); its webhook is
+on unless it was configured off. An installation without data has nothing to do.
+
+### Added
+
+- **Every agency has its own repository.** Settings → Repositories: an agency
+  is created together with its repository, whose token must be able to push
+  (the connection test says whether it can, and what its push check cannot
+  see: a protected branch). A repository is changed, never disconnected, and
+  goes when its agency is deleted, empty. Each has its own webhook URL and
+  secret, sync status, history and problems (file, kind, message, since when).
+  An agency's repository is held to a list of allowed hosts, http or https.
+- **Publish names a repository**, and is that repository's agency's publishers';
+  Global's takes a global publisher's only. A publish fetches first, is refused
+  when the branch has moved, never forces, and a push refused for a protected
+  branch is 409 `branch_protected`.
+- **A scope can be cloned to another agency**, which is how one agency gets
+  another's hosts.
+- **`cronomicon validate <dir> -agency`** reads a checkout as sync does and
+  checks a reaction's upstream and a workflow's steps; the CI template
+  validates the whole checkout.
+- An installation-wide freeze (Settings), a global administrator's, with a
+  reason.
+
+### Changed
+
+- **Agencies are independent** (IN-1 to IN-8). Global is an agency like the
+  others: its repository is its own, not a library; its secrets, variables,
+  keys, scopes, runners and calendars are its runs' only. A definition runs
+  only what its agency has: a workflow's jobs and sub-workflows, a reaction's
+  upstream, a job's script, schedule and calendars resolve within the agency,
+  and what was shared stops with the reason. The local runner serves Global
+  only. A runner takes its owner's work only.
+- **Names are unique within an agency** (IN-5): scopes, calendars, schedules,
+  and the routes by name take `?agencyId=` when two agencies hold one.
+- **Moves between agencies are a global administrator's repair** (IN-7), with
+  `repair: true` and a reason, audited; another agency gets an object by a copy.
+  A save that would change a workflow's agency is a repair too.
+- Calendars belong to an agency; a global calendar reaches its own agency's
+  schedules.
+- A script, a schedule and a run remember which definition they mean, by
+  identity; a checkout run is read at its pinned commit from its script's
+  repository.
+
+### Deprecated
+
+- `/settings/gitlab` (GET, PUT) and `/settings/gitlab/webhook-secret/rotate`:
+  they address Global's repository. Use `/agencies/{id}/git-repo`.
+
+### For developers
+
+- Migrations 1290 to 1450. 1290, 1300, 1420 and 1430 are table rebuilds (1420
+  stashes and restores eight tables that hang off `scopes`; 1430
+  `calendar_days`); 1310 drops `gitlab_config` and `git_sync_state` for
+  `git_repos`; 1290, 1300, 1310, 1320, 1420 and 1430 have lossy or refusing
+  downs, each saying so.
+
 ## [2.3.2] - 2026-10-08
 
 What 2.3.0 left open, closed before the next band of work begins. The first

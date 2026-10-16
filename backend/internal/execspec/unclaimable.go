@@ -61,6 +61,14 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 		return "", err
 	}
 	ag := agenciesJSON.String
+	// The agency the run's scope is looked for in (I2: a scope's name is unique
+	// within an agency only), from the run's snapshot.
+	var runNames []string
+	_ = json.Unmarshal([]byte(ag), &runNames)
+	scopeOwner, oerr := RunScopeOwner(ctx, database, runNames)
+	if oerr != nil {
+		return "", oerr
+	}
 	if ag == "" || ag == "null" {
 		ag = "[]"
 	}
@@ -79,7 +87,7 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	if reqJSON == "" {
 		reqJSON = "[]"
 	}
-	lcaps := effectiveCapsSQL("rn")
+	lcaps := EffectiveCapsSQL("rn")
 	var localOff bool
 	if err := database.QueryRowContext(ctx, `
 		SELECT EXISTS (
@@ -88,12 +96,12 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 			   AND ? IN `+lcaps+`
 			   AND NOT EXISTS (SELECT 1 FROM json_each(?) je WHERE je.value NOT IN `+lcaps+`)
 			   AND EXISTS (SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
-			                WHERE ra.runner_id = rn.id AND a.name IN (SELECT value FROM json_each(?)))
-			   AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ?)
+			                WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency AND a.name IN (SELECT value FROM json_each(?)))
+			   AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ? AND sc.owner_agency = ?)
 			        OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-			                    WHERE sc.name = ? AND sr.runner_id = rn.id))
+			                    WHERE sc.name = ? AND sc.owner_agency = ? AND sr.runner_id = rn.id))
 			   AND ? = 0)`,
-		runType.String, reqJSON, ag, scope.String, scope.String, bindsKey).Scan(&localOff); err != nil {
+		runType.String, reqJSON, ag, scope.String, scopeOwner, scope.String, scopeOwner, bindsKey).Scan(&localOff); err != nil {
 		return "", err
 	}
 	if localOff {
@@ -119,7 +127,7 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	// 2. Can anything online run this TYPE? Against the runner's EFFECTIVE
 	// capabilities — what it declared minus what the operator masked off — as the
 	// claim does: a runner whose mask lists this type will never take the run.
-	caps := effectiveCapsSQL("rn")
+	caps := EffectiveCapsSQL("rn")
 	typeClause := `? IN ` + caps
 	n, err = count(typeClause, runType.String)
 	if err != nil {
@@ -136,7 +144,7 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	// which every runner belongs to a department cannot take it at all.
 	agencyClause := typeClause + ` AND EXISTS (
 		SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
-		 WHERE ra.runner_id = rn.id AND a.name IN (SELECT value FROM json_each(?)))`
+		 WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency AND a.name IN (SELECT value FROM json_each(?)))`
 	n, err = count(agencyClause, runType.String, ag)
 	if err != nil {
 		return "", err
@@ -164,16 +172,16 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	// EXISTS arm. The arguments are kept in a slice so every later clause extends one
 	// list instead of re-spelling it.
 	bindClause := agencyClause + ` AND (
-		NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ?)
+		NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ? AND sc.owner_agency = ?)
 		OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-		            WHERE sc.name = ? AND sr.runner_id = rn.id))`
-	bindArgs := []any{runType.String, ag, scope.String, scope.String}
+		            WHERE sc.name = ? AND sc.owner_agency = ? AND sr.runner_id = rn.id))`
+	bindArgs := []any{runType.String, ag, scope.String, scopeOwner, scope.String, scopeOwner}
 	n, err = count(bindClause, bindArgs...)
 	if err != nil {
 		return "", err
 	}
 	if n == 0 {
-		bound, berr := BoundRunnersByScopeName(ctx, database, scope.String)
+		bound, berr := BoundRunnersByScopeName(ctx, database, scopeOwner, scope.String)
 		if berr != nil {
 			return "", berr
 		}
@@ -233,7 +241,16 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 		}
 	}
 	if len(missing) > 0 {
-		return "no eligible runner advertises " + strings.Join(missing, ", "), nil
+		reason := "no eligible runner advertises " + strings.Join(missing, ", ")
+		for _, tok := range missing {
+			if tok == "checkout" {
+				// The one token an operator did not write (it is on every
+				// project job's run since 2.4.0), so what it means is said.
+				reason += " — this is a project's run, which only an agent started with -allow-checkout takes"
+				break
+			}
+		}
+		return reason, nil
 	}
 
 	// Every gate above passed individually but the combined predicate did not — the

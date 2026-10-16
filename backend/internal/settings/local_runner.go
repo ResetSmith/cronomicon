@@ -26,8 +26,9 @@ import (
 //   - On or off is an app setting, `localRunner.enabled`, read through ONE
 //     function (LocalRunnerEnabled). The host can forbid it outright with
 //     CRONOMICON_LOCAL_RUNNER=forbid, which wins (LR-17).
-//   - It is the one runner with a serve list a global administrator edits
-//     (MA-11, MA-14); see CheckRunnerPlacement.
+//   - It serves Global only (§0a, IN-3; migration 1380): its serve list is
+//     Global and nothing else, and CheckRunnerPlacement refuses any other.
+//     (From MA-11 until then a global administrator edited it.)
 //   - It claims through the one claim (runner.Claim), as this row: agencies,
 //     scope bindings, requirements and priority apply to it as to an agent.
 

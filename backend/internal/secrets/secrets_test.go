@@ -518,7 +518,7 @@ func TestListScopeFilter(t *testing.T) {
 
 	keys := func(canRead func(string) bool) map[string]bool {
 		t.Helper()
-		list, err := svc.List(ctx, canRead)
+		list, err := svc.List(ctx, func(_, scope string) bool { return canRead(scope) })
 		if err != nil {
 			t.Fatalf("List: %v", err)
 		}

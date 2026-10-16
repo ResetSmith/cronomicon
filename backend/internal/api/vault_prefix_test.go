@@ -142,10 +142,11 @@ func TestVaultPrefixes_AnAgencyNamesPathsInsideItsOwnAndNoOthers(t *testing.T) {
 		t.Error("the allowed edit was not stored, or the refused one was")
 	}
 
-	// A move: the secret must lie inside the TARGET agency's paths.
-	both := gFinAdmin + "," + gTaxAdmin
+	// A move: the secret must lie inside the TARGET agency's paths. Since I4
+	// (IN-7) a move is a global administrator's repair, held to that too.
+	both := gRoot
 	move := func(who, agency string) (int, string) {
-		rec := gateReq(t, h, http.MethodPut, "/api/v1/secret-agencies", who, `[{"id":"`+finSecret+`","agencyIds":["`+agency+`"]}]`)
+		rec := gateReq(t, h, http.MethodPut, "/api/v1/secret-agencies", who, asRepair(`[{"id":"`+finSecret+`","agencyIds":["`+agency+`"]}]`))
 		return rec.Code, errCode(rec.Body.Bytes())
 	}
 	if code, ec := move(both, "ag:TAX"); code != http.StatusUnprocessableEntity || ec != "vault_path_not_allowed" {
@@ -244,8 +245,9 @@ func TestVaultPrefixes_OnlyTheOwnerNamesASharedRowsPath(t *testing.T) {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &sec)
-	// Shared with FIN, in a scope FIN can also write: the pre-2.3.0 shape.
-	exec(`UPDATE secrets SET scope = 'fin-hosts' WHERE id = ?`, sec.ID)
+	// Shared with FIN, as a global row FIN can read: the pre-2.3.0 shape (until I2
+	// it sat in a scope of FIN's; a row of TAX's in FIN's scope cannot be, I2).
+	exec(`UPDATE secrets SET scope = NULL WHERE id = ?`, sec.ID)
 	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES (?, 'ag:FIN')`, sec.ID)
 
 	for _, c := range []struct{ name, method, path, body string }{

@@ -15,6 +15,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/gitlab"
 )
 
 // The two-agency fixture (GC-18).
@@ -131,8 +132,31 @@ func gateServerWith(t *testing.T, adjust func(*config.Config)) (http.Handler, *s
 	}
 	// The roles cache is process-wide; put the built-in set back for the next test.
 	t.Cleanup(func() { _ = auth.RefreshRoles(context.Background(), pool) })
-	h := api.New(api.Options{Config: cfg, Logger: log, Auth: authSvc, DB: pool}).Handler()
+	h := api.New(api.Options{Config: cfg, Logger: log, Auth: authSvc, DB: pool, RepoTest: fakeRepoTest}).Handler()
 	return h, pool
+}
+
+// fakeRepoTest stands in for a remote (2.4.0 Phase I3): every connection
+// answers and may push, except a URL that says it is read-only, or a token
+// that does (may not push), or a URL that says it is unreachable (does not
+// answer). The real check is the gitlab package's, tested there against git
+// http-backend.
+func fakeRepoTest(_ context.Context, _ *config.Config, url, token, branch string) gitlab.ConnectionTest {
+	if strings.Contains(token, "read-only") {
+		url += "/read-only"
+	}
+	res := gitlab.ConnectionTest{Branch: branch, Branches: []string{branch}}
+	if strings.Contains(url, "unreachable") {
+		res.Error = "dial tcp: connection refused"
+		return res
+	}
+	res.OK, res.BranchFound = true, true
+	if strings.Contains(url, "read-only") {
+		res.PushError = "authorization failed"
+		return res
+	}
+	res.CanPush = true
+	return res
 }
 
 // gateReq issues one request as a member of the given AD group(s) — a

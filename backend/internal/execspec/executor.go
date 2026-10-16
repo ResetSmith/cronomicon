@@ -3,6 +3,8 @@ package execspec
 import (
 	"context"
 	"strings"
+
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 )
 
 // The executor, as a value. Until 2.3.0 a run was written for one of two
@@ -25,13 +27,13 @@ const (
 
 // ScopeIsBound reports whether a scope (by name) is bound to at least one
 // runner. An empty name, or one with no scopes row, is not.
-func ScopeIsBound(ctx context.Context, q rowQueryer, scope string) (bool, error) {
+func ScopeIsBound(ctx context.Context, q rowQueryer, agency, scope string) (bool, error) {
 	if strings.TrimSpace(scope) == "" {
 		return false, nil
 	}
 	var bound bool
 	err := q.QueryRowContext(ctx, `
 		SELECT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-		                WHERE sc.name = ?)`, scope).Scan(&bound)
+		                WHERE `+agencyid.ScopeIn("sc", "?", "?")+`)`, scope, ownerOrGlobal(agency)).Scan(&bound)
 	return bound, err
 }

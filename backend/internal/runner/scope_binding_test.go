@@ -132,6 +132,13 @@ func TestClaimRunScopeBindingNarrowsNeverWidens(t *testing.T) {
 	addRunnerAgency(t, svc, "r-beta-bound", "a2")
 	addRunnerAgency(t, svc, "r-alpha-plain", "a1")
 	insertScopeRow(t, svc, "s-dmz", "dmz-web")
+	// alpha's scope: a run of alpha's finds its scope in alpha (I2).
+	if _, err := svc.db.Exec(`DELETE FROM scope_agencies WHERE scope_id = 's-dmz'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-dmz', 'a1')`); err != nil {
+		t.Fatal(err)
+	}
 	bindScope(t, svc, "s-dmz", "r-alpha-bound", "alpha-bound")
 	bindScope(t, svc, "s-dmz", "r-beta-bound", "beta-bound")
 

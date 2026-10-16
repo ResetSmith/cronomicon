@@ -201,6 +201,17 @@ func TestPreviewScopeRunners(t *testing.T) {
 	// restart binds a secret, so it needs an injection-flagged runner once it moves.
 	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
 	      VALUES('job','cronomicon','restart','u-shell','secret','DB_PASSWORD','t')`)
+	// pinned's SCRIPT binds a variable, so pinned needs one too. deploy names a
+	// script of the SAME NAME that is not the one with the binding (another
+	// repository's), so it does not. The preview finds a job's script by
+	// jobs.script_uid (migration 1290), never by the name: by name it would
+	// count deploy as well.
+	exec(`INSERT INTO scripts(uid, repo_id, name, run_type, command, content_hash, synced_at)
+	      VALUES('uid-lib','global','lib.sh','bash','x','h','t'), ('uid-lib-other','repo-b','lib.sh','bash','x','h','t')`)
+	exec(`UPDATE jobs SET script_ref='lib.sh', script_uid='uid-lib' WHERE uid='u-runner'`)
+	exec(`UPDATE jobs SET script_ref='lib.sh', script_uid='uid-lib-other' WHERE uid='u-play'`)
+	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
+	      VALUES('script','','lib.sh','uid-lib','var','REGION','t')`)
 	exec(`INSERT INTO runs(id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
 	      VALUES('run-ssh','restart','bash','dmz-web','queued','seed','manual','ssh','t')`)
 	// Parked runs frozen onto ssh count too — they are promoted onto it later.
@@ -231,6 +242,8 @@ func TestPreviewScopeRunners(t *testing.T) {
 	exec(`INSERT INTO runners(id, name, status, capabilities, managed_settings, registered_at, created_at)
 	      VALUES('r-junk','runner-junk','online','["bash"]','not json','t','t')`)
 	exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES('r-junk','ag-fin')`)
+	// Finance's agents are Finance's (since §0a a runner takes its owner's work only).
+	exec(`UPDATE runners SET owner_agency = 'ag-fin' WHERE id IN ('r-full', 'r-thin', 'r-junk')`)
 
 	names := func(js []PreviewJob) string {
 		out := ""
@@ -240,7 +253,8 @@ func TestPreviewScopeRunners(t *testing.T) {
 		return out
 	}
 
-	// The local runner serves Finance too, and legacy binds an SSH key.
+	// The local runner, which serves Global only (§0a; until then it served Finance
+	// too, and lost and gained the scope below with the agents), and legacy binds an SSH key.
 	exec(`INSERT INTO runners(id, name, kind, status, capabilities, allow_secret_injection, registered_at, created_at)
 	      VALUES('r-local','Local runner','server','online','["bash","perl","powershell","python"]',1,'t','t')`)
 	exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES('r-local','ag-fin')`)
@@ -263,8 +277,8 @@ func TestPreviewScopeRunners(t *testing.T) {
 	if p.CurrentlyBound || !p.WillBeBound {
 		t.Errorf("bound state = %v → %v, want false → true", p.CurrentlyBound, p.WillBeBound)
 	}
-	if got := who(p.RunnersLosing); got != "Local runner runner-junk " {
-		t.Errorf("runners losing the scope = %q, want the local runner and runner-junk", got)
+	if got := who(p.RunnersLosing); got != "runner-junk " {
+		t.Errorf("runners losing the scope = %q, want runner-junk", got)
 	}
 	if len(p.RunnersGaining) != 0 {
 		t.Errorf("runners gaining the scope = %q, want none when binding an open scope", who(p.RunnersGaining))
@@ -284,8 +298,9 @@ func TestPreviewScopeRunners(t *testing.T) {
 	if got := strings.Join(p.RunTypes, ","); got != "ansible,bash,python" {
 		t.Errorf("run types = %q, want ansible,bash,python", got)
 	}
-	if p.JobsNeedingInjection != 2 {
-		t.Errorf("jobs needing injection = %d, want 2 (restart's secret, legacy's key)", p.JobsNeedingInjection)
+	if p.JobsNeedingInjection != 3 {
+		t.Errorf("jobs needing injection = %d, want 3 (restart's secret, legacy's key, pinned's script's variable; "+
+			"not deploy, whose script only shares that script's name)", p.JobsNeedingInjection)
 	}
 	byID := map[string]PreviewRunner{}
 	for _, r := range p.Runners {
@@ -346,7 +361,7 @@ func TestPreviewScopeRunners(t *testing.T) {
 	if !p.CurrentlyBound || p.WillBeBound {
 		t.Errorf("bound state = %v → %v, want true → false", p.CurrentlyBound, p.WillBeBound)
 	}
-	if got := who(p.RunnersGaining); got != "Local runner runner-junk runner-thin " {
+	if got := who(p.RunnersGaining); got != "runner-junk runner-thin " {
 		t.Errorf("runners gaining the scope on clear = %q, want everyone in Finance but the one already bound", got)
 	}
 	if len(p.RunnersLosing) != 0 || len(p.JobsNeedingAgent) != 0 {

@@ -1,5 +1,6 @@
 agencies_json = []
 checkout_entry = <NULL>
+checkout_repo = <NULL>
 checkout_sha = <NULL>
 completed_at = <ts>
 concurrency_key = <NULL>
@@ -36,6 +37,7 @@ schedule_name = <NULL>
 scheduled_for = <NULL>
 scope = <NULL>
 script_ref = <NULL>
+script_uid = <NULL>
 sla_warned_at = <NULL>
 ssh_credential = <NULL>
 ssh_user = <NULL>

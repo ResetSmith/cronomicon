@@ -159,11 +159,11 @@ func TestSetLocalRunnerIsAuditedAndBounded(t *testing.T) {
 	}
 }
 
-// MA-11, MA-14: the local runner is the ONE runner with a serve list. A global
-// administrator gives it any non-empty set — Global beside agencies included,
-// which the schema refuses for an agent — and takes agencies away again. Its
-// owner never changes, and it is never a legacy placement.
-func TestTheLocalRunnerServesWhateverItIsGiven(t *testing.T) {
+// The local runner is Global's and serves Global only (§0a, IN-3). Until §0a
+// it was the ONE runner with a serve list (MA-11, MA-14): a global
+// administrator gave it any non-empty set. Its owner never changes, and it is
+// never a legacy placement.
+func TestTheLocalRunnerServesGlobalOnly(t *testing.T) {
 	pool := placementDB(t) // agencies ag-dss, ag-nwd; agents r-dss, r-global, r-legacy
 	ctx := context.Background()
 	id, _, err := EnsureLocalRunner(ctx, pool, false, 4)
@@ -173,18 +173,20 @@ func TestTheLocalRunnerServesWhateverItIsGiven(t *testing.T) {
 	set := func(ids ...string) error {
 		return SetRunnerAgencies(ctx, pool, []RunnerAgencies{{RunnerID: id, AgencyIDs: ids}}, "root@example.com")
 	}
-	for _, want := range [][]string{
-		{"ag-dss", "global"},           // Global beside an agency
-		{"ag-dss", "ag-nwd", "global"}, // widened
-		{"ag-nwd"},                     // narrowed, and out of Global
-		{"global"},                     // and back
+	for _, refused := range [][]string{
+		{"ag-dss", "global"}, // Global beside an agency
+		{"ag-dss", "ag-nwd"}, // agencies
+		{"ag-nwd"},           // one agency
 	} {
-		if err := set(want...); err != nil {
-			t.Fatalf("serve list %v: %v", want, err)
+		if err := set(refused...); !errors.Is(err, ErrLocalRunnerGlobalOnly) {
+			t.Errorf("serve list %v: %v, want ErrLocalRunnerGlobalOnly", refused, err)
 		}
-		if got := serveList(t, pool, id); !slices.Equal(got, want) {
-			t.Fatalf("after setting %v it serves %v", want, got)
+		if got := serveList(t, pool, id); !slices.Equal(got, []string{"global"}) {
+			t.Fatalf("after a refused %v it serves %v", refused, got)
 		}
+	}
+	if err := set("global"); err != nil {
+		t.Errorf("serve list [global]: %v", err)
 	}
 	if err := set(); !errors.Is(err, ErrAgencyRequired) {
 		t.Errorf("an empty serve list = %v, want ErrAgencyRequired", err)
@@ -192,39 +194,19 @@ func TestTheLocalRunnerServesWhateverItIsGiven(t *testing.T) {
 	if got := serveList(t, pool, id); !slices.Equal(got, []string{"global"}) {
 		t.Errorf("a refused write changed its serve list to %v", got)
 	}
-	// The same through an agency's member list: NWD takes it on, beside Global.
-	if _, err := SetAgencyMembers(ctx, pool, "ag-nwd", refs([2]string{"runner", "r-legacy"}, [2]string{"runner", id}), "root@example.com"); err != nil {
-		t.Fatalf("adding the local runner to an agency's members: %v", err)
+	// The same through an agency's member list: NWD cannot take it on (§0a;
+	// until then it served NWD beside Global from here).
+	if _, err := SetAgencyMembers(ctx, pool, "ag-nwd", refs([2]string{"runner", "r-legacy"}, [2]string{"runner", id}), "root@example.com"); !errors.Is(err, ErrLocalRunnerGlobalOnly) {
+		t.Errorf("adding the local runner to an agency's members: %v, want ErrLocalRunnerGlobalOnly", err)
 	}
-	if got := serveList(t, pool, id); !slices.Equal(got, []string{"ag-nwd", "global"}) {
-		t.Errorf("after joining NWD it serves %v, want NWD and Global", got)
-	}
-	// And Global takes it back the same way, while it still serves NWD.
-	if err := set("ag-nwd"); err != nil {
-		t.Fatal(err)
-	}
-	global, err := BuildAgencyDetail(ctx, pool, "global")
-	if err != nil || global == nil {
-		t.Fatalf("Global's members: %v", err)
-	}
-	members := []AgencyMemberRef{{Kind: "runner", ID: id}}
-	for _, m := range global.Members {
-		members = append(members, AgencyMemberRef{Kind: m.Kind, ID: m.ID})
-	}
-	if _, err := SetAgencyMembers(ctx, pool, "global", members, "root@example.com"); err != nil {
-		t.Fatalf("adding the local runner back to Global's members: %v", err)
-	}
-	if got := serveList(t, pool, id); !slices.Equal(got, []string{"ag-nwd", "global"}) {
-		t.Errorf("after rejoining Global it serves %v, want NWD and Global", got)
+	if got := serveList(t, pool, id); !slices.Equal(got, []string{"global"}) {
+		t.Errorf("after a refused join it serves %v, want Global alone", got)
 	}
 	// An agent still cannot hold Global beside an agency: the rule is the local runner's alone.
 	if err := SetRunnerAgencies(ctx, pool, []RunnerAgencies{{RunnerID: "r-global", AgencyIDs: []string{"global", "ag-dss"}}}, "root@example.com"); err == nil {
 		t.Error("an agent was given Global beside an agency")
 	}
-	// Its owner is Global and stays Global, whatever it serves.
-	if err := set("ag-dss"); err != nil {
-		t.Fatal(err)
-	}
+	// Its owner is Global and stays Global.
 	if err := SetRunnerOwner(ctx, pool, id, "ag-dss", "root@example.com"); !errors.Is(err, ErrOwnerChangeRefused) {
 		t.Errorf("handing the local runner to the one agency it serves = %v, want ErrOwnerChangeRefused", err)
 	}

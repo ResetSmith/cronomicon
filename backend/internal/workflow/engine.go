@@ -26,12 +26,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/envmerge"
 	"github.com/ResetSmith/cronomicon/internal/envref"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/scheduler"
 )
@@ -82,6 +84,15 @@ type Step struct {
 	// map (what {fromStep} addresses), and this is what it runs. Collapsing them
 	// would forbid two steps running the same sub-workflow with different inputs.
 	Workflow string `json:"workflow,omitempty"`
+	// WorkflowUID pins a workflow step to ONE workflow by its identity, as
+	// JobUID pins a job step (2.4.0, present defect 50). Two agencies may each
+	// hold a workflow of one name, and by the name a step ran whichever the
+	// database returned, and, when the parent's own child was binned, the
+	// OTHER agency's, on its hosts. A workflow built in the app has it written
+	// at every save (the API stamps it among the workflows the saver may
+	// compose); a pinned child that is binned, disabled or gone fails the step.
+	// A Git workflow's steps carry none: sync strips it, names are the law there.
+	WorkflowUID string `json:"workflowUid,omitempty"`
 
 	// NodeID is the per-NODE child-run trace ID (runs.id PK), minted by
 	// assignNodeIDs before the walk. Keying run identity by node position rather
@@ -167,6 +178,47 @@ type TriggerParams struct {
 	WorkflowDepth       int
 }
 
+// LoadForFire finds the workflow a schedule entry or a parked run is for, and
+// returns what Trigger needs to start it: its row and its steps.
+//
+// By uid, which is what the entry and the parked row carry. Until 2.4.0 both
+// callers looked the workflow up by source and name, and two agencies may each
+// hold a workflow of one name: one agency's schedule ran the other's steps, and
+// its own workflow never ran on its schedule (present defect 34).
+//
+// With no uid (a caller that has none) the name must mean one workflow: when
+// two hold it, ErrAmbiguousWorkflow, and nothing is started.
+func LoadForFire(ctx context.Context, database *sql.DB, uid, source, name string) (rowid int64, steps []Step, err error) {
+	var stepsJSON string
+	if uid != "" {
+		err = database.QueryRowContext(ctx,
+			`SELECT rowid, steps FROM workflows WHERE uid = ?`, uid).Scan(&rowid, &stepsJSON)
+	} else {
+		var n int
+		if cerr := database.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM workflows WHERE source = ? AND name = ?`, source, name).Scan(&n); cerr != nil {
+			return 0, nil, cerr
+		}
+		if n > 1 {
+			return 0, nil, ErrAmbiguousWorkflow
+		}
+		err = database.QueryRowContext(ctx,
+			`SELECT rowid, steps FROM workflows WHERE source = ? AND name = ?`, source, name).Scan(&rowid, &stepsJSON)
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	steps, err = ParseSteps(stepsJSON)
+	if err != nil {
+		return 0, nil, fmt.Errorf("parse steps: %w", err)
+	}
+	return rowid, steps, nil
+}
+
+// ErrAmbiguousWorkflow is LoadForFire's refusal to pick between two workflows
+// of one name.
+var ErrAmbiguousWorkflow = errors.New("two workflows are called this, and the fire does not say which one it is for")
+
 // TriggerResult is returned by Trigger.
 type TriggerResult struct {
 	TraceID     string
@@ -218,13 +270,20 @@ func (e *Engine) Trigger(ctx context.Context, p TriggerParams) (*TriggerResult, 
 			 parent_workflow_run_id, parent_node_id, workflow_depth,
 			 started_at, created_at, workflow_uid)
 		VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-			(SELECT uid FROM workflows WHERE name = ? AND source = ?))
+			-- The uid of the row that is being run (WorkflowID), not of whichever
+			-- workflow the name finds: two agencies may each hold a workflow of one
+			-- name, and until 2.4.0 a run of one could be stamped as the other's
+			-- (present defect 34), which is also whose reactions it then fired. A
+			-- caller that passes no row gets the name's uid when one workflow holds
+			-- it, and none when two do.
+			COALESCE((SELECT uid FROM workflows WHERE rowid = ?),
+			         (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)))
 	`, wfTraceID, p.WorkflowID, p.WorkflowName, wfSource, p.TriggeredBy, triggerKind,
 		nullStr(p.ScheduleName), nullStr(p.EnvJSON), nullStr(snapshot), nullStr(snapshotHash),
 		p.ReactionDepth, nullStr(p.ReactedToRunID),
 		nullStr(p.ParentWorkflowRunID), nullStr(p.ParentNodeID), p.WorkflowDepth,
 		now, now,
-		p.WorkflowName, wfSource)
+		p.WorkflowID, p.WorkflowName, wfSource)
 	if err != nil {
 		return nil, fmt.Errorf("insert workflow_run: %w", err)
 	}
@@ -243,7 +302,7 @@ func (e *Engine) Trigger(ctx context.Context, p TriggerParams) (*TriggerResult, 
 
 	// Look up job definitions for run_type/scope/source via the A11 precedence
 	// (step.Source > workflow source > fallback).
-	jobDefs, err := e.lookupJobDefs(ctx, p.Steps, wfSource)
+	jobDefs, err := e.lookupJobDefs(ctx, p.Steps, wfSource, e.Home(ctx, p.WorkflowID))
 	if err != nil {
 		return nil, fmt.Errorf("look up job defs: %w", err)
 	}
@@ -527,13 +586,40 @@ func (e *Engine) runJob(
 
 	// Look up the job's run type.
 	jd, ok := jobDefs[StepKey(step)]
+	// refusal is the reason a step is not the workflow's to run at all; its
+	// child row is written failed, under the WORKFLOW's agency and with no job
+	// identity (present defect 58: it was filed under the job's agency, so the
+	// other agency was shown a failure of its job it never triggered, and the
+	// workflow's own agency might not see its failed step).
+	refusal := ""
 	if !ok {
-		e.log.Warn("workflow: job not found in DB", "job", step.Name)
-		jd = jobDef{runType: "bash", scope: scope}
+		// Not a bash job with no command (present defect 61): a step names a
+		// job of its workflow's repository or agency, or it does not run.
+		e.log.Warn("workflow: the job this step names is not the workflow's", "job", step.Name)
+		jd = jobDef{runType: "bash"}
+		refusal = runref.ReasonStepJobNotFound
 	}
 	effectiveScope := scope
 	if jd.scope != "" {
 		effectiveScope = jd.scope
+	}
+	wfAgency, wfAgencyName, werr := e.workflowAgencyOf(ctx, wfID)
+	if werr != nil {
+		e.log.Error("workflow: read the workflow's agency", "job", step.Name, "err", werr)
+		return "danger", false
+	}
+	// The job's agency is the workflow's, asked of the job itself (present
+	// defect 57): the scope check below asks only whether the workflow's
+	// agency holds a scope of the NAME, which another agency's job can share.
+	if refusal == "" && wfAgency != "" && jd.agency != "" && jd.agency != wfAgency {
+		e.log.Warn("workflow: this step's job is another agency's", "job", step.Name, "job_agency", jd.agency, "workflow_agency", wfAgency)
+		refusal = runref.ReasonStepJobOtherAgency
+	}
+	if refusal != "" {
+		// Nothing of another agency's job goes into the refused row: not its
+		// scope, its host, its connect-as identity or its environment.
+		jd = jobDef{runType: jd.runType, source: jd.source}
+		effectiveScope = scope
 	}
 
 	// Insert the child run directly (pre-assigned trace ID). Gap A: each child
@@ -547,7 +633,7 @@ func (e *Engine) runJob(
 		jobSrc = "git"
 	}
 	executor := execspec.ExecutorRunner
-	concKey := cronutil.ConcurrencyKey(jd.concurrencyKey, jd.uid, jobSrc, step.Name)
+	concKey := cronutil.ConcurrencyKey(jd.concurrencyKey, jd.agency, jd.uid, jobSrc, step.Name)
 	// M3/T3.6 — snapshot the effective scope's agency SET onto the child run (hard
 	// isolation). This path builds its own INSERT rather than going through
 	// scheduler.EnqueueParams, which is exactly why it is easy to miss: a child run
@@ -555,12 +641,20 @@ func (e *Engine) runJob(
 	// be refused by every runner in its actual agency. TG-2 was the same class of
 	// miss for target_host — the column was simply absent from the list below, so
 	// every workflow step fanned out across its job's whole scope.
-	stepAgencies, aerr := execspec.ScopeAgencies(ctx, e.db, effectiveScope)
-	if aerr != nil {
-		// As for an unreadable binding or executor: the step fails, recorded, and
-		// no child run is written with a guessed agency set.
-		e.log.Error("workflow: read the scope's agencies", "job", step.Name, "scope", effectiveScope, "err", aerr)
-		return "danger", false
+	// The scope is looked for in the step's job's agency (I2: a scope's name is
+	// unique within an agency only).
+	var stepAgencies []string
+	if refusal != "" {
+		stepAgencies = []string{wfAgencyName}
+	} else {
+		var aerr error
+		stepAgencies, aerr = execspec.ScopeAgencies(ctx, e.db, jd.agency, effectiveScope)
+		if aerr != nil {
+			// As for an unreadable binding or executor: the step fails, recorded, and
+			// no child run is written with a guessed agency set.
+			e.log.Error("workflow: read the scope's agencies", "job", step.Name, "scope", effectiveScope, "err", aerr)
+			return "danger", false
+		}
 	}
 	stepAgenciesJSON := execspec.MarshalAgencies(stepAgencies)
 
@@ -588,14 +682,19 @@ func (e *Engine) runJob(
 		e.log.Warn("workflow: step references a job that must not run",
 			"job", step.Name, "source", jobSrc, "reason", jd.unavailable)
 	}
+	// Asked first of all: nothing below reads another agency's job's
+	// bindings, keys or scope for a step that is not the workflow's.
+	if refusal != "" {
+		stepStatus, stepQueuedReason = "failure", refusal
+	}
 	// R2F-1 — jd.uid is the job resolveJobDef settled on (R2-3); read the
 	// script and the bindings off THAT identity, or a same-named sibling's
 	// credentials decide whether this step is allowed to run.
-	var stepScriptRef sql.NullString
+	var stepScriptRef, stepScriptUID sql.NullString
 	_ = e.db.QueryRowContext(ctx,
-		`SELECT script_ref FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
-		jd.uid, jd.uid, step.Name, jobSrc).Scan(&stepScriptRef)
-	stepOwners := runref.RunOwners(jobSrc, step.Name, jd.uid, stepScriptRef.String)
+		`SELECT script_ref, script_uid FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
+		jd.uid, jd.uid, step.Name, jobSrc).Scan(&stepScriptRef, &stepScriptUID)
+	stepOwners := runref.RunOwners(jobSrc, step.Name, jd.uid, stepScriptRef.String, stepScriptUID.String)
 	// An unbound step is Global's run (migration 1220): its agency set is
 	// ["Global"], never empty, so the guard is the scope alone. (It also asked
 	// for an empty set until 2.3.0, which Global being a row made never true —
@@ -612,12 +711,47 @@ func (e *Engine) runJob(
 				"job", step.Name, "reference", blocked[0].Reference, "detail", runref.UnboundRefusal(blocked))
 		}
 	}
+	// GR-15 — a step that runs a job of an agency's repository on a scope that
+	// is not that agency's fails here, recorded like the refusal above.
+	if stepStatus == "queued" {
+		stranded, serr := runref.RepoScopeMismatch(ctx, e.db, jd.uid, jobSrc, step.Name, effectiveScope)
+		if serr != nil {
+			e.log.Error("workflow: check the step's job against its scope", "job", step.Name, "err", serr)
+			return "danger", false
+		}
+		if stranded {
+			stepStatus, stepQueuedReason = "failure", runref.ReasonRepoScopeMismatch
+			e.log.Warn("workflow: step's job comes from an agency's repository and its scope is not that agency's",
+				"job", step.Name, "scope", effectiveScope)
+		}
+	}
+	// And the WORKFLOW's agency: a workflow's step runs on its agency's scopes,
+	// whoever's job it resolved to (§0a, IN-8). The check above asks about the
+	// job's repository; this is what stops a workflow from running another
+	// agency's job there, on its own schedule and with its own environment.
+	// Until §0a it was asked of a workflow of an agency's repository only; a
+	// workflow that spans agencies (one built in the app, saved before §0a)
+	// now fails its other agencies' steps here (§0a, open point 1).
+	if stepStatus == "queued" {
+		outside, oerr := e.stepOutsideWorkflowAgency(ctx, wfID, effectiveScope)
+		if oerr != nil {
+			e.log.Error("workflow: check the step's scope against the workflow's agency", "job", step.Name, "err", oerr)
+			return "danger", false
+		}
+		if outside {
+			stepStatus, stepQueuedReason = "failure", runref.ReasonWorkflowScopeMismatch
+			e.log.Warn("workflow: this step's scope is not the workflow's agency's",
+				"job", step.Name, "scope", effectiveScope)
+			// Filed under the workflow's agency, whose failure it is (defect 58).
+			stepAgenciesJSON = execspec.MarshalAgencies([]string{wfAgencyName})
+		}
+	}
 	// LR-47 — a key-bound shell step with no agent to deliver the key fails the
 	// step here, terminal-and-recorded like the refusal above: the local runner
 	// cannot deliver it, and a step left queued for a runner that does not exist
 	// would hold the workflow for its whole timeout (or for ever with none).
 	if stepStatus == "queued" {
-		keys, kerr := runref.KeyBindingsNeedAgent(ctx, e.db, stepOwners, nil, jd.runType, effectiveScope)
+		keys, kerr := runref.KeyBindingsNeedAgent(ctx, e.db, stepOwners, nil, jd.runType, jd.agency, effectiveScope)
 		if kerr != nil {
 			e.log.Error("workflow: check key bindings", "job", step.Name, "err", kerr)
 			return "danger", false
@@ -626,6 +760,21 @@ func (e *Engine) runJob(
 			stepStatus, stepQueuedReason = "failure", runref.ReasonKeyBindingNeedsAgent
 			e.log.Warn("workflow: step binds an SSH key and no agent serves its scope",
 				"job", step.Name, "reference", keys[0].Reference, "detail", runref.KeyBindingRefusal(keys))
+		}
+	}
+	// Present defect 44 — a project step with no agent that allows checkout to
+	// wait for fails here, for the same reason: left queued for an agent that
+	// does not exist it would hold the workflow for its whole timeout.
+	if stepStatus == "queued" {
+		stuck, cerr := runref.CheckoutNeedsAgent(ctx, e.db, jd.uid, jobSrc, step.Name, effectiveScope)
+		if cerr != nil {
+			e.log.Error("workflow: check for an agent that allows checkout", "job", step.Name, "err", cerr)
+			return "danger", false
+		}
+		if stuck {
+			stepStatus, stepQueuedReason = "failure", runref.ReasonCheckoutNeedsAgent
+			e.log.Warn("workflow: step is a project and no agent that allows checkout serves its scope",
+				"job", step.Name, "scope", effectiveScope)
 		}
 	}
 
@@ -647,6 +796,12 @@ func (e *Engine) runJob(
 	_ = e.db.QueryRowContext(ctx,
 		`SELECT COALESCE(reaction_depth, 0) FROM workflow_runs WHERE id = ?`, wfTraceID,
 	).Scan(&parentDepth)
+	// A refused step has no job of the workflow's: its row carries no job's
+	// environment (read by name it would be another agency's).
+	childEnv := ""
+	if refusal == "" {
+		childEnv = e.childEnvJSON(ctx, wfTraceID, jobSrc, step.Name, jd.uid, inputEnv).String
+	}
 	if _, err := scheduler.InsertRun(ctx, e.db, scheduler.RunRow{
 		EnqueueParams: scheduler.EnqueueParams{
 			JobName:        step.Name,
@@ -660,7 +815,7 @@ func (e *Engine) runJob(
 			ConcurrencyKey: concKey,
 			WorkflowRunID:  wfTraceID,
 			Executor:       executor,
-			EnvJSON:        e.childEnvJSON(ctx, wfTraceID, jobSrc, step.Name, inputEnv).String,
+			EnvJSON:        childEnv,
 			SSHUser:        jd.sshUser,
 			SSHCredential:  jd.sshCred,
 			AgenciesJSON:   stepAgenciesJSON,
@@ -669,6 +824,7 @@ func (e *Engine) runJob(
 		TraceID:      traceID,
 		Status:       stepStatus,
 		QueuedReason: stepQueuedReason,
+		NoDefinition: refusal != "",
 	}); err != nil {
 		e.log.Error("workflow: insert child run", "job", step.Name, "err", err)
 		return "danger", false
@@ -810,9 +966,16 @@ func (e *Engine) Cancel(ctx context.Context, wfTraceID string) bool {
 // childEnvJSON builds a child run's env snapshot in precedence order (later wins):
 // job-level env (JC10/JC11 base) → the parent workflow env → this step's resolved
 // A12 inputs (inputs win). Returns NULL when every layer is empty (R2 no-op).
-func (e *Engine) childEnvJSON(ctx context.Context, wfTraceID, jobSource, jobName string, inputEnv map[string]string) sql.NullString {
+//
+// The job's env is read by the job's uid, the one the step resolved to. By
+// name and source, as it was until 2.4.0 (present defect 37), it was the env
+// of WHICHEVER job of that name the query returned: with two agencies' jobs of
+// one name, a step ran one agency's job with the other's environment.
+func (e *Engine) childEnvJSON(ctx context.Context, wfTraceID, jobSource, jobName, jobUID string, inputEnv map[string]string) sql.NullString {
 	var jobEnv sql.NullString
-	_ = e.db.QueryRowContext(ctx, `SELECT env_json FROM jobs WHERE name=? AND source=?`, jobName, jobSource).Scan(&jobEnv)
+	_ = e.db.QueryRowContext(ctx,
+		`SELECT env_json FROM jobs WHERE CASE WHEN ?1 != '' THEN uid = ?1 ELSE name = ?2 AND source = ?3 END`,
+		jobUID, jobName, jobSource).Scan(&jobEnv)
 	parent := e.parentEnvJSON(ctx, wfTraceID)
 	merged := envmerge.Merge(envmerge.Parse(jobEnv.String), envmerge.Parse(parent.String), inputEnv)
 	if merged == nil {
@@ -935,7 +1098,7 @@ func (e *Engine) markSkipped(
 	if jobSrc == "" {
 		jobSrc = "git"
 	}
-	concKey := cronutil.ConcurrencyKey(jd.concurrencyKey, jd.uid, jobSrc, jobName)
+	concKey := cronutil.ConcurrencyKey(jd.concurrencyKey, jd.agency, jd.uid, jobSrc, jobName)
 	// TG-2: target_host is carried here purely so a skipped row DISPLAYS the pin the
 	// step would have run against — a skipped run never executes, so this has no
 	// blast-radius meaning.
@@ -1045,7 +1208,10 @@ type jobDef struct {
 	// uid is the resolved job's permanent identity (R2-3). It is what the child
 	// run's concurrency key is built from, so a workflow step gates against the
 	// same job a cron fire does — the RX-25 agreement, now keyed on identity.
-	uid             string
+	uid string
+	// agency is whose the job is (agencyid.JobSQL; an in-app job's owner since
+	// 1400), the agency its scope is looked for in (I2).
+	agency          string
 	concurrencyKey  string
 	retries         int  // WB-R1 job-level default (step value overrides)
 	backoffSeconds  int  // WB-R1 job-level default
@@ -1093,19 +1259,115 @@ func (r StepRef) Key() string {
 // StepKey is the defs-map key for a step, the lookup half of StepRef.Key.
 func StepKey(s Step) string { return StepRefOf(s).Key() }
 
+// Home is the repository a workflow's names are looked up in first (2.4.0,
+// GR-16): the repository of a GIT workflow, by the workflow's row. A workflow
+// built in the app has none (""), and so does a row that is not there.
+//
+// A Git workflow cannot pin a step to a job's identity (sync strips `jobUid`:
+// names are the law in Git), so its name-only steps need a rule for a name
+// that more than one repository holds. The rule is the one every other
+// reference follows: the workflow's own repository, and no other (§0a, IN-8;
+// from GR-16 until §0a, then Global's). With no home the older rule stands: a
+// name that one Git job holds is that job, and a name that several hold is
+// refused; whatever it finds runs only on the workflow's agency's scopes
+// (stepOutsideWorkflowAgency).
+//
+// Whoever AUTHORIZES a workflow must ask with the same home the engine runs it
+// with (JobScopesAt), or the walk authorizes one job and the engine runs
+// another.
+func (e *Engine) Home(ctx context.Context, workflowID int64) string {
+	var repo string
+	if err := e.db.QueryRowContext(ctx,
+		`SELECT COALESCE(repo_id, ?) FROM workflows WHERE rowid = ? AND source = 'git'`, repoid.Global, workflowID).Scan(&repo); err != nil {
+		return ""
+	}
+	return repo
+}
+
+// stepOutsideWorkflowAgency reports whether a step of the workflow of a rowid
+// would run on a scope that is not the workflow's agency's (runref
+// .ScopeOutsideAgency). A workflow that is no longer there confines nothing; a
+// Git workflow whose repository is gone has no agency to run for.
+// workflowAgencyOf is the agency a workflow belongs to, by id and by name. A
+// workflow that is not there is "" (nothing to compare); one whose agency
+// cannot be told (its repository is gone) is filed under Global's name.
+func (e *Engine) workflowAgencyOf(ctx context.Context, workflowID int64) (id, name string, err error) {
+	var agency sql.NullString
+	err = e.db.QueryRowContext(ctx,
+		`SELECT `+runref.WorkflowAgencySQL+` FROM workflows w WHERE w.rowid = ?`, workflowID).Scan(&agency)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", agencyid.GlobalName, nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if !agency.Valid {
+		return "", agencyid.GlobalName, nil
+	}
+	var n sql.NullString
+	if err := e.db.QueryRowContext(ctx, `SELECT name FROM agencies WHERE id = ?`, agency.String).Scan(&n); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", "", err
+	}
+	if !n.Valid || n.String == "" {
+		return agency.String, agencyid.GlobalName, nil
+	}
+	return agency.String, n.String, nil
+}
+
+func (e *Engine) stepOutsideWorkflowAgency(ctx context.Context, workflowID int64, scope string) (bool, error) {
+	var agency sql.NullString
+	err := e.db.QueryRowContext(ctx,
+		`SELECT `+runref.WorkflowAgencySQL+` FROM workflows w WHERE w.rowid = ?`, workflowID).Scan(&agency)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !agency.Valid {
+		return true, nil
+	}
+	return runref.ScopeOutsideAgency(ctx, e.db, agency.String, scope)
+}
+
+// agencyOfHome is the agency a workflow's home repository belongs to: Global
+// for Global's repository (since §0a), "" for no home.
+//
+// A workflow of a repository is confined to its agency in what it names as
+// well as in what it runs on. Its Git names are its repository's. The names it
+// finds among the definitions built in the app are that agency's and nobody
+// else's: the older rule, "the one in-app definition of the name", is another
+// agency's job the moment that agency builds one. (Until §0a, IN-8, Global's
+// repository's workflows took any agency's.)
+func (e *Engine) agencyOfHome(ctx context.Context, home string) string {
+	if home == "" {
+		return ""
+	}
+	var agency string
+	if err := e.db.QueryRowContext(ctx, `SELECT agency_id FROM git_repos WHERE id = ?`, home).Scan(&agency); err != nil {
+		// A home that cannot be read confines to nobody: nothing in-app is found.
+		return "\x00no-agency"
+	}
+	return agency
+}
+
+// jobOfAgencySQL is "this row of `jobs` is the agency ?'s" (agencyid.JobSQL;
+// an in-app job's owner since 1400).
+var jobOfAgencySQL = ` AND ` + agencyid.JobSQL("jobs") + ` = ?`
+
 // lookupJobDefs resolves each step's referenced job def. A step pinning a uid
 // (R2F-2) resolves by identity alone; otherwise the A11 step-source precedence
 // applies (v20 Phase 4): an explicit step.Source wins; otherwise the parent
 // workflow's source; otherwise the other source if the job exists there. A ref
-// absent from the returned map is unresolved (runJob warns).
-func (e *Engine) lookupJobDefs(ctx context.Context, steps []Step, wfSource string) (map[string]jobDef, error) {
+// absent from the returned map is unresolved (runJob warns). home: see Home.
+func (e *Engine) lookupJobDefs(ctx context.Context, steps []Step, wfSource, home string) (map[string]jobDef, error) {
 	if wfSource == "" {
 		wfSource = "git"
 	}
 	refs := collectStepRefs(steps)
 	m := make(map[string]jobDef, len(refs))
 	for _, ref := range refs {
-		src, jd, ok := e.resolveJobDef(ctx, ref, wfSource)
+		src, jd, ok := e.resolveJobDef(ctx, ref, wfSource, home)
 		if !ok {
 			continue
 		}
@@ -1127,104 +1389,82 @@ func (e *Engine) maxParallel(ctx context.Context) int {
 	return 10
 }
 
-// JobScopes returns the distinct effective scopes of every job referenced
-// anywhere in the step graph, applying the same A11 step-source precedence the
-// engine uses at run time. Its only caller is the API's workflow authorization
-// guard (workflowScopesPermit), which enforces scope access and the RB-2 verb on
-// the workflow trigger/patch/cancel the way runJob does per job.
-//
-// ⚠️ An UNSCOPED constituent job yields an EMPTY STRING entry, and that entry is
-// load-bearing. This function used to filter empties out, which made the caller's
-// `sc == ""` branch — the RB-26 rule that an unscoped job inside a workflow is
-// unrestricted-only — unreachable dead code: a workflow of entirely unscoped jobs
-// produced an empty list and therefore no check at all. Fixed in RF-6
-// (the RBAC-fixes plan). If this is ever changed back to skipping
-// empties, that guard silently stops running.
-//
-// GC-10 (v2.2.2): the list covers the jobs of every SUB-WORKFLOW too. It used to
-// stop at the workflow's own job steps, because collectStepRefs deliberately
-// does not flatten a child's jobs into the parent's lookup. That is right for
-// resolution and was wrong for authorization: a workflow whose only step is a
-// sub-workflow produced no scopes, so triggering, pausing or cancelling it was
-// authorized on nothing while the engine went on to run the child's jobs with
-// the caller as actor.
-func (e *Engine) JobScopes(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
-	seen := map[string]bool{}
-	var out []string
-	add := func(scopes []string) {
-		for _, sc := range scopes {
-			if !seen[sc] {
-				seen[sc] = true
-				out = append(out, sc)
-			}
+// AgencyScope is a job's scope and whose it is: what a grant is asked of (I2).
+type AgencyScope struct{ Agency, Scope string }
+
+// JobAgencyScopesAt is JobScopesAt with each scope's agency: the jobs' owners
+// (agencyid.JobSQL), which is where each scope's name is looked for and whose
+// grant covers it. Distinct pairs, own jobs first, then the sub-workflows'.
+func (e *Engine) JobAgencyScopesAt(ctx context.Context, steps []Step, wfSource, home string) ([]AgencyScope, error) {
+	seen := map[AgencyScope]bool{}
+	var out []AgencyScope
+	add := func(jd jobDef) {
+		p := AgencyScope{Agency: jd.agency, Scope: jd.scope}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
 		}
 	}
-	own, err := e.ownJobScopes(ctx, steps, wfSource)
+	defs, err := e.lookupJobDefs(ctx, steps, wfSource, home)
 	if err != nil {
 		return nil, err
 	}
-	add(own)
-	nested, err := e.SubWorkflowJobScopes(ctx, steps, wfSource)
-	if err != nil {
-		return nil, err
-	}
-	add(nested)
-	return out, nil
-}
-
-// ownJobScopes is the scopes of the job steps this graph names directly.
-func (e *Engine) ownJobScopes(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
-	defs, err := e.lookupJobDefs(ctx, steps, wfSource)
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	var out []string
 	for _, jd := range defs {
-		if !seen[jd.scope] {
-			seen[jd.scope] = true
-			out = append(out, jd.scope)
-		}
+		add(jd)
+	}
+	if err := e.walkSubWorkflowJobs(ctx, steps, wfSource, home, add); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
 
-// SubWorkflowJobScopes returns the scopes of every job reachable THROUGH the
-// sub-workflow steps of a graph — the jobs the engine will run on the caller's
-// behalf that the graph itself never names (GC-10). An unscoped job yields ""
-// here exactly as it does in JobScopes, and for the same reason.
-//
-// Each child is resolved by loadChildWorkflow, the function the engine itself
-// calls when the step runs, so the walk authorizes the workflow that would
-// actually run and nothing else. Authorizing against every workflow that merely
-// SHARES the name would be wrong in the other direction: names are per-agency,
-// so another department could veto this one's trigger, pause and cancel by
-// creating a workflow of the same name. A child that does not resolve
-// contributes nothing — it will not run either.
-//
-// The answer is true at the moment it is given. A child that is disabled now
-// and enabled before its step is reached runs on an authorization that did not
-// see it; closing that window needs the run to carry the resolution it was
-// authorized on, which it does not yet.
-//
-// Descent stops at MaxWorkflowDepth, the engine's own ceiling. A workflow is
-// walked again when it is reached at a SHALLOWER depth than before: its
-// subtree was cut off earlier at the ceiling, and from nearer the root more of
-// it is reachable — the engine would run that part.
-func (e *Engine) SubWorkflowJobScopes(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
+// SubWorkflowJobAgencies is SubWorkflowJobScopes for the jobs' AGENCIES
+// (agencyid.JobSQL: an in-app job's owner since 1400): whose the jobs the
+// graph reaches through its sub-workflows are. A scope's name says nothing of
+// whose it is once names are per agency (I2).
+func (e *Engine) SubWorkflowJobAgencies(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
+	err := e.walkSubWorkflowJobs(ctx, steps, wfSource, "", func(jd jobDef) {
+		if !seen[jd.agency] {
+			seen[jd.agency] = true
+			out = append(out, jd.agency)
+		}
+	})
+	return out, err
+}
+
+// SubWorkflowJobAgencyScopesAt is SubWorkflowJobScopesAt with each scope's
+// agency (the job's owner, agencyid.JobSQL), for a caller that asks a grant of
+// it (I2).
+func (e *Engine) SubWorkflowJobAgencyScopesAt(ctx context.Context, steps []Step, wfSource, home string) ([]AgencyScope, error) {
+	seen := map[AgencyScope]bool{}
+	var out []AgencyScope
+	err := e.walkSubWorkflowJobs(ctx, steps, wfSource, home, func(jd jobDef) {
+		p := AgencyScope{Agency: jd.agency, Scope: jd.scope}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	})
+	return out, err
+}
+
+// walkSubWorkflowJobs visits the job definitions of every workflow reachable
+// through the sub-workflow steps of a graph, as SubWorkflowJobScopes
+// describes.
+func (e *Engine) walkSubWorkflowJobs(ctx context.Context, steps []Step, wfSource, home string, visit func(jobDef)) error {
 	walkedAt := map[int64]int{} // workflow rowid → shallowest depth walked from
-	var walk func(steps []Step, source string, depth int) error
-	walk = func(steps []Step, source string, depth int) error {
+	var walk func(steps []Step, source, home string, depth int) error
+	walk = func(steps []Step, source, home string, depth int) error {
 		if DepthExceeded(depth) {
 			return nil
 		}
 		if source == "" {
 			source = "git"
 		}
-		for _, name := range collectWorkflowRefs(steps) {
-			childSource, childSteps, rowid, ok := e.loadChildWorkflow(ctx, name, source)
+		for _, ref := range collectWorkflowRefs(steps) {
+			childSource, childSteps, rowid, childHome, ok := e.loadChildWorkflow(ctx, ref, source, home)
 			if !ok {
 				continue
 			}
@@ -1232,34 +1472,40 @@ func (e *Engine) SubWorkflowJobScopes(ctx context.Context, steps []Step, wfSourc
 				continue
 			}
 			walkedAt[rowid] = depth
-			scopes, err := e.ownJobScopes(ctx, childSteps, childSource)
+			defs, err := e.lookupJobDefs(ctx, childSteps, childSource, childHome)
 			if err != nil {
 				return err
 			}
-			for _, sc := range scopes {
-				if !seen[sc] {
-					seen[sc] = true
-					out = append(out, sc)
-				}
+			for _, jd := range defs {
+				visit(jd)
 			}
-			if err := walk(childSteps, childSource, depth+1); err != nil {
+			if err := walk(childSteps, childSource, childHome, depth+1); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	// The children of the addressed workflow run at depth 1.
-	if err := walk(steps, wfSource, 1); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return walk(steps, wfSource, home, 1)
 }
 
-// collectWorkflowRefs lists the sub-workflow names a graph references, walking
+// WorkflowRef is a sub-workflow step's reference: the name, and the identity
+// when the step pins one (WorkflowUID).
+type WorkflowRef struct {
+	Name string
+	UID  string
+}
+
+// CollectWorkflowRefs exposes collectWorkflowRefs to `cronomicon validate`,
+// which checks a Git workflow's sub-workflow steps against its checkout, and to
+// the API, which pins them at a save.
+func CollectWorkflowRefs(steps []Step) []WorkflowRef { return collectWorkflowRefs(steps) }
+
+// collectWorkflowRefs lists the sub-workflow references a graph makes, walking
 // the same containers collectStepRefs walks.
-func collectWorkflowRefs(steps []Step) []string {
-	var out []string
-	seen := map[string]bool{}
+func collectWorkflowRefs(steps []Step) []WorkflowRef {
+	var out []WorkflowRef
+	seen := map[WorkflowRef]bool{}
 	var walk func([]Step)
 	walk = func(ss []Step) {
 		for _, s := range ss {
@@ -1276,9 +1522,10 @@ func collectWorkflowRefs(steps []Step) []string {
 					walk(s.Fail.Steps)
 				}
 			case stepKindWorkflow:
-				if s.Workflow != "" && !seen[s.Workflow] {
-					seen[s.Workflow] = true
-					out = append(out, s.Workflow)
+				ref := WorkflowRef{Name: s.Workflow, UID: s.WorkflowUID}
+				if s.Workflow != "" && !seen[ref] {
+					seen[ref] = true
+					out = append(out, ref)
 				}
 			}
 		}
@@ -1289,7 +1536,7 @@ func collectWorkflowRefs(steps []Step) []string {
 
 // resolveJobDef finds a step's job def: by identity when the step pins one
 // (R2F-2), otherwise at the effective source per the A11 precedence.
-func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource string) (string, jobDef, bool) {
+func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource, home string) (string, jobDef, bool) {
 	name := ref.Name
 	// scan runs the def query with an arbitrary WHERE and returns the row's own
 	// source, so the identity arm reports where the job actually lives rather
@@ -1300,14 +1547,14 @@ func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource string
 		var continueOnErr bool
 		var ck sql.NullString
 		var disabled, binned int
-		var uid string
+		var uid, agency string
 		err := e.db.QueryRowContext(ctx,
 			`SELECT run_type, COALESCE(scope,''), COALESCE(target_host,''), COALESCE(timeout_seconds,0), concurrency_key,
 			        COALESCE(retries,0), COALESCE(backoff_seconds,0), COALESCE(continue_on_error,0),
 			        COALESCE(ssh_user,''), COALESCE(ssh_credential,''),
-			        enabled = 0, deleted_at IS NOT NULL, COALESCE(uid,''), source
+			        enabled = 0, deleted_at IS NOT NULL, COALESCE(uid,''), source, COALESCE(`+agencyid.JobSQL("jobs")+`, '`+agencyid.Global+`')
 			 FROM jobs WHERE `+where,
-			args...).Scan(&rt, &sc, &th, &to, &ck, &retries, &backoff, &continueOnErr, &su, &scr, &disabled, &binned, &uid, &rowSrc)
+			args...).Scan(&rt, &sc, &th, &to, &ck, &retries, &backoff, &continueOnErr, &su, &scr, &disabled, &binned, &uid, &rowSrc, &agency)
 		if err != nil {
 			return "", jobDef{}, false
 		}
@@ -1317,7 +1564,7 @@ func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource string
 		if !execspec.IdentityCapableRunType(rt) {
 			su, scr = "", ""
 		}
-		jd := jobDef{runType: rt, scope: sc, targetHost: th, sshUser: su, sshCred: scr, timeout: to, uid: uid, concurrencyKey: ck.String, retries: retries, backoffSeconds: backoff, continueOnError: continueOnErr}
+		jd := jobDef{runType: rt, scope: sc, targetHost: th, sshUser: su, sshCred: scr, timeout: to, uid: uid, agency: agency, concurrencyKey: ck.String, retries: retries, backoffSeconds: backoff, continueOnError: continueOnErr}
 		// FX-A1 — the row EXISTS, so A11 precedence has already chosen this source;
 		// whether it may RUN is a separate question, answered here.
 		//
@@ -1360,6 +1607,33 @@ func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource string
 	}
 
 	for _, src := range StepSourceOrder(ref.Source, wfSource) {
+		// GR-16 — a Git name, for a workflow whose home is known: its own
+		// repository's job (and, until §0a, then Global's). A repository holds
+		// a name once, so there is nothing ambiguous to refuse; and a job of
+		// that name in ANOTHER repository is not found at all, however many
+		// there are. (The existence rule of FX-A1 holds: a binned or disabled
+		// job of the home repository is the one found.)
+		if src == "git" && home != "" {
+			if _, jd, ok := scan(`name = ? AND source = 'git' AND COALESCE(repo_id, ?) = ?`, name, repoid.Global, home); ok {
+				return src, jd, true
+			}
+			continue
+		}
+		// And among the jobs built in the app, for a workflow of an AGENCY's
+		// repository: that agency's, and no other's (see agencyOfHome).
+		if agency := e.agencyOfHome(ctx, home); src == "cronomicon" && agency != "" {
+			var nMatches int
+			_ = e.db.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM jobs WHERE name = ? AND source = 'cronomicon'`+jobOfAgencySQL, name, agency).Scan(&nMatches)
+			if nMatches > 1 {
+				return src, jobDef{runType: "bash", source: src,
+					unavailable: "Refused: this name matches more than one job; qualify the step by identity"}, true
+			}
+			if _, jd, ok := scan(`name = ? AND source = 'cronomicon'`+jobOfAgencySQL, name, agency); ok {
+				return src, jd, true
+			}
+			continue
+		}
 		// R2-5 — a name may match two jobs within one source pool now. COUNT
 		// first: an ambiguous reference REFUSES (fail closed, RA-17) rather than
 		// running whichever row SQLite returns — a step that silently picks a

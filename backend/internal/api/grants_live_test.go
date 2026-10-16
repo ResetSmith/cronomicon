@@ -77,18 +77,18 @@ func TestEveryGrantWriterIsInForceOnTheNextRequest(t *testing.T) {
 	want("after a rename", gFinViewer, "fin-hosts", "fin-renamed")
 
 	// A global administrator moves a scope, by each of the three setters.
-	do("move (scope route)", http.MethodPut, "/api/v1/scopes/"+made.ID+"/agency", gRoot, `{"agencyId":"ag:TAX"}`, http.StatusOK)
+	do("move (scope route)", http.MethodPut, "/api/v1/scopes/"+made.ID+"/agency", gRoot, asRepair(`{"agencyId":"ag:TAX"}`), http.StatusOK)
 	want("after a move", gFinAdmin, "fin-hosts")
 	want("after a move", gTaxAdmin, "fin-renamed", "tax-hosts")
-	do("move (matrix)", http.MethodPut, "/api/v1/scope-agencies", gRoot, `[{"id":"`+made.ID+`","agencyIds":["ag:FIN"]}]`, http.StatusOK)
+	do("move (matrix)", http.MethodPut, "/api/v1/scope-agencies", gRoot, asRepair(`[{"id":"`+made.ID+`","agencyIds":["ag:FIN"]}]`), http.StatusOK)
 	want("after a matrix move", gFinAdmin, "fin-hosts", "fin-renamed")
 	want("after a matrix move", gTaxAdmin, "tax-hosts")
 	// The agency editor adds what is Global's (a scope in another agency is
 	// moved on the scope itself, LR-7), so the scope goes by way of Global.
-	do("move (to Global)", http.MethodPut, "/api/v1/scopes/"+made.ID+"/agency", gRoot, `{"agencyId":null}`, http.StatusOK)
+	do("move (to Global)", http.MethodPut, "/api/v1/scopes/"+made.ID+"/agency", gRoot, asRepair(`{"agencyId":null}`), http.StatusOK)
 	want("after a move to Global", gFinAdmin, "fin-hosts")
 	do("move (members)", http.MethodPut, "/api/v1/agencies/ag:TAX/members", gRoot,
-		`{"members":[{"kind":"scope","id":"sc:tax"},{"kind":"scope","id":"`+made.ID+`"}]}`, http.StatusOK)
+		asRepair(`{"members":[{"kind":"scope","id":"sc:tax"},{"kind":"scope","id":"`+made.ID+`"}]}`), http.StatusOK)
 	want("after a members move", gTaxAdmin, "fin-renamed", "tax-hosts")
 
 	// It is deleted.
@@ -138,7 +138,7 @@ func TestNoRBACWriteSignsAnyoneOut(t *testing.T) {
 	for _, w := range []struct{ what, method, path, groups, body string }{
 		{"a scope create", http.MethodPost, "/api/v1/scopes", gFinAdmin, `{"scope":"fin-new","hosts":["h1"]}`},
 		{"a scope rename", http.MethodPatch, "/api/v1/scopes/sc:fin", gFinAdmin, `{"scope":"fin-renamed","hosts":["h1"]}`},
-		{"a scope move", http.MethodPut, "/api/v1/scope-agencies", gRoot, `[{"id":"sc:shared","agencyIds":["ag:TAX"]}]`},
+		{"a scope move", http.MethodPut, "/api/v1/scope-agencies", gRoot, asRepair(`[{"id":"sc:shared","agencyIds":["ag:TAX"]}]`)},
 		{"a grant create", http.MethodPost, "/api/v1/access-grants", gRoot, `{"adGroup":"new-group","role":"viewer","agencyId":"ag:TAX"}`},
 		{"a role create", http.MethodPost, "/api/v1/roles", gRoot, `{"name":"auditor","permissions":{}}`},
 	} {

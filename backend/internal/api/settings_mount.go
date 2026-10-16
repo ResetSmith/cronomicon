@@ -19,6 +19,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/envref"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/notify"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/sshexec"
@@ -73,7 +74,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 			return
 		}
-		list, err := sec.List(r.Context(), id.Grant().CanRead)
+		list, err := sec.List(r.Context(), func(agency, scope string) bool { return auth.ScopeReadableIn(id, agency, scope) })
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
@@ -90,7 +91,18 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			}
 			list = kept
 		}
-		httpx.JSON(w, http.StatusOK, list)
+		rows, err := withRowFlags(list, func(sc secrets.Secret) (rowFlags, error) {
+			fl, err := s.flagsByMembership(r.Context(), id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sc.ID)
+			if err != nil {
+				return fl, err
+			}
+			return s.flagsWithScope(r.Context(), id, fl, "secrets", sc.ID, sc.Scope)
+		})
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, rows)
 	})))
 	mux.Handle("POST /api/v1/env-secrets", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := auth.IdentityFrom(r.Context())
@@ -118,10 +130,6 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// D3: a scope-restricted manager may not create a secret outside their grants,
 		// NOR in the global scope (a global secret injects into every scope). 403 (not
 		// 404) — the actor supplied the scope, so there is no existence to leak.
-		if !auth.ScopeWritable(id, scopeStrOf(inp.Scope)) {
-			s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot create a secret in a scope outside your access")
-			return
-		}
 		// RF-Q2(a): a restricted creator names at least one held agency, so the new
 		// secret is born owned — an unmembered secret is RB-Q14 unrestricted-only,
 		// which would lock the creator out of the row they just made. RA-9: when they
@@ -129,6 +137,12 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// rather than refused, so the safe outcome is the default.
 		agencyIDs, ok := s.requireCreationAgencies(w, r, id, auth.PermManageEnvVars, inp.AgencyIDs, "secret")
 		if !ok {
+			return
+		}
+		// The scope is the new row's owner's scope of that name (I2), so the owner
+		// is settled first.
+		if !auth.ScopeWritableIn(id, ownerAgencyFor(agencyIDs), scopeStrOf(inp.Scope)) {
+			s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot create a secret in a scope outside your access")
 			return
 		}
 		// LR-80: a Vault path is named inside the owner agency's prefixes (a
@@ -236,7 +250,12 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// The target scope must be writable too (blocks moving it out of reach OR
 		// widening a scoped secret to global). A restricted PUT that omits scope would
 		// globalize the row — ScopeWritable("") rejects that for a restricted actor.
-		if !auth.ScopeWritable(id, scopeStrOf(inp.Scope)) {
+		rowOwner, rerr := s.rowOwnerAgency(r.Context(), "secrets", sid)
+		if rerr != nil {
+			httpx.Fail500(w, s.log, "db_error", rerr)
+			return
+		}
+		if !auth.ScopeWritableIn(id, rowOwner, scopeStrOf(inp.Scope)) {
 			s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot move a secret into a scope outside your access")
 			return
 		}
@@ -454,7 +473,15 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			}
 			list = kept
 		}
-		httpx.JSON(w, http.StatusOK, list)
+		id, _ := auth.IdentityFrom(r.Context())
+		rows, err := withRowFlags(list, func(c sshkeys.Credential) (rowFlags, error) {
+			return s.flagsByMembership(r.Context(), id, auth.PermConfigureApp, "ssh_credential_agencies", "credential_id", c.ID)
+		})
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, rows)
 	})))
 	mux.Handle("POST /api/v1/ssh/credentials", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := auth.IdentityFrom(r.Context())
@@ -708,7 +735,12 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 	if sc != nil && sc.Scope != nil {
 		scopeStr = *sc.Scope
 	}
-	if sc == nil || !auth.ScopeReadable(actor, scopeStr) {
+	owner, oerr := s.rowOwnerAgency(r.Context(), "secrets", sid) // whose scope it is (I2)
+	if oerr != nil {
+		httpx.Fail500(w, s.log, "db_error", oerr)
+		return nil, false
+	}
+	if sc == nil || !auth.ScopeReadableIn(actor, owner, scopeStr) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 		return nil, false
 	}
@@ -829,7 +861,12 @@ func (s *Server) loadSecretWritable(w http.ResponseWriter, r *http.Request, sec 
 	if !ok {
 		return nil, false
 	}
-	if !auth.ScopeWritable(actor, scopeStrOf(sc.Scope)) {
+	owner, oerr := s.rowOwnerAgency(r.Context(), "secrets", sid)
+	if oerr != nil {
+		httpx.Fail500(w, s.log, "db_error", oerr)
+		return nil, false
+	}
+	if !auth.ScopeWritableIn(actor, owner, scopeStrOf(sc.Scope)) {
 		s.denyScope(w, r, scopeStrOf(sc.Scope), "cannot modify a secret in a scope outside your access")
 		return nil, false
 	}
@@ -853,11 +890,16 @@ func (s *Server) loadEnvVarWritable(w http.ResponseWriter, r *http.Request, evID
 	if ev != nil && ev.Scope != nil {
 		scopeStr = *ev.Scope
 	}
-	if ev == nil || !auth.ScopeReadable(actor, scopeStr) {
+	owner, oerr := s.rowOwnerAgency(r.Context(), "env_vars", evID) // whose scope it is (I2)
+	if oerr != nil {
+		httpx.Fail500(w, s.log, "db_error", oerr)
+		return nil, false
+	}
+	if ev == nil || !auth.ScopeReadableIn(actor, owner, scopeStr) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "env var not found")
 		return nil, false
 	}
-	if !auth.ScopeWritable(actor, scopeStr) {
+	if !auth.ScopeWritableIn(actor, owner, scopeStr) {
 		s.denyScope(w, r, scopeStr, "cannot modify an env var in a scope outside your access")
 		return nil, false
 	}
@@ -894,12 +936,24 @@ func (s *Server) handleListEnvVars(w http.ResponseWriter, r *http.Request) {
 	// ManageEnvVars; management-scope enforcement on variable writes is a follow-up.
 	tagFilter := tagutil.ParseQuery(r.URL.Query())
 	filtered := make([]settings.EnvVar, 0, len(list))
+	agencyIDs := s.agencyIDsByName(r.Context()) // a row names its owner (I2: whose scope it is)
 	for _, ev := range list {
-		if auth.ScopeReadable(id, scopeStrOf(ev.Scope)) && tagFilter.Match(ev.Tags) {
+		if auth.ScopeReadableIn(id, agencyIDs[ev.OwnerAgency], scopeStrOf(ev.Scope)) && tagFilter.Match(ev.Tags) {
 			filtered = append(filtered, ev)
 		}
 	}
-	httpx.JSON(w, http.StatusOK, filtered)
+	rows, err := withRowFlags(filtered, func(ev settings.EnvVar) (rowFlags, error) {
+		fl, err := s.flagsByMembership(r.Context(), id, auth.PermManageEnvVars, "env_var_agencies", "env_var_id", ev.ID)
+		if err != nil {
+			return fl, err
+		}
+		return s.flagsWithScope(r.Context(), id, fl, "env_vars", ev.ID, ev.Scope)
+	})
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rows)
 }
 
 func (s *Server) handleCreateEnvVar(w http.ResponseWriter, r *http.Request) {
@@ -926,15 +980,16 @@ func (s *Server) handleCreateEnvVar(w http.ResponseWriter, r *http.Request) {
 	// M4: a restricted manager may not create a variable outside their grants, NOR in
 	// the global scope (a global var injects into every scope — same rationale as
 	// secrets). 403 (not 404): the actor supplied the scope, so there is nothing to leak.
-	if !auth.ScopeWritable(id, scopeStrOf(inp.Scope)) {
-		s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot create an env var in a scope outside your access")
-		return
-	}
 	// RF-Q2(a): same creation rule as secrets — the new variable is born owned by
 	// at least one of the restricted creator's agencies (RB-Q14 otherwise makes it
 	// unrestricted-only the moment it exists), inherited per RA-9 when unambiguous.
 	agencyIDs, ok := s.requireCreationAgencies(w, r, id, auth.PermManageEnvVars, inp.AgencyIDs, "variable")
 	if !ok {
+		return
+	}
+	// The scope is the new row's owner's scope of that name (I2).
+	if !auth.ScopeWritableIn(id, ownerAgencyFor(agencyIDs), scopeStrOf(inp.Scope)) {
+		s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot create an env var in a scope outside your access")
 		return
 	}
 	ev, err := settings.CreateEnvVar(r.Context(), s.db, settings.EnvVarInput{
@@ -1003,7 +1058,12 @@ func (s *Server) handleUpdateEnvVar(w http.ResponseWriter, r *http.Request) {
 	if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "env_var_agencies", "env_var_id", evID, "variable") {
 		return
 	}
-	if !auth.ScopeWritable(id, scopeStrOf(inp.Scope)) {
+	rowOwner, rerr := s.rowOwnerAgency(r.Context(), "env_vars", evID)
+	if rerr != nil {
+		httpx.Fail500(w, s.log, "db_error", rerr)
+		return
+	}
+	if !auth.ScopeWritableIn(id, rowOwner, scopeStrOf(inp.Scope)) {
 		s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot move an env var into a scope outside your access")
 		return
 	}
@@ -1073,7 +1133,26 @@ func (s *Server) handleListScopes(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.Scope{}
 	}
-	httpx.JSON(w, http.StatusOK, list)
+	id, _ := auth.IdentityFrom(r.Context())
+	rows, err := withRowFlags(list, func(sc settings.Scope) (rowFlags, error) {
+		fl, err := s.flagsByMembership(r.Context(), id, auth.PermConfigureApp, "scope_agencies", "scope_id", sc.ID)
+		if err != nil || sc.Source != "git" {
+			return fl, err
+		}
+		// A scope from Git is edited and deleted in its repository: the routes
+		// answer 409 for anything but a scope built in the app. It belongs to
+		// its repository's agency and is not repaired into another (GR-18,
+		// scope_agency_fixed; Global's repository's too since 2.4.3, question
+		// 58: another agency gets its hosts by a clone). The flags say what the
+		// routes answer (2.4.2, question 55).
+		fl.CanEdit, fl.CanDelete, fl.CanRepair = false, false, false
+		return fl, nil
+	})
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rows)
 }
 
 func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
@@ -1096,6 +1175,9 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
+	// Trimmed, as sync's names are (2.4.2: " web" and "web" were two scopes,
+	// and a job naming "web" did not find the first).
+	inp.Scope = strings.TrimSpace(inp.Scope)
 	if inp.Scope == "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "scope name is required")
 		return
@@ -1108,8 +1190,16 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	target := agencyid.Global
+	if len(agencyIDs) == 1 {
+		target = agencyIDs[0]
+	}
+	// Created in its agency (I2: a scope's name is unique there), so a name
+	// another agency uses is no obstacle and one this agency uses is refused by
+	// the key (409 conflict, below).
 	sc, err := settings.CreateScope(r.Context(), s.db, settings.LocalScopeInput{
 		Scope: inp.Scope, Description: inp.Description, Hosts: inp.Hosts, RawInventory: inp.RawInventory,
+		OwnerAgency: target,
 	}, id.Email)
 	if err != nil {
 		if validationErr, ok := errors.AsType[settings.InventoryValidationError](err); ok {
@@ -1133,6 +1223,10 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 			// An unplaced scope is exactly the row this gate exists to prevent, so
 			// take it back rather than leave it for a global administrator to find.
 			_, _ = settings.DeleteScope(r.Context(), s.db, sc.ID, id.Email)
+			if errors.Is(err, settings.ErrScopeNameTaken) {
+				httpx.Fail(w, http.StatusConflict, "conflict", "scope name already exists")
+				return
+			}
 			httpx.Fail500(w, s.log, "create_failed", err)
 			return
 		}
@@ -1272,6 +1366,10 @@ func (s *Server) handleUpdateScope(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
+	// A rename takes a name in the scope's own agency only (I2): another
+	// agency's jobs that name it find their own agency's scope, so there is
+	// nothing of theirs to take (until then 409 scope_name_in_use, present
+	// defect 51). A name the agency already uses is refused by the key.
 	sc, broken, err := settings.UpdateScope(r.Context(), s.db, sid, settings.LocalScopeInput{
 		Scope: inp.Scope, Description: inp.Description, Hosts: inp.Hosts, RawInventory: inp.RawInventory,
 	}, id.Email)
@@ -1486,7 +1584,13 @@ func (s *Server) handleListSshHosts(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.SshHost{}
 	}
-	httpx.JSON(w, http.StatusOK, list)
+	id, _ := auth.IdentityFrom(r.Context())
+	rows, err := withRowFlags(list, func(h settings.SshHost) (rowFlags, error) { return s.hostRecordFlags(r.Context(), id, h.ID) })
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rows)
 }
 
 func (s *Server) handleCreateSshHost(w http.ResponseWriter, r *http.Request) {
@@ -1495,7 +1599,7 @@ func (s *Server) handleCreateSshHost(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 		return
 	}
-	inp, err := decodeSshHostInput(r)
+	inp, _, err := decodeSshHostInput(r)
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
@@ -1526,12 +1630,13 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hid := r.PathValue("hostId")
-	inp, err := decodeSshHostInput(r)
+	inp, rep, err := decodeSshHostInput(r)
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
-	if !s.requireHostWriteAllowed(w, r, id, hid, inp) {
+	repaired, ok := s.requireHostWriteAllowed(w, r, id, hid, inp, rep)
+	if !ok {
 		return
 	}
 	h, err := settings.UpdateSshHost(r.Context(), s.db, hid, *inp, id.Email)
@@ -1543,6 +1648,9 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "host not found")
 		return
 	}
+	if repaired {
+		s.auditRepair(r.Context(), id.Email, "host record "+hid, "owner set to "+inp.OwnerAgency, rep)
+	}
 	httpx.JSON(w, http.StatusOK, h)
 }
 
@@ -1550,9 +1658,11 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 // requireHostOwner has established that the caller administers the record as it
 // stands. Two things remain (LR-69, LR-72):
 //
-//   - Giving a hand-written record to ANOTHER agency needs the permission there
-//     too, like every move. An imported record's owner is its scope's and cannot
-//     be set here.
+//   - Giving a hand-written record to ANOTHER agency is a repair (2.4.0 Phase
+//     I4; IN-7; question 42): a global administrator's, with a reason; until
+//     then an administrator of both agencies could. It reports whether the
+//     write is one, for the handler's audit row. An imported record's owner is
+//     its scope's and cannot be set here.
 //   - The SSH key the record names must be one its owner may use: the owner's
 //     own, or Global's. Credential ids are listed to every session, so without
 //     this an administrator could point their host at another agency's key.
@@ -1563,7 +1673,7 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 // The key a host names by NAME, in its scope's inventory, cannot be judged here
 // — a name resolves at connect time — so the control that closes the hole is the
 // same check made when the key is loaded (sshexec.keyGuard).
-func (s *Server) requireHostWriteAllowed(w http.ResponseWriter, r *http.Request, id auth.Identity, hostID string, inp *settings.SshHostInput) bool {
+func (s *Server) requireHostWriteAllowed(w http.ResponseWriter, r *http.Request, id auth.Identity, hostID string, inp *settings.SshHostInput, rep repairInput) (repaired, ok bool) {
 	// Read only what the decision needs: the record's scope, owner and key.
 	var cur struct {
 		ScopeID, AuthCredentialID *string
@@ -1573,11 +1683,11 @@ func (s *Server) requireHostWriteAllowed(w http.ResponseWriter, r *http.Request,
 		`SELECT scope_id, owner_agency, auth_credential_id FROM ssh_hosts WHERE id = ?`, hostID).
 		Scan(&cur.ScopeID, &cur.OwnerAgency, &cur.AuthCredentialID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return true // the handler's 404
+		return false, true // the handler's 404
 	}
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
-		return false
+		return false, false
 	}
 	if cur.ScopeID != nil && *cur.ScopeID == "" {
 		cur.ScopeID = nil
@@ -1587,18 +1697,16 @@ func (s *Server) requireHostWriteAllowed(w http.ResponseWriter, r *http.Request,
 		inp.OwnerAgency = "" // the scope decides
 	} else if inp.OwnerAgency != "" && inp.OwnerAgency != cur.OwnerAgency {
 		if !s.requireKnownAgency(w, r, inp.OwnerAgency) {
-			return false
+			return false, false
 		}
-		if !id.CanAgency(auth.PermConfigureApp, inp.OwnerAgency) {
-			s.denyEntityAgency(w, r, id, auth.PermConfigureApp, inp.OwnerAgency,
-				"you do not have configureApp on agency "+inp.OwnerAgency+", so you cannot give this host record to it")
-			return false
+		if !s.requireRepair(w, r, id, rep, "this host record") {
+			return false, false
 		}
 		owner, ownerChanged = inp.OwnerAgency, true
 	}
 	keyChanged := derefStr(inp.AuthCredentialID) != derefStr(cur.AuthCredentialID)
 	if !keyChanged && !ownerChanged {
-		return true
+		return false, true
 	}
 	// An imported record of a scope in several agencies (the state from before
 	// 2.3.0) may use a key of any of them, as its runs may.
@@ -1606,10 +1714,10 @@ func (s *Server) requireHostWriteAllowed(w http.ResponseWriter, r *http.Request,
 	if cur.ScopeID != nil {
 		if owners, err = s.scopeAgencyIDs(r.Context(), *cur.ScopeID); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
-			return false
+			return false, false
 		}
 	}
-	return s.requireKeyUsableBy(w, r, inp.AuthCredentialID, owners, "host record")
+	return ownerChanged, s.requireKeyUsableBy(w, r, inp.AuthCredentialID, owners, "host record")
 }
 
 func derefStr(p *string) string {
@@ -1695,7 +1803,7 @@ func (s *Server) requireKeyUsableBy(w http.ResponseWriter, r *http.Request, cred
 	}
 	if !usable {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_credential",
-			"no SSH key with that id is usable by this "+label+"'s agency — choose a key of its own agency, or one that is Global's")
+			"no SSH key with that id is usable by this "+label+"'s agency — choose a key of its own agency")
 		return false
 	}
 	return true
@@ -1721,7 +1829,9 @@ func (s *Server) handleDeleteSshHost(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func decodeSshHostInput(r *http.Request) (*settings.SshHostInput, error) {
+// decodeSshHostInput also returns the repair fields (I4): an update that
+// gives the record another owner is a repair.
+func decodeSshHostInput(r *http.Request) (*settings.SshHostInput, repairInput, error) {
 	var body struct {
 		Hostname         string  `json:"hostname"`
 		Address          *string `json:"address"`
@@ -1732,16 +1842,17 @@ func decodeSshHostInput(r *http.Request) (*settings.SshHostInput, error) {
 		AuthCredentialID *string `json:"authCredentialId"`
 		User             *string `json:"user"`
 		OwnerAgency      string  `json:"ownerAgency"`
+		repairInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		return nil, err
+		return nil, repairInput{}, err
 	}
 	return &settings.SshHostInput{
 		OwnerAgency: strings.TrimSpace(body.OwnerAgency),
 		Hostname:    body.Hostname, Address: body.Address, Port: body.Port,
 		OS: body.OS, Via: body.Via, AuthKeyEnvVar: body.AuthKeyEnvVar,
 		AuthCredentialID: body.AuthCredentialID, User: body.User,
-	}, nil
+	}, body.repairInput, nil
 }
 
 // handleTestSshHost runs a synchronous SSH connection test against a host,
@@ -1813,7 +1924,13 @@ func (s *Server) handleListBastions(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.SshBastion{}
 	}
-	httpx.JSON(w, http.StatusOK, list)
+	id, _ := auth.IdentityFrom(r.Context())
+	rows, err := withRowFlags(list, func(b settings.SshBastion) (rowFlags, error) { return s.bastionFlags(r.Context(), id, b.ID) })
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rows)
 }
 
 func (s *Server) handleCreateBastion(w http.ResponseWriter, r *http.Request) {
@@ -1822,7 +1939,7 @@ func (s *Server) handleCreateBastion(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 		return
 	}
-	inp, err := decodeBastionInput(r)
+	inp, _, err := decodeBastionInput(r)
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
@@ -1850,14 +1967,14 @@ func (s *Server) handleUpdateBastion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bid := r.PathValue("bastionId")
-	inp, err := decodeBastionInput(r)
+	inp, rep, err := decodeBastionInput(r)
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
 	// requireBastionOwner let the caller in on the bastion as it stands. Giving
-	// it to another agency needs the permission there too, and its key must be
-	// one its (new) owner may use — checked when either changes (LR-72).
+	// it to another agency is a repair (I4; IN-7; question 42), and its key must
+	// be one its (new) owner may use — checked when either changes (LR-72).
 	var cur struct {
 		OwnerAgency      string
 		AuthCredentialID *string
@@ -1868,18 +1985,17 @@ func (s *Server) handleUpdateBastion(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", gerr)
 		return
 	}
+	repaired := false
 	if gerr == nil {
 		owner, ownerChanged := cur.OwnerAgency, false
 		if inp.OwnerAgency != "" && inp.OwnerAgency != cur.OwnerAgency {
 			if !s.requireKnownAgency(w, r, inp.OwnerAgency) {
 				return
 			}
-			if !id.CanAgency(auth.PermConfigureApp, inp.OwnerAgency) {
-				s.denyEntityAgency(w, r, id, auth.PermConfigureApp, inp.OwnerAgency,
-					"you do not have configureApp on agency "+inp.OwnerAgency+", so you cannot give this bastion to it")
+			if !s.requireRepair(w, r, id, rep, "this bastion") {
 				return
 			}
-			owner, ownerChanged = inp.OwnerAgency, true
+			owner, ownerChanged, repaired = inp.OwnerAgency, true, true
 		}
 		if ownerChanged || derefStr(inp.AuthCredentialID) != derefStr(cur.AuthCredentialID) {
 			if !s.requireKeyUsableBy(w, r, inp.AuthCredentialID, []string{owner}, "bastion") {
@@ -1895,6 +2011,9 @@ func (s *Server) handleUpdateBastion(w http.ResponseWriter, r *http.Request) {
 	if b == nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "bastion not found")
 		return
+	}
+	if repaired {
+		s.auditRepair(r.Context(), id.Email, "bastion "+bid, "owner set to "+inp.OwnerAgency, rep)
 	}
 	httpx.JSON(w, http.StatusOK, b)
 }
@@ -1919,7 +2038,9 @@ func (s *Server) handleDeleteBastion(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func decodeBastionInput(r *http.Request) (*settings.SshBastionInput, error) {
+// decodeBastionInput also returns the repair fields (I4): an update that
+// gives the bastion another owner is a repair.
+func decodeBastionInput(r *http.Request) (*settings.SshBastionInput, repairInput, error) {
 	var body struct {
 		Name             string  `json:"name"`
 		Address          string  `json:"address"`
@@ -1929,16 +2050,17 @@ func decodeBastionInput(r *http.Request) (*settings.SshBastionInput, error) {
 		AuthCredentialID *string `json:"authCredentialId"`
 		Zone             *string `json:"zone"`
 		OwnerAgency      string  `json:"ownerAgency"`
+		repairInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		return nil, err
+		return nil, repairInput{}, err
 	}
 	return &settings.SshBastionInput{
 		OwnerAgency: strings.TrimSpace(body.OwnerAgency),
 		Name:        body.Name, Address: body.Address, Port: body.Port,
 		Username: body.Username, AuthKeyEnvVar: body.AuthKeyEnvVar,
 		AuthCredentialID: body.AuthCredentialID, Zone: body.Zone,
-	}, nil
+	}, body.repairInput, nil
 }
 
 // decodeCredentialInput parses an SSH key credential create/update body. material
@@ -2322,7 +2444,9 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetGitlabSettings(w http.ResponseWriter, r *http.Request) {
-	cfg, err := settings.GetGitlabConfig(r.Context(), s.db, s.cfg)
+	// The /settings/gitlab routes mean Global's repository (GR-9; an agency's
+	// own repository gets routes of its own in Phase R6).
+	cfg, err := settings.GetGitlabConfig(r.Context(), s.db, s.cfg, repoid.Global)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -2341,13 +2465,26 @@ func (s *Server) handleUpdateGitlabSettings(w http.ResponseWriter, r *http.Reque
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
-	cfg, err := settings.UpdateGitlabConfig(r.Context(), s.db, s.cfg, inp, id.Email)
+	// Tested before it is written, as PUT /agencies/global/git-repo is (IN-2;
+	// from the review of I3: this route, the one the Integrations screen
+	// uses for Global, was not).
+	if !s.requirePushableConnection(w, r, repoid.Global, true, inp) {
+		return
+	}
+	cfg, err := settings.UpdateGitlabConfig(r.Context(), s.db, s.cfg, repoid.Global, inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "update_failed", err)
 		return
 	}
-	// The sync service resolves repo URL/PAT once at startup (E.5).
-	s.log.Warn("gitlab settings updated — repo URL/PAT changes take effect on restart", "actor", id.Email)
+	// The connection has been written: the repository's sync service is built
+	// again from it, and syncs (GR-11). Until 2.4.0 the service resolved the URL
+	// and the token once, at start-up, and this handler logged that the change
+	// would take effect at the next restart.
+	if s.git != nil {
+		if err := s.git.Restart(r.Context(), repoid.Global); err != nil {
+			s.log.Error("gitlab settings saved, but the sync service could not be restarted with them", "actor", id.Email, "error", err)
+		}
+	}
 	httpx.JSON(w, http.StatusOK, cfg)
 }
 
@@ -2357,7 +2494,13 @@ func (s *Server) handleRotateGitlabWebhookSecret(w http.ResponseWriter, r *http.
 		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 		return
 	}
+	s.rotateWebhookSecret(w, r, repoid.Global, id.Email)
+}
 
+// rotateWebhookSecret rotates one repository's webhook secret and answers with
+// the new one. The caller has decided who may (a global administrator for
+// Global's; configureApp on the agency for an agency's, GR-9).
+func (s *Server) rotateWebhookSecret(w http.ResponseWriter, r *http.Request, repoID, actor string) {
 	var inp struct {
 		UpdateGitlab   *bool `json:"updateGitlab"`
 		OverlapMinutes *int  `json:"overlapMinutes"`
@@ -2384,11 +2527,15 @@ func (s *Server) handleRotateGitlabWebhookSecret(w http.ResponseWriter, r *http.
 		}
 	}
 
-	secret, gitlabUpdated, overlapUntil, err := settings.RotateWebhookSecret(r.Context(), s.db, s.cfg, updateGitlab, overlapMinutes, id.Email)
+	secret, gitlabUpdated, overlapUntil, err := settings.RotateWebhookSecret(r.Context(), s.db, s.cfg, repoID, updateGitlab, overlapMinutes, actor)
 	if err != nil {
 		switch {
 		case errors.Is(err, settings.ErrWebhookSecretEnvPinned):
 			httpx.Fail(w, http.StatusConflict, "env_pinned", err.Error())
+		case errors.Is(err, settings.ErrRepoNotFound):
+			httpx.Fail(w, http.StatusNotFound, "not_connected", "this agency has no repository connected")
+		case errors.Is(err, settings.ErrRepoURLNotAllowed):
+			httpx.Fail(w, http.StatusUnprocessableEntity, "repo_url_not_allowed", err.Error())
 		case errors.Is(err, settings.ErrRotateNotConfigured):
 			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
 		case errors.Is(err, settings.ErrGitlabUnreachable):

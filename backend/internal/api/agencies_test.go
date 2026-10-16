@@ -22,6 +22,12 @@ func TestAgenciesAPI(t *testing.T) {
 		`INSERT INTO scopes(id, name, source, created_at) VALUES('s1','prod','cronomicon','t')`); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}
+	// An agency is created with its repository (I3): its host is listed.
+	if _, err := pool.ExecContext(ctx, `INSERT INTO settings (key, value, last_modified_by, last_modified_at)
+	                                    VALUES ('gitAllowedHosts', '["git.example.com"]', 't', 't')`); err != nil {
+		t.Fatalf("seed allowed hosts: %v", err)
+	}
+	repo := map[string]any{"repoUrl": "https://git.example.com/alpha.git", "pat": "glpat-alpha-1234"}
 
 	do := func(method, path string, body any, withCSRF bool) *http.Response {
 		t.Helper()
@@ -52,7 +58,7 @@ func TestAgenciesAPI(t *testing.T) {
 	}
 
 	// ── Create ───────────────────────────────────────────────────────────────────
-	resp = do(http.MethodPost, "/api/v1/agencies", map[string]any{"name": "alpha", "description": "tenant A"}, true)
+	resp = do(http.MethodPost, "/api/v1/agencies", map[string]any{"name": "alpha", "description": "tenant A", "repository": repo}, true)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create = %d, want 201", resp.StatusCode)
 	}
@@ -67,7 +73,7 @@ func TestAgenciesAPI(t *testing.T) {
 	}
 
 	// ── Duplicate name → 409 ──────────────────────────────────────────────────────
-	resp = do(http.MethodPost, "/api/v1/agencies", map[string]any{"name": "alpha"}, true)
+	resp = do(http.MethodPost, "/api/v1/agencies", map[string]any{"name": "alpha", "repository": repo}, true)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("duplicate create = %d, want 409", resp.StatusCode)
@@ -110,7 +116,7 @@ func TestAgenciesAPI(t *testing.T) {
 	}
 
 	// ── Bind scope to the real agency → 200, surfaced on the scope ────────────────
-	resp = do(http.MethodPut, "/api/v1/scopes/s1/agency", map[string]any{"agencyId": created.ID}, true)
+	resp = do(http.MethodPut, "/api/v1/scopes/s1/agency", repairOf(map[string]any{"agencyId": created.ID}), true)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("bind = %d, want 200", resp.StatusCode)
 	}
@@ -141,7 +147,7 @@ func TestAgenciesAPI(t *testing.T) {
 	}
 
 	// ── Clear the binding → 200, agency null ──────────────────────────────────────
-	resp = do(http.MethodPut, "/api/v1/scopes/s1/agency", map[string]any{"agencyId": nil}, true)
+	resp = do(http.MethodPut, "/api/v1/scopes/s1/agency", repairOf(map[string]any{"agencyId": nil}), true)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("clear = %d, want 200", resp.StatusCode)
 	}

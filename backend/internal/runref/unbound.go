@@ -103,14 +103,21 @@ func UnboundRunBlocked(ctx context.Context, database *sql.DB, owners []Owner, sc
 // Pass it whenever the caller holds it — every one does, from a fetched job row
 // or from runs.job_uid — so the probe reads the same bindings dispatch will.
 // Empty is legal and means the legacy name-keyed set (see Owner.UID).
-func RunOwners(jobSource, jobName, jobUID, scriptRef string) []Owner {
+//
+// scriptUID identifies the script (jobs.script_uid, or the snapshot a run took
+// of it in runs.script_uid); scriptRef is the name its author wrote, kept on the
+// owner for messages. The script is an owner only when the uid is known: a job
+// whose script was pruned has a name and no script, and so no script bindings
+// (they went with the script). A name without a uid is never looked up, because
+// more than one repository may hold a script of that name (GR-5).
+func RunOwners(jobSource, jobName, jobUID, scriptRef, scriptUID string) []Owner {
 	js := jobSource
 	if js == "" {
 		js = "git"
 	}
 	owners := []Owner{{Kind: "job", Source: js, Name: jobName, UID: jobUID}}
-	if scriptRef != "" {
-		owners = append(owners, Owner{Kind: "script", Name: scriptRef})
+	if scriptUID != "" {
+		owners = append(owners, Owner{Kind: "script", Name: scriptRef, UID: scriptUID})
 	}
 	return owners
 }

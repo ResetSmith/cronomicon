@@ -32,9 +32,7 @@ func LocalRunnerMissingKeys(ctx context.Context, database *sql.DB) ([]notices.Fi
 		return nil, err
 	}
 	rows, err := database.QueryContext(ctx, `
-		SELECT sc.id, sc.name,
-		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                   FROM scope_agencies sa WHERE sa.scope_id = sc.id), ?)
+		SELECT sc.id, sc.name, COALESCE(NULLIF(sc.owner_agency, ''), ?) -- its owner (1410)
 		  FROM scopes sc
 		 WHERE EXISTS (SELECT 1 FROM scope_agencies sa JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
 		                WHERE sa.scope_id = sc.id AND ra.runner_id = ?)
@@ -67,7 +65,7 @@ func LocalRunnerMissingKeys(ctx context.Context, database *sql.DB) ([]notices.Fi
 	}
 	var found []notices.Finding
 	for _, s := range scopes {
-		plan, err := PlanScopeFor(ctx, database, s.name, true)
+		plan, err := PlanScopeFor(ctx, database, s.agency, s.name, true)
 		if err != nil {
 			return nil, err
 		}

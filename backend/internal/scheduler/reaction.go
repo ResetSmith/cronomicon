@@ -254,6 +254,44 @@ func (s *Scheduler) collectEvents(ctx context.Context, since time.Time) []srcEve
 	return out
 }
 
+// reactionHomeSQL is the repository a reaction's names are looked up in
+// (GR-16), as an expression over the row `reactions`: the repository of a Git
+// owner (Global's for a row with none); for an owner built in the app, the
+// repository of its agency (its owner: a job's since 1400, a workflow's since
+// 1360). NULL for an agency that has no repository, whose reactions find no
+// Git name (§0a, IN-8: until then Global's stood in for it).
+const reactionHomeSQL = `(
+	CASE WHEN reactions.owner_source = 'git' THEN
+	          CASE reactions.owner_kind
+	            WHEN 'job' THEN (SELECT COALESCE(repo_id, 'global') FROM jobs      WHERE uid = reactions.owner_uid)
+	            ELSE            (SELECT COALESCE(repo_id, 'global') FROM workflows WHERE uid = reactions.owner_uid)
+	          END
+	     ELSE (SELECT g.id FROM git_repos g WHERE g.agency_id = COALESCE(
+	          CASE reactions.owner_kind
+	            WHEN 'job' THEN (SELECT owner_agency FROM jobs      WHERE uid = reactions.owner_uid)
+	            ELSE            (SELECT owner_agency FROM workflows WHERE uid = reactions.owner_uid)
+	          END, 'global'))
+	END)`
+
+// reactionUpstreamByNameSQL is the uid of the Git definition a reaction's
+// upstream NAME means: the live one of that name in the reaction's home, else
+// NULL (§0a, IN-8; from GR-16 until then, Global's repository's next).
+const reactionUpstreamByNameSQL = ReactionUpstreamByNameSQL
+
+// ReactionUpstreamByNameSQL is exported for the one other place that must
+// answer the same question the same way: whoever WRITES a reaction and stamps
+// its upstream's identity (api, reactions written in the app). A writer that
+// pinned a different definition than the engine would find by the name would
+// be the engine's rule defeated at the door.
+const ReactionUpstreamByNameSQL = `(CASE reactions.on_kind
+	WHEN 'job' THEN
+	    (SELECT uid FROM jobs WHERE source = 'git' AND name = reactions.on_name AND deleted_at IS NULL
+	        AND COALESCE(repo_id, 'global') = ` + reactionHomeSQL + `)
+	ELSE
+	    (SELECT uid FROM workflows WHERE source = 'git' AND name = reactions.on_name AND deleted_at IS NULL
+	        AND COALESCE(repo_id, 'global') = ` + reactionHomeSQL + `)
+	END)`
+
 // deliverEvent matches one event against every reaction watching it, and
 // decides each independently.
 func (s *Scheduler) deliverEvent(ctx context.Context, ev srcEvent, now time.Time) {
@@ -281,23 +319,45 @@ func (s *Scheduler) deliverEvent(ctx context.Context, ev srcEvent, now time.Time
 		   --      name says nothing, so nothing fires until the reaction is
 		   --      re-saved against the one it means. The first half is what
 		   --      lets a job that was purged and recreated keep its reactions.
+		   --
+		   -- GR-16 (2.4.0): for a GIT upstream the name is not "the one live
+		   -- definition that carries it, wherever it is". Two repositories may
+		   -- each hold a "nightly", and a reaction in one agency's repository
+		   -- must not fire on another agency's. The name resolves where every
+		   -- other reference of the reaction's owner does: in the owner's own
+		   -- repository (until §0a, then in Global's). So by name a reaction
+		   -- fires on THAT definition's runs and on no other's, however many
+		   -- repositories hold the name, and on nobody's when it does not. (A
+		   -- run from before a run recorded its definition keeps the older
+		   -- rule: there is nothing to compare.)
+		   --
+		   -- Only once a repository other than Global's is connected. With one
+		   -- repository the older rule cannot reach another agency's job, and
+		   -- it does one thing this rule does not: it fires on the run of a
+		   -- job that has since been pruned, or pruned and recreated, whose
+		   -- definition the run's identity no longer names. An installation
+		   -- with one repository keeps exactly what it had.
 		   AND (
 		         (COALESCE(on_uid,'') <> '' AND ? <> '' AND on_uid = ?)
 		      OR (
 		            (COALESCE(on_uid,'') = '' OR ? = ''
 		              OR (NOT EXISTS (SELECT 1 FROM jobs      WHERE uid = reactions.on_uid)
 		              AND NOT EXISTS (SELECT 1 FROM workflows WHERE uid = reactions.on_uid)))
-		        AND CASE on_kind
-		              WHEN 'job' THEN (SELECT COUNT(*) FROM jobs
-		                                WHERE source = reactions.on_source AND name = reactions.on_name
-		                                  AND deleted_at IS NULL)
-		              ELSE            (SELECT COUNT(*) FROM workflows
-		                                WHERE source = reactions.on_source AND name = reactions.on_name
-		                                  AND deleted_at IS NULL)
-		            END <= 1
+		        AND CASE
+		              WHEN reactions.on_source = 'git' AND ? <> ''
+		                   AND EXISTS (SELECT 1 FROM git_repos WHERE id <> 'global') THEN `+reactionUpstreamByNameSQL+` = ?
+		              ELSE CASE on_kind
+		                     WHEN 'job' THEN (SELECT COUNT(*) FROM jobs
+		                                       WHERE source = reactions.on_source AND name = reactions.on_name
+		                                         AND deleted_at IS NULL)
+		                     ELSE            (SELECT COUNT(*) FROM workflows
+		                                       WHERE source = reactions.on_source AND name = reactions.on_name
+		                                         AND deleted_at IS NULL)
+		                   END <= 1
+		            END
 		         )
 		       )`,
-		ev.kind, ev.source, ev.name, ev.uid, ev.uid, ev.uid)
+		ev.kind, ev.source, ev.name, ev.uid, ev.uid, ev.uid, ev.uid, ev.uid)
 	if err != nil {
 		s.log.Error("reactor: match reactions", "kind", ev.kind, "name", ev.name, "err", err)
 		return
@@ -419,21 +479,31 @@ func (s *Scheduler) reactionVerdict(ctx context.Context, ev srcEvent, r reaction
 	if !r.enabled {
 		return "suppressed_disabled", "the reaction is disabled"
 	}
+	// §0a (IN-8): a reaction watches its own agency's definitions. One that
+	// watches another agency's (written before §0a, or left by a scope given
+	// to another agency) does not fire, and says why (open point 1). Recorded
+	// as an error: the result's list is a table constraint, and this is not a
+	// switch anybody turned.
+	if other, err := s.reactionCrossesAgencies(ctx, ev, r); err != nil {
+		s.log.Error("reactor: compare the reaction's agency with its upstream's", "reaction", r.name, "err", err)
+	} else if other {
+		return "error", ReasonReactionOtherAgency
+	}
 	if now.Sub(ev.completedAt) > reactionMissGrace {
 		return "expired", fmt.Sprintf("upstream finished %s ago, past the %s catch-up grace",
 			now.Sub(ev.completedAt).Truncate(time.Minute), reactionMissGrace)
 	}
-	if enabled, known := s.definitionEnabled(ctx, r.ownerSource, r.ownerKind, r.ownerName); known && !enabled {
+	if enabled, known := s.definitionEnabled(ctx, r.ownerSource, r.ownerKind, r.ownerName, r.ownerUID); known && !enabled {
 		// jobs.enabled / workflows.enabled is a separate lever from paused_jobs,
 		// and a disabled definition must no more react than a paused one.
 		return "suppressed_disabled", "the reacting definition is disabled"
 	}
-	if s.isPaused(ctx, r.ownerSource, r.ownerKind, r.ownerName) {
+	if s.isPaused(ctx, r.ownerSource, r.ownerKind, r.ownerName, r.ownerUID) {
 		// promoteOne does NOT check this, so the reactor must. A paused
 		// definition not reacting is not arguable.
 		return "suppressed_paused", "the reacting definition is paused"
 	}
-	if v, day, ok := s.globalCalendarVerdict(ctx); ok && v.Suppressed {
+	if v, day, ok := s.globalCalendarVerdict(ctx, definitionAgency(ctx, s.db, r.ownerUID, r.ownerKind)); ok && v.Suppressed {
 		// RX-20 — GLOBAL tier only. A fleet-wide freeze must stop a cascade: a
 		// chain that runs THROUGH a freeze day is worse than a schedule that
 		// does, because nobody authored it to happen today. Entry-level bindings
@@ -468,6 +538,64 @@ func (s *Scheduler) reactionVerdict(ctx context.Context, ev srcEvent, r reaction
 	return "fired", ""
 }
 
+// ReasonReactionOtherAgency is a delivery's detail when the reaction watches
+// another agency's definition.
+const ReasonReactionOtherAgency = "Refused: this reaction watches another agency's definition: a reaction watches its own agency's definitions only"
+
+// reactionCrossesAgencies reports whether a reaction's owner and the
+// definition whose run it was matched to are two agencies' definitions.
+//
+// Each side is told by its identity, else (an owner or a run from before
+// identities, or a definition since removed) by its name, when one definition
+// holds it (2.4.2, present defect 60: a side with no identity was not told at
+// all, so a reaction with no owner identity fired across agencies). A side
+// that cannot be told either way leaves nothing to compare, and the reaction
+// is matched as before: refusing it would stop reactions of an installation
+// with one repository whose rows say no agency, which 2.4.0 keeps as they were.
+func (s *Scheduler) reactionCrossesAgencies(ctx context.Context, ev srcEvent, r reactionRow) (bool, error) {
+	owner, ok, err := s.agencyOfDefinition(ctx, r.ownerUID, r.ownerKind, r.ownerSource, r.ownerName)
+	if err != nil || !ok {
+		return false, err
+	}
+	upstream, ok, err := s.agencyOfDefinition(ctx, ev.uid, ev.kind, ev.source, ev.name)
+	if err != nil || !ok {
+		return false, err
+	}
+	return owner != upstream, nil
+}
+
+// agencyOfDefinition is whose a definition is: by its uid, else by its name
+// when one definition of the kind and source holds it (binned ones too: a
+// binned definition is still its agency's). ok is false when it cannot be told.
+func (s *Scheduler) agencyOfDefinition(ctx context.Context, uid, kind, source, name string) (agency string, ok bool, err error) {
+	var a sql.NullString
+	if uid != "" {
+		if err := s.db.QueryRowContext(ctx, `SELECT `+runref.DefinitionAgencySQL, uid, kind).Scan(&a); err != nil {
+			return "", false, err
+		}
+		if a.Valid {
+			return a.String, true, nil
+		}
+	}
+	table := "jobs"
+	if kind == "workflow" {
+		table = "workflows"
+	}
+	var byName sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM `+table+` WHERE source = ? AND name = ?`,
+		source, name).Scan(&byName); err != nil {
+		return "", false, err
+	}
+	if !byName.Valid || byName.String == "" {
+		return "", false, nil
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT `+runref.DefinitionAgencySQL, byName.String, kind).Scan(&a); err != nil {
+		return "", false, err
+	}
+	return a.String, a.Valid, nil
+}
+
 // fireReaction resolves a decided reaction into a pending_runs row.
 func (s *Scheduler) fireReaction(ctx context.Context, ev srcEvent, r reactionRow, now time.Time) (string, error) {
 	stamp := reactionEnvStamp(ev)
@@ -478,6 +606,7 @@ func (s *Scheduler) fireReaction(ctx context.Context, ev srcEvent, r reactionRow
 		Kind:      r.ownerKind,
 		Name:      r.ownerName,
 		Source:    r.ownerSource,
+		OwnerUID:  r.ownerUID,
 		RunAt:     runAt.Format(time.RFC3339),
 		OriginRef: ev.runID,
 		Depth:     ev.depth + 1,
@@ -507,10 +636,15 @@ func (s *Scheduler) fireReaction(ctx context.Context, ev srcEvent, r reactionRow
 		// delivery naming the workflow, instead of a pending row that survives
 		// until promotion and is marked missed there with the trail one step
 		// further from the cause.
+		//
+		// The reaction's own workflow, by uid when the reaction row has one: a
+		// name may be another agency's workflow too (present defect 34).
 		var one int
-		if err := s.db.QueryRowContext(ctx,
-			`SELECT 1 FROM workflows WHERE source = ? AND name = ? AND deleted_at IS NULL`,
-			r.ownerSource, r.ownerName).Scan(&one); err != nil {
+		q, args := `SELECT 1 FROM workflows WHERE source = ? AND name = ? AND deleted_at IS NULL`, []any{r.ownerSource, r.ownerName}
+		if r.ownerUID != "" {
+			q, args = `SELECT 1 FROM workflows WHERE uid = ? AND deleted_at IS NULL`, []any{r.ownerUID}
+		}
+		if err := s.db.QueryRowContext(ctx, q, args...).Scan(&one); err != nil {
 			return "", fmt.Errorf("resolve reacting workflow %q: %w", r.ownerName, err)
 		}
 	}
@@ -553,16 +687,16 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 		runType, scope, policy, concKey sql.NullString
 		jobEnv, targetHost              sql.NullString
 		sshUser, sshCred                sql.NullString
-		scriptRef                       sql.NullString
+		scriptRef, scriptUID            sql.NullString
 		jobUID                          sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT run_type, scope, concurrency_policy, concurrency_key,
-		       env_json, target_host, ssh_user, ssh_credential, script_ref, uid
+		       env_json, target_host, ssh_user, ssh_credential, script_ref, script_uid, uid
 		  FROM jobs
 		 WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END
 		   AND deleted_at IS NULL`, ownerUID, ownerUID, jobName, source).
-		Scan(&runType, &scope, &policy, &concKey, &jobEnv, &targetHost, &sshUser, &sshCred, &scriptRef, &jobUID)
+		Scan(&runType, &scope, &policy, &concKey, &jobEnv, &targetHost, &sshUser, &sshCred, &scriptRef, &scriptUID, &jobUID)
 	if err != nil {
 		// Includes ErrNoRows: a reaction whose owner was deleted or renamed. The
 		// delivery stays recorded; there is simply nothing to fire.
@@ -592,10 +726,10 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 	// the policy silently becomes Allow on this one path.
 	effectiveConcKey := ""
 	if cronutil.HoldsGate(policy.String) {
-		effectiveConcKey = cronutil.ConcurrencyKey(concKey.String, jobUID.String, source, jobName)
+		effectiveConcKey = cronutil.ConcurrencyKey(concKey.String, keyAgency(ctx, s.db, concKey.String, jobUID.String, source, jobName), jobUID.String, source, jobName)
 	}
 
-	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, scope.String)
+	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, jobAgencyFor(ctx, s.db, jobUID.String, source, jobName), scope.String)
 	if aerr != nil {
 		// The delivery records the error; nothing is enqueued on a guessed agency set.
 		return nil, fmt.Errorf("read the agencies of scope %q: %w", scope.String, aerr)
@@ -607,7 +741,7 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 	// enqueued. Unlike fire() this does not record a skipped run: the delivery
 	// row already carries the trail, and inventing a run to say "this did not
 	// run" would double-count the event in History.
-	owners := runref.RunOwners(source, jobName, jobUID.String, scriptRef.String)
+	owners := runref.RunOwners(source, jobName, jobUID.String, scriptRef.String, scriptUID.String)
 	blocked, berr := runref.UnboundRunBlocked(ctx, s.db, owners, scope.String, scopeAgencies)
 	if berr != nil {
 		return nil, fmt.Errorf("check unbound references for %q: %w", jobName, berr)
@@ -616,15 +750,28 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 		return nil, fmt.Errorf("reacting job %q consumes department-owned credentials unbound at this scope: %s",
 			jobName, runref.UnboundRefusal(blocked))
 	}
+	// GR-15 — nor a run of an agency's repository's job on a scope that is not
+	// that agency's. The delivery row carries the refusal.
+	if stranded, serr := runref.RepoScopeMismatch(ctx, s.db, jobUID.String, source, jobName, scope.String); serr != nil {
+		return nil, fmt.Errorf("check the repository of %q against its scope: %w", jobName, serr)
+	} else if stranded {
+		return nil, fmt.Errorf("reacting job %q: %s", jobName, runref.ReasonRepoScopeMismatch)
+	}
 	// LR-47 — same posture for a key-bound shell job with no agent to deliver
 	// the key: the delivery row carries the refusal, no run row is invented.
 	executor := execspec.ExecutorRunner
-	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType.String, scope.String)
+	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType.String, jobAgencyFor(ctx, s.db, jobUID.String, source, jobName), scope.String)
 	if kerr != nil {
 		return nil, fmt.Errorf("check key bindings for %q: %w", jobName, kerr)
 	}
 	if len(keys) > 0 {
 		return nil, fmt.Errorf("reacting job %q: %s", jobName, runref.KeyBindingRefusal(keys))
+	}
+	// Present defect 44 — nor a project job with no agent that allows checkout.
+	if stuck, cerr := runref.CheckoutNeedsAgent(ctx, s.db, jobUID.String, source, jobName, scope.String); cerr != nil {
+		return nil, fmt.Errorf("check for an agent that allows checkout for %q: %w", jobName, cerr)
+	} else if stuck {
+		return nil, fmt.Errorf("reacting job %q: %s", jobName, runref.CheckoutRefusal)
 	}
 
 	stampJSON, _ := json.Marshal(stamp)
@@ -657,13 +804,20 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 // when the definition does not exist, which the caller treats as "not a reason
 // to suppress" — a missing definition fails later, at promotion, with a message
 // about the definition rather than about a flag.
-func (s *Scheduler) definitionEnabled(ctx context.Context, source, kind, name string) (enabled, known bool) {
-	q := `SELECT enabled FROM jobs WHERE source = ? AND name = ? AND deleted_at IS NULL`
+func (s *Scheduler) definitionEnabled(ctx context.Context, source, kind, name, uid string) (enabled, known bool) {
+	table := "jobs"
 	if kind == "workflow" {
-		q = `SELECT enabled FROM workflows WHERE source = ? AND name = ? AND deleted_at IS NULL`
+		table = "workflows"
+	}
+	q, args := `SELECT enabled FROM `+table+` WHERE source = ? AND name = ? AND deleted_at IS NULL`, []any{source, name}
+	if uid != "" {
+		// The reacting definition itself (2.4.0), and not whichever definition
+		// of its name was read first.
+		q, args = `SELECT enabled FROM `+table+` WHERE uid = ? AND deleted_at IS NULL`, []any{uid}
 	}
 	var n int
-	if err := s.db.QueryRowContext(ctx, q, source, name).Scan(&n); err != nil {
+	//nolint:gosec // table is one of two literals
+	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
 		return false, false
 	}
 	return n == 1, true
@@ -680,15 +834,18 @@ func (s *Scheduler) definitionEnabled(ctx context.Context, source, kind, name st
 // Failure is OPEN, matching calendarVerdict: a DB error yields "not suppressed"
 // plus a log line, because converting a transient SQLite hiccup into a silent
 // fleet-wide halt of all cascades is the worse failure.
-func (s *Scheduler) globalCalendarVerdict(ctx context.Context) (calendar.Verdict, string, bool) {
+//
+// Since §0a (2.4.0): the installation-wide freeze first, then the global
+// calendars of the reacting definition's own agency.
+func (s *Scheduler) globalCalendarVerdict(ctx context.Context, agency string) (calendar.Verdict, string, bool) {
 	loc := s.location()
 	day := calendar.DayOf(time.Now(), loc)
-	sets, err := calendar.Load(ctx, s.db, nil)
+	v, err := freezeTier(ctx, s.db, agency, nil, nil, day)
 	if err != nil {
 		s.log.Error("reactor: load calendars — reacting without calendar suppression", "err", err)
 		return calendar.Verdict{}, day, false
 	}
-	return calendar.Evaluate(sets, nil, nil, day), day, true
+	return v, day, true
 }
 
 // lastFiredAt returns when this reaction last actually fired (RX-21's anchor).

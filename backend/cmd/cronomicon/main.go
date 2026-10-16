@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -62,7 +63,7 @@ var errIdentityNotReady = errors.New("identity provider not ready")
 // tags); a release build still overrides all three via -ldflags. Kept in sync with
 // the top CHANGELOG.md entry.
 var (
-	version   = "2.3.2"
+	version   = "2.4.3"
 	commit    = "none"
 	buildDate = "unknown"
 )
@@ -204,6 +205,7 @@ func run() error {
 	// the inbox is opened. A failure here is a stale inbox, not a failed boot.
 	notices.SetRecordKeyNameCheck(sshexec.BastionKeyNameFindings)
 	notices.SetLocalRunnerHostKeysCheck(hostkeys.LocalRunnerMissingKeys)
+	notices.SetGlobalRepoFromEnvironment(strings.TrimSpace(cfg.GitLabBaseURL) != "")
 	if err := notices.RunChecks(context.Background(), pool); err != nil {
 		logger.Warn("notices: boot checks failed", "err", err)
 	}
@@ -395,74 +397,11 @@ func run() error {
 	// breaches and missed fires reach the same transports, rules and
 	// per-transport delivery stamps as a terminal-run notification.
 	sched.SetNotifier(notifier)
-	sched.SetWorkflowFirer(func(ctx context.Context, source, workflowName, scheduleName, envJSON string) {
-		var (
-			rowid     int64
-			stepsJSON string
-		)
-		// Source-qualified lookup (A9/A11) so a scheduled cronomicon workflow resolves
-		// its own steps rather than a same-named git workflow's.
-		if err := pool.QueryRowContext(ctx,
-			`SELECT rowid, steps FROM workflows WHERE source = ? AND name = ?`, source, workflowName,
-		).Scan(&rowid, &stepsJSON); err != nil {
-			logger.Error("scheduler firer: look up workflow", "workflow", workflowName, "source", source, "error", err)
-			return
-		}
-		steps, err := workflow.ParseSteps(stepsJSON)
-		if err != nil {
-			logger.Error("scheduler firer: parse steps", "workflow", workflowName, "error", err)
-			return
-		}
-		if _, err := workflow.New(pool, logger).Trigger(ctx, workflow.TriggerParams{
-			WorkflowName:   workflowName,
-			WorkflowSource: source,
-			WorkflowID:     rowid,
-			Steps:          steps,
-			TriggeredBy:    "scheduler",
-			TriggerKind:    "scheduled",
-			ScheduleName:   scheduleName,
-			EnvJSON:        envJSON,
-		}); err != nil {
-			logger.Error("scheduler firer: trigger workflow", "workflow", workflowName, "error", err)
-		}
-	})
+	sched.SetWorkflowFirer(workflow.ScheduledFirer(pool, logger))
 	// AR — deferred ad-hoc WORKFLOW runs promoted by the pending loop fire
 	// through the same engine seam as the cron firer, but keep the scheduling
 	// operator as triggered_by so the run's audit trail names a person.
-	sched.SetPendingWorkflowFirer(func(ctx context.Context, p scheduler.PendingWorkflowFire) {
-		var (
-			rowid     int64
-			stepsJSON string
-		)
-		if err := pool.QueryRowContext(ctx,
-			`SELECT rowid, steps FROM workflows WHERE source = ? AND name = ?`, p.Source, p.Name,
-		).Scan(&rowid, &stepsJSON); err != nil {
-			logger.Error("pending firer: look up workflow", "workflow", p.Name, "source", p.Source, "error", err)
-			return
-		}
-		steps, err := workflow.ParseSteps(stepsJSON)
-		if err != nil {
-			logger.Error("pending firer: parse steps", "workflow", p.Name, "error", err)
-			return
-		}
-		// RX-11 — the trigger kind and the reaction provenance ride the envelope
-		// rather than being hardcoded here. A reaction-fired workflow that
-		// reported "manual" would be a lie in History, and a depth that reset to
-		// zero on every hop would disarm the runaway ceiling for whole chains.
-		if _, err := workflow.New(pool, logger).Trigger(ctx, workflow.TriggerParams{
-			WorkflowName:   p.Name,
-			WorkflowSource: p.Source,
-			WorkflowID:     rowid,
-			Steps:          steps,
-			TriggeredBy:    p.TriggeredBy,
-			TriggerKind:    p.TriggerKind,
-			EnvJSON:        p.EnvJSON,
-			ReactionDepth:  p.ReactionDepth,
-			ReactedToRunID: p.ReactedToRunID,
-		}); err != nil {
-			logger.Error("pending firer: trigger workflow", "workflow", p.Name, "error", err)
-		}
-	})
+	sched.SetPendingWorkflowFirer(workflow.PendingFirer(pool, logger))
 	bg.Go(func() {
 		if err := sched.Start(ctx0); err != nil {
 			logger.Error("scheduler stopped with error", "error", err)
@@ -644,7 +583,8 @@ const auditLogName = "audit.log"
 // would send every later line to an unlinked inode.
 const processLogName = "cronomicon.log"
 
-// runValidate implements `cronomicon validate <path>...` (T11), reusing the runtime
+// runValidate implements `cronomicon validate [-agency] <path>...`
+// (T11; the flag 2.4.0, GR-14), reusing the runtime
 // YAML/pragma parser from the gitlab slice (T10/S10). A path that is a directory
 // is validated as a whole job-definitions checkout: scripts/ is parsed first and
 // each job's script_ref is resolved against it (B-Git), with orphan scripts
@@ -659,15 +599,32 @@ func runValidate(args []string) int {
 // code (0 = valid, 1 = errors, 2 = usage) without calling os.Exit, so a CLI-level
 // test can assert both the exit code and the line-numbered stderr format against
 // a deliberately-broken repo.
+//
+// The flag applies to a directory: -agency says it is an agency's repository
+// (a job must name a scope, one of the checkout's). Without it a directory is
+// Global's repository. Either way a reference resolves in the checkout or is
+// an error, as at sync (§0a, IN-8; `-library`, which looked in a checkout of
+// Global's repository too, went with borrowing).
 func validatePaths(args []string, out, errOut io.Writer) int {
-	if len(args) == 0 {
-		_, _ = fmt.Fprintln(errOut, "usage: cronomicon validate <path>... (file, or a repo dir for cross-file script_ref checks)")
+	const usage = "usage: cronomicon validate [-agency] <path>...\n" +
+		"  <path> is a file, or a repository's checkout (a directory) for the checks across its files"
+	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	agency := fs.Bool("agency", false, "the directory is an agency's repository (GR-14)")
+	fs.Usage = func() { _, _ = fmt.Fprintln(errOut, usage) }
+	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	args = fs.Args()
+	if len(args) == 0 {
+		_, _ = fmt.Fprintln(errOut, usage)
+		return 2
+	}
+	opt := gitlab.ValidateOptions{Agency: *agency}
 	exit := 0
 	for _, path := range args {
 		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
-			errs, warnings, err := gitlab.ValidateRepo(path)
+			errs, warnings, err := gitlab.ValidateRepoWith(path, opt)
 			if err != nil {
 				fmt.Fprintf(errOut, "%s: %v\n", path, err)
 				exit = 1

@@ -37,7 +37,9 @@ import (
 // perRun are the references added to this one run (the manual trigger's
 // `references`); the automatic producers have none and pass nil. A key among
 // them counts like a declared one, as it does in the claim.
-func KeyBindingsNeedAgent(ctx context.Context, database *sql.DB, owners []Owner, perRun []Binding, runType, scope string) ([]Binding, error) {
+//
+// agency is whose the run would be: its scope is looked for there (I2).
+func KeyBindingsNeedAgent(ctx context.Context, database *sql.DB, owners []Owner, perRun []Binding, runType, agency, scope string) ([]Binding, error) {
 	if !execspec.SupportedRunType(runType) {
 		return nil, nil
 	}
@@ -78,15 +80,15 @@ func KeyBindingsNeedAgent(ctx context.Context, database *sql.DB, owners []Owner,
 			 WHERE rn.kind <> 'server'
 			   AND EXISTS (
 			       SELECT 1 FROM runner_agencies ra
-			        WHERE ra.runner_id = rn.id
-			          AND ((NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = ?1) AND ra.agency_id = 'global')
+			        WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency -- its owner's work only (§0a, question 29)
+			          AND ((NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = ?1 AND sc.owner_agency = ?2) AND ra.agency_id = 'global')
 			               OR ra.agency_id IN (SELECT sa.agency_id FROM scope_agencies sa
 			                                     JOIN scopes sc ON sc.id = sa.scope_id
-			                                    WHERE sc.name = ?1)))
+			                                    WHERE sc.name = ?1 AND sc.owner_agency = ?2)))
 			   AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-			                     WHERE sc.name = ?1)
+			                     WHERE sc.name = ?1 AND sc.owner_agency = ?2)
 			        OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-			                    WHERE sc.name = ?1 AND sr.runner_id = rn.id)))`, scope).Scan(&agent)
+			                    WHERE sc.name = ?1 AND sc.owner_agency = ?2 AND sr.runner_id = rn.id)))`, scope, scopeAgencyOr(agency)).Scan(&agent)
 	if err != nil {
 		return nil, err
 	}

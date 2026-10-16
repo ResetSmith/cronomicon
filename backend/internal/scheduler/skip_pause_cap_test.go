@@ -285,11 +285,11 @@ func TestFireWorkflowPausedAndCappedRecord(t *testing.T) {
 			pool := mustPool(t)
 			s := New(pool, quietLog(), nil)
 			fired := 0
-			s.SetWorkflowFirer(func(context.Context, string, string, string, string) { fired++ })
+			s.SetWorkflowFirer(func(context.Context, WorkflowFire) { fired++ })
 			tc.setup(t, pool)
 
-			s.fireWorkflow("git", tc.wf, "nightly", "")
-			s.fireWorkflow("git", tc.wf, "nightly", "")
+			s.fireWorkflow("", "git", tc.wf, "nightly", "")
+			s.fireWorkflow("", "git", tc.wf, "nightly", "")
 
 			if fired != 0 {
 				t.Errorf("suppressed workflow fired %d times, want 0", fired)
@@ -311,7 +311,7 @@ func TestFireWorkflowPausedAndCappedRecord(t *testing.T) {
 // UPDATE, so the AFTER DELETE triggers never fire and the definition KEEPS its
 // definition_schedules rows — deliberately, because that is what makes an
 // undelete lossless. Nothing about the data therefore stops the scheduler from
-// registering the entry; only reloadJobs' deleted_at filter does. Drop it and a
+// registering the entry; only loadJobEntries' deleted_at filter does. Drop it and a
 // deleted job keeps running at 2am with nothing in the UI to explain why.
 
 func TestReloadSkipsSoftDeletedDefinitions(t *testing.T) {

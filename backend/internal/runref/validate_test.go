@@ -2,14 +2,42 @@ package runref
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
+
+// scopeOwner is the agency a run in the scope named would be for: the scope's
+// owner (I2: a scope's name is looked for within an agency).
+func scopeOwner(t *testing.T, pool *sql.DB, scope string) string {
+	t.Helper()
+	a, err := execspec.ScopeOwnerByName(context.Background(), pool, scope)
+	if err != nil {
+		t.Fatalf("scope owner of %q: %v", scope, err)
+	}
+	return a
+}
+
+// ownerOfJob is whose the job with this uid is (agencyid.JobSQL): the agency
+// its run's scope is looked for in (I2).
+func ownerOfJob(t *testing.T, pool *sql.DB, uid string) string {
+	t.Helper()
+	var a sql.NullString
+	if err := pool.QueryRow(`SELECT `+agencyid.JobSQL("j")+` FROM jobs j WHERE j.uid = ?`, uid).Scan(&a); err != nil {
+		t.Fatalf("owner of job %q: %v", uid, err)
+	}
+	if !a.Valid {
+		return agencyid.Global
+	}
+	return a.String
+}
 
 // unrestricted / scoped / zero-grant readers, mirroring auth.ScopeGrant.CanRead
 // without importing auth (runref must stay a leaf — see CanReadScope).
@@ -139,7 +167,7 @@ func TestValidateTruthTable(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			v, err := Validate(ctx, pool, tc.kind, tc.ref, tc.scope, tc.canRead)
+			v, err := Validate(ctx, pool, tc.kind, tc.ref, scopeOwner(t, pool, tc.scope), tc.scope, tc.canRead)
 			if err != nil {
 				t.Fatalf("Validate: %v", err)
 			}
@@ -198,7 +226,7 @@ func TestValidateAgreesWithDispatch(t *testing.T) {
 	for _, scope := range []string{"", "dev", "prod"} {
 		for _, name := range []string{"GLOBAL_PW", "PROD_PW", "ABSENT"} {
 			b := Binding{Kind: KindSecret, Name: name}
-			v, err := Validate(ctx, pool, b.Kind, b.Name, scope, allScopes())
+			v, err := Validate(ctx, pool, b.Kind, b.Name, scopeOwner(t, pool, scope), scope, allScopes())
 			if err != nil {
 				t.Fatalf("Validate(%s,%s): %v", scope, name, err)
 			}
@@ -221,7 +249,7 @@ func TestValidateAllPreservesOrder(t *testing.T) {
 		{Kind: KindSecret, Name: "A"},
 		{Kind: KindKey, Name: "C"},
 	}
-	out, err := ValidateAll(ctx, pool, in, "", allScopes())
+	out, err := ValidateAll(ctx, pool, in, "", "", allScopes())
 	if err != nil {
 		t.Fatalf("ValidateAll: %v", err)
 	}
@@ -264,7 +292,7 @@ func TestAgencyPredicateAG_Q1b(t *testing.T) {
 		if scope != "" {
 			sp = &scope
 		}
-		s, err := sec.Create(ctx, secrets.CreateInput{Key: key, Source: "stored", Scope: sp, Value: "v"}, "seed")
+		s, err := sec.Create(ctx, secrets.CreateInput{Key: key, Source: "stored", Scope: sp, Value: "v", OwnerAgency: agency}, "seed")
 		if err != nil {
 			t.Fatalf("seed secret %s: %v", key, err)
 		}
@@ -293,7 +321,7 @@ func TestAgencyPredicateAG_Q1b(t *testing.T) {
 	}{
 		{"unrestricted row, general-pool run", "FREE", "prod", nil, true,
 			"an empty membership set means NO restriction — this is what keeps global secrets global"},
-		{"unrestricted row, agency run", "FREE", "prod", []string{"A"}, true, ""},
+		{"Global's row, agency run", "FREE", "prod", []string{"A"}, false, "§0a (IN-6): Global's rows are Global's runs' only"},
 		{"agency row, matching run", "IN_A", "prod", []string{"A"}, true, ""},
 		{"agency row, non-matching run", "IN_A", "prod", []string{"B"}, false,
 			"the AG-Q1(b) agency clause"},
@@ -335,6 +363,7 @@ func TestKeyTighteningAG_Q5(t *testing.T) {
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-a','A','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO ssh_credential_agencies(credential_id, agency_id)
 	      SELECT id, 'ag-a' FROM ssh_credentials WHERE label='a_key'`)
+	exec(`UPDATE ssh_credentials SET owner_agency = 'ag-a' WHERE label = 'a_key'`) // as the write path makes it
 
 	r := NewResolver(pool, cfg, sec, nilLog())
 	resolves := func(label string, agencies []string) error {
@@ -347,8 +376,9 @@ func TestKeyTighteningAG_Q5(t *testing.T) {
 	if err := resolves("free_key", nil); err != nil {
 		t.Errorf("a key with no membership must stay reachable: %v", err)
 	}
-	if err := resolves("free_key", []string{"A"}); err != nil {
-		t.Errorf("a key with no membership must stay reachable from any agency: %v", err)
+	// §0a (IN-6): Global's key is Global's runs' only; until then any agency's.
+	if err := resolves("free_key", []string{"A"}); err == nil {
+		t.Errorf("Global's key resolved for a run of agency A")
 	}
 	// The tightening itself.
 	if err := resolves("a_key", []string{"A"}); err != nil {

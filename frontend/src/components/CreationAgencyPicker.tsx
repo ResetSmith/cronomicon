@@ -18,7 +18,7 @@ type Agency = { id?: string; name?: string };
  *   - An administrator of SEVERAL must say which (the server answers 422
  *     `agency_required` otherwise). Their own agencies are offered and no others.
  *   - A GLOBAL administrator may name any agency, or leave it Global's, which is
- *     the default: usable by every agency, changed only by global administrators.
+ *     the default: Global's runs' only (§0a), changed only by global administrators.
  *
  * Until 2.3.0 this was a multi-select shown only to restricted callers, because
  * a row could be shared by several agencies and "no agency" meant shared
@@ -29,7 +29,7 @@ type Agency = { id?: string; name?: string };
  * scopes and SSH keys, "manageEnvVars" for secrets and variables. With none it
  * falls back to the permission-blind `unrestricted`, as before.
  */
-export function useCreationAgencies(isEdit: boolean, permission?: "configureApp" | "manageEnvVars") {
+export function useCreationAgencies(isEdit: boolean, permission?: "configureApp" | "manageEnvVars" | "compose") {
   const [global, setGlobal] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [agencies, setAgencies] = useState<AgencyRef[]>([]);
@@ -48,7 +48,9 @@ export function useCreationAgencies(isEdit: boolean, permission?: "configureApp"
           ? !!caps.configureAppGlobal
           : permission === "manageEnvVars"
             ? !!caps.manageEnvVarsGlobal
-            : !!caps.unrestricted;
+            : permission === "compose"
+              ? !!caps.composeAdmin
+              : !!caps.unrestricted;
       const catalog = async (): Promise<AgencyRef[]> => {
         const res = await api.GET("/agencies");
         return ((res.data as Agency[] | undefined) ?? [])
@@ -96,6 +98,8 @@ export function useCreationAgencies(isEdit: boolean, permission?: "configureApp"
     setSelected,
     /** Spread into the create body. The API takes a list and accepts exactly one. */
     body: visible && selected ? { agencyIds: [selected] } : {},
+    /** The same choice for a route that takes one owner (a schedule, a calendar: `ownerAgency`). */
+    ownerBody: visible && selected ? { ownerAgency: selected } : {},
     /** Non-empty when the form must not submit yet. */
     // Nothing to choose from (the lists could not be read) does not block: the
     // server places the row in the caller's one agency, or says which to name.
@@ -113,7 +117,7 @@ export function CreationAgencyPicker({
   label,
   pick,
 }: {
-  /** The entity noun, for the helper text: "secret", "variable", "SSH key", "scope". */
+  /** The entity noun, for the helper text: "secret", "variable", "SSH key", "scope", "schedule". */
   label: string;
   pick: CreationAgencies;
 }) {
@@ -151,7 +155,7 @@ export function CreationAgencyPicker({
       <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 4 }}>
         {pick.global ? (
           <>
-            A {label} belongs to one agency. Global's is usable by every agency and changed only by global
+            A {label} belongs to one agency, and is used by that agency's runs only. Global's is changed only by global
             administrators; an agency's is that agency's own.
           </>
         ) : only ? (

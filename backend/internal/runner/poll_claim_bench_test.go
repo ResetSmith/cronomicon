@@ -278,7 +278,7 @@ func claimSQL(agencyClause string) string {
 			      WHERE (rb.owner_kind = 'job'
 			              AND rb.owner_source = COALESCE(NULLIF(runs.job_source, ''), 'git')
 			              AND rb.owner_name = runs.job_name)
-			         OR (rb.owner_kind = 'script' AND rb.owner_name = runs.script_ref))
+			         OR (rb.owner_kind = 'script' AND rb.owner_uid = runs.script_uid))
 			  )
 			-- Mirrors claimRun's sort (QP). If these drift, the benchmark stops
 			-- measuring the query production actually runs.

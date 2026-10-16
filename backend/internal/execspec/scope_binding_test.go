@@ -87,7 +87,7 @@ func TestScopeBindingReasonsAreToldApart(t *testing.T) {
 
 	// 3. In the agency, but offline.
 	f.exec(`INSERT INTO runner_agencies(runner_id,agency_id) VALUES('r-gone','a1')`)
-	f.exec(`UPDATE runners SET status='offline' WHERE id='r-gone'`)
+	f.exec(`UPDATE runners SET status='offline', owner_agency = 'a1' WHERE id='r-gone'`) // alpha's agent (§0a)
 	got = f.reason(t, "run-1")
 	if !strings.Contains(got, "online and otherwise eligible") {
 		t.Errorf("offline binding = %q, want it to say no bound runner is online and eligible", got)
@@ -121,7 +121,7 @@ func TestScopeBindingPermits(t *testing.T) {
 	ctx := context.Background()
 	permits := func(scope, runnerID string) bool {
 		t.Helper()
-		ok, err := ScopeBindingPermits(ctx, f.pool, scope, runnerID)
+		ok, err := ScopeBindingPermits(ctx, f.pool, mustOwner(t, f.pool, scope), scope, runnerID)
 		if err != nil {
 			t.Fatalf("ScopeBindingPermits: %v", err)
 		}

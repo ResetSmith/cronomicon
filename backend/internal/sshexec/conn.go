@@ -146,7 +146,7 @@ type keyGuard struct {
 // exist or belongs to another agency: a host record must not be usable as a
 // probe for which keys another agency holds.
 var errKeyNotUsable = errors.New("the SSH key this record names is not one its agency may use " +
-	"(it belongs to another agency, or no longer exists) — use a key of the agency's own, or one that is Global's")
+	"(it belongs to another agency, or no longer exists) — use a key of the agency's own")
 
 // loadSignerChecked is loadSigner's name path under a checked guard: the same
 // routing by prefix, with each lookup made by runref.LookupEntityID — the row
@@ -307,8 +307,8 @@ func BastionKeyNameFindings(ctx context.Context, db *sql.DB) ([]notices.Finding,
 			AgencyID: r.owner,
 			Subject:  "bastion:" + r.id,
 			Detail: fmt.Sprintf("The bastion %s belongs to %s and names its SSH key as %s, which is not a key, secret or variable "+
-				"that %s may use (its own or Global's, with no scope). Every run that routes through it fails. "+
-				"Give the bastion a key of its own agency or one that is Global's, or give the bastion to the agency whose key it names.",
+				"that %s may use (its own, with no scope). Every run that routes through it fails. "+
+				"Give the bastion a key of its own agency, or give the bastion to the agency whose key it names.",
 				r.name, r.ownerName, r.key, r.ownerName),
 		})
 	}
@@ -438,16 +438,17 @@ func dialContext(ctx context.Context, addr string, cfg *ssh.ClientConfig) (*ssh.
 }
 
 // bastionAddr resolves a host record's `via` to the bastion the engine hops
-// through (execspec.BastionByRef: the record's own agency's bastion, or
-// Global's — LR-70).
+// through (execspec.BastionByRef: the record's own agency's bastion — LR-70;
+// Global's only for Global's records since §0a, question 33).
 func (s *Service) bastionAddr(ctx context.Context, ref string, owners []string) (*target, error) {
 	return execspec.BastionByRef(ctx, s.db, ref, owners)
 }
 
 // ownerKeyGuard is the keyGuard for a key that a RECORD names for itself — a
 // bastion's, or a hand-written host record's under "Test connection": the key
-// must belong to one of the record's owning agencies, or to Global (LR-72). No
-// owner at all (a record that could not be resolved) leaves only Global's keys.
+// must belong to one of the record's owning agencies (LR-72; since §0a, IN-6,
+// Global's key only to Global's record, as runref.KeyIDUsable asks). No owner
+// at all (a record that could not be resolved) leaves only Global's keys.
 func ownerKeyGuard(ctx context.Context, db *sql.DB, ownerIDs []string) (keyGuard, error) {
 	g := keyGuard{checked: true}
 	for _, id := range ownerIDs {

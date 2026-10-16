@@ -44,7 +44,15 @@ func TestSightingForKeyBoundJobNeedsAnAgent(t *testing.T) {
 				addRunnerAgency(t, svc, "r1", "ag-tax")
 			}
 			// Scoped, so the AF unbound probe (unscoped runs only) is not what refuses it.
+			// tax's job, from tax's repository: a job finds its scope in its own
+			// agency (I2).
+			if _, err := svc.db.Exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-tax', 'ag-tax', 'u', 'main')`); err != nil {
+				t.Fatal(err)
+			}
 			seedWatchJob(t, svc, "git", "ingest", "tax", `[{"path":"/srv/incoming/*.csv"}]`)
+			if _, err := svc.db.Exec(`UPDATE jobs SET repo_id = 'repo-tax' WHERE name = 'ingest'`); err != nil {
+				t.Fatal(err)
+			}
 			if err := runref.ReplaceBindings(ctx, svc.db,
 				runref.Owner{Kind: "job", Source: "git", Name: "ingest"},
 				[]runref.Binding{{Kind: runref.KindKey, Name: "deploy_key"}}, "t"); err != nil {

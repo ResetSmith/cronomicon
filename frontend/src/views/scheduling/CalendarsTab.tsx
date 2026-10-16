@@ -1,6 +1,8 @@
 // CAL-18/19 — the Calendars tab under Schedules. A working calendar is a named
 // set of wall-clock dates; schedule entries bind them in two polarities, and a
-// global calendar applies to every entry at once.
+// global calendar applies to every entry of its own agency at once (since 2.4.0,
+// §0a: a calendar is one agency's, and so is the reach of its "global"; the
+// installation-wide stop is the change freeze, a global administrator's).
 //
 // Cronomicon ships NO holiday content in any form (CAL-Q8) — not a seeded row, not
 // an importable file. The dates are always the operator's, so a wrong or stale
@@ -15,7 +17,9 @@
 // outbound call would fail closed in exactly the environment that needs this most.
 import { useEffect, useState } from "react";
 import { api, csrfHeader, errMsg, fetchCapabilities } from "../../api/client";
-import { COMPOSE_ADMIN_ONLY, globalOnly } from "../../api/globalAdmin";
+import { GLOBAL_AGENCY, agenciesFor, useMyAccess } from "../../api/access";
+import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
+import { useGet, rows } from "../../hooks";
 import { c } from "../../theme";
 import { DOC_LINKS } from "../../components/docLinks";
 import { Btn, SkeletonRows, TableSurface,
@@ -64,7 +68,7 @@ function ExpiryBadge({ state, daysRemaining }: { state: ExpiryState; daysRemaini
 
 const GlobalBadge = () => (
   <span
-    title="Applies to EVERY schedule entry, whether or not the entry names it."
+    title="Applies to every schedule entry of its agency, whether or not the entry names it."
     style={{
       fontSize: c.fontXs,
       fontWeight: 600,
@@ -82,16 +86,24 @@ const GlobalBadge = () => (
 
 export function CalendarsTab() {
   const [refresh, setRefresh] = useState(0);
-  // GC (v2.2.2) — `canCompose` is "authors somewhere" and decides whether the
-  // authoring controls are relevant; `composeAdmin` is what a calendar WRITE
-  // needs. A calendar belongs to no agency — a `global` one vetoes every
-  // agency's fires — so the server takes its writes only from compose and
-  // configureApp on one all-agencies grant. A departmental composer keeps "New
-  // calendar", disabled with the reason, and opens rows read-only.
+  // 2.4.0 (I2; R8) — a calendar is one agency's (`ownerAgency`), and writing
+  // it takes Compose on that agency; Global's takes a global composer. Two
+  // agencies may each have a calendar of a name, so a row is opened by its
+  // name and its owner (`?agencyId=`). `canCompose` ("authors somewhere")
+  // decides whether "New calendar" is offered; a row the caller does not
+  // compose on opens read-only. Until 2.4.0 a calendar belonged to no agency
+  // and every write was a global composer's (GC, 2.2.2).
   const [canCompose, setCanCompose] = useState(false);
   const [composeAdmin, setComposeAdmin] = useState(false);
-  const authorWhy = globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY);
-  const [editing, setEditing] = useState<string | null>(null); // calendar name, or "" for a new one
+  const access = useMyAccess();
+  const composesOn = new Set(agenciesFor(access ?? null, "compose").map((a) => a.id));
+  const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
+  const agencyName = (id?: string | null) =>
+    !id || id === GLOBAL_AGENCY ? "Global" : (rows<{ id: string; name: string }>(catalogQ.data).find((a) => a.id === id)?.name ?? id);
+  // 2.4.2 (question 55): a row says canEdit; this is for a server that does not.
+  const mayWrite = (owner?: string | null) => composeAdmin || access == null || composesOn.has(owner || GLOBAL_AGENCY);
+  // The calendar open in the editor: its name and owner, or "" for a new one.
+  const [editing, setEditing] = useState<{ name: string; owner?: string; canEdit?: boolean } | null>(null);
   const { calendars, expiryWarningDays, loading, error } = useCalendars(refresh);
 
   useEffect(() => {
@@ -106,7 +118,10 @@ export function CalendarsTab() {
   if (editing !== null) {
     return (
       <CalendarEditor
-        name={editing}
+        name={editing.name}
+        owner={editing.owner}
+        ownerName={agencyName(editing.owner)}
+        mayWrite={editing.name === "" ? canCompose : (editing.canEdit ?? mayWrite(editing.owner))}
         onClose={() => setEditing(null)}
         onSaved={() => {
           setEditing(null);
@@ -125,7 +140,7 @@ export function CalendarsTab() {
           <DocLink href={DOC_LINKS.calendars}>How the veto is applied</DocLink>
         </div>
         {canCompose && (
-          <Btn primary onClick={() => setEditing("")} disabled={!!authorWhy} title={authorWhy || undefined} style={{ padding: "8px 14px", fontSize: c.fontSm }}>
+          <Btn primary onClick={() => setEditing({ name: "" })} style={{ padding: "8px 14px", fontSize: c.fontSm }}>
             + New calendar
           </Btn>
         )}
@@ -144,7 +159,8 @@ export function CalendarsTab() {
               A calendar is a list of dates — your company holidays, a change freeze, your month-end close.
               Bind one to a schedule as a <strong>skip</strong> calendar and no fire lands on those days; bind it as a{" "}
               <strong>run-day</strong> calendar and the schedule fires on no others. Mark one <strong>global</strong> and
-              it applies to every schedule at once, which is how a change freeze is one checkbox instead of N edits.
+              it applies to every schedule of its agency at once, which is how an agency's change freeze is one checkbox
+              instead of N edits. It does not reach another agency's schedules.
             </p>
             <p>
               <strong>Cronomicon ships no holiday dates</strong> — every date is yours to author, so no list of ours can be
@@ -159,10 +175,7 @@ export function CalendarsTab() {
           </div>
           {canCompose && (
             <div style={{ marginTop: 14 }}>
-              <Btn small onClick={() => setEditing("")} disabled={!!authorWhy} title={authorWhy || undefined}>New calendar</Btn>
-              {authorWhy && (
-                <div role="note" style={{ marginTop: 8, fontSize: c.fontSm, color: c.textMuted }}>{authorWhy}</div>
-              )}
+              <Btn small onClick={() => setEditing({ name: "" })}>New calendar</Btn>
             </div>
           )}
           {!canCompose && (
@@ -190,11 +203,12 @@ export function CalendarsTab() {
                 const expiry = calendarExpiry(cal, expiryWarningDays);
                 const usedBy = cal.usedBy ?? [];
                 return (
-                  <tr key={cal.name} style={{ borderBottom: `1px solid ${c.border}` }}>
+                  <tr key={`${cal.ownerAgency ?? ""}:${cal.name}`} style={{ borderBottom: `1px solid ${c.border}` }}>
                     <td style={td}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ fontFamily: c.mono, fontWeight: 600, color: c.text }}>{cal.name}</span>
                         {cal.global && <GlobalBadge />}
+                        <span style={{ fontSize: c.fontXs, color: c.textMuted }}>{agencyName(cal.ownerAgency)}</span>
                         <ExpiryBadge state={expiry} daysRemaining={cal.daysRemaining} />
                       </div>
                       {cal.description && (
@@ -209,7 +223,9 @@ export function CalendarsTab() {
                         : `${usedBy.length} ${usedBy.length === 1 ? "entry" : "entries"}`}
                     </td>
                     <td style={{ ...td, textAlign: "right" }}>
-                      <Btn small onClick={() => setEditing(cal.name ?? "")}>{composeAdmin ? "Edit" : "View"}</Btn>
+                      <Btn small onClick={() => setEditing({ name: cal.name ?? "", owner: cal.ownerAgency ?? undefined, canEdit: cal.canEdit })}>
+                        {(cal.canEdit ?? mayWrite(cal.ownerAgency)) ? "Edit" : "View"}
+                      </Btn>
                     </td>
                   </tr>
                 );
@@ -226,13 +242,31 @@ export function CalendarsTab() {
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
-function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () => void; onSaved: () => void }) {
+function CalendarEditor({
+  name,
+  owner,
+  ownerName,
+  mayWrite,
+  onClose,
+  onSaved,
+}: {
+  name: string;
+  /** The calendar's owning agency id (2.4.0); names it on every read and write. */
+  owner?: string;
+  ownerName: string;
+  /** Compose on the owner (a new one: compose somewhere). */
+  mayWrite: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const isEdit = !!name;
-  // `canCompose` here means "may WRITE a calendar" — `composeAdmin` since GC
-  // (v2.2.2). `composes` is the flat flag, kept only to choose the sentence the
-  // read-only editor shows.
-  const [canCompose, setCanCompose] = useState<boolean | null>(null);
-  const [composes, setComposes] = useState(false);
+  const agencyQuery = owner ? { agencyId: owner } : {};
+  // Whose a new calendar is: an agency the caller composes on, or Global for a
+  // global composer (its default).
+  const ownerPick = useCreationAgencies(isEdit, "compose");
+  // Whose the calendar is (and so whose schedules its "global" reaches): the
+  // agency chosen, for a new one.
+  const ownerLabel = isEdit ? ownerName : (ownerPick.agencies.find((a) => a.id === ownerPick.selected)?.name ?? "its agency");
   const [slug, setSlug] = useState(name);
   const [description, setDescription] = useState("");
   const [global, setGlobal] = useState(false);
@@ -245,17 +279,10 @@ function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () 
   const [pendingForce, setPendingForce] = useState(false);
 
   useEffect(() => {
-    fetchCapabilities().then((caps) => {
-      setCanCompose(!!caps.composeAdmin);
-      setComposes(caps.compose);
-    });
-  }, []);
-
-  useEffect(() => {
     if (!isEdit) return;
     let cancelled = false;
     (async () => {
-      const { data, error } = await api.GET("/calendars/{name}", { params: { path: { name } } });
+      const { data, error } = await api.GET("/calendars/{name}", { params: { path: { name }, query: agencyQuery } } as never);
       if (cancelled) return;
       if (error || !data) {
         setLoadErr(`Could not load calendar "${name}".`);
@@ -272,9 +299,10 @@ function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () 
     return () => {
       cancelled = true;
     };
-  }, [name, isEdit]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name, isEdit, owner]);
 
-  const readOnly = canCompose === false;
+  const readOnly = !mayWrite;
   // The API refuses global on a calendar bound as a run-day calendar anywhere —
   // mirror it here so the checkbox explains itself rather than 422ing on save.
   const boundAsOnly = usedBy.filter((b) => b.polarity === "only");
@@ -306,12 +334,13 @@ function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () 
     if (global && boundAsOnly.length > 0) {
       return setErr(`"${nm}" is bound as a run-day calendar by ${boundAsOnly.length} entr${boundAsOnly.length === 1 ? "y" : "ies"} — a global calendar may only ever skip.`);
     }
+    if (!isEdit && ownerPick.blockedReason) return setErr(`${ownerPick.blockedReason}.`);
     setBusy(true);
     if (!isEdit) {
       // POST accepts days inline, so a calendar and its dates arrive together.
       const { response, error } = await api.POST("/calendars", {
         params: { header: csrfHeader },
-        body: { name: nm, description: description.trim(), global, recordSuppressed, days },
+        body: { name: nm, description: description.trim(), global, recordSuppressed, days, ...ownerPick.ownerBody },
       } as never);
       setBusy(false);
       if (error || !response.ok) return setErr(errMsg(error) || `Create failed (${response.status}).`);
@@ -321,7 +350,7 @@ function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () 
     // PUT deliberately does NOT carry days — a metadata edit cannot wipe a year of
     // dates — so the day list is a second call to its own endpoint.
     const meta = await api.PUT("/calendars/{name}", {
-      params: { path: { name }, header: csrfHeader },
+      params: { path: { name }, query: agencyQuery, header: csrfHeader },
       body: { description: description.trim(), global, recordSuppressed },
     } as never);
     if (meta.error || !meta.response.ok) {
@@ -329,7 +358,7 @@ function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () 
       return setErr(errMsg(meta.error) || `Save failed (${meta.response.status}).`);
     }
     const dayResp = await api.PUT("/calendars/{name}/days", {
-      params: { path: { name }, header: csrfHeader },
+      params: { path: { name }, query: agencyQuery, header: csrfHeader },
       body: { days },
     } as never);
     setBusy(false);
@@ -343,7 +372,7 @@ function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () 
     setErr(null);
     setBusy(true);
     const { response, error } = await api.DELETE("/calendars/{name}", {
-      params: { path: { name }, query: force ? { force: true } : {}, header: csrfHeader },
+      params: { path: { name }, query: { ...(force ? { force: true } : {}), ...agencyQuery }, header: csrfHeader },
     } as never);
     setBusy(false);
     if (response.status === 409 && !force) {
@@ -376,8 +405,11 @@ function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () 
           <>A new working calendar: a named set of dates that schedule entries can be bound to.</>
         )}
       </div>
-      {readOnly && composes && (
-        <div role="note" style={{ fontSize: c.fontSm, color: c.textMuted }}>Read-only. {COMPOSE_ADMIN_ONLY}</div>
+      {readOnly && (
+        <div role="note" style={{ fontSize: c.fontSm, color: c.textMuted }}>
+          Read-only. This calendar is {ownerName === "Global" ? "Global's — only a global composer (Compose on every agency)" : `${ownerName}'s — only that agency's composers`} can
+          change it.
+        </div>
       )}
 
       <Field label="Name">
@@ -388,7 +420,8 @@ function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () 
           placeholder="company-holidays"
           disabled={isEdit || readOnly}
         />
-        {isEdit && <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 4 }}>Name is the identity — immutable on edit.</div>}
+        {isEdit && <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 4 }}>Name is the identity — immutable on edit. Owner: {ownerName}.</div>}
+        <CreationAgencyPicker label="calendar" pick={ownerPick} />
       </Field>
 
       <Field label="Description (optional)">
@@ -399,10 +432,11 @@ function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () 
         <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: c.fontSm, color: c.text }}>
           <input type="checkbox" checked={global} onChange={(e) => setGlobal(e.target.checked)} disabled={readOnly || boundAsOnly.length > 0} style={{ marginTop: 3 }} />
           <span>
-            Apply to every schedule (global)
+            Apply to every schedule of {ownerLabel} (global)
             <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 2 }}>
-              Its days are skipped by every entry, whether or not the entry names it — a change freeze as one checkbox
-              instead of N schedule edits. Skip only: a global calendar can never be a run-day calendar.
+              Its days are skipped by every entry of {ownerLabel}, whether or not the entry names it — a change freeze as one
+              checkbox instead of N schedule edits. Other agencies' schedules are not affected. Skip only: a global calendar
+              can never be a run-day calendar.
               {boundAsOnly.length > 0 && (
                 <span style={{ color: c.warning }}>
                   {" "}Unavailable — {boundAsOnly.length} entr{boundAsOnly.length === 1 ? "y binds" : "ies bind"} this as a run-day calendar.

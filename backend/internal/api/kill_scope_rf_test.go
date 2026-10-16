@@ -32,10 +32,13 @@ func jobRowIDStr(t *testing.T, pool *sql.DB, name string) string {
 // scheduled fire of an unscoped job under RB-Q11(c)).
 func seedRunFor(t *testing.T, exec func(string, ...any), runID, jobName, scope string) {
 	t.Helper()
+	// The run is its scope's agency's, as a producer snapshots it (I2: its
+	// scope is looked for in that agency).
 	exec(`INSERT INTO runs (id, job_name, job_source, run_type, status, triggered_by,
-	                        trigger_kind, executor, scope, created_at)
-	      VALUES (?, ?, 'cronomicon', 'bash', 'running', 't', 'manual', 'ssh', ?, '2026-01-01T00:00:00Z')`,
-		runID, jobName, scope)
+	                        trigger_kind, executor, scope, created_at, agencies_json)
+	      VALUES (?, ?, 'cronomicon', 'bash', 'running', 't', 'manual', 'ssh', ?, '2026-01-01T00:00:00Z',
+	              COALESCE((SELECT json_array(a.name) FROM scopes sc JOIN agencies a ON a.id = sc.owner_agency WHERE sc.name = ?), '["Global"]'))`,
+		runID, jobName, scope, scope)
 }
 
 // TestKillAuthorizesOnTheRunsScopeNotTheJobs — the headline RF-10 case, and the

@@ -301,10 +301,15 @@ func TestG2ChecksFindAndResolveTheirConditions(t *testing.T) {
 	job("u-all", "whole-scope", "fin-prod", "")
 	mustExec(t, pool, `INSERT INTO ssh_credentials (id, label, source, created_at, owner_agency) VALUES ('k-fin', 'fin_key', 'stored', ?, 'ag-fin'), ('k-glob', 'shared_key', 'stored', ?, 'global')`, ts, ts)
 	mustExec(t, pool, `INSERT INTO ssh_credential_agencies VALUES ('k-fin', 'ag-fin')`)
+	// Finance's key, shared into Tax by membership: still Finance's (§0a, IN-6;
+	// the review of I1 found a Tax record naming it was not listed).
+	mustExec(t, pool, `INSERT INTO ssh_credentials (id, label, source, created_at, owner_agency) VALUES ('k-lent', 'lent_key', 'stored', ?, 'ag-fin')`, ts)
+	mustExec(t, pool, `INSERT INTO ssh_credential_agencies VALUES ('k-lent', 'ag-fin'), ('k-lent', 'ag-tax')`)
 	mustExec(t, pool, `INSERT INTO ssh_hosts (id, source, hostname, port, created_at, auth_credential_id, owner_agency) VALUES
 	                   ('h-bad', 'cronomicon', 'legacy01', 22, ?, 'k-fin', 'global'),
 	                   ('h-ok1', 'cronomicon', 'fin01', 22, ?, 'k-fin', 'ag-fin'),
-	                   ('h-ok2', 'cronomicon', 'tax01', 22, ?, 'k-glob', 'ag-tax')`, ts, ts, ts)
+	                   ('h-ok2', 'cronomicon', 'tax01', 22, ?, 'k-glob', 'ag-tax'),
+	                   ('h-lent', 'cronomicon', 'tax02', 22, ?, 'k-lent', 'ag-tax')`, ts, ts, ts, ts)
 	// An imported record's key is its scope's business (checked at write and at
 	// connect against the scope's agencies), not this check's.
 	mustExec(t, pool, `INSERT INTO ssh_hosts (id, source, scope_id, hostname, port, created_at, auth_credential_id) VALUES ('h-imp', 'cronomicon', 'sc-fin', 'web01', 22, ?, 'k-fin')`, ts)
@@ -328,8 +333,16 @@ func TestG2ChecksFindAndResolveTheirConditions(t *testing.T) {
 		t.Errorf("a job in a scope of several agencies is filed under %q, want global", n.AgencyID)
 	}
 	keys := openOf(t, pool, notices.KindRecordKeyOutsideOwner)
-	if len(keys) != 2 {
-		t.Fatalf("record_key_outside_owner = %v, want the Global record and Tax's bastion that name Finance's key", keys)
+	// And, since §0a (IN-6), Tax's record that names Global's key: Global's key
+	// is not Tax's to use (until then it was).
+	if len(keys) != 4 {
+		t.Fatalf("record_key_outside_owner = %v, want the Global record and Tax's bastion that name Finance's key, Tax's record that names Global's, and Tax's that names the key Finance shares with it", keys)
+	}
+	if n, ok := keys["ssh-host:h-lent"]; !ok || n.AgencyID != "ag-tax" || !strings.Contains(n.Detail, "lent_key") {
+		t.Errorf("Tax's record naming Finance's shared key: %+v", n)
+	}
+	if n, ok := keys["ssh-host:h-ok2"]; !ok || n.AgencyID != "ag-tax" || !strings.Contains(n.Detail, "shared_key") {
+		t.Errorf("Tax's record naming Global's key: %+v", n)
 	}
 	if n := keys["ssh-host:h-bad"]; n.AgencyID != "global" || !strings.Contains(n.Detail, "legacy01") || !strings.Contains(n.Detail, "fin_key") {
 		t.Errorf("the host record's notice = %+v", n)
@@ -340,12 +353,16 @@ func TestG2ChecksFindAndResolveTheirConditions(t *testing.T) {
 
 	// Settle each: the scope's agency is set, one job's host joins the scope and
 	// the other job is re-aimed, the record goes to the agency whose key it
-	// names, and the bastion is given a key that is Global's.
+	// names, and Tax's bastion and record are given a key of Tax's own (since
+	// §0a; until then the bastion was given Global's).
 	mustExec(t, pool, `DELETE FROM scope_agencies WHERE scope_id = 'sc-two' AND agency_id = 'ag-tax'`)
 	mustExec(t, pool, `INSERT INTO scope_hosts (scope_id, host) VALUES ('sc-fin', 'db99')`)
 	mustExec(t, pool, `UPDATE jobs SET target_host = 'web01' WHERE uid = 'u-two'`)
 	mustExec(t, pool, `UPDATE ssh_hosts SET owner_agency = 'ag-fin' WHERE id = 'h-bad'`)
-	mustExec(t, pool, `UPDATE bastions SET auth_credential_id = 'k-glob' WHERE id = 'b-bad'`)
+	mustExec(t, pool, `INSERT INTO ssh_credentials (id, label, source, created_at, owner_agency) VALUES ('k-tax', 'tax_key', 'stored', 't', 'ag-tax')`)
+	mustExec(t, pool, `INSERT OR IGNORE INTO ssh_credential_agencies (credential_id, agency_id) VALUES ('k-tax', 'ag-tax')`)
+	mustExec(t, pool, `UPDATE bastions SET auth_credential_id = 'k-tax' WHERE id = 'b-bad'`)
+	mustExec(t, pool, `UPDATE ssh_hosts SET auth_credential_id = 'k-tax' WHERE id IN ('h-ok2', 'h-lent')`)
 	if err := notices.RunChecks(ctx, pool); err != nil {
 		t.Fatalf("RunChecks: %v", err)
 	}

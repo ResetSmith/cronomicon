@@ -201,7 +201,7 @@ func TestRehomingIsAuthorized(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rec := reqAs(t, h2, http.MethodPut, "/api/v1/secret-agencies", "sec-admins",
-		`[{"id":"`+s2+`","agencyIds":["ag-any"]}]`); rec.Code != http.StatusOK {
+		asRepair(`[{"id":"`+s2+`","agencyIds":["ag-any"]}]`)); rec.Code != http.StatusOK {
 		t.Errorf("unrestricted admin setting membership = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
 }
@@ -389,6 +389,7 @@ func TestPerRunReferencesAreDepartmental(t *testing.T) {
 	// would resolve it. Only the actor's grants stand between her and its value.
 	prodSecret := secretID(t, pool, "SEC_PROD")
 	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES (?, 'ag-prod')`, prodSecret)
+	exec(`UPDATE secrets SET owner_agency = 'ag-prod' WHERE id = ?`, prodSecret) // as the write path makes it (§0a: a row Global owns is Global's)
 
 	jobPath := runPath(t, pool, "j-prod")
 
@@ -440,6 +441,7 @@ func TestPerRunReferencesAreDepartmental(t *testing.T) {
 	// variables ship ungated in v0.56.6.
 	exec(`INSERT INTO env_vars (id,key,value,scope,created_at) VALUES ('v-prod','V_PROD','x','prod','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO env_var_agencies (env_var_id, agency_id) VALUES ('v-prod','ag-prod')`)
+	exec(`UPDATE env_vars SET owner_agency = 'ag-prod' WHERE id = 'v-prod'`)
 	if rec := reqAs(t, h, http.MethodPost, jobPath, "alice",
 		`{"references":[{"kind":"var","name":"V_PROD"}]}`); rec.Code != http.StatusForbidden {
 		t.Errorf("attaching a VARIABLE from a department where she lacks manageEnvVars = %d, want 403", rec.Code)
@@ -447,6 +449,7 @@ func TestPerRunReferencesAreDepartmental(t *testing.T) {
 	exec(`INSERT INTO ssh_credentials (id,label,source,created_at,last_modified_at)
 	      VALUES ('k-prod','KEY_PROD','stored','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES ('k-prod','ag-prod')`)
+	exec(`UPDATE ssh_credentials SET owner_agency = 'ag-prod' WHERE id = 'k-prod'`)
 	if rec := reqAs(t, h, http.MethodPost, jobPath, "alice",
 		`{"references":[{"kind":"key","name":"KEY_PROD"}]}`); rec.Code != http.StatusForbidden {
 		t.Errorf("attaching a KEY from a department where she lacks manageEnvVars = %d, want 403", rec.Code)

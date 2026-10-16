@@ -48,13 +48,15 @@ func SupportedRunType(runType string) bool { return execspec.SupportedRunType(ru
 
 // Service is the SSH executor worker pool.
 type Service struct {
-	db          *sql.DB
-	cfg         *config.Config
-	log         *slog.Logger
-	sec         *secrets.Service
-	resolver    *runref.Resolver // dispatch-time reference injection (P1.3)
-	notifier    *notify.Dispatcher
-	gitCacheDir string
+	db       *sql.DB
+	cfg      *config.Config
+	log      *slog.Logger
+	sec      *secrets.Service
+	resolver *runref.Resolver // dispatch-time reference injection (P1.3)
+	notifier *notify.Dispatcher
+	// cloneDirs is where a repository is cloned: a job's body kept as a file
+	// is read from its script's repository's clone (GR-22).
+	cloneDirs execspec.CloneDirs
 	// logDir is held atomically because the operator can re-point the run-log
 	// directory while the executor is running (LU-5), and openLog reads it on
 	// every claimed run.
@@ -104,6 +106,15 @@ type Service struct {
 	shutdownWG *sync.WaitGroup
 }
 
+// WithCloneDirs says where each repository is cloned, so that a job's body
+// kept as a file is read from its script's repository's clone (GR-22). Without
+// it every repository is read in the one directory New was given, which is
+// right while an installation has one. Chainable; returns s.
+func (s *Service) WithCloneDirs(dirs execspec.CloneDirs) *Service {
+	s.cloneDirs = dirs
+	return s
+}
+
 // WithShutdownWG registers a WaitGroup that Start's goroutines (claim loop,
 // orphan reaper, in-flight runs) join, so the process can drain them on
 // shutdown before closing the DB pool (PP-L15). Chainable; returns s.
@@ -127,7 +138,8 @@ func (s *Service) track(fn func()) {
 	go fn()
 }
 
-// New builds the executor. gitCacheDir is where scriptPath jobs are read from;
+// New builds the executor. gitCacheDir is where scriptPath jobs are read from,
+// for every repository, until WithCloneDirs says where each one's clone is;
 // logDir is the per-run log directory (shared with the runner subsystem).
 func New(db *sql.DB, cfg *config.Config, log *slog.Logger, gitCacheDir, logDir string) *Service {
 	conc := cfg.SSHExecutorConcurrency
@@ -145,7 +157,7 @@ func New(db *sql.DB, cfg *config.Config, log *slog.Logger, gitCacheDir, logDir s
 		sec:         sec,
 		resolver:    runref.NewResolver(db, cfg, sec, log),
 		notifier:    notify.New(db, cfg, log),
-		gitCacheDir: gitCacheDir,
+		cloneDirs:   execspec.OneCloneDir(gitCacheDir),
 		concurrency: conc,
 		fanout:      4, // EX-D5 bounded-parallel within a run
 		slotFree:    make(chan struct{}, 1),
@@ -423,7 +435,8 @@ type claimedRun struct {
 	traceID      string
 	jobName      string
 	jobSource    string // git | cronomicon (A9); resolves the job's denormalized body by (name,source)
-	scriptRef    string // referenced Script name (P1.3 script binding owner); "" ⇒ legacy inline body
+	scriptRef    string // referenced Script name as authored; "" ⇒ legacy inline body
+	scriptUID    string // WHICH script that name meant when the run was queued (runs.script_uid, 1290); keys the script's bindings
 	jobUID       string // the executed job's frozen identity (runs.job_uid, R2-1); keys the binding read (R2F-1)
 	runType      string
 	scope        string
@@ -470,12 +483,12 @@ func (s *Service) claim(ctx context.Context) (*claimedRun, error) {
 	// The rest of the row, by id. The run is already 'running' and this
 	// process is its only worker, so a failed read must not return an error
 	// and walk away: it is finalized here, with the cause.
-	var targetHost, envJSON, overrideJSON, jobSource, jobUID, scriptRef, triggeredBy, entityCode, sshUser, sshCred sql.NullString
+	var targetHost, envJSON, overrideJSON, jobSource, jobUID, scriptRef, scriptUID, triggeredBy, entityCode, sshUser, sshCred sql.NullString
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT job_source, job_uid, script_ref, target_host, triggered_by, env_json, override_json,
+		SELECT job_source, job_uid, script_ref, script_uid, target_host, triggered_by, env_json, override_json,
 		       entity_code, ssh_user, ssh_credential
 		  FROM runs WHERE id = ?`, c.TraceID).
-		Scan(&jobSource, &jobUID, &scriptRef, &targetHost, &triggeredBy, &envJSON, &overrideJSON,
+		Scan(&jobSource, &jobUID, &scriptRef, &scriptUID, &targetHost, &triggeredBy, &envJSON, &overrideJSON,
 			&entityCode, &sshUser, &sshCred); err != nil {
 		s.log.Error("local runner: claimed a run and could not read it; failing it", "trace_id", c.TraceID, "error", err)
 		s.finalizeReason(ctx, r, "failure", nil, "local_runner_read_failed")
@@ -484,6 +497,7 @@ func (s *Service) claim(ctx context.Context) (*claimedRun, error) {
 	r.jobSource = jobSource.String
 	r.jobUID = jobUID.String
 	r.scriptRef = scriptRef.String
+	r.scriptUID = scriptUID.String
 	r.targetHost = targetHost.String
 	r.triggeredBy = triggeredBy.String
 	r.envJSON = envJSON.String
@@ -524,6 +538,26 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go s.watchKill(runCtx, cancel, r.traceID)
+
+	// May this run go ahead? The one question the manifest asks for an agent's
+	// run (runref.RefuseDispatch has the list): every producer asks when a run
+	// is made, and what can change while it waits is asked again here, before
+	// anything of the run is resolved. No secret, command or target of a
+	// refused run is read. A check that cannot be made refuses too.
+	if refusal, derr := runref.RefuseDispatch(runCtx, s.db, r.traceID); derr != nil || refusal != nil {
+		reason := "Refused: could not check whether this run may go ahead"
+		if derr != nil {
+			s.log.Error("local runner dispatch check", "trace_id", r.traceID, "error", derr)
+		} else {
+			reason = refusal.Reason
+		}
+		if sink, err := s.openLog(runCtx, r, nil); err == nil {
+			sink.line("", "cronomicon: "+reason)
+			sink.close()
+		}
+		s.finalizeReason(ctx, r, "failure", nil, reason)
+		return
+	}
 
 	// Resolve the run's declared references BEFORE opening the log so the log
 	// redactor is seeded with the injected secret values (and key material). A
@@ -596,7 +630,11 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		return
 	}
 
-	interp, body, err := execspec.ResolveCommand(runCtx, s.db, s.gitCacheDir, r.jobName, r.jobSource, r.runType)
+	// No pin: the local runner runs a body, read at its repository's last
+	// synced commit. (It has never honoured a checkout pin: "Read, and not
+	// changed" in the plan's R5 record.)
+	interp, body, err := execspec.ResolveCommand(runCtx, s.db, s.cloneDirs,
+		execspec.JobRef{UID: r.jobUID, Name: r.jobName, Source: r.jobSource}, execspec.Pin{}, r.runType)
 	if err != nil {
 		sink.line("", "cronomicon: "+err.Error())
 		s.finalize(ctx, r, "failure", nil)
@@ -607,7 +645,21 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	// the explicit host subset; the SSH executor uses only the expanded targets
 	// (it discards the --limit, which is the ansible runner's mechanism). Groups
 	// arrive pre-expanded as ordinary Targets — no fan-out change.
-	targets, _, err := execspec.ResolveRun(runCtx, s.db, r.scope, r.targetHost,
+	// The scope is looked for in the run's agency (I2: a scope's name is unique
+	// within an agency only).
+	scopeAgencies, aerr := runref.RunAgencies(runCtx, s.db, r.traceID)
+	if aerr != nil {
+		sink.line("", "cronomicon: could not read this run's agencies: "+aerr.Error())
+		s.finalize(ctx, r, "failure", nil)
+		return
+	}
+	scopeOwner, aerr := execspec.RunScopeOwner(runCtx, s.db, scopeAgencies)
+	if aerr != nil {
+		sink.line("", "cronomicon: could not read this run's agencies: "+aerr.Error())
+		s.finalize(ctx, r, "failure", nil)
+		return
+	}
+	targets, _, err := execspec.ResolveRun(runCtx, s.db, scopeOwner, r.scope, r.targetHost,
 		execspec.OverrideHosts(r.overrideJSON), execspec.OverrideGroups(r.overrideJSON))
 	if err != nil {
 		sink.line("", "cronomicon: target resolution failed: "+err.Error())
@@ -657,7 +709,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	// A12/§13.2 — enforce the job's timeout so a hung or non-emitting step can't
 	// run forever (previously TimeoutSeconds was shipped but never enforced).
 	execCtx := runCtx
-	if to := s.jobTimeout(runCtx, r.jobName, r.jobSource); to > 0 {
+	if to := s.jobTimeout(runCtx, r.jobUID, r.jobName, r.jobSource); to > 0 {
 		var tcancel context.CancelFunc
 		execCtx, tcancel = context.WithTimeout(runCtx, to)
 		defer tcancel()
@@ -749,8 +801,8 @@ func (s *Service) resolveReferences(ctx context.Context, r claimedRun) (resolved
 	// the ones the job that was ENQUEUED declared — not the union of every job
 	// sharing its name.
 	owners := []runref.Owner{{Kind: "job", Source: jobSource, Name: r.jobName, UID: r.jobUID}}
-	if r.scriptRef != "" {
-		owners = append(owners, runref.Owner{Kind: "script", Name: r.scriptRef})
+	if r.scriptUID != "" {
+		owners = append(owners, runref.Owner{Kind: "script", Name: r.scriptRef, UID: r.scriptUID})
 	}
 
 	seen := map[string]bool{}
@@ -827,14 +879,19 @@ func (s *Service) injectedEnv(r claimedRun, resolved *runref.Resolved) map[strin
 	return out
 }
 
-// jobTimeout reads the (source-qualified) job's timeout_seconds as a Duration (0 ⇒ none).
-func (s *Service) jobTimeout(ctx context.Context, jobName, jobSource string) time.Duration {
+// jobTimeout reads the job's timeout_seconds as a Duration (0 ⇒ none): the
+// run's own job, by its uid, and by source and name only for a run that
+// records none. By name alone, a run of one of two jobs of a name was given
+// the other's timeout (present defect 4's family).
+func (s *Service) jobTimeout(ctx context.Context, jobUID, jobName, jobSource string) time.Duration {
 	if jobSource == "" {
 		jobSource = "git"
 	}
 	var secs sql.NullInt64
 	_ = s.db.QueryRowContext(ctx,
-		`SELECT timeout_seconds FROM jobs WHERE name = ? AND source = ?`, jobName, jobSource).Scan(&secs)
+		`SELECT timeout_seconds FROM jobs
+		  WHERE CASE WHEN ? != '' THEN uid = ? ELSE source = ? AND name = ? END`,
+		jobUID, jobUID, jobSource, jobName).Scan(&secs)
 	if secs.Valid && secs.Int64 > 0 {
 		return time.Duration(secs.Int64) * time.Second
 	}
