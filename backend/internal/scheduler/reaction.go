@@ -543,24 +543,57 @@ func (s *Scheduler) reactionVerdict(ctx context.Context, ev srcEvent, r reaction
 const ReasonReactionOtherAgency = "Refused: this reaction watches another agency's definition: a reaction watches its own agency's definitions only"
 
 // reactionCrossesAgencies reports whether a reaction's owner and the
-// definition whose run it was matched to are two agencies' definitions. False
-// when either cannot be told (a run that records no definition, an owner with
-// no identity, a row that is gone): there is then nothing to compare.
+// definition whose run it was matched to are two agencies' definitions.
+//
+// Each side is told by its identity, else (an owner or a run from before
+// identities, or a definition since removed) by its name, when one definition
+// holds it (2.4.2, present defect 60: a side with no identity was not told at
+// all, so a reaction with no owner identity fired across agencies). A side
+// that cannot be told either way leaves nothing to compare, and the reaction
+// is matched as before: refusing it would stop reactions of an installation
+// with one repository whose rows say no agency, which 2.4.0 keeps as they were.
 func (s *Scheduler) reactionCrossesAgencies(ctx context.Context, ev srcEvent, r reactionRow) (bool, error) {
-	if ev.uid == "" || r.ownerUID == "" {
-		return false, nil
-	}
-	var owner, upstream sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT `+runref.DefinitionAgencySQL, r.ownerUID, r.ownerKind).Scan(&owner); err != nil {
+	owner, ok, err := s.agencyOfDefinition(ctx, r.ownerUID, r.ownerKind, r.ownerSource, r.ownerName)
+	if err != nil || !ok {
 		return false, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT `+runref.DefinitionAgencySQL, ev.uid, ev.kind).Scan(&upstream); err != nil {
+	upstream, ok, err := s.agencyOfDefinition(ctx, ev.uid, ev.kind, ev.source, ev.name)
+	if err != nil || !ok {
 		return false, err
 	}
-	if !owner.Valid || !upstream.Valid {
-		return false, nil
+	return owner != upstream, nil
+}
+
+// agencyOfDefinition is whose a definition is: by its uid, else by its name
+// when one definition of the kind and source holds it (binned ones too: a
+// binned definition is still its agency's). ok is false when it cannot be told.
+func (s *Scheduler) agencyOfDefinition(ctx context.Context, uid, kind, source, name string) (agency string, ok bool, err error) {
+	var a sql.NullString
+	if uid != "" {
+		if err := s.db.QueryRowContext(ctx, `SELECT `+runref.DefinitionAgencySQL, uid, kind).Scan(&a); err != nil {
+			return "", false, err
+		}
+		if a.Valid {
+			return a.String, true, nil
+		}
 	}
-	return owner.String != upstream.String, nil
+	table := "jobs"
+	if kind == "workflow" {
+		table = "workflows"
+	}
+	var byName sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM `+table+` WHERE source = ? AND name = ?`,
+		source, name).Scan(&byName); err != nil {
+		return "", false, err
+	}
+	if !byName.Valid || byName.String == "" {
+		return "", false, nil
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT `+runref.DefinitionAgencySQL, byName.String, kind).Scan(&a); err != nil {
+		return "", false, err
+	}
+	return a.String, a.Valid, nil
 }
 
 // fireReaction resolves a decided reaction into a pending_runs row.

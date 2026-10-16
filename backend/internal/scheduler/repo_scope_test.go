@@ -110,6 +110,12 @@ func TestReactionToAStrandedJobRecordsADeliveryErrorNotARun(t *testing.T) {
 	s := New(pool, quietLog(), nil)
 	seedJobRow(t, pool, "upstream", 1)
 	strand := strandable(t, pool, "downstream")
+	// The upstream is FIN's too: a reaction of FIN's to Global's job is
+	// refused for that alone (2.4.2, present defect 60: with no owner
+	// identity the two agencies were not compared).
+	if _, err := pool.Exec(`UPDATE jobs SET repo_id = 'repo-fin' WHERE name = 'upstream'`); err != nil {
+		t.Fatal(err)
+	}
 	seedReaction(t, pool, "downstream", "on-upstream", "upstream", "success")
 	primeCursor(t, s)
 

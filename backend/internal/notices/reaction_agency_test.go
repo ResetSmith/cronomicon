@@ -10,8 +10,10 @@ import (
 
 // A reaction pinned to another agency's definition is reported to its own
 // agency (§0a, open point 1), and the notice resolves when it watches one of
-// its own. Not reported: a reaction to its own agency's definition, one with
-// no upstream identity (matched by name within its agency).
+// its own. So is one with no upstream identity whose name only another
+// agency's definition holds: the reactor refuses it too (2.4.2, present
+// defect 60; until then it was not reported). Not reported: a reaction to its
+// own agency's definition.
 func TestI1_AReactionToAnotherAgencysDefinitionIsReported(t *testing.T) {
 	pool := open(t)
 	mustExec(t, pool, `INSERT INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', 't'), ('ag-tax', 'Tax', 't')`)
@@ -40,14 +42,16 @@ func TestI1_AReactionToAnotherAgencysDefinitionIsReported(t *testing.T) {
 	}
 	got := check()
 	n, ok := got["j-after:on-tax"]
-	if len(got) != 1 || !ok {
-		t.Fatalf("open notices = %v; want the reaction to Tax's job alone", got)
+	_, byName := got["j-after:by-name"]
+	if len(got) != 2 || !ok || !byName {
+		t.Fatalf("open notices = %v; want the two reactions to Tax's job", got)
 	}
 	if n.AgencyID != "ag-fin" || !strings.Contains(n.Detail, "tax-job") || !strings.Contains(n.Detail, "another agency's") {
 		t.Errorf("the notice is filed under %q with %q", n.AgencyID, n.Detail)
 	}
 
 	mustExec(t, pool, `UPDATE reactions SET on_name = 'fin-job', on_uid = 'j-fin' WHERE name = 'on-tax'`)
+	mustExec(t, pool, `UPDATE reactions SET on_name = 'fin-job' WHERE name = 'by-name'`)
 	if got := check(); len(got) != 0 {
 		t.Errorf("after the reaction was pointed at its own agency's job: %v", got)
 	}
