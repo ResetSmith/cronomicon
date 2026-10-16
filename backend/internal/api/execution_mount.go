@@ -324,13 +324,15 @@ var runScopeOwnerSQL = agencyid.RunScopeOwnerSQL("agencies_json")
 var runOwnerSQL = agencyid.Owner("owner_agency")
 
 // activityOwnerSQL is whose a row of `activity` is, for the agency context: its
-// run's, or its workflow run's (by the trace id it records), else its job's;
-// Global's for what is the installation's (a change of settings, a sync, a
-// push) and for history that names neither.
+// run's, or its workflow run's (by the trace id it records), else its job's,
+// else the agency the row records (migration 1510: a sync's or a push's
+// repository's, or the agency a change was made in); Global's for a row that
+// names none (a script's change, history from before 2.4.4).
 var activityOwnerSQL = agencyid.Owner(`COALESCE(
 	(SELECT ru.owner_agency FROM runs ru WHERE ru.id = activity.trace_id),
 	(SELECT ` + agencyid.WorkflowRunSQL("wr") + ` FROM workflow_runs wr WHERE wr.id = activity.trace_id),
-	(SELECT ` + agencyid.JobSQL("aj") + ` FROM jobs aj WHERE aj.uid = activity.job_uid))`)
+	(SELECT ` + agencyid.JobSQL("aj") + ` FROM jobs aj WHERE aj.uid = activity.job_uid),
+	activity.agency_id)`)
 
 func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()

@@ -18,9 +18,17 @@ const AgencyHeader = "X-Cronomicon-Agency"
 // agency other than Global (the 2.5.0 plan's IN-9): each change it writes to
 // change_log records both identities, "X, acting in Y". Anyone else works in
 // their own agencies, and their changes say so by what they change.
+//
+// It also marks, for anyone, the agency the request works in when they may
+// read it: the activity rows the request writes are that agency's, so that an
+// agency's own changes are in its Activity (2.4.4).
 func actingAgencyContext(ctx context.Context, r *http.Request, id Identity) context.Context {
 	a := strings.TrimSpace(r.Header.Get(AgencyHeader))
-	if a == "" || a == agencyid.Global || !id.GlobalAdmin(PermConfigureApp) {
+	if a == "" || !id.ReadsAgency(a) {
+		return ctx
+	}
+	ctx = auditlog.WithRequestAgency(ctx, a)
+	if a == agencyid.Global || !id.GlobalAdmin(PermConfigureApp) {
 		return ctx
 	}
 	return auditlog.WithActingAgency(ctx, a)

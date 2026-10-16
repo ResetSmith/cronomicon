@@ -82,6 +82,27 @@ type ActivityParams struct {
 	Repository   string
 	Branch       string
 	ScheduleFile string
+	// AgencyID is the agency the event is of (2.4.4): a sync's or a push's
+	// repository's. Empty: the agency the request worked in
+	// (WithRequestAgency), else none, which is Global's.
+	AgencyID string
+}
+
+// requestAgencyKey carries the agency a request works in (2.4.4).
+type requestAgencyKey struct{}
+
+// WithRequestAgency marks ctx with the agency its request works in, one the
+// caller may read (the agency switcher). An activity row written under it
+// records that agency, so that an agency's own changes are in its Activity.
+// auth marks it when it attaches the identity.
+func WithRequestAgency(ctx context.Context, agencyID string) context.Context {
+	return context.WithValue(ctx, requestAgencyKey{}, agencyID)
+}
+
+// RequestAgency is the agency WithRequestAgency marked ctx with, or "".
+func RequestAgency(ctx context.Context) string {
+	a, _ := ctx.Value(requestAgencyKey{}).(string)
+	return a
 }
 
 // actingKey carries the agency a global administrator works in (2.4.4).
@@ -166,7 +187,7 @@ func WriteActivity(ctx context.Context, db Execer, p ActivityParams) error {
 	p.Target = TrimForAudit(mask(p.Target))
 	p.Details = TrimForAudit(mask(p.Details))
 	p.Summary = TrimForAudit(mask(p.Summary))
-	_, err := db.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		INSERT INTO activity
 			(kind, outcome, actor, job_name, job_id, workflow_name, workflow_id,
 			 job_uid, workflow_uid,
@@ -201,6 +222,19 @@ func WriteActivity(ctx context.Context, db Execer, p ActivityParams) error {
 	)
 	if err != nil {
 		return err
+	}
+	// The agency the event is of (2.4.4), written apart and only when there is
+	// one: a test's own schema of the table has no column for it.
+	agency := p.AgencyID
+	if agency == "" {
+		agency = RequestAgency(ctx)
+	}
+	if agency != "" {
+		if id, ierr := res.LastInsertId(); ierr == nil {
+			if _, err := db.ExecContext(ctx, `UPDATE activity SET agency_id = ? WHERE id = ?`, agency, id); err != nil {
+				return err
+			}
+		}
 	}
 	if ev, ok := activityEvent(now, p); ok {
 		emit(ev)
