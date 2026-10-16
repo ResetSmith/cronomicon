@@ -17,6 +17,7 @@ package scheduler
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"log/slog"
@@ -645,11 +646,17 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	// R2-5 — the per-fire read keys on the identity the reload resolved, never
 	// on the (name, source) pair a sibling may now share.
 	var jobEnv, jobTargetHost, jobSSHUser, jobSSHCred sql.NullString
-	_ = s.db.QueryRowContext(ctx,
+	// A read that fails stops the fire (2.4.2, present defect 66): read as
+	// nothing, the run lost its target host (and fanned out over the whole
+	// scope, the TG-1 class) and its connect-as identity.
+	if err := s.db.QueryRowContext(ctx,
 		`SELECT env_json, target_host, ssh_user, ssh_credential FROM jobs
 		  WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
 		jobUID, jobUID, jobName, source).
-		Scan(&jobEnv, &jobTargetHost, &jobSSHUser, &jobSSHCred)
+		Scan(&jobEnv, &jobTargetHost, &jobSSHUser, &jobSSHCred); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		s.log.Error("scheduler: read the job — fire not enqueued", "job", jobName, "err", err)
+		return
+	}
 	if !execspec.IdentityCapableRunType(runType) {
 		jobSSHUser.String, jobSSHCred.String = "", ""
 	}
@@ -701,9 +708,13 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	// bindings this probe checks must be the one THIS job references, not a
 	// same-named sibling's.
 	var scriptRef, scriptUID sql.NullString
-	_ = s.db.QueryRowContext(ctx,
+	// As above: read as nothing, the script's bindings were not asked about.
+	if err := s.db.QueryRowContext(ctx,
 		`SELECT script_ref, script_uid FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
-		jobUID, jobUID, jobName, source).Scan(&scriptRef, &scriptUID)
+		jobUID, jobUID, jobName, source).Scan(&scriptRef, &scriptUID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		s.log.Error("scheduler: read the job's script — fire not enqueued", "job", jobName, "err", err)
+		return
+	}
 	owners := runref.RunOwners(source, jobName, jobUID, scriptRef.String, scriptUID.String)
 	blocked, berr := runref.UnboundRunBlocked(ctx, s.db, owners, scope, scopeAgencies)
 	if berr != nil {
@@ -1608,10 +1619,23 @@ func EnqueueRunWithID(ctx context.Context, database *sql.DB, p EnqueueParams) (s
 		_ = rerr
 	}
 	if err := execspec.SyncRunAgencies(ctx, database, traceID, p.agenciesJSONOrDefault()); err != nil {
+		// The row is committed and its agencies are not: no runner would ever
+		// claim it, and it counted toward the cap until retention (2.4.2,
+		// present defect 66). It is closed, failed, with the reason.
+		now := time.Now().UTC().Format(time.RFC3339)
+		if _, uerr := database.ExecContext(ctx,
+			`UPDATE runs SET status = 'failure', queued_reason = ?, started_at = COALESCE(started_at, ?), completed_at = ?
+			  WHERE id = ? AND status = 'queued'`, ReasonRunAgenciesUnwritten, now, now, traceID); uerr != nil {
+			return "", fmt.Errorf("%w (and the run %s could not be closed: %v)", err, traceID, uerr)
+		}
 		return "", err
 	}
 	return traceID, nil
 }
+
+// ReasonRunAgenciesUnwritten is the stored reason of a run closed because the
+// agencies it runs for could not be written.
+const ReasonRunAgenciesUnwritten = "Refused: the agencies this run runs for could not be recorded, so no runner could claim it"
 
 // IsForbidConflict reports whether err is a UNIQUE constraint violation on the
 // runs.concurrency_key partial index (uq_runs_active_concurrency), indicating a
