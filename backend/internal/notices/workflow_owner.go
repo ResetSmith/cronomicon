@@ -23,9 +23,11 @@ import (
 // a scope is given to another agency. It resolves when the workflow's jobs
 // are all one agency's.
 //
-// The steps are read here as migration 1360 read them, and as the engine
-// resolves them: sub-workflows followed, a step's job found by its uid, its
-// stated source, or the workflow's own source and then the other.
+// The steps are read here as the engine resolves them (2.4.2, present defect
+// 59: until then by the lowest rowid of a name, across repositories):
+// sub-workflows followed, a step's job found by its uid, else in its stated
+// source or the workflow's own and then the other, a Git workflow's within
+// its repository and its agency, and a name two jobs hold as nothing.
 //
 // Subject: the workflow's uid. Filed under Global: the workflow is Global's,
 // and the detail names the agencies it reaches.
@@ -105,10 +107,19 @@ func SpanningWorkflows(ctx context.Context, q interface {
 		                       AND COALESCE(c.repo_id, 'global') = 'global')
 		               END
 		             ELSE
-		               (SELECT c.rowid FROM workflows c
-		                 WHERE c.source IN ('git', 'cronomicon') AND c.name = json_extract(n.value, '$.workflow')
-		                   AND c.enabled = 1 AND c.deleted_at IS NULL
-		                 ORDER BY (c.source = p.source) DESC, c.rowid LIMIT 1)
+		               -- A Git parent: its own repository's workflow of the name (one
+		               -- that is off fails the step), else a workflow built in the app
+		               -- of its repository's agency (loadChildWorkflow; 2.4.2, present
+		               -- defect 59: this took the lowest rowid of the name, any repository).
+		               COALESCE(
+		                 (SELECT CASE WHEN c.enabled = 1 AND c.deleted_at IS NULL THEN c.rowid ELSE -1 END
+		                    FROM workflows c
+		                   WHERE c.source = 'git' AND c.name = json_extract(n.value, '$.workflow')
+		                     AND COALESCE(c.repo_id, 'global') = COALESCE(p.repo_id, 'global')),
+		                 (SELECT MIN(c.rowid) FROM workflows c
+		                   WHERE c.source = 'cronomicon' AND c.name = json_extract(n.value, '$.workflow')
+		                     AND c.enabled = 1 AND c.deleted_at IS NULL
+		                     AND c.owner_agency = (SELECT g.agency_id FROM git_repos g WHERE g.id = COALESCE(p.repo_id, 'global'))))
 		           END,
 		           r.depth + 1
 		      FROM reach r
@@ -117,25 +128,63 @@ func SpanningWorkflows(ctx context.Context, q interface {
 		        ON n.type = 'object' AND json_extract(n.value, '$.type') = 'workflow'
 		     WHERE r.depth < 3
 		),
-		stepjob(root, jrow) AS MATERIALIZED (
-		    SELECT r.root,
-		           CASE WHEN COALESCE(json_extract(n.value, '$.jobUid'), '') <> ''
-		             THEN (SELECT j.rowid FROM jobs j
-		                    WHERE j.uid = json_extract(n.value, '$.jobUid') AND j.deleted_at IS NULL)
-		             ELSE (SELECT j.rowid FROM jobs j
-		                    WHERE j.source IN ('git', 'cronomicon') AND j.name = json_extract(n.value, '$.name')
-		                      AND j.deleted_at IS NULL
-		                      AND (COALESCE(json_extract(n.value, '$.jobSource'), '') = ''
-		                           OR j.source = json_extract(n.value, '$.jobSource'))
-		                    ORDER BY (j.source = p.source) DESC, j.rowid
-		                    LIMIT 1)
-		           END
+		-- A job step of each reached workflow, and the sources its job is looked
+		-- for in, in the engine's order (StepSourceOrder): the step's own, else
+		-- the workflow's and then the other.
+		stepref(root, prow, name, juid, src, ord) AS MATERIALIZED (
+		    SELECT r.root, p.rowid, json_extract(n.value, '$.name'), COALESCE(json_extract(n.value, '$.jobUid'), ''),
+		           CASE WHEN COALESCE(json_extract(n.value, '$.jobSource'), '') <> '' THEN json_extract(n.value, '$.jobSource') ELSE p.source END,
+		           1
 		      FROM reach r
 		      JOIN workflows p ON p.rowid = r.wf
 		      JOIN json_tree(CASE WHEN json_valid(p.steps) THEN p.steps ELSE '[]' END) n
 		        ON n.type = 'object'
 		       AND COALESCE(json_extract(n.value, '$.type'), '') IN ('', 'job')
 		       AND COALESCE(json_extract(n.value, '$.name'), '') <> ''
+		  UNION ALL
+		    SELECT r.root, p.rowid, json_extract(n.value, '$.name'), COALESCE(json_extract(n.value, '$.jobUid'), ''),
+		           CASE WHEN p.source = 'cronomicon' THEN 'git' ELSE 'cronomicon' END,
+		           2
+		      FROM reach r
+		      JOIN workflows p ON p.rowid = r.wf
+		      JOIN json_tree(CASE WHEN json_valid(p.steps) THEN p.steps ELSE '[]' END) n
+		        ON n.type = 'object'
+		       AND COALESCE(json_extract(n.value, '$.type'), '') IN ('', 'job')
+		       AND COALESCE(json_extract(n.value, '$.name'), '') <> ''
+		       AND COALESCE(json_extract(n.value, '$.jobSource'), '') = ''
+		),
+		-- The job found in each source, as resolveJobDef finds it (2.4.2, present
+		-- defect 59: this was the lowest rowid of the name across every
+		-- repository and agency). A Git workflow's: its own repository's job, then
+		-- its repository's agency's jobs built in the app. Otherwise the one job of
+		-- the name in that source. Binned and disabled rows are found (they stop
+		-- the search, as in the engine); a name two jobs hold is -1, ambiguous,
+		-- and the step does not run.
+		stepfound(root, prow, name, ord, jrow) AS MATERIALIZED (
+		    SELECT s.root, s.prow, s.name, s.ord,
+		           CASE
+		             WHEN s.src = 'git' AND p.source = 'git' THEN
+		               (SELECT j.rowid FROM jobs j WHERE j.source = 'git' AND j.name = s.name
+		                   AND COALESCE(j.repo_id, 'global') = COALESCE(p.repo_id, 'global'))
+		             WHEN s.src = 'cronomicon' AND p.source = 'git' THEN
+		               (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(j.rowid) WHEN COUNT(*) > 1 THEN -1 END
+		                  FROM jobs j WHERE j.source = 'cronomicon' AND j.name = s.name
+		                   AND COALESCE(j.owner_agency, 'global') = (SELECT g.agency_id FROM git_repos g WHERE g.id = COALESCE(p.repo_id, 'global')))
+		             ELSE
+		               (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(j.rowid) WHEN COUNT(*) > 1 THEN -1 END
+		                  FROM jobs j WHERE j.source = s.src AND j.name = s.name)
+		           END
+		      FROM stepref s JOIN workflows p ON p.rowid = s.prow
+		     WHERE s.juid = ''
+		),
+		stepjob(root, jrow) AS MATERIALIZED (
+		    SELECT root, (SELECT j.rowid FROM jobs j WHERE j.uid = juid AND j.deleted_at IS NULL)
+		      FROM (SELECT DISTINCT root, juid FROM stepref WHERE juid <> '')
+		  UNION ALL
+		    SELECT f.root, (SELECT f2.jrow FROM stepfound f2
+		                     WHERE f2.root = f.root AND f2.prow = f.prow AND f2.name = f.name AND f2.jrow IS NOT NULL
+		                     ORDER BY f2.ord LIMIT 1)
+		      FROM (SELECT DISTINCT root, prow, name FROM stepfound) f
 		),
 		step(root, agency) AS MATERIALIZED (
 		    SELECT s.root,
@@ -143,7 +192,7 @@ func SpanningWorkflows(ctx context.Context, q interface {
 		             WHEN COALESCE(j.scope, '') = '' THEN ?1
 		             ELSE COALESCE(`+agencyid.JobSQL("j")+`, ?1) -- its owner (1400)
 		           END
-		      FROM stepjob s JOIN jobs j ON j.rowid = s.jrow
+		      FROM stepjob s JOIN jobs j ON j.rowid = s.jrow AND j.deleted_at IS NULL
 		),
 		counted(root, n) AS MATERIALIZED (
 		    SELECT root, COUNT(DISTINCT agency) FROM step GROUP BY root
