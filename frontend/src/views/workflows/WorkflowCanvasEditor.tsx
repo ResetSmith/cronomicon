@@ -283,9 +283,16 @@ function NodeRow({
           <input
             value={node.workflow ?? ""}
             placeholder="workflow to run"
-            onChange={(e) => set({ workflow: e.target.value })}
+            // A changed name no longer means the workflow the step was pinned
+            // to (R7): the save pins it again, by the new name.
+            onChange={(e) => set({ workflow: e.target.value, workflowUid: undefined })}
             style={{ ...inp(), width: "100%", boxSizing: "border-box" }}
           />
+          {node.workflowUid && (
+            <div style={{ fontSize: c.fontXs, color: c.textSec }} title={node.workflowUid}>
+              Pinned to the workflow this step was saved with; another workflow of the same name is not run in its place.
+            </div>
+          )}
           <div style={{ fontSize: c.fontXs, color: c.textSec }}>
             Runs another workflow as one step and waits for it. Only the inputs you map cross over — this
             workflow's variables do not flow in automatically. Nesting is capped at 3 deep.
