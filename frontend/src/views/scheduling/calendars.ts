@@ -39,26 +39,48 @@ export function useCalendars(refresh = 0): CalendarsList {
 // for the component's lifetime. Failed fetches cache as [] — a preview is
 // advisory, and the server re-evaluates for real at fire time.
 
-export function useCalendarDays(names: string[]): { days: DaysByCalendar; loading: boolean } {
+// calendarDaysKey is the key useCalendarDays files a calendar's days under:
+// its name, or, given its owner, the owner and the name (2.4.1). Two agencies
+// may each have a calendar of a name (2.4.0, I2), and by the name alone the
+// read answered 409 ambiguous_calendar or another agency's days.
+export const calendarDaysKey = (name: string, owner?: string | null) => (owner ? `${owner}/${name}` : name);
+
+/** A calendar to read: its name, or its name and owning agency. */
+export type CalendarRef = string | { name: string; owner?: string | null };
+
+export function useCalendarDays(refs: CalendarRef[]): { days: DaysByCalendar; loading: boolean } {
   const [days, setDays] = useState<DaysByCalendar>({});
   const inFlight = useRef<Set<string>>(new Set());
-  const want = [...new Set(names.filter(Boolean))].sort().join(" ");
+  // Keys carry no spaces (a name is a slug, an agency id has none), so the
+  // joined string is a stable dependency.
+  const want = [
+    ...new Set(
+      refs
+        .map((r) => (typeof r === "string" ? r : r.name ? calendarDaysKey(r.name, r.owner) : ""))
+        .filter(Boolean),
+    ),
+  ]
+    .sort()
+    .join(" ");
   useEffect(() => {
     let cancelled = false;
-    for (const name of want ? want.split(" ") : []) {
-      if (name in days || inFlight.current.has(name)) continue;
-      inFlight.current.add(name);
+    for (const key of want ? want.split(" ") : []) {
+      if (key in days || inFlight.current.has(key)) continue;
+      inFlight.current.add(key);
+      const slash = key.indexOf("/");
+      const name = slash < 0 ? key : key.slice(slash + 1);
+      const owner = slash < 0 ? undefined : key.slice(0, slash);
       api
-        .GET("/calendars/{name}", { params: { path: { name } } })
+        .GET("/calendars/{name}", { params: { path: { name }, query: owner ? { agencyId: owner } : {} } } as never)
         .then(({ data }) => {
           if (cancelled) return;
           const cal = data as Calendar | undefined;
-          setDays((cur) => ({ ...cur, [name]: cal?.days ?? [] }));
+          setDays((cur) => ({ ...cur, [key]: cal?.days ?? [] }));
         })
         .catch(() => {
-          if (!cancelled) setDays((cur) => ({ ...cur, [name]: [] }));
+          if (!cancelled) setDays((cur) => ({ ...cur, [key]: [] }));
         })
-        .finally(() => inFlight.current.delete(name));
+        .finally(() => inFlight.current.delete(key));
     }
     return () => {
       cancelled = true;

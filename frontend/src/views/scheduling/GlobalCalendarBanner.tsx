@@ -8,15 +8,16 @@
 // calendar that ran out of days stops freezing anything — a change freeze that
 // silently lifted is the same class of invisible failure, pointing the other way.
 import { c } from "../../theme";
-import { calendarExpiry, dayInAppZone, useCalendarDays, useCalendars } from "./calendars";
+import { calendarDaysKey, calendarExpiry, dayInAppZone, useCalendarDays, useCalendars } from "./calendars";
 import { api } from "../../api/client";
 import { useGet, rows } from "../../hooks";
 
 export function GlobalCalendarBanner({ onGoToCalendars }: { onGoToCalendars?: () => void }) {
   const { calendars, expiryWarningDays } = useCalendars();
   const globals = calendars.filter((cal) => cal.global);
-  const globalNames = globals.map((cal) => cal.name ?? "").filter(Boolean);
-  const { days } = useCalendarDays(globalNames);
+  // Each read by its name AND its owner: two agencies may each have a global
+  // calendar of a name, and by the name alone one's days were read for both.
+  const { days } = useCalendarDays(globals.map((cal) => ({ name: cal.name ?? "", owner: cal.ownerAgency })));
   const today = dayInAppZone();
   const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
   const agencyName = (id?: string | null) =>
@@ -24,15 +25,15 @@ export function GlobalCalendarBanner({ onGoToCalendars }: { onGoToCalendars?: ()
 
   // Covering today: the fleet is quiet right now, and this is the only place
   // that says why.
-  const activeToday: { name: string; label?: string; owner: string }[] = [];
+  const activeToday: { name: string; key: string; label?: string; owner: string }[] = [];
   for (const cal of globals) {
-    const hit = (days[cal.name ?? ""] ?? []).find((d) => d.day === today);
-    if (hit) activeToday.push({ name: cal.name ?? "", label: hit.label, owner: agencyName(cal.ownerAgency) });
+    const hit = (days[calendarDaysKey(cal.name ?? "", cal.ownerAgency)] ?? []).find((d) => d.day === today);
+    if (hit) activeToday.push({ name: cal.name ?? "", key: calendarDaysKey(cal.name ?? "", cal.ownerAgency), label: hit.label, owner: agencyName(cal.ownerAgency) });
   }
   const owners = [...new Set(activeToday.map((g) => g.owner))];
 
   const lapsed = globals
-    .map((cal) => ({ name: cal.name ?? "", state: calendarExpiry(cal, expiryWarningDays), daysRemaining: cal.daysRemaining }))
+    .map((cal) => ({ name: cal.name ?? "", key: calendarDaysKey(cal.name ?? "", cal.ownerAgency), state: calendarExpiry(cal, expiryWarningDays), daysRemaining: cal.daysRemaining }))
     .filter((g) => g.state !== null);
 
   if (activeToday.length === 0 && lapsed.length === 0) return null;
@@ -46,7 +47,7 @@ export function GlobalCalendarBanner({ onGoToCalendars }: { onGoToCalendars?: ()
             {activeToday.length === 1 ? "" : ` by ${activeToday.length} global calendars`}.
           </strong>{" "}
           {activeToday.map((g, i) => (
-            <span key={g.name}>
+            <span key={g.key}>
               {i > 0 ? " · " : ""}
               <span style={{ fontFamily: c.mono }}>{g.name}</span>
               {owners.length > 1 ? ` (${g.owner})` : ""}
@@ -62,7 +63,7 @@ export function GlobalCalendarBanner({ onGoToCalendars }: { onGoToCalendars?: ()
         </div>
       )}
       {lapsed.map((g) => (
-        <div key={g.name} style={bannerStyle(g.state === "expired" ? c.danger : c.warning)}>
+        <div key={g.key} style={bannerStyle(g.state === "expired" ? c.danger : c.warning)}>
           The global calendar <span style={{ fontFamily: c.mono }}>{g.name}</span>{" "}
           {g.state === "expired"
             ? "has no future days left, so it no longer suppresses anything — runs it used to hold back are firing again."

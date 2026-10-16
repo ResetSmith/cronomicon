@@ -21,7 +21,7 @@ vi.mock("./calendars", async (importOriginal) => {
       loading: false,
       error: null,
     }),
-    useCalendarDays: () => ({ days: { freeze: [{ day: today, label: "quarter close" }] }, loading: false }),
+    useCalendarDays: () => ({ days: { "ag-fin/freeze": [{ day: today, label: "quarter close" }] }, loading: false }),
     calendarExpiry: () => null,
   };
 });
