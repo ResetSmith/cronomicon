@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 )
@@ -37,11 +38,19 @@ func seedSwitcher(t *testing.T, pool *sql.DB) {
 	        ('j-tax',  's0-tax-job',     'cronomicon', 'bash', 'tax-hosts', 'ag:TAX', 'true', ?),
 	        ('j-glob', 's0-glob-job',    'cronomicon', 'bash', NULL,        NULL,     'true', ?),
 	        ('j-fin0', 's0-fin-noscope', 'cronomicon', 'bash', NULL,        'ag:FIN', 'true', ?)`, at, at, at, at)
-	exec(`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, created_at, scope, agencies_json) VALUES
-	        ('r-fin',  's0-fin-job',     'bash', 'success', 'x', 'manual', ?, 'fin-hosts', '["FIN"]'),
-	        ('r-tax',  's0-tax-job',     'bash', 'success', 'x', 'manual', ?, 'tax-hosts', '["TAX"]'),
-	        ('r-glob', 's0-glob-job',    'bash', 'success', 'x', 'manual', ?, NULL,        '[]'),
-	        ('r-fin0', 's0-fin-noscope', 'bash', 'success', 'x', 'manual', ?, NULL,        '[]')`, at, at, at, at)
+	exec(`INSERT INTO runs (id, job_name, job_uid, run_type, status, triggered_by, trigger_kind, created_at, scope, agencies_json) VALUES
+	        ('r-fin',  's0-fin-job',     'j-fin',  'bash', 'success', 'x', 'manual', ?, 'fin-hosts', '["FIN"]'),
+	        ('r-tax',  's0-tax-job',     'j-tax',  'bash', 'success', 'x', 'manual', ?, 'tax-hosts', '["TAX"]'),
+	        ('r-glob', 's0-glob-job',    'j-glob', 'bash', 'success', 'x', 'manual', ?, NULL,        '[]'),
+	        ('r-fin0', 's0-fin-noscope', 'j-fin0', 'bash', 'success', 'x', 'manual', ?, NULL,        '[]')`, at, at, at, at)
+	// What the feed says of those runs: by the trace id each records (S2).
+	// Dated now: the feed shows a recent window by default.
+	now := time.Now().UTC().Format(time.RFC3339)
+	exec(`INSERT INTO activity (kind, actor, outcome, job_name, summary, trace_id, at, created_at) VALUES
+	        ('run-end', 'x', 'success', 's0-fin-job',     's0-fin-act',     'r-fin',  ?, ?),
+	        ('run-end', 'x', 'success', 's0-tax-job',     's0-tax-act',     'r-tax',  ?, ?),
+	        ('run-end', 'x', 'success', 's0-glob-job',    's0-glob-act',    'r-glob', ?, ?),
+	        ('run-end', 'x', 'success', 's0-fin-noscope', 's0-fin0-act',    'r-fin0', ?, ?)`, now, now, now, now, now, now, now, now)
 
 	exec(`INSERT INTO workflows (uid, name, source, owner_agency, steps, created_at) VALUES
 	        ('w-fin',  's0-fin-flow',  'cronomicon', 'ag:FIN', '[]', ?),
@@ -157,6 +166,9 @@ var switcherLists = []switcherList{
 	{"/api/v1/scripts?pageSize=200", "s0-fin-script", "s0-tax-script", "s0-glob-script"},
 	{"/api/v1/access-grants", `"fin-admins"`, `"tax-admins"`, `"root-admins"`},
 	{"/api/v1/service-accounts", "s0-fin-sa", "s0-tax-sa", "s0-glob-sa"},
+	// Added by S2, when a run has an owner for its feed rows to be judged by.
+	{"/api/v1/activity?pageSize=200", "s0-fin-act", "s0-tax-act", "s0-glob-act"},
+	{"/api/v1/activity?pageSize=200&noscope=1", "s0-fin0-act", "s0-tax-act", "s0-glob-act"},
 }
 
 // The kinds of person, by the groups they present.
@@ -182,29 +194,31 @@ var switcherPeople = []struct{ name, groups string }{
 // to everyone; FIN's job with no scope, and its run, are listed to TAX; any
 // agency's administrator lists every agency's grants.
 var switcherToday = map[string][6]string{
-	"/api/v1/jobs?pageSize=200":           {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/runs?pageSize=200":           {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/jobs?pageSize=200&noscope=1": {"YYY", "YYY", "Y.Y", "YYY", "YYY", "Y.Y"},
-	"/api/v1/runs?pageSize=200&noscope=1": {"YYY", "YYY", "Y.Y", "YYY", "YYY", "Y.Y"},
-	"/api/v1/workflow-runs?pageSize=200":  {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/workflows?pageSize=200":      {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/schedule-defs?pageSize=200":  {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/scopes":                      {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/runners":                     {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/env-secrets":                 {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/env-vars":                    {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/env-secrets?scoped=1":        {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/env-vars?scoped=1":           {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/ssh/credentials":             {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/ssh/hosts":                   {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/ssh/bastions":                {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/calendars":                   {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/notices":                     {"YYY", "...", "Y..", ".Y.", "YY.", "..."},
-	"/api/v1/git-repo-names":              {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/git-repos":                   {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
-	"/api/v1/scripts?pageSize=200":        {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/access-grants":               {"YYY", "403", "YYY", "YYY", "YYY", "403"},
-	"/api/v1/service-accounts":            {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
+	"/api/v1/jobs?pageSize=200":               {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
+	"/api/v1/runs?pageSize=200":               {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
+	"/api/v1/jobs?pageSize=200&noscope=1":     {"YYY", "YYY", "Y.Y", "YYY", "YYY", "Y.Y"},
+	"/api/v1/runs?pageSize=200&noscope=1":     {"YYY", "YYY", "Y.Y", "YYY", "YYY", "Y.Y"},
+	"/api/v1/workflow-runs?pageSize=200":      {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/workflows?pageSize=200":          {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/schedule-defs?pageSize=200":      {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/scopes":                          {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/runners":                         {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/env-secrets":                     {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/env-vars":                        {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/env-secrets?scoped=1":            {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
+	"/api/v1/env-vars?scoped=1":               {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
+	"/api/v1/ssh/credentials":                 {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/ssh/hosts":                       {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/ssh/bastions":                    {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/calendars":                       {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/notices":                         {"YYY", "...", "Y..", ".Y.", "YY.", "..."},
+	"/api/v1/git-repo-names":                  {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
+	"/api/v1/git-repos":                       {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
+	"/api/v1/scripts?pageSize=200":            {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
+	"/api/v1/access-grants":                   {"YYY", "403", "YYY", "YYY", "YYY", "403"},
+	"/api/v1/service-accounts":                {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
+	"/api/v1/activity?pageSize=200":           {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/activity?pageSize=200&noscope=1": {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
 }
 
 // switcherSees asks one list as one person and answers as switcherToday does.
@@ -257,23 +271,6 @@ func TestSwitcherListsWithNoAgencyNamedAnswerAsBefore(t *testing.T) {
 // they may not read narrows every list to nothing.
 var switcherReads = [6]string{"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"}
 
-// switcherS2Pending is what S1 answers before a run has an owner of its own
-// (S2): FIN's run with no scope is taken for Global's, from its empty scope
-// snapshot. Keyed by list, agency named and person.
-var switcherS2Pending = map[string]string{
-	"/api/v1/runs?pageSize=200&noscope=1|global|root":          "Y.Y",
-	"/api/v1/runs?pageSize=200&noscope=1|global|all-viewer":    "Y.Y",
-	"/api/v1/runs?pageSize=200&noscope=1|global|fin-admin":     "Y.Y",
-	"/api/v1/runs?pageSize=200&noscope=1|global|tax-admin":     "Y.Y",
-	"/api/v1/runs?pageSize=200&noscope=1|global|fin+tax admin": "Y.Y",
-	"/api/v1/runs?pageSize=200&noscope=1|global|fin-viewer":    "Y.Y",
-	"/api/v1/runs?pageSize=200&noscope=1|ag:FIN|root":          "...",
-	"/api/v1/runs?pageSize=200&noscope=1|ag:FIN|all-viewer":    "...",
-	"/api/v1/runs?pageSize=200&noscope=1|ag:FIN|fin-admin":     "...",
-	"/api/v1/runs?pageSize=200&noscope=1|ag:FIN|fin+tax admin": "...",
-	"/api/v1/runs?pageSize=200&noscope=1|ag:FIN|fin-viewer":    "...",
-}
-
 // Naming an agency (2.4.4 S1) narrows each list to that agency's rows of what
 // the person could see before, and never widens it: FIN's view of a list is
 // today's answer with TAX's and Global's rows taken out. An agency the person
@@ -297,9 +294,6 @@ func TestSwitcherNamingAnAgencyNarrowsEachListAndNeverWidensIt(t *testing.T) {
 						keep[a.col] = want[a.col]
 					}
 					want = string(keep)
-				}
-				if pending, ok := switcherS2Pending[l.path+"|"+a.id+"|"+p.name]; ok {
-					want = pending
 				}
 				if got := switcherSees(t, h, l, p.groups, agencyctx.Header, a.id); got != want {
 					t.Errorf("%s as %s in %s: %s, want %s (FIN, TAX, Global)", l.path, p.name, a.id, got, want)

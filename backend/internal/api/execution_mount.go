@@ -320,8 +320,17 @@ func (s *Server) scopeWhereFragment(r *http.Request, col, ownerExpr string) (str
 var runScopeOwnerSQL = agencyid.RunScopeOwnerSQL("agencies_json")
 
 // runOwnerSQL is whose a row of `runs` is, for the agency context (2.4.4):
-// for now the agency its scope snapshot names, Global's for none.
-var runOwnerSQL = runScopeOwnerSQL
+// the owner stamped when it was queued (migration 1480), by the no-owner rule.
+var runOwnerSQL = agencyid.Owner("owner_agency")
+
+// activityOwnerSQL is whose a row of `activity` is, for the agency context: its
+// run's, or its workflow run's (by the trace id it records), else its job's;
+// Global's for what is the installation's (a change of settings, a sync, a
+// push) and for history that names neither.
+var activityOwnerSQL = agencyid.Owner(`COALESCE(
+	(SELECT ru.owner_agency FROM runs ru WHERE ru.id = activity.trace_id),
+	(SELECT ` + agencyid.WorkflowRunSQL("wr") + ` FROM workflow_runs wr WHERE wr.id = activity.trace_id),
+	(SELECT ` + agencyid.JobSQL("aj") + ` FROM jobs aj WHERE aj.uid = activity.job_uid))`)
 
 func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -4816,6 +4825,12 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request) {
 	if to != "" {
 		base += " AND at < ?"
 		args = append(args, to)
+	}
+	// 2.4.4: the agency the request works in. (Activity has no read filter of
+	// its own: who reads which is 2.5.0's, CF-2.)
+	if frag, fargs := agencyctx.Narrow(r, activityOwnerSQL); frag != "" {
+		base += frag
+		args = append(args, fargs...)
 	}
 
 	// One filter slice for the COUNT + page query (CC.14 — no parallel cArgs).
