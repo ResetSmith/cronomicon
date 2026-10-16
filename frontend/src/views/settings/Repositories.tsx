@@ -208,6 +208,30 @@ function RepoCard({ repo, onSaved, unconnected }: { repo: GitRepo; onSaved: () =
           <SettingRow label="Webhook Enabled">
             <Toggle on={form.webhookEnabled ?? false} onChange={() => patch({ webhookEnabled: !form.webhookEnabled })} />
           </SettingRow>
+          {form.webhookEnabled && (
+            // The events the webhook starts a sync on (2.4.2, question 54: the
+            // single form had them, and the Repositories card sent them unseen).
+            <SettingRow label="Webhook Events" hint="The events that start a sync of this repository.">
+              <div style={{ display: "flex", gap: 14 }}>
+                {(
+                  [
+                    ["push", "Push"],
+                    ["mr", "Merge request"],
+                    ["tag", "Tag"],
+                  ] as const
+                ).map(([key, text]) => (
+                  <label key={key} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <input
+                      type="checkbox"
+                      checked={!!form.webhookEvents?.[key]}
+                      onChange={(e) => patch({ webhookEvents: { push: true, mr: true, tag: true, ...form.webhookEvents, [key]: e.target.checked } })}
+                    />
+                    {text}
+                  </label>
+                ))}
+              </div>
+            </SettingRow>
+          )}
           {!unconnected && (
             <SettingRow label="Webhook Secret" hint="Rotating it updates the hook in GitLab; the new secret is shown once.">
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -239,6 +263,18 @@ function RepoCard({ repo, onSaved, unconnected }: { repo: GitRepo; onSaved: () =
             </div>
           )}
           {msg && <div role={msg.ok ? "status" : "alert"} style={{ marginTop: 8, color: msg.ok ? c.success : c.danger }}>{msg.text}</div>}
+          {repo.agencyId !== "global" && !unconnected && (
+            // A repository is not disconnected (IN-2): it goes with its agency,
+            // when the agency is empty (IN-13). One place deletes, and names
+            // what keeps it (2.4.2, question 54).
+            <div style={{ marginTop: 10, fontSize: c.fontXs, color: c.textSec }}>
+              To remove this repository, delete {label} under{" "}
+              <a href="/scopes?tab=agencies" style={{ color: c.accent }}>
+                Scopes → Agencies
+              </a>
+              : an agency is deleted when it is empty, and its repository with it.
+            </div>
+          )}
         </div>
       )}
     </Card>
