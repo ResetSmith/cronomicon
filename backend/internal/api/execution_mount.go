@@ -167,8 +167,10 @@ type jobRow struct {
 	Host       *string `json:"host"`
 	Scope      *string `json:"scope"`
 	// OwnerAgency is whose the job is (agencyid.JobSQL): the agency its scope is
-	// looked for in, and whose grant is asked of it (I2). Set by fetchJobDetail.
-	OwnerAgency string  `json:"-"`
+	// looked for in, and whose grant is asked of it (I2). Set by fetchJobDetail,
+	// and sent with the detail since 2.4.2 (present defect 68: the Run dialog's
+	// calendar note had no agency to judge the job's schedules by).
+	OwnerAgency string `json:"ownerAgency,omitempty"`
 	Status      string  `json:"status"`
 	Schedule    *string `json:"schedule"`
 	LastRunAt   *string `json:"lastRunAt"`

@@ -5211,6 +5211,8 @@ export interface components {
          */
         Job: {
             readonly id?: number;
+            /** @description v2.4.2, on GET /jobs/{jobId}. The id of the agency the job is (its owner since 1400): whose calendars its schedule entries are judged by. */
+            readonly ownerAgency?: string;
             /** @description AF-4a — the definition's stable surrogate identity, assigned when the row is first seen (by sync or by the composer) and preserved across syncs, edits and restores. Unlike `id` (a numeric handle) and unlike the name (which a later phase will allow to repeat across agencies), the uid never changes for the life of the row. New integrations should key on it. */
             readonly uid?: string;
             readonly name?: string;

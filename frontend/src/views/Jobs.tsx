@@ -2887,7 +2887,7 @@ export function RunDialog({
             {/* CAL-14/CAL-15 — the same note answers both: whether the chosen
                 instant (or now) is a day this job's schedules would have fired
                 on. A warning, never a block — manual runs are not calendar-gated. */}
-            <RunCalendarNote entries={jobDetail.schedules ?? []} at={runAt} />
+            <RunCalendarNote entries={jobDetail.schedules ?? []} at={runAt} agency={jobDetail.ownerAgency || undefined} />
             {runAt !== null && (
               <div style={{ marginLeft: 24, display: "flex", flexDirection: "column", gap: 4 }}>
                 <input

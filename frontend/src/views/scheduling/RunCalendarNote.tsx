@@ -25,7 +25,8 @@ export interface EntryBinding {
  */
 export function RunCalendarNote({ entries, at, agency }: { entries: EntryBinding[]; at: string | null; agency?: string }) {
   // `agency` (2.4.1): the definition's agency, whose calendars the entries are
-  // judged by (see useAgencyCalendars). Nothing renders this note today.
+  // judged by (see useAgencyCalendars). The Run dialog passes it (2.4.2,
+  // present defect 68: it passed none, and every agency's calendars were asked).
   const { calendars } = useCalendars();
   const bound = entries.flatMap((e) => [...(e.skipCalendars ?? []), ...(e.onlyCalendars ?? [])]);
   const { globals, daysByName: days } = useAgencyCalendars(calendars, agency, bound);

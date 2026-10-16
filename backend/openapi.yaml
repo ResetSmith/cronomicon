@@ -8552,6 +8552,7 @@ components:
         POST/PUT /jobs (A11).
       properties:
         id: { type: integer, readOnly: true }
+        ownerAgency: { type: string, readOnly: true, description: "v2.4.2, on GET /jobs/{jobId}. The id of the agency the job is (its owner since 1400): whose calendars its schedule entries are judged by." }
         uid:
           type: string
           readOnly: true
