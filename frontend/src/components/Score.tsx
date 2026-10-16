@@ -712,7 +712,10 @@ function Readout({
               </table>
             );
             return fixed ? (
-              <div data-testid="score-readout-rows" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+              // The scrollbar's room is kept from the start, so the table never
+              // overflows sideways when it appears (the walkthrough found a
+              // horizontal scrollbar and the View-run column clipped).
+              <div data-testid="score-readout-rows" style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", scrollbarGutter: "stable" }}>
                 {table}
               </div>
             ) : (

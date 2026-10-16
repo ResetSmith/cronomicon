@@ -75,6 +75,14 @@ export function AgencySwitcher({ collapsed }: { collapsed: boolean }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  // The menu is placed against the window, not inside the sidebar, which
+  // clips what overflows it (the walkthrough found the badges cut off).
+  const [at, setAt] = useState<{ top: number; left: number } | null>(null);
+  const toggle = (e: { currentTarget: HTMLElement }) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setAt(collapsed ? { top: r.top, left: r.right + 6 } : { top: r.bottom + 4, left: r.left });
+    setOpen((o) => !o);
+  };
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {
@@ -133,7 +141,7 @@ export function AgencySwitcher({ collapsed }: { collapsed: boolean }) {
         aria-expanded={open}
         aria-label={`Agency: ${currentName}. Switch agency`}
         title={collapsed ? `${currentName} (switch agency)` : "Switch agency"}
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
         style={{ ...box, cursor: "pointer" }}
       >
         {collapsed ? (
@@ -157,12 +165,10 @@ export function AgencySwitcher({ collapsed }: { collapsed: boolean }) {
           role="listbox"
           aria-label="Agencies"
           style={{
-            position: "absolute",
-            top: collapsed ? 0 : "100%",
-            left: collapsed ? "100%" : 0,
+            position: "fixed",
+            top: at?.top ?? 0,
+            left: at?.left ?? 0,
             zIndex: 40,
-            marginTop: collapsed ? 0 : 4,
-            marginLeft: collapsed ? 6 : 0,
             minWidth: 240,
             maxHeight: 420,
             overflowY: "auto",
