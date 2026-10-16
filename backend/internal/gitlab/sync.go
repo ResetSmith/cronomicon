@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -500,8 +501,33 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 		return SyncResult{Status: "failed", ErrorMessage: "sync not run: " + err.Error(), StartedAt: now, FinishedAt: now, notRun: true}
 	}
 	defer release()
-	return s.syncNow(opCtx, triggeredBy)
+	res := s.syncNow(opCtx, triggeredBy)
+	res.ErrorMessage = s.scrubURL(res.ErrorMessage)
+	return res
 }
+
+// scrubURL takes the connection's URL out of a message, in the forms an error
+// can carry it (as given, redacted, and its user part): it may carry a
+// credential, and a sync's message reaches the history and the activity log,
+// which every session of the agency reads (present defect 64: Global's URL,
+// exempt from the allowed hosts, may carry one).
+func (s *Service) scrubURL(msg string) string {
+	if s.repoURL == "" || msg == "" {
+		return msg
+	}
+	msg = strings.ReplaceAll(msg, s.repoURL, "the repository")
+	if u, err := url.Parse(s.repoURL); err == nil && u.User != nil {
+		if p, ok := u.User.Password(); ok && p != "" {
+			msg = strings.ReplaceAll(msg, p, "***")
+		}
+	}
+	// Whatever form a transport quoted it in (net/http's, with the password
+	// masked and its own path after it): no user part of any URL.
+	return urlUserinfo.ReplaceAllString(msg, "$1")
+}
+
+// urlUserinfo matches the user part of a URL in a message.
+var urlUserinfo = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s"']+@`)
 
 // syncNow is the sync itself. The caller holds the queue.
 func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
@@ -1387,7 +1413,10 @@ func (s *Service) cloneOrFetch(ctx context.Context, branch string) (*gogit.Repos
 		return cerr
 	})
 	if err != nil {
-		return nil, fmt.Errorf("git clone %s: %w", s.repoURL, err)
+		// Not the URL: it may carry a credential, and this error is recorded in
+		// the sync history every session reads (present defect 64). The log
+		// lines name the repository by its id.
+		return nil, fmt.Errorf("git clone: %w", err)
 	}
 	// Initialize + check out submodules so their files are present for discovery.
 	// RecurseSubmodules is intentionally NOT set on CloneOptions above so that a
@@ -3753,6 +3782,7 @@ func (s *Service) recordSyncEvent(ctx context.Context, triggeredBy string, res S
 		s.logInfo("git sync: cut short because the repository's sync service was stopped; not recorded", "repo_id", s.repo())
 		return nil
 	}
+	res.ErrorMessage = s.scrubURL(res.ErrorMessage)
 	_, err := s.db.Exec(`
 		INSERT INTO git_sync_events(repo_id, triggered_by, sha, status, jobs_synced, scripts_synced, schedules_synced, wfs_synced, scopes_synced, error_message, started_at, finished_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,

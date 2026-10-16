@@ -325,12 +325,8 @@ func (s *Service) noteFetchFailure(ctx context.Context, fetchErr error) {
 	if s.db == nil {
 		return
 	}
-	msg := fetchErr.Error()
-	if s.repoURL != "" {
-		// The URL is the connection's, and may carry a credential.
-		msg = strings.ReplaceAll(msg, s.repoURL, "the repository")
-	}
-	msg = "the repository could not be fetched: " + s.scrub(msg)
+	// The URL is the connection's, and may carry a credential.
+	msg := "the repository could not be fetched: " + s.scrub(s.scrubURL(fetchErr.Error()))
 	now := syncStamp()
 	ctx = context.WithoutCancel(ctx)
 	before, err := s.knownErrors(ctx, s.db)
