@@ -3339,9 +3339,7 @@ func (s *Server) listWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 	// The run's workflow's agency: by the uid the run records, else by its
 	// source and name (a run from before 1010 records none); NULL, judged by
 	// the name, when the workflow is gone.
-	if frag, fargs := s.scopeWhereFragment(r, "scope",
-		"COALESCE((SELECT "+agencyid.WorkflowSQL+" FROM workflows w WHERE w.uid = workflow_runs.workflow_uid),"+
-			" (SELECT "+agencyid.WorkflowSQL+" FROM workflows w WHERE w.source = COALESCE(workflow_runs.workflow_source, 'git') AND w.name = workflow_runs.workflow_name ORDER BY w.rowid LIMIT 1))"); frag != "" {
+	if frag, fargs := s.scopeWhereFragment(r, "scope", agencyid.WorkflowRunSQL("workflow_runs")); frag != "" {
 		base += frag
 		args = append(args, fargs...)
 	}
