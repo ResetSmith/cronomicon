@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { fetchCapabilities } from "../api/client";
 import { useGet, rows } from "../hooks";
+import { useEnsureAgency } from "../agency";
 import { c } from "../theme";
 import { guideForRunType } from "../components/docLinks";
 import { EnvRowsEditor, Btn, InfoBody, InfoToggle, Input, Select, SourceBadge, fieldLabelStyle, inputStyle, type EnvKV,
@@ -182,6 +183,9 @@ export function JobComposer() {
   const isEdit = !!editId;
   // The job to prefill the form from, in either mode.
   const loadId = editId ?? cloneId;
+  // 2.4.4 (SW-8) — a link to another agency's job switches to its agency.
+  const [jobOwner, setJobOwner] = useState<string | undefined>(undefined);
+  useEnsureAgency(jobOwner);
 
   const [canCompose, setCanCompose] = useState<boolean | null>(null);
   // EV-6 parity — key-binding writes go through the reference-bindings PUT, which
@@ -335,6 +339,7 @@ export function JobComposer() {
         return;
       }
       const j = data as Job;
+      if (editId) setJobOwner((j as { ownerAgency?: string }).ownerAgency || undefined);
       if (j.source !== "cronomicon") {
         setGitSource(true);
         return;

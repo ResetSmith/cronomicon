@@ -6656,6 +6656,8 @@ export interface components {
             suppressedLabel?: string;
         };
         Run: {
+            /** @description Whose the run is (v2.4.4, migration 1480), on GET /runs/{traceId} only; Global's is `global`. A link to another agency's run switches to its agency. */
+            readonly ownerAgency?: string;
             /**
              * @description RX — the run whose completion CAUSED this one, for a reaction-fired
              *     run; null for every other run, which is every run that existed before

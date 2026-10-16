@@ -32,8 +32,9 @@ vi.mock("./api/client", async (importOriginal) => {
   };
 });
 
-import { AgencyProvider, useAgency } from "./agency";
+import { AgencyProvider, useAgency, useEnsureAgency } from "./agency";
 import { AgencySwitcher } from "./components/AgencySwitcher";
+import { CreationAgencyPicker, useCreationAgencies } from "./components/CreationAgencyPicker";
 import { AGENCY_REFRESH_EVENT } from "./api/client";
 
 const agencies = [
@@ -130,6 +131,59 @@ describe("the agency context (2.4.4 F1)", () => {
       window.dispatchEvent(new Event(AGENCY_REFRESH_EVENT));
     });
     await waitFor(() => expect(gets.filter((g) => g === "/me/context").length).toBe(before + 1));
+  });
+});
+
+describe("the views (2.4.4 F2)", () => {
+  function Linked({ owner }: { owner: string }) {
+    useEnsureAgency(owner);
+    return null;
+  }
+
+  it("switches to the agency of an object a link opens, and says so", async () => {
+    render(
+      <MemoryRouter initialEntries={["/compose?id=7"]}>
+        <AgencyProvider>
+          <Linked owner="ag-b" />
+          <Probe />
+        </AgencyProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("ag-b"));
+    expect(screen.getByTestId("search").textContent).toContain("id=7");
+    expect(screen.getByRole("status").textContent).toBe("Switched to agency-beta");
+  });
+
+  it("does not switch to an owner the person may not choose", async () => {
+    render(
+      <MemoryRouter initialEntries={["/compose?id=7"]}>
+        <AgencyProvider>
+          <Linked owner="ag-elsewhere" />
+          <Probe />
+        </AgencyProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("ag-a"));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("creates in the agency in use: the form shows it, fixed, and sends it", async () => {
+    let body: unknown = null;
+    function Form() {
+      const pick = useCreationAgencies(false, "manageEnvVars");
+      body = pick.body;
+      return <CreationAgencyPicker label="variable" pick={pick} />;
+    }
+    render(
+      <MemoryRouter initialEntries={["/env-vars?agency=ag-b"]}>
+        <AgencyProvider>
+          <Form />
+        </AgencyProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId("creation-agency").textContent).toContain("Created in agency-beta"));
+    expect(screen.queryByRole("combobox", { name: "Agency" })).toBeNull();
+    expect(body).toEqual({ agencyIds: ["ag-b"] });
   });
 });
 

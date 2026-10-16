@@ -10351,6 +10351,10 @@ components:
     Run:
       type: object
       properties:
+        ownerAgency:
+          type: string
+          readOnly: true
+          description: Whose the run is (v2.4.4, migration 1480), on GET /runs/{traceId} only; Global's is `global`. A link to another agency's run switches to its agency.
         reactedToRunId:
           type: [string, 'null']
           readOnly: true

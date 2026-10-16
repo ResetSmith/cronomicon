@@ -123,6 +123,11 @@ func seedSwitcher(t *testing.T, pool *sql.DB) {
 	exec(`INSERT INTO git_repos (id, agency_id, url, created_at) VALUES
 	        ('repo-fin', 'ag:FIN', 'http://127.0.0.1:1/s0-fin-repo.git', ?),
 	        ('repo-tax', 'ag:TAX', 'http://127.0.0.1:1/s0-tax-repo.git', ?)`, at, at)
+	exec(`DELETE FROM schedule_pushes`)
+	exec(`INSERT INTO schedule_pushes (repo_id, at, actor, schedule_file, status, created_at) VALUES
+	        ('repo-fin', ?, 'x', 'jobs/s0-fin-push.yaml',  'success', ?),
+	        ('repo-tax', ?, 'x', 'jobs/s0-tax-push.yaml',  'success', ?),
+	        ('global',   ?, 'x', 'jobs/s0-glob-push.yaml', 'success', ?)`, at, at, at, at, at, at)
 	exec(`INSERT INTO scripts (uid, repo_id, name, run_type, command, content_hash, synced_at) VALUES
 	        ('sx-fin',  'repo-fin', 's0-fin-script.sh',  'bash', 'true', 'h', ?),
 	        ('sx-tax',  'repo-tax', 's0-tax-script.sh',  'bash', 'true', 'h', ?),
@@ -166,6 +171,8 @@ var switcherLists = []switcherList{
 	{"/api/v1/scripts?pageSize=200", "s0-fin-script", "s0-tax-script", "s0-glob-script"},
 	{"/api/v1/access-grants", `"fin-admins"`, `"tax-admins"`, `"root-admins"`},
 	{"/api/v1/service-accounts", "s0-fin-sa", "s0-tax-sa", "s0-glob-sa"},
+	// Added by F2: History's Schedule pushes, every repository the caller reads.
+	{"/api/v1/schedule-pushes", "s0-fin-push", "s0-tax-push", "s0-glob-push"},
 	// Added by S2, when a run has an owner for its feed rows to be judged by.
 	{"/api/v1/activity?pageSize=200", "s0-fin-act", "s0-tax-act", "s0-glob-act"},
 	{"/api/v1/activity?pageSize=200&noscope=1", "s0-fin0-act", "s0-tax-act", "s0-glob-act"},
@@ -217,6 +224,7 @@ var switcherToday = map[string][6]string{
 	"/api/v1/scripts?pageSize=200":            {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
 	"/api/v1/access-grants":                   {"YYY", "403", "YYY", "YYY", "YYY", "403"},
 	"/api/v1/service-accounts":                {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
+	"/api/v1/schedule-pushes":                 {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
 	"/api/v1/activity?pageSize=200":           {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
 	"/api/v1/activity?pageSize=200&noscope=1": {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
 }
@@ -311,5 +319,9 @@ func TestSwitcherReadingOneObjectIsNotNarrowed(t *testing.T) {
 	rec := gateReqWithHeader(t, h, http.MethodGet, "/api/v1/runs/r-tax", gTaxAdmin, "", agencyctx.Header, "global")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "s0-tax-job") {
 		t.Fatalf("TAX's run, read with Global named = %d %s, want it", rec.Code, rec.Body)
+	}
+	// It says whose it is (F2, SW-8): a link to it switches to its agency.
+	if !strings.Contains(rec.Body.String(), `"ownerAgency":"ag:TAX"`) {
+		t.Errorf("TAX's run does not say whose it is: %s", rec.Body)
 	}
 }

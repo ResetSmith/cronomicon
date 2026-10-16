@@ -4267,6 +4267,12 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// 2.4.4 (SW-8): whose the run is (1480), so that a link to it from another
+	// agency's view switches to its agency.
+	var owner string
+	if err := s.db.QueryRowContext(r.Context(), `SELECT `+runOwnerSQL+` FROM runs WHERE id = ?`, traceID).Scan(&owner); err == nil {
+		run["ownerAgency"] = owner
+	}
 
 	httpx.JSON(w, http.StatusOK, run)
 }
