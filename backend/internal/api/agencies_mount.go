@@ -1,12 +1,12 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"github.com/ResetSmith/cronomicon/internal/vaultpath"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
@@ -665,14 +665,17 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 		// make: take the agency back (it holds nothing yet), with a repository
 		// row the write may have left before it failed (from the review of
 		// I3: a refusal for that row left both).
-		takeBack := func(repoID string) error {
+		takeBack := func(ctx context.Context, repoID string) (func(*sql.Tx) error, func(bool), error) {
 			if s.git != nil {
-				if _, err := s.git.Disconnect(r.Context(), repoID, id.Email); err == nil {
-					return nil
+				if rm, fin, err := s.git.RemoveWithAgency(ctx, repoID, id.Email); err == nil {
+					return rm, fin, nil
 				}
 			}
-			_, err := s.db.ExecContext(r.Context(), `DELETE FROM git_repos WHERE id = ?`, repoID)
-			return err
+			rm := func(tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `DELETE FROM git_repos WHERE id = ?`, repoID)
+				return err
+			}
+			return rm, func(bool) {}, nil
 		}
 		if _, derr := settings.DeleteAgencyWith(r.Context(), s.db, a.ID, id.Email, takeBack); derr != nil {
 			s.log.Error("an agency whose repository could not be written could not be taken back",
@@ -740,46 +743,20 @@ func (s *Server) handleDeleteAgency(w http.ResponseWriter, r *http.Request) {
 	}
 	aid := r.PathValue("agencyId")
 	// RB-17: an agency-shaped grant is ON DELETE CASCADE, so deleting an agency
-	// would silently revoke every grant authored against it. Refuse instead, with
-	// the same posture as the existing scope guard — quiet revocation is the exact
-	// failure this whole surface exists to prevent.
-	var grantRefs int
-	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM access_grants WHERE agency_id = ?`, aid).Scan(&grantRefs); err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return
-	}
-	if grantRefs > 0 {
-		httpx.Fail(w, http.StatusConflict, "agency_in_use",
-			"agency is referenced by "+strconv.Itoa(grantRefs)+" access grant(s); remove those grants first")
-		return
-	}
-	// A service account bound to this agency is the same shape as a grant —
-	// service_accounts.agency_id is ON DELETE CASCADE too — and it was not
-	// counted: deleting the agency deleted its tokens' rows, and an integration
-	// stopped authenticating with nothing said. Refuse while one is ACTIVE; a
-	// revoked account is already dead and goes with the agency.
-	var tokenRefs int
-	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM service_accounts WHERE agency_id = ? AND revoked_at IS NULL`, aid).Scan(&tokenRefs); err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return
-	}
-	if tokenRefs > 0 {
-		httpx.Fail(w, http.StatusConflict, "agency_in_use",
-			"agency is referenced by "+strconv.Itoa(tokenRefs)+" active service account(s); revoke those first")
-		return
-	}
+	// would silently revoke every grant authored against it; a service account
+	// bound to it is the same shape. DeleteAgencyWith refuses both, and an
+	// unspent registration token, inside the delete's transaction (2.4.2,
+	// present defect 62: until then they were asked here only, and the create
+	// route's rollback did not ask them).
+	//
 	// An empty agency is deleted with its repository (§0a, IN-13; Phase I3;
 	// question 37): the connection, and what the repository supplied, which
-	// is all still in Git, go by the disconnect GR-28 built — the route for it
-	// went with I3, since a repository is changed, not disconnected (IN-2).
-	takeRepo := func(repoID string) error {
+	// is all still in Git, go in the same transaction as the agency.
+	takeRepo := func(ctx context.Context, repoID string) (func(*sql.Tx) error, func(bool), error) {
 		if s.git == nil {
-			return errSyncUnavailable
+			return nil, nil, errSyncUnavailable
 		}
-		_, err := s.git.Disconnect(r.Context(), repoID, id.Email)
-		return err
+		return s.git.RemoveWithAgency(ctx, repoID, id.Email)
 	}
 	found, err := settings.DeleteAgencyWith(r.Context(), s.db, aid, id.Email, takeRepo)
 	if err != nil {

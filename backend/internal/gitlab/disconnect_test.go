@@ -14,7 +14,36 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
-// Disconnecting a repository removes every row it supplied, and no other
+// removeAlone removes a repository as an agency's delete does
+// (RemoveWithAgency in its own transaction), and says what it removed.
+func removeAlone(ctx context.Context, reg *Registry, repoID string) (settings.RepoCounts, error) {
+	var none settings.RepoCounts
+	remove, finish, err := reg.RemoveWithAgency(ctx, repoID, "root")
+	if err != nil {
+		return none, err
+	}
+	committed := false
+	defer func() { finish(committed) }()
+	tx, err := reg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return none, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	counts, err := settings.CountRepoRows(ctx, tx, repoID)
+	if err != nil {
+		return none, err
+	}
+	if err := remove(tx); err != nil {
+		return none, err
+	}
+	if err := tx.Commit(); err != nil {
+		return none, err
+	}
+	committed = true
+	return counts, nil
+}
+
+// Removing a repository removes every row it supplied, and no other
 // repository's (GR-28): its Git jobs and workflows with their schedule
 // entries, its scripts, its Git schedules, its scopes with their host
 // membership and imported host records, its sync problems, its connection and
@@ -91,10 +120,10 @@ func TestDisconnectingARepositoryRemovesWhatItSuppliedAndNothingElse(t *testing.
 	genBefore := generation()
 
 	// Global's is never disconnected, and one that is not there is not found.
-	if _, err := reg.Disconnect(ctx, "global", "root"); !errors.Is(err, ErrGlobalRepo) {
+	if _, err := removeAlone(ctx, reg, "global"); !errors.Is(err, ErrGlobalRepo) {
 		t.Errorf("disconnecting Global's repository answered %v", err)
 	}
-	if _, err := reg.Disconnect(ctx, "no-such-repo", "root"); !errors.Is(err, settings.ErrRepoNotFound) {
+	if _, err := removeAlone(ctx, reg, "no-such-repo"); !errors.Is(err, settings.ErrRepoNotFound) {
 		t.Errorf("disconnecting a repository that is not there answered %v", err)
 	}
 
@@ -102,7 +131,7 @@ func TestDisconnectingARepositoryRemovesWhatItSuppliedAndNothingElse(t *testing.
 	// nothing is removed.
 	exec(`INSERT INTO runs (id, job_name, run_type, scope, status, executor, triggered_by, trigger_kind, created_at, agencies_json)
 	        VALUES ('r-wait', 'b-job', 'bash', 'b-git-hosts', 'queued', 'runner', 'u', 'manual', 't', json_array((SELECT name FROM agencies WHERE id = 'ag-b')))`) // B's run (I2: a run's scope is its agency's)
-	_, err := reg.Disconnect(ctx, "repo-b", "root")
+	_, err := removeAlone(ctx, reg, "repo-b")
 	var busy *ErrScopesBusy
 	if !errors.As(err, &busy) || len(busy.Scopes) != 1 || busy.Scopes[0] != "b-git-hosts" || !strings.Contains(err.Error(), "b-git-hosts") {
 		t.Fatalf("disconnecting with work queued on a bound scope answered %v, want it refused naming the scope", err)
@@ -127,7 +156,7 @@ func TestDisconnectingARepositoryRemovesWhatItSuppliedAndNothingElse(t *testing.
 
 	// The work is gone: it goes through, and says what it removed.
 	exec(`DELETE FROM runs WHERE id = 'r-wait'`)
-	removed, err := reg.Disconnect(ctx, "repo-b", "root")
+	removed, err := removeAlone(ctx, reg, "repo-b")
 	if err != nil {
 		t.Fatalf("disconnect: %v", err)
 	}
@@ -183,7 +212,7 @@ func TestDisconnectingARepositoryRemovesWhatItSuppliedAndNothingElse(t *testing.
 		t.Errorf("the scheduler was told %v and the generation went from %d to %d, want one reload on one more", told, genBefore, generation())
 	}
 	// Disconnected, it is not there to disconnect again.
-	if _, err := reg.Disconnect(ctx, "repo-b", "root"); !errors.Is(err, settings.ErrRepoNotFound) {
+	if _, err := removeAlone(ctx, reg, "repo-b"); !errors.Is(err, settings.ErrRepoNotFound) {
 		t.Errorf("disconnecting it a second time answered %v", err)
 	}
 }

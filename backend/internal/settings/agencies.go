@@ -421,6 +421,17 @@ type AgencyInUseError struct {
 	// agency that no longer existed.
 	Definitions int
 	Calendars   int
+	// Grants, ServiceAccounts and Tokens are what the delete would take with
+	// it silently: access grants and service accounts are ON DELETE CASCADE,
+	// and an unspent registration token would enrol an agent into an agency
+	// that is gone. OwnedRunners are runners it owns that serve nothing
+	// (runner_agencies does not count them). Counted here since 2.4.2 (present
+	// defects 62 and 63): the first two were the route's own checks, which the
+	// create route's rollback did not ask.
+	Grants          int
+	ServiceAccounts int
+	Tokens          int
+	OwnedRunners    int
 }
 
 func (e *AgencyInUseError) Error() string {
@@ -456,7 +467,12 @@ func (e *AgencyInUseError) Blockers() []string {
 		"jobs, workflows and schedules built in the app (or not of its repository)",
 		"delete them, and purge them from the recycle bin; an agency's own definitions are not handed to another")
 	add(e.Calendars, "calendar built in the app", "calendars built in the app", "delete them")
+	add(e.Grants, "access grant", "access grants", "remove those grants first: deleting the agency would revoke them")
+	add(e.ServiceAccounts, "active service account", "active service accounts", "revoke those first")
+	add(e.Tokens, "unspent registration token", "unspent registration tokens",
+		"revoke it: an agent enrolled with it would belong to an agency that is gone")
 	add(e.Runners, "runner", "runners", "re-enroll the runner in another agency")
+	add(e.OwnedRunners, "runner it owns that serves no agency", "runners it owns that serve no agency", "remove the runner")
 	// Scopes first among the membership kinds: an agency exists to own scopes, so
 	// that is the likeliest blocker and the one with the plainest remedy.
 	add(e.Members[MemberScope], "scope", "scopes", "rebind the scope to another agency")
@@ -486,6 +502,44 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 	return DeleteAgencyWith(ctx, database, id, actor, nil)
 }
 
+// RepoTake removes an agency's repository with the agency (the gitlab
+// Registry's RemoveWithAgency: settings cannot import gitlab). It is called
+// once the agency has been counted and found empty, BEFORE the delete's
+// transaction begins, and does there what must not wait on the transaction's
+// write lock (it stops the repository's sync service). remove deletes the
+// repository's rows inside the transaction; finish is told whether the
+// transaction committed, and either removes what is outside the database (the
+// clone) or puts the service back.
+type RepoTake func(ctx context.Context, repoID string) (remove func(tx *sql.Tx) error, finish func(committed bool), err error)
+
+// rowQuerier is a *sql.DB or a *sql.Tx.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// countCascades fills what the delete would take with it silently and no
+// trigger refuses (present defects 62 and 63). Asked before the transaction,
+// for the refusal's wording, and again inside it, where nothing else can
+// write: the write lock is taken at BEGIN (db.go, _txlock=immediate).
+func countCascades(ctx context.Context, q rowQuerier, id string, inUse *AgencyInUseError) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := q.QueryRowContext(ctx, `SELECT
+	      (SELECT COUNT(*) FROM access_grants WHERE agency_id = ?1),
+	      (SELECT COUNT(*) FROM service_accounts WHERE agency_id = ?1 AND revoked_at IS NULL),
+	      (SELECT COUNT(*) FROM registration_tokens WHERE agency_id = ?1
+	          AND revoked_at IS NULL AND used_at IS NULL AND expires_at > ?2),
+	      (SELECT COUNT(*) FROM runners r WHERE r.owner_agency = ?1
+	          AND NOT EXISTS (SELECT 1 FROM runner_agencies ra WHERE ra.runner_id = r.id))`, id, now).
+		Scan(&inUse.Grants, &inUse.ServiceAccounts, &inUse.Tokens, &inUse.OwnedRunners); err != nil {
+		return fmt.Errorf("delete agency: count its grants, service accounts, registration tokens and runners: %w", err)
+	}
+	return nil
+}
+
+func (e *AgencyInUseError) cascades() int {
+	return e.Grants + e.ServiceAccounts + e.Tokens + e.OwnedRunners
+}
+
 // DeleteAgencyWith is DeleteAgency for an agency that may have its repository
 // connected (§0a, IN-13; Phase I3; the owner's answer to question 37): an
 // agency is deleted when it is EMPTY, and its repository connection with it.
@@ -493,14 +547,12 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 // scopes and calendars) does not make it non-empty: it goes with the
 // connection, and it is all still in Git. Everything else does, and is named.
 //
-// takeRepo, given, is called with the repository's id once everything else
-// has been counted and found empty, and removes it with what it supplied (the
-// gitlab Registry's Disconnect: settings cannot import gitlab). Its error is
-// returned as it is, and nothing more is done. With a nil takeRepo a connected
-// repository blocks the delete, as before. The take and the delete are two
-// writes: what joins the agency between them is refused by the trigger, and
-// the agency is left without its repository, which its notice then says.
-func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, takeRepo func(repoID string) error) (bool, error) {
+// takeRepo, given, removes the repository with what it supplied (RepoTake).
+// With a nil takeRepo a connected repository blocks the delete, as before.
+// The repository's rows and the agency go in ONE transaction (2.4.2, present
+// defect 63): until then the repository was taken first, and a delete the
+// trigger then refused left the agency without it.
+func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, takeRepo RepoTake) (bool, error) {
 	// LR-78: this changes what an access grant reaches (or what it is shown as),
 	// so the grant snapshot is told on the way out — after the write, on every
 	// return path, a failed half-write included.
@@ -607,22 +659,54 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 	if err := countAgencyDefinitions(ctx, database, id, repoID, takeRepo != nil, inUse); err != nil {
 		return false, err
 	}
+	if err := countCascades(ctx, database, id, inUse); err != nil {
+		return false, err
+	}
 	if runnerRefs > 0 || memberRefs > 0 || ownerRefs > 0 || inUse.records() > 0 || inUse.Repository > 0 ||
-		inUse.Definitions > 0 || inUse.Calendars > 0 {
+		inUse.Definitions > 0 || inUse.Calendars > 0 || inUse.cascades() > 0 {
 		return false, inUse
 	}
+	var removeRepo func(tx *sql.Tx) error
+	finish := func(bool) {}
 	if repoID != "" {
-		if err := takeRepo(repoID); err != nil {
+		rm, fin, err := takeRepo(ctx, repoID)
+		if err != nil {
+			return false, err
+		}
+		removeRepo, finish = rm, fin
+	}
+	committed := false
+	defer func() { finish(committed) }()
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("delete agency: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// What no trigger refuses, asked again where nothing else can write.
+	again := &AgencyInUseError{Members: map[MemberKind]int{}}
+	if err := countCascades(ctx, tx, id, again); err != nil {
+		return false, err
+	}
+	if again.cascades() > 0 {
+		return false, again
+	}
+	if removeRepo != nil {
+		if err := removeRepo(tx); err != nil {
 			return false, err
 		}
 	}
-	res, err := database.ExecContext(ctx, `DELETE FROM agencies WHERE id=?`, id)
+	res, err := tx.ExecContext(ctx, `DELETE FROM agencies WHERE id=?`, id)
+	if err == nil {
+		err = tx.Commit()
+	}
 	if err != nil {
-		// The counts above and this DELETE are separate statements, so something
-		// can join the agency in between. The database refuses the delete itself
-		// (trigger agencies_no_delete_in_use, migration 1220): that is the guard,
-		// and the counts are how the refusal gets its wording. Count again so the
-		// caller is told what arrived.
+		_ = tx.Rollback()
+		// The counts above and the transaction are separate, so something can
+		// join the agency in between. The database refuses the delete itself
+		// (trigger agencies_no_delete_in_use, migrations 1220 and 1450): that is
+		// the guard, and the counts are how the refusal gets its wording. The
+		// transaction is rolled back, the repository with it, and the caller is
+		// told what arrived.
 		if strings.Contains(err.Error(), "agency_in_use") {
 			inUse := &AgencyInUseError{Members: map[MemberKind]int{}}
 			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_agencies WHERE agency_id=?`, id).Scan(&inUse.Runners)
@@ -638,10 +722,12 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 			// repository was taken answered with no blocker named).
 			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_repos WHERE agency_id = ?`, id).Scan(&inUse.Repository)
 			_ = countAgencyDefinitions(ctx, database, id, "", false, inUse)
+			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM runners WHERE owner_agency = ?`, id).Scan(&inUse.OwnedRunners)
 			return false, inUse
 		}
 		return false, fmt.Errorf("delete agency: %w", err)
 	}
+	committed = true
 	n, _ := res.RowsAffected()
 	if n > 0 {
 		audit(ctx, database, actor, "Agencies", "deleted", existing.Name, "")
