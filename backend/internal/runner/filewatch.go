@@ -444,7 +444,7 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 	// is a fire like any other, and a Forbid job whose run is still going must
 	// not be started twice because two files landed.
 	if concPolicy.Valid && cronutil.HoldsGate(concPolicy.String) {
-		key := cronutil.ConcurrencyKey(concKey.String, jobUID.String, spec.JobSource, spec.JobName)
+		key := cronutil.ConcurrencyKey(concKey.String, jobAgencyOf(ctx, s.db, jobUID.String), jobUID.String, spec.JobSource, spec.JobName)
 		params.ConcurrencyKey = key
 		params.Policy = concPolicy.String
 		if conflict, cerr := scheduler.CheckForbid(ctx, s.db, key); cerr == nil && conflict {

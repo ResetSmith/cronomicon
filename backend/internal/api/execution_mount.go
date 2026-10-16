@@ -1654,7 +1654,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	_ = s.db.QueryRowContext(r.Context(), `SELECT concurrency_policy, concurrency_key, uid FROM jobs WHERE rowid = ?`, jobID).Scan(&concPolicy, &dbConcKey, &dbUID)
 	queueOnConflict := false
 	if concPolicy.Valid && cronutil.HoldsGate(concPolicy.String) {
-		concKey = cronutil.ConcurrencyKey(dbConcKey.String, dbUID.String, jobSrc, jr.Name)
+		concKey = cronutil.ConcurrencyKey(dbConcKey.String, jr.OwnerAgency, dbUID.String, jobSrc, jr.Name)
 		if !deferred {
 			conflict, err := scheduler.CheckForbid(r.Context(), s.db, concKey)
 			if err != nil {

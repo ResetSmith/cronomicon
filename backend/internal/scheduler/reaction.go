@@ -726,7 +726,7 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 	// the policy silently becomes Allow on this one path.
 	effectiveConcKey := ""
 	if cronutil.HoldsGate(policy.String) {
-		effectiveConcKey = cronutil.ConcurrencyKey(concKey.String, jobUID.String, source, jobName)
+		effectiveConcKey = cronutil.ConcurrencyKey(concKey.String, keyAgency(ctx, s.db, concKey.String, jobUID.String, source, jobName), jobUID.String, source, jobName)
 	}
 
 	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, jobAgencyFor(ctx, s.db, jobUID.String, source, jobName), scope.String)

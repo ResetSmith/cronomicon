@@ -633,7 +633,7 @@ func (e *Engine) runJob(
 		jobSrc = "git"
 	}
 	executor := execspec.ExecutorRunner
-	concKey := cronutil.ConcurrencyKey(jd.concurrencyKey, jd.uid, jobSrc, step.Name)
+	concKey := cronutil.ConcurrencyKey(jd.concurrencyKey, jd.agency, jd.uid, jobSrc, step.Name)
 	// M3/T3.6 — snapshot the effective scope's agency SET onto the child run (hard
 	// isolation). This path builds its own INSERT rather than going through
 	// scheduler.EnqueueParams, which is exactly why it is easy to miss: a child run
@@ -1098,7 +1098,7 @@ func (e *Engine) markSkipped(
 	if jobSrc == "" {
 		jobSrc = "git"
 	}
-	concKey := cronutil.ConcurrencyKey(jd.concurrencyKey, jd.uid, jobSrc, jobName)
+	concKey := cronutil.ConcurrencyKey(jd.concurrencyKey, jd.agency, jd.uid, jobSrc, jobName)
 	// TG-2: target_host is carried here purely so a skipped row DISPLAYS the pin the
 	// step would have run against — a skipped run never executes, so this has no
 	// blast-radius meaning.

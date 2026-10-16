@@ -464,7 +464,7 @@ func (s *Scheduler) loadJobEntries(ctx context.Context) ([]scheduleEntry, error)
 		if j.scope.Valid {
 			scope = j.scope.String
 		}
-		concKey := cronutil.ConcurrencyKey(j.concurrencyKey.String, j.uid, j.source, j.name)
+		concKey := cronutil.ConcurrencyKey(j.concurrencyKey.String, keyAgency(ctx, s.db, j.concurrencyKey.String, j.uid, j.source, j.name), j.uid, j.source, j.name)
 		envJSON := j.envJSON.String
 		entries = append(entries, scheduleEntry{
 			sched: sched,

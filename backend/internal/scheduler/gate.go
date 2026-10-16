@@ -391,6 +391,16 @@ func jobAgencyFor(ctx context.Context, database *sql.DB, uid, source, name strin
 	return agency.String
 }
 
+// keyAgency is the agency a job's custom concurrency key is shared within
+// (question 56), read only when the job has one: a key it composes itself is
+// its own identity, which no other agency's job holds.
+func keyAgency(ctx context.Context, database *sql.DB, custom, uid, source, name string) string {
+	if custom == "" {
+		return ""
+	}
+	return jobAgencyFor(ctx, database, uid, source, name)
+}
+
 // definitionAgency is the agency of a definition by uid and kind; Global's when
 // it cannot be told (no uid, a row that is gone), as such a run is.
 func definitionAgency(ctx context.Context, database *sql.DB, uid, kind string) string {
