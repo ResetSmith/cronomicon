@@ -179,6 +179,8 @@ describe("Calendars tab — a calendar is its agency's (I2; R8)", () => {
     await waitFor(() => expect(screen.getByText(/Viewing the working calendar/)).toBeTruthy());
     await waitFor(() => expect(screen.getByRole("note").textContent).toMatch(/Tax's — only that agency's composers/));
     expect(gets.find((g) => g.path === "/calendars/{name}")?.query).toMatchObject({ agencyId: "ag-tax" });
+    // Its "global" reaches Tax's schedules only (2.4.0): the box says whose.
+    expect(screen.getByText(/Apply to every schedule of Tax \(global\)/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Save calendar/ })).toBeNull();
   });
 

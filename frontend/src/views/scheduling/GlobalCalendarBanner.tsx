@@ -1,6 +1,6 @@
 // CAL-28 — the active-global banner. A global calendar unions its days into every
-// schedule entry's skip set, so one covering today means the whole fleet is
-// silent. A global suppression nobody can see is the worst failure mode this
+// schedule entry's skip set of ITS agency (since 2.4.0, §0a), so one covering
+// today means that agency's schedules are silent; the banner names whose. A global suppression nobody can see is the worst failure mode this
 // feature has, which is why this is not optional polish: it names the calendar
 // and the day's label wherever an operator would otherwise just see nothing run.
 //
@@ -9,6 +9,8 @@
 // silently lifted is the same class of invisible failure, pointing the other way.
 import { c } from "../../theme";
 import { calendarExpiry, dayInAppZone, useCalendarDays, useCalendars } from "./calendars";
+import { api } from "../../api/client";
+import { useGet, rows } from "../../hooks";
 
 export function GlobalCalendarBanner({ onGoToCalendars }: { onGoToCalendars?: () => void }) {
   const { calendars, expiryWarningDays } = useCalendars();
@@ -16,14 +18,18 @@ export function GlobalCalendarBanner({ onGoToCalendars }: { onGoToCalendars?: ()
   const globalNames = globals.map((cal) => cal.name ?? "").filter(Boolean);
   const { days } = useCalendarDays(globalNames);
   const today = dayInAppZone();
+  const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
+  const agencyName = (id?: string | null) =>
+    !id || id === "global" ? "Global" : (rows<{ id: string; name: string }>(catalogQ.data).find((a) => a.id === id)?.name ?? id);
 
   // Covering today: the fleet is quiet right now, and this is the only place
   // that says why.
-  const activeToday: { name: string; label?: string }[] = [];
+  const activeToday: { name: string; label?: string; owner: string }[] = [];
   for (const cal of globals) {
     const hit = (days[cal.name ?? ""] ?? []).find((d) => d.day === today);
-    if (hit) activeToday.push({ name: cal.name ?? "", label: hit.label });
+    if (hit) activeToday.push({ name: cal.name ?? "", label: hit.label, owner: agencyName(cal.ownerAgency) });
   }
+  const owners = [...new Set(activeToday.map((g) => g.owner))];
 
   const lapsed = globals
     .map((cal) => ({ name: cal.name ?? "", state: calendarExpiry(cal, expiryWarningDays), daysRemaining: cal.daysRemaining }))
@@ -36,17 +42,18 @@ export function GlobalCalendarBanner({ onGoToCalendars }: { onGoToCalendars?: ()
       {activeToday.length > 0 && (
         <div style={bannerStyle(c.warning)}>
           <strong>
-            Scheduled runs are suppressed fleet-wide today
+            Scheduled runs of {owners.join(", ")} are suppressed today
             {activeToday.length === 1 ? "" : ` by ${activeToday.length} global calendars`}.
           </strong>{" "}
           {activeToday.map((g, i) => (
             <span key={g.name}>
               {i > 0 ? " · " : ""}
               <span style={{ fontFamily: c.mono }}>{g.name}</span>
+              {owners.length > 1 ? ` (${g.owner})` : ""}
               {g.label ? ` — ${g.label}` : ""}
             </span>
           ))}
-          . Manual runs are unaffected.
+          . Other agencies' schedules and manual runs are unaffected.
           {onGoToCalendars && (
             <button type="button" onClick={onGoToCalendars} style={linkBtn()}>
               Review calendars

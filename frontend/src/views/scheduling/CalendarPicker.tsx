@@ -118,7 +118,7 @@ export function CalendarPicker({
                 onClick={() => toggle(role, name)}
                 title={
                   disabled
-                    ? "A global calendar already applies to every entry and cannot be a run-day calendar."
+                    ? "A global calendar already applies to every entry of its agency and cannot be a run-day calendar."
                     : missing
                       ? "This calendar no longer exists — the binding does nothing. Click to remove it."
                       : cal?.description || undefined

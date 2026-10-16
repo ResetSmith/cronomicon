@@ -1,6 +1,8 @@
 // CAL-18/19 — the Calendars tab under Schedules. A working calendar is a named
 // set of wall-clock dates; schedule entries bind them in two polarities, and a
-// global calendar applies to every entry at once.
+// global calendar applies to every entry of its own agency at once (since 2.4.0,
+// §0a: a calendar is one agency's, and so is the reach of its "global"; the
+// installation-wide stop is the change freeze, a global administrator's).
 //
 // Cronomicon ships NO holiday content in any form (CAL-Q8) — not a seeded row, not
 // an importable file. The dates are always the operator's, so a wrong or stale
@@ -66,7 +68,7 @@ function ExpiryBadge({ state, daysRemaining }: { state: ExpiryState; daysRemaini
 
 const GlobalBadge = () => (
   <span
-    title="Applies to EVERY schedule entry, whether or not the entry names it."
+    title="Applies to every schedule entry of its agency, whether or not the entry names it."
     style={{
       fontSize: c.fontXs,
       fontWeight: 600,
@@ -157,7 +159,8 @@ export function CalendarsTab() {
               A calendar is a list of dates — your company holidays, a change freeze, your month-end close.
               Bind one to a schedule as a <strong>skip</strong> calendar and no fire lands on those days; bind it as a{" "}
               <strong>run-day</strong> calendar and the schedule fires on no others. Mark one <strong>global</strong> and
-              it applies to every schedule at once, which is how a change freeze is one checkbox instead of N edits.
+              it applies to every schedule of its agency at once, which is how an agency's change freeze is one checkbox
+              instead of N edits. It does not reach another agency's schedules.
             </p>
             <p>
               <strong>Cronomicon ships no holiday dates</strong> — every date is yours to author, so no list of ours can be
@@ -264,6 +267,9 @@ function CalendarEditor({
   // Whose a new calendar is: an agency the caller composes on, or Global for a
   // global composer (its default).
   const ownerPick = useCreationAgencies(isEdit, "compose");
+  // Whose the calendar is (and so whose schedules its "global" reaches): the
+  // agency chosen, for a new one.
+  const ownerLabel = isEdit ? ownerName : (ownerPick.agencies.find((a) => a.id === ownerPick.selected)?.name ?? "its agency");
   const [slug, setSlug] = useState(name);
   const [description, setDescription] = useState("");
   const [global, setGlobal] = useState(false);
@@ -429,10 +435,11 @@ function CalendarEditor({
         <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: c.fontSm, color: c.text }}>
           <input type="checkbox" checked={global} onChange={(e) => setGlobal(e.target.checked)} disabled={readOnly || boundAsOnly.length > 0} style={{ marginTop: 3 }} />
           <span>
-            Apply to every schedule (global)
+            Apply to every schedule of {ownerLabel} (global)
             <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 2 }}>
-              Its days are skipped by every entry, whether or not the entry names it — a change freeze as one checkbox
-              instead of N schedule edits. Skip only: a global calendar can never be a run-day calendar.
+              Its days are skipped by every entry of {ownerLabel}, whether or not the entry names it — a change freeze as one
+              checkbox instead of N schedule edits. Other agencies' schedules are not affected. Skip only: a global calendar
+              can never be a run-day calendar.
               {boundAsOnly.length > 0 && (
                 <span style={{ color: c.warning }}>
                   {" "}Unavailable — {boundAsOnly.length} entr{boundAsOnly.length === 1 ? "y binds" : "ies bind"} this as a run-day calendar.
