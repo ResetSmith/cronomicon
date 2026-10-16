@@ -123,17 +123,19 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 		})))
 
 	// ── Scope resync (ConfigureApp, PP-B1) ─────────────────────────────────
+	// One repository, as POST /git/sync (2.4.2, question 53): ?repo= names it,
+	// Global's without it, and who may configure it starts it.
 	mux.Handle("POST /api/v1/scopes/resync",
-		s.requireGlobal(auth.PermConfigureApp)(
-			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				id, ok := auth.IdentityFrom(r.Context())
-				if !ok {
-					httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-					return
-				}
-				h.ResyncScopes(id.Email, w, r)
-			}),
-		),
+		s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, ok := auth.IdentityFrom(r.Context())
+			if !ok {
+				httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+				return
+			}
+			if repo, ok := s.configurableRepo(w, r, r.URL.Query().Get("repo")); ok {
+				h.ResyncScopesOf(repo, id.Email, w, r)
+			}
+		})),
 	)
 }
 

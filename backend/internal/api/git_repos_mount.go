@@ -48,7 +48,7 @@ func (s *Server) requireRepoAgency(w http.ResponseWriter, r *http.Request, agenc
 	}
 	msg := "you do not have configureApp on the agency this repository belongs to"
 	if agencyID == agencyid.Global {
-		msg = "Global's repository is shared by every agency; only a global administrator may read or change its connection"
+		msg = "Global's repository is Global's (§0a); only a global administrator may read or change its connection"
 	}
 	s.denyEntityAgency(w, r, id, auth.PermConfigureApp, agencyID, msg)
 	return id, false
@@ -83,6 +83,11 @@ type repoName struct {
 	ID         string `json:"id"`
 	AgencyID   string `json:"agencyId"`
 	AgencyName string `json:"agencyName"`
+	// CanSync and CanPublish say what the caller's sync (configurableRepo) and
+	// publish (authorizePublish, at the repository; a job's scope is asked at
+	// the publish) would answer (2.4.2, question 55).
+	CanSync    bool `json:"canSync"`
+	CanPublish bool `json:"canPublish"`
 }
 
 // handleListGitRepoNames lists the repositories whose history the caller may
@@ -106,7 +111,10 @@ func (s *Server) handleListGitRepoNames(w http.ResponseWriter, r *http.Request) 
 	items := make([]repoName, 0, len(all))
 	for _, repo := range all {
 		if id.ReadsAgency(repo.AgencyID) {
-			items = append(items, repoName{ID: repo.ID, AgencyID: repo.AgencyID, AgencyName: repo.AgencyName})
+			publish := id.CanUnbound(auth.PermPublishSchedule) ||
+				(repo.ID != repoid.Global && id.CanAgency(auth.PermPublishSchedule, repo.AgencyID))
+			items = append(items, repoName{ID: repo.ID, AgencyID: repo.AgencyID, AgencyName: repo.AgencyName,
+				CanSync: id.CanAgency(auth.PermConfigureApp, repo.AgencyID), CanPublish: publish})
 		}
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": items})

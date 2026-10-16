@@ -303,9 +303,10 @@ func TestSharedAuthoringSurfacesStayAdminOnly(t *testing.T) {
 
 	// (Schedules built in the app and calendars left this list with §0a,
 	// question 32 and SO-1: each has an owner, and writing it takes compose on
-	// that owner. TestI1_AScheduleIsItsOwnersToWrite, TestI1_ACalendarIsItsAgencys.)
+	// that owner. TestI1_AScheduleIsItsOwnersToWrite, TestI1_ACalendarIsItsAgencys.
+	// Reactions left it in 2.4.2, question 61: they are their definition's
+	// agency's, TestRV_ADefinitionsReactionsAreItsAgencysToWrite.)
 	for _, tc := range []struct{ what, method, path, body string }{
-		{"reactions replace", http.MethodPut, "/api/v1/reactions/job/fin-job", `{"reactions":[]}`},
 		{"recycle bin list", http.MethodGet, "/api/v1/recycle-bin", ""},
 	} {
 		// Even the UNRESTRICTED composer is refused: this is about the surface, not

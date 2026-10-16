@@ -577,13 +577,45 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 // POST /api/v1/scopes/resync — trigger scope resync (blocking)
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (h *Handlers) ResyncScopes(actor string, w http.ResponseWriter, r *http.Request) {
-	svc := h.service(w)
+// ResyncScopesOf syncs one repository at once and says which of ITS scopes the
+// sync added or removed (2.4.2, the owner's answer to question 53: it synced
+// Global's only, and compared the scopes of every repository by name, so an
+// agency's scopes could not be resynced and a name another agency held hid a
+// change of Global's).
+func (h *Handlers) ResyncScopesOf(repoID, actor string, w http.ResponseWriter, r *http.Request) {
+	svc := h.serviceOf(repoID)
 	if svc == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable",
+			"the repository's sync service is not running; try again in a moment")
 		return
 	}
+	ofRepo := func() ([]settings.Scope, error) {
+		rows, err := settings.ListScopes(r.Context(), svc.db, "git")
+		if err != nil {
+			return nil, err
+		}
+		ids := map[string]bool{}
+		q, err := svc.db.QueryContext(r.Context(), `SELECT id FROM scopes WHERE source = 'git' AND COALESCE(repo_id, ?) = ?`, repoid.Global, repoID)
+		if err != nil {
+			return nil, err
+		}
+		defer q.Close()
+		for q.Next() {
+			var id string
+			if q.Scan(&id) == nil {
+				ids[id] = true
+			}
+		}
+		var out []settings.Scope
+		for _, sc := range rows {
+			if ids[sc.ID] {
+				out = append(out, sc)
+			}
+		}
+		return out, q.Err()
+	}
 	// 1. Get scopes before sync
-	beforeScopes, err := settings.ListScopes(r.Context(), svc.db, "git")
+	beforeScopes, err := ofRepo()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list scopes before sync: "+err.Error())
 		return
@@ -597,7 +629,7 @@ func (h *Handlers) ResyncScopes(actor string, w http.ResponseWriter, r *http.Req
 	res := svc.SyncBlocking(r.Context(), "manual")
 
 	// 3. Get scopes after sync
-	afterScopes, err := settings.ListScopes(r.Context(), svc.db, "git")
+	afterScopes, err := ofRepo()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list scopes after sync: "+err.Error())
 		return

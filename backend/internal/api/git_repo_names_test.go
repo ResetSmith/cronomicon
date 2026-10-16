@@ -37,7 +37,9 @@ func TestR8_RepoNamesAreWhatTheCallerMayRead(t *testing.T) {
 		for _, it := range body.Items {
 			got = append(got, it["id"].(string))
 			for k := range it {
-				if k != "id" && k != "agencyId" && k != "agencyName" {
+				// canSync and canPublish (2.4.2, question 55) are about the
+				// caller, not the connection.
+				if k != "id" && k != "agencyId" && k != "agencyName" && k != "canSync" && k != "canPublish" {
 					t.Errorf("%s: a repository name carries %q; it says which and whose, nothing of the connection", c.who, k)
 				}
 			}

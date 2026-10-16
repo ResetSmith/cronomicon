@@ -1127,10 +1127,12 @@ export interface paths {
         get: operations["getDefinitionReactions"];
         /**
          * Replace a definition's reactions
-         * @description Wholesale replacement — an empty list clears them. Admin-gated
-         *     (ConfigureApp), the same gate as schedule-defs and calendars: a reaction
-         *     is a standing instruction to run something and, unlike a schedule, has
-         *     no visible clock.
+         * @description Wholesale replacement — an empty list clears them. Takes `compose` on
+         *     the agency of the definition the reactions belong to (v2.4.2), as
+         *     schedule-defs and calendars do since v2.4.0; it was a gate of an
+         *     administrator of every agency while a reaction could trigger another
+         *     agency's definition. A reaction is a standing instruction to run
+         *     something and, unlike a schedule, has no visible clock.
          *
          *     Validation refuses, with the offending reaction named: self-reference,
          *     an unknown upstream, an `onOutcome` outside the enum, a cycle (with the
@@ -1761,6 +1763,12 @@ export interface paths {
          *     scope") plus any line-numbered parse errors; emits a gitsync activity
          *     entry. The retired `types` pragma directive is ignored and is not an
          *     error. CSRF required.
+         *
+         *     One repository (v2.4.2): `repo` names it, Global's without it, and the
+         *     deltas are of its scopes only. Taken by who may configure that
+         *     repository (configureApp on its agency; Global's, a global
+         *     administrator), as POST /git/sync; until v2.4.2 it was Global's
+         *     repository's only, a global administrator's.
          */
         post: operations["resyncScopes"];
         delete?: never;
@@ -5773,6 +5781,10 @@ export interface components {
         Schedule: {
             /** @description The id of the agency the schedule is (v2.4.0). A name is unique within an agency only; the routes by name take it as `?agencyId=` when two agencies hold one. */
             readonly ownerAgency?: string;
+            /** @description v2.4.2, on the list. The caller's PUT would pass: compose on the schedule's agency, for one built in the app. */
+            readonly canEdit?: boolean;
+            /** @description v2.4.2, on the list. As canEdit. */
+            readonly canDelete?: boolean;
             /** @description AF-4a — stable surrogate identity; see Job.uid. */
             readonly uid?: string;
             /**
@@ -6284,6 +6296,10 @@ export interface components {
             name?: string;
             /** @description The agency id the calendar belongs to (v2.4.0). */
             ownerAgency?: string;
+            /** @description v2.4.2, on the list. The caller's writes to this calendar would pass: compose on its agency. */
+            canEdit?: boolean;
+            /** @description v2.4.2, on the list. As canEdit. */
+            canDelete?: boolean;
             /** @description Always 'cronomicon' — calendars are operator-authored, never Git-authored. */
             source?: string;
             description?: string;
@@ -12973,7 +12989,10 @@ export interface operations {
     };
     resyncScopes: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The repository's id; Global's when absent. */
+                repo?: string;
+            };
             header: {
                 /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
                 "X-CSRF-Token": components["parameters"]["csrf"];
@@ -17210,6 +17229,10 @@ export interface operations {
                             id: string;
                             agencyId: string;
                             agencyName: string;
+                            /** @description v2.4.2. The caller's POST /git/sync?repo= would be accepted: configureApp on the repository's agency. */
+                            canSync?: boolean;
+                            /** @description v2.4.2. The caller may publish to this repository at all (a job's scope is asked at the publish): publishSchedule on its agency, or everywhere; Global's takes only the latter. */
+                            canPublish?: boolean;
                         }[];
                     };
                 };

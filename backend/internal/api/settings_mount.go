@@ -1135,7 +1135,24 @@ func (s *Server) handleListScopes(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := auth.IdentityFrom(r.Context())
 	rows, err := withRowFlags(list, func(sc settings.Scope) (rowFlags, error) {
-		return s.flagsByMembership(r.Context(), id, auth.PermConfigureApp, "scope_agencies", "scope_id", sc.ID)
+		fl, err := s.flagsByMembership(r.Context(), id, auth.PermConfigureApp, "scope_agencies", "scope_id", sc.ID)
+		if err != nil || sc.Source != "git" {
+			return fl, err
+		}
+		// A scope from Git is edited and deleted in its repository: the routes
+		// answer 409 for anything but a scope built in the app. One from an
+		// agency's repository belongs to that agency and is not repaired into
+		// another (GR-18, scope_agency_fixed). The flags say what the routes
+		// answer (2.4.2, question 55).
+		fl.CanEdit, fl.CanDelete = false, false
+		var repo string
+		if err := s.db.QueryRowContext(r.Context(), `SELECT COALESCE(repo_id, ?) FROM scopes WHERE id = ?`, repoid.Global, sc.ID).Scan(&repo); err != nil {
+			return rowFlags{}, err
+		}
+		if repo != repoid.Global {
+			fl.CanRepair = false
+		}
+		return fl, nil
 	})
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)

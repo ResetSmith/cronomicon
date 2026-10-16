@@ -64,7 +64,12 @@ type scheduleDefRow struct {
 	// OwnerAgency is the id of the agency the schedule is (2.4.0 Phase R8):
 	// a name is unique within an agency only (I2), and the routes by name
 	// take it as ?agencyId= when two agencies hold one.
-	OwnerAgency    string            `json:"ownerAgency"`
+	OwnerAgency string `json:"ownerAgency"`
+	// CanEdit and CanDelete say what the caller's PUT and DELETE would answer
+	// (2.4.2, question 55): compose on the owner, for a schedule built in the
+	// app (one from Git is changed in its repository).
+	CanEdit        bool              `json:"canEdit"`
+	CanDelete      bool              `json:"canDelete"`
 	Name           string            `json:"name"`
 	Source         string            `json:"source"`
 	Description    *string           `json:"description,omitempty"`
@@ -165,11 +170,14 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	items := []scheduleDefRow{}
+	caller, _ := auth.IdentityFrom(r.Context())
 	for rows.Next() {
 		sd, err := scanScheduleDef(rows)
 		if err != nil {
 			continue
 		}
+		sd.CanEdit = sd.Source == "cronomicon" && caller.CanAgency(auth.PermCompose, sd.OwnerAgency)
+		sd.CanDelete = sd.CanEdit
 		items = append(items, sd)
 	}
 

@@ -160,7 +160,12 @@ type calendarRow struct {
 	Name   string `json:"name"`
 	Source string `json:"source"`
 	// OwnerAgency is the agency the calendar belongs to (§0a, 2.4.0).
-	OwnerAgency      string `json:"ownerAgency"`
+	OwnerAgency string `json:"ownerAgency"`
+	// CanEdit and CanDelete say what the caller's writes would answer (2.4.2,
+	// question 55): compose on the owner (requireCalendarOwner). Set on the
+	// list.
+	CanEdit          bool   `json:"canEdit"`
+	CanDelete        bool   `json:"canDelete"`
 	Description      string `json:"description,omitempty"`
 	Global           bool   `json:"global"`
 	RecordSuppressed bool   `json:"recordSuppressed"`
@@ -213,9 +218,12 @@ func (s *Server) listCalendars(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := make([]calendarRow, 0, len(rows))
+	caller, _ := auth.IdentityFrom(r.Context())
 	for _, c := range rows {
 		c.UsedBy = bindings[calKey(c.OwnerAgency, c.Name)]
 		c.Days = nil // the list view carries counts and coverage, not every date
+		c.CanEdit = caller.CanAgency(auth.PermCompose, c.OwnerAgency)
+		c.CanDelete = c.CanEdit
 		items = append(items, c)
 	}
 	// The threshold ships with the data so the badge in the UI and any future
