@@ -769,12 +769,14 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
 
   const viaOptions = [{ v: "", l: "Direct" }, ...bastions.map((b) => ({ v: b.name, l: b.name }))];
 
-  // The keys a record may name: its owner's, and Global's (LR-72). Anything
-  // else would be refused, so it is not offered. The key a record already
-  // names stays listed, so an edit shows what is there.
+  // The keys a record may name: its owner's (§0a, IN-6: Global's are Global's
+  // records' only; until 2.4.2 they were offered to every agency's, and the
+  // save was refused, present defect 55). Anything else would be refused, so
+  // it is not offered. The key a record already names stays listed, so an
+  // edit shows what is there.
   const keysFor = (owner: string, current: string) => {
     const name = ownerName(owner || defaultOwner);
-    return creds.filter((cr) => cr.id === current || !cr.ownerAgency || cr.ownerAgency === "Global" || cr.ownerAgency === name);
+    return creds.filter((cr) => cr.id === current || cr.ownerAgency === name);
   };
   const ownerPick = (value: string, set: (id: string) => void, what: string) => (
     <select
@@ -782,7 +784,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
       value={value || defaultOwner}
       disabled={owners.length <= 1}
       onChange={(e) => set(e.target.value)}
-      title={`The agency that owns this ${what}: its administrators change it, and its runs (and no other agency's) use it. Global's is used by every agency.`}
+      title={`The agency that owns this ${what}: its administrators change it, and its runs (and no other agency's) use it.`}
       style={smallInput({ cursor: owners.length <= 1 ? "default" : "pointer" })}
     >
       {!canWrite && owners.length > 1 && <option value="">Owner…</option>}

@@ -4507,12 +4507,12 @@ export interface paths {
          *     the agencies plan Phase 2). Every row belongs to at least one agency since v2.3.0 (migration 1220):
          *     what belonged to "no agency" belongs to **Global** (`global`), the built-in
          *     agency of the global administrators, and says so here. A Global secret,
-         *     variable or key is usable by every agency's runs; a Global scope or runner
-         *     serves Global's work only.
+         *     variable, key, scope or runner is used by Global's runs only (v2.4.0, §0a;
+         *     until then Global's secrets, variables and keys were every agency's).
          *
          *     These tables are what dispatch and reference resolution read: a runner claims
          *     a run only when it serves one of the run's agencies, and a run resolves a
-         *     secret, variable or key only when the row is Global's or one of its own.
+         *     secret, variable or key only when the row is one of its own.
          */
         get: operations["listScopeAgencies"];
         /**
@@ -4555,12 +4555,12 @@ export interface paths {
          *     the agencies plan Phase 2). Every row belongs to at least one agency since v2.3.0 (migration 1220):
          *     what belonged to "no agency" belongs to **Global** (`global`), the built-in
          *     agency of the global administrators, and says so here. A Global secret,
-         *     variable or key is usable by every agency's runs; a Global scope or runner
-         *     serves Global's work only.
+         *     variable, key, scope or runner is used by Global's runs only (v2.4.0, §0a;
+         *     until then Global's secrets, variables and keys were every agency's).
          *
          *     These tables are what dispatch and reference resolution read: a runner claims
          *     a run only when it serves one of the run's agencies, and a run resolves a
-         *     secret, variable or key only when the row is Global's or one of its own.
+         *     secret, variable or key only when the row is one of its own.
          */
         get: operations["listSecretAgencies"];
         /**
@@ -4599,12 +4599,12 @@ export interface paths {
          *     the agencies plan Phase 2). Every row belongs to at least one agency since v2.3.0 (migration 1220):
          *     what belonged to "no agency" belongs to **Global** (`global`), the built-in
          *     agency of the global administrators, and says so here. A Global secret,
-         *     variable or key is usable by every agency's runs; a Global scope or runner
-         *     serves Global's work only.
+         *     variable, key, scope or runner is used by Global's runs only (v2.4.0, §0a;
+         *     until then Global's secrets, variables and keys were every agency's).
          *
          *     These tables are what dispatch and reference resolution read: a runner claims
          *     a run only when it serves one of the run's agencies, and a run resolves a
-         *     secret, variable or key only when the row is Global's or one of its own.
+         *     secret, variable or key only when the row is one of its own.
          */
         get: operations["listEnvVarAgencies"];
         /**
@@ -4643,12 +4643,12 @@ export interface paths {
          *     the agencies plan Phase 2). Every row belongs to at least one agency since v2.3.0 (migration 1220):
          *     what belonged to "no agency" belongs to **Global** (`global`), the built-in
          *     agency of the global administrators, and says so here. A Global secret,
-         *     variable or key is usable by every agency's runs; a Global scope or runner
-         *     serves Global's work only.
+         *     variable, key, scope or runner is used by Global's runs only (v2.4.0, §0a;
+         *     until then Global's secrets, variables and keys were every agency's).
          *
          *     These tables are what dispatch and reference resolution read: a runner claims
          *     a run only when it serves one of the run's agencies, and a run resolves a
-         *     secret, variable or key only when the row is Global's or one of its own.
+         *     secret, variable or key only when the row is one of its own.
          */
         get: operations["listSshCredentialAgencies"];
         /**

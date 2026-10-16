@@ -143,14 +143,16 @@ describe("SSH Targets — an administrator of one agency (LR-69)", () => {
     expect(writes.find((w) => w.path === "/ssh/bastions")!.body).toMatchObject({ name: "jump-new", ownerAgency: "ag-fin" });
   });
 
-  it("offers a new record only its owner's keys and Global's", async () => {
+  // §0a, IN-6: Global's key is Global's records' only, and the server refuses
+  // an agency's record that names it (2.4.2, present defect 55: it was offered).
+  it("offers a new record only its owner's keys", async () => {
     await open(false);
     fireEvent.click(button(screen, "+ Add Host"));
     await waitFor(() => screen.getByLabelText("Agency that owns this host record"));
     const keys = screen.getByTitle(/SSH key: a credential/) as HTMLSelectElement;
     const offered = Array.from(keys.options).map((o) => o.textContent);
-    expect(offered).toContain("shared_key");
     expect(offered).toContain("fin_key");
+    expect(offered).not.toContain("shared_key");
     expect(offered).not.toContain("tax_key");
   });
 
