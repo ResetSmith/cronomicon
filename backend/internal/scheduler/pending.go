@@ -718,17 +718,27 @@ func InsertPendingRun(ctx context.Context, database *sql.DB, kind, name, source,
 	if scope != "" {
 		scopeVal = scope
 	}
+	// The definition's own identity when the caller has it (a deferred job run
+	// always does: params.JobUID), as TryQueue writes it; the name only when one
+	// definition holds it. Until 2.4.2 the name was all that was asked (present
+	// defect 56), so a deferred run of one of two agencies' twins was parked as
+	// nobody's and judged at promotion by its name: either twin's pause held
+	// it, and Global's calendars gated it.
+	ownUID := ""
+	if params != nil && kind == "job" {
+		ownUID = params.JobUID
+	}
 	_, err := database.ExecContext(ctx, `
 		INSERT INTO pending_runs (id, kind, name, source, scope, run_at, scheduled_by, created_at, status, params_json,
 			owner_uid)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?,
-			CASE ?
+			COALESCE(NULLIF(?, ''), CASE ?
 			  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
 			  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
-			END)`,
+			END))`,
 		id, kind, name, source, scopeVal, runAt, scheduledBy,
 		time.Now().UTC().Format(time.RFC3339), paramsJSON,
-		kind, name, source, name, source)
+		ownUID, kind, name, source, name, source)
 	if err != nil {
 		return "", err
 	}
