@@ -4,8 +4,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { allReadable, api } from "../api/client";
 import { paged, rows, useGet, useLiveGet } from "../hooks";
 import { Score } from "../components/Score";
-import { HOURS_BACK } from "../components/score-model";
 import { buildScoreMarks, scoreTruncatedAt, type ScoreRun, type ScoreUpcoming } from "../components/score-feed";
+import { ScoreCutNote, fetchScoreRuns } from "../components/score-runs";
 import { excludeSuppressed } from "./scheduling/calendars";
 import { appZoneParts, fmtInAppZone } from "../utils/datetime";
 import { useAgency } from "../agency";
@@ -119,32 +119,6 @@ function Section({ title, aside, children }: { title: string; aside?: ReactNode;
   );
 }
 
-// The server answers at most 200 runs a page, newest first, and across every
-// agency a day can hold more: the Score reads up to SCORE_MAX_PAGES pages of its
-// window, and says so when that is not all of it (a side agent's finding: one
-// page silently dropped the morning on a busy installation).
-const SCORE_PAGE = 200;
-export const SCORE_MAX_PAGES = 5;
-
-/** fetchScoreRuns — the Score's runs, every agency's, page after page. */
-export async function fetchScoreRuns(): Promise<{ data?: unknown; error?: unknown }> {
-  const from = new Date(Date.now() - (HOURS_BACK + 1) * 3600 * 1000).toISOString();
-  const items: unknown[] = [];
-  let totalItems = 0;
-  for (let page = 1; page <= SCORE_MAX_PAGES; page++) {
-    const res = await api.GET("/runs", {
-      params: { query: { kind: "job", from, pageSize: SCORE_PAGE, page } },
-      headers: allReadable,
-    });
-    if (res.error) return { error: res.error };
-    const p = paged(res.data);
-    items.push(...p.items);
-    totalItems = p.totalItems;
-    if (page >= p.totalPages || p.items.length === 0) break;
-  }
-  return { data: { items, totalItems } };
-}
-
 /**
  * OverviewScore — the Dashboard's Score across every agency (2.4.4 F4): runs
  * in the last day and fires in the next twelve hours, each named with its
@@ -155,7 +129,7 @@ export async function fetchScoreRuns(): Promise<{ data?: unknown; error?: unknow
 function OverviewScore() {
   const ag = useAgency();
   const navigate = useNavigate();
-  const runsQ = useLiveGet<unknown>(fetchScoreRuns, [], () => true, REFRESH_MS);
+  const runsQ = useLiveGet<unknown>(() => fetchScoreRuns({ allAgencies: true }), [], () => true, REFRESH_MS);
   const upcomingQ = useLiveGet<unknown>(
     () => api.GET("/schedules/upcoming", { params: { query: { window: "24h" } }, headers: allReadable }),
     [],
@@ -165,7 +139,6 @@ function OverviewScore() {
   const runnersQ = useGet<unknown>(() => api.GET("/runners", { headers: allReadable }));
   const runsPage = paged<ScoreRun>(runsQ.data);
   const runs = runsPage.items;
-  const cut = runsPage.totalItems > runs.length;
   const upcomingAll = rows<ScoreUpcoming & { suppressed?: boolean }>(upcomingQ.data);
   const upcoming = excludeSuppressed(upcomingAll);
   const runnerNames = useMemo(() => {
@@ -189,12 +162,7 @@ function OverviewScore() {
   const zone = (opts: Intl.DateTimeFormatOptions) => (at: number) => fmtInAppZone(new Date(at).toISOString(), { ...opts, hour12: false });
   return (
     <div data-testid="overview-score" style={{ marginBottom: 20 }}>
-      {cut && (
-        <div data-testid="score-cut" role="note" style={{ fontSize: c.fontSm, color: c.warning, marginBottom: 6 }}>
-          Showing the newest {runs.length.toLocaleString()} of {runsPage.totalItems.toLocaleString()} runs from the last day; the
-          older ones are not drawn. History has them all, one agency at a time.
-        </div>
-      )}
+      <ScoreCutNote shown={runs.length} total={runsPage.totalItems} where=", one agency at a time" />
       <Score
         marks={marks}
         now={now}

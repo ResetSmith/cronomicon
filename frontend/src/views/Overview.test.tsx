@@ -44,7 +44,8 @@ vi.mock("../api/client", async (importOriginal) => {
 });
 
 import { AgencyProvider, useAgency } from "../agency";
-import { Overview, SCORE_MAX_PAGES, attentionHref, hitHref } from "./Overview";
+import { Overview, attentionHref, hitHref } from "./Overview";
+import { SCORE_MAX_PAGES } from "../components/score-runs";
 
 const choices = [
   { id: "overview", name: "Overview: all agencies", kind: "overview" },

@@ -7,8 +7,9 @@ import { c } from "../theme";
 import { DOC_LINKS } from "../components/docLinks";
 import { SkeletonRows, StatTile, statusLabel, statusTone, DocLink } from "../components/ui";
 import { Score } from "../components/Score";
-import { HOURS_BACK, type Mark } from "../components/score-model";
+import { type Mark } from "../components/score-model";
 import { buildScoreMarks, scoreTruncatedAt } from "../components/score-feed";
+import { ScoreCutNote, fetchScoreRuns } from "../components/score-runs";
 import { GlobalCalendarBanner } from "./scheduling/GlobalCalendarBanner";
 import { excludeSuppressed } from "./scheduling/calendars";
 import { appZoneParts, fmtInAppZone } from "../utils/datetime";
@@ -153,14 +154,10 @@ export function Dashboard() {
   // the window displays and clip on startedAt below. Without that margin, a run
   // queued just before the window but started inside it would be missing from
   // the plot. `from` is computed inside the thunk, so each poll slides it.
-  const scoreRunsQ = useLiveGet<unknown>(
-    () =>
-      api.GET("/runs", {
-        params: { query: { kind: "job", from: new Date(Date.now() - (HOURS_BACK + 1) * 3600 * 1000).toISOString(), pageSize: 200 } },
-      }),
-    [],
-    () => true,
-  );
+  //
+  // 2.4.4 — read page after page (fetchScoreRuns): one page of 200 dropped a
+  // busy day's morning silently. ScoreCutNote says when even that is not all.
+  const scoreRunsQ = useLiveGet<unknown>(() => fetchScoreRuns(), [], () => true);
   // Forward half. `window` is an ENUM (`24h` | `7d`), not a duration — any other
   // value is silently coerced to 24h server-side — so request 24h and trim to
   // the 12h the Score shows. At that horizon the projection caps
@@ -182,7 +179,8 @@ export function Dashboard() {
   const errorsRef = useRef<HTMLDivElement>(null);
 
   const jobs = rows<Job>(jobsQ.data);
-  const scoreRuns = rows<Run>(scoreRunsQ.data);
+  const scoreRunsPage = paged<Run>(scoreRunsQ.data);
+  const scoreRuns = scoreRunsPage.items;
   // SR-1 — the claiming runner's name. A run row carries its own copy since
   // 2.3.0 (`runnerName`); the runners list is the fallback for a run claimed
   // before that, whose row was stamped only if its runner was still registered.
@@ -475,6 +473,7 @@ export function Dashboard() {
               and swaps the single lane for the per-job staves in place. The state
               stays here rather than inside Score so the Dashboard keeps owning
               what it feeds the panel. */}
+          <ScoreCutNote shown={scoreRuns.length} total={scoreRunsPage.totalItems} />
           <Score
             marks={marks}
             now={now}
@@ -486,6 +485,7 @@ export function Dashboard() {
             onOpenRun={(t) => navigate(`/runs?trace=${encodeURIComponent(t)}`)}
             truncatedAt={truncatedAt}
             loading={scoreRunsQ.loading}
+            pinnedReadout
             jobNames={jobNames}
             types={jobTypes}
             expanded={fullScore}
