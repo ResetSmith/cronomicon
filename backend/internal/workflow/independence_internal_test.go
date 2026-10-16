@@ -38,8 +38,10 @@ func TestI1_AWorkflowBuiltInTheAppRunsItsOwnAgencysJobsOnly(t *testing.T) {
 		}
 		return status, reason
 	}
-	if status, reason := run("c-job", "app-c"); status != "failure" || reason != runref.ReasonWorkflowScopeMismatch {
-		t.Errorf("B's workflow running C's job: %q, %q; want it failed with %q", status, reason, runref.ReasonWorkflowScopeMismatch)
+	// Refused as another agency's job (2.4.2, present defect 57: asked of the
+	// job itself, before its scope is).
+	if status, reason := run("c-job", "app-c"); status != "failure" || reason != runref.ReasonStepJobOtherAgency {
+		t.Errorf("B's workflow running C's job: %q, %q; want it failed with %q", status, reason, runref.ReasonStepJobOtherAgency)
 	}
 	if status, reason := run("b-job", "app-b"); status == "failure" || strings.HasPrefix(reason, "Refused") {
 		t.Errorf("B's workflow running B's job: %q, %q; want it queued", status, reason)

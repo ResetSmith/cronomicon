@@ -40,9 +40,12 @@ func TestAStepOfAnAgencysWorkflowRunsOnThatAgencysScopesOnly(t *testing.T) {
 		}
 		return status, reason
 	}
+	// Global's job is not found from an agency's repository's workflow at all
+	// (§0a, IN-8), and the step is refused for that (2.4.2, present defect 61:
+	// it was a bash job with no command, refused only by its empty scope).
 	for _, step := range []string{"patch-c", "patch-all"} {
-		if status, reason := run(parentB, step); status != "failure" || reason != runref.ReasonWorkflowScopeMismatch {
-			t.Errorf("an agency's workflow running Global's %s: %q, %q; want it failed with %q", step, status, reason, runref.ReasonWorkflowScopeMismatch)
+		if status, reason := run(parentB, step); status != "failure" || reason != runref.ReasonStepJobNotFound {
+			t.Errorf("an agency's workflow running Global's %s: %q, %q; want it failed with %q", step, status, reason, runref.ReasonStepJobNotFound)
 		}
 	}
 	// §0a (IN-3, IN-8): Global's job on the agency's own scope was what GR-16

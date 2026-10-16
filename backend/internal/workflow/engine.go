@@ -586,13 +586,40 @@ func (e *Engine) runJob(
 
 	// Look up the job's run type.
 	jd, ok := jobDefs[StepKey(step)]
+	// refusal is the reason a step is not the workflow's to run at all; its
+	// child row is written failed, under the WORKFLOW's agency and with no job
+	// identity (present defect 58: it was filed under the job's agency, so the
+	// other agency was shown a failure of its job it never triggered, and the
+	// workflow's own agency might not see its failed step).
+	refusal := ""
 	if !ok {
-		e.log.Warn("workflow: job not found in DB", "job", step.Name)
-		jd = jobDef{runType: "bash", scope: scope}
+		// Not a bash job with no command (present defect 61): a step names a
+		// job of its workflow's repository or agency, or it does not run.
+		e.log.Warn("workflow: the job this step names is not the workflow's", "job", step.Name)
+		jd = jobDef{runType: "bash"}
+		refusal = runref.ReasonStepJobNotFound
 	}
 	effectiveScope := scope
 	if jd.scope != "" {
 		effectiveScope = jd.scope
+	}
+	wfAgency, wfAgencyName, werr := e.workflowAgencyOf(ctx, wfID)
+	if werr != nil {
+		e.log.Error("workflow: read the workflow's agency", "job", step.Name, "err", werr)
+		return "danger", false
+	}
+	// The job's agency is the workflow's, asked of the job itself (present
+	// defect 57): the scope check below asks only whether the workflow's
+	// agency holds a scope of the NAME, which another agency's job can share.
+	if refusal == "" && wfAgency != "" && jd.agency != "" && jd.agency != wfAgency {
+		e.log.Warn("workflow: this step's job is another agency's", "job", step.Name, "job_agency", jd.agency, "workflow_agency", wfAgency)
+		refusal = runref.ReasonStepJobOtherAgency
+	}
+	if refusal != "" {
+		// Nothing of another agency's job goes into the refused row: not its
+		// scope, its host, its connect-as identity or its environment.
+		jd = jobDef{runType: jd.runType, source: jd.source}
+		effectiveScope = scope
 	}
 
 	// Insert the child run directly (pre-assigned trace ID). Gap A: each child
@@ -616,12 +643,18 @@ func (e *Engine) runJob(
 	// every workflow step fanned out across its job's whole scope.
 	// The scope is looked for in the step's job's agency (I2: a scope's name is
 	// unique within an agency only).
-	stepAgencies, aerr := execspec.ScopeAgencies(ctx, e.db, jd.agency, effectiveScope)
-	if aerr != nil {
-		// As for an unreadable binding or executor: the step fails, recorded, and
-		// no child run is written with a guessed agency set.
-		e.log.Error("workflow: read the scope's agencies", "job", step.Name, "scope", effectiveScope, "err", aerr)
-		return "danger", false
+	var stepAgencies []string
+	if refusal != "" {
+		stepAgencies = []string{wfAgencyName}
+	} else {
+		var aerr error
+		stepAgencies, aerr = execspec.ScopeAgencies(ctx, e.db, jd.agency, effectiveScope)
+		if aerr != nil {
+			// As for an unreadable binding or executor: the step fails, recorded, and
+			// no child run is written with a guessed agency set.
+			e.log.Error("workflow: read the scope's agencies", "job", step.Name, "scope", effectiveScope, "err", aerr)
+			return "danger", false
+		}
 	}
 	stepAgenciesJSON := execspec.MarshalAgencies(stepAgencies)
 
@@ -648,6 +681,11 @@ func (e *Engine) runJob(
 		stepStatus, stepQueuedReason = "failure", jd.unavailable
 		e.log.Warn("workflow: step references a job that must not run",
 			"job", step.Name, "source", jobSrc, "reason", jd.unavailable)
+	}
+	// Asked first of all: nothing below reads another agency's job's
+	// bindings, keys or scope for a step that is not the workflow's.
+	if refusal != "" {
+		stepStatus, stepQueuedReason = "failure", refusal
 	}
 	// R2F-1 — jd.uid is the job resolveJobDef settled on (R2-3); read the
 	// script and the bindings off THAT identity, or a same-named sibling's
@@ -704,6 +742,8 @@ func (e *Engine) runJob(
 			stepStatus, stepQueuedReason = "failure", runref.ReasonWorkflowScopeMismatch
 			e.log.Warn("workflow: this step's scope is not the workflow's agency's",
 				"job", step.Name, "scope", effectiveScope)
+			// Filed under the workflow's agency, whose failure it is (defect 58).
+			stepAgenciesJSON = execspec.MarshalAgencies([]string{wfAgencyName})
 		}
 	}
 	// LR-47 — a key-bound shell step with no agent to deliver the key fails the
@@ -756,6 +796,12 @@ func (e *Engine) runJob(
 	_ = e.db.QueryRowContext(ctx,
 		`SELECT COALESCE(reaction_depth, 0) FROM workflow_runs WHERE id = ?`, wfTraceID,
 	).Scan(&parentDepth)
+	// A refused step has no job of the workflow's: its row carries no job's
+	// environment (read by name it would be another agency's).
+	childEnv := ""
+	if refusal == "" {
+		childEnv = e.childEnvJSON(ctx, wfTraceID, jobSrc, step.Name, jd.uid, inputEnv).String
+	}
 	if _, err := scheduler.InsertRun(ctx, e.db, scheduler.RunRow{
 		EnqueueParams: scheduler.EnqueueParams{
 			JobName:        step.Name,
@@ -769,7 +815,7 @@ func (e *Engine) runJob(
 			ConcurrencyKey: concKey,
 			WorkflowRunID:  wfTraceID,
 			Executor:       executor,
-			EnvJSON:        e.childEnvJSON(ctx, wfTraceID, jobSrc, step.Name, jd.uid, inputEnv).String,
+			EnvJSON:        childEnv,
 			SSHUser:        jd.sshUser,
 			SSHCredential:  jd.sshCred,
 			AgenciesJSON:   stepAgenciesJSON,
@@ -778,6 +824,7 @@ func (e *Engine) runJob(
 		TraceID:      traceID,
 		Status:       stepStatus,
 		QueuedReason: stepQueuedReason,
+		NoDefinition: refusal != "",
 	}); err != nil {
 		e.log.Error("workflow: insert child run", "job", step.Name, "err", err)
 		return "danger", false
@@ -1241,6 +1288,32 @@ func (e *Engine) Home(ctx context.Context, workflowID int64) string {
 // would run on a scope that is not the workflow's agency's (runref
 // .ScopeOutsideAgency). A workflow that is no longer there confines nothing; a
 // Git workflow whose repository is gone has no agency to run for.
+// workflowAgencyOf is the agency a workflow belongs to, by id and by name. A
+// workflow that is not there is "" (nothing to compare); one whose agency
+// cannot be told (its repository is gone) is filed under Global's name.
+func (e *Engine) workflowAgencyOf(ctx context.Context, workflowID int64) (id, name string, err error) {
+	var agency sql.NullString
+	err = e.db.QueryRowContext(ctx,
+		`SELECT `+runref.WorkflowAgencySQL+` FROM workflows w WHERE w.rowid = ?`, workflowID).Scan(&agency)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", agencyid.GlobalName, nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if !agency.Valid {
+		return "", agencyid.GlobalName, nil
+	}
+	var n sql.NullString
+	if err := e.db.QueryRowContext(ctx, `SELECT name FROM agencies WHERE id = ?`, agency.String).Scan(&n); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", "", err
+	}
+	if !n.Valid || n.String == "" {
+		return agency.String, agencyid.GlobalName, nil
+	}
+	return agency.String, n.String, nil
+}
+
 func (e *Engine) stepOutsideWorkflowAgency(ctx context.Context, workflowID int64, scope string) (bool, error) {
 	var agency sql.NullString
 	err := e.db.QueryRowContext(ctx,

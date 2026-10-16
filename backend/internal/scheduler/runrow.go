@@ -61,6 +61,12 @@ type RunRow struct {
 	// (CAL-6); NULL otherwise. Only meaningful with Terminal.
 	SuppressedByCalendar string
 
+	// NoDefinition writes the row as of no definition even though JobName
+	// names one: a workflow step refused for being another agency's, whose
+	// row must not be that agency's job's (2.4.2, present defect 58). Without
+	// it an empty JobUID is filled from the name.
+	NoDefinition bool
+
 	// CreatedAt overrides the row timestamp (RFC3339 UTC). Empty means now.
 	// Only the missed-run detector sets it: a miss is DISCOVERED minutes after
 	// the fire it describes, and stamping discovery time would put the row
@@ -141,7 +147,10 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 	if r.DurationMs != nil {
 		durationMs = *r.DurationMs
 	}
-	uid := resolveEnqueueUID(ctx, database, r.EnqueueParams)
+	uid := ""
+	if !r.NoDefinition {
+		uid = resolveEnqueueUID(ctx, database, r.EnqueueParams)
+	}
 	snap := r.snapshotFlag()
 
 	_, err := database.ExecContext(ctx, `

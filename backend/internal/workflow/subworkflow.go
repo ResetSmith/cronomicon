@@ -166,7 +166,7 @@ func (e *Engine) runChildWorkflowOnce(
 		e.log.Error("workflow: sub-workflow nesting ceiling reached; refusing to descend",
 			"parent", parentName, "child", childName, "depth", childDepth, "max", MaxWorkflowDepth)
 		e.recordRefusedChild(ctx, parentTraceID, nodeID, childName, actor, parentSource, childDepth,
-			fmt.Sprintf("Refused: sub-workflow nesting would reach depth %d (max %d)", childDepth, MaxWorkflowDepth))
+			fmt.Sprintf("Refused: sub-workflow nesting would reach depth %d (max %d)", childDepth, MaxWorkflowDepth), true)
 		return "danger", ""
 	}
 
@@ -179,7 +179,7 @@ func (e *Engine) runChildWorkflowOnce(
 	if !ok {
 		e.log.Error("workflow: sub-workflow not found", "parent", parentName, "child", childName)
 		e.recordRefusedChild(ctx, parentTraceID, nodeID, childName, actor, parentSource, childDepth,
-			"Refused: the referenced workflow does not exist or is disabled")
+			"Refused: the referenced workflow does not exist or is disabled", true)
 		return "danger", ""
 	}
 	// A workflow's sub-workflows are its agency's (§0a, IN-8). What spans at
@@ -192,7 +192,7 @@ func (e *Engine) runChildWorkflowOnce(
 		}
 		if !same {
 			e.log.Warn("workflow: sub-workflow is another agency's", "parent", parentName, "child", childName)
-			e.recordRefusedChild(ctx, parentTraceID, nodeID, childName, actor, parentSource, childDepth, ReasonChildOtherAgency)
+			e.recordRefusedChild(ctx, parentTraceID, nodeID, childName, actor, parentSource, childDepth, ReasonChildOtherAgency, false)
 			return "danger", ""
 		}
 	}
@@ -429,9 +429,17 @@ func (e *Engine) waitForWorkflowRun(ctx context.Context, traceID string) string 
 // parent that simply failed, with the reason living only in a log line — the
 // invisible-failure shape this codebase keeps having to fix. The row is the
 // child's, so History renders the refusal where the child would have been.
-func (e *Engine) recordRefusedChild(ctx context.Context, parentTraceID, nodeID, childName, actor, source string, depth int, reason string) {
+//
+// A child refused for being ANOTHER agency's is recorded by its name only
+// (identified false): no workflow of that agency is stamped on the parent's
+// run (2.4.2, present defect 58; it was its uid by the name).
+func (e *Engine) recordRefusedChild(ctx context.Context, parentTraceID, nodeID, childName, actor, source string, depth int, reason string, identified bool) {
 	if childName == "" {
 		return
+	}
+	lookup := childName
+	if !identified {
+		lookup = ""
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := e.db.ExecContext(ctx, `
@@ -445,7 +453,7 @@ func (e *Engine) recordRefusedChild(ctx context.Context, parentTraceID, nodeID, 
 			(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?))`,
 		nodeIDOrNew(nodeID), childName, source, reason, actor,
 		nullStr(parentTraceID), nullStr(nodeID), depth, now, now, now,
-		childName, source); err != nil {
+		lookup, source); err != nil {
 		e.log.Error("workflow: record refused sub-workflow", "child", childName, "err", err)
 	}
 }

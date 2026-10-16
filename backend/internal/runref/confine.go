@@ -120,6 +120,18 @@ func RepoScopeMismatch(ctx context.Context, database *sql.DB, jobUID, jobSource,
 // by ScopeOutsideAgency.
 const ReasonWorkflowScopeMismatch = "Refused: this step would run on a scope that is not its workflow's agency's: a workflow runs its own agency's jobs only"
 
+// ReasonStepJobOtherAgency is the stored reason of a workflow step whose job
+// resolved to another agency's (2.4.2, present defect 57). The scope check
+// above is asked of the scope's NAME, which another agency may hold too
+// (names are per agency since I2).
+const ReasonStepJobOtherAgency = "Refused: this step's job is another agency's: a workflow runs its own agency's jobs only"
+
+// ReasonStepJobNotFound is the stored reason of a workflow step whose job is
+// not the workflow's to run: in neither its repository nor, built in the app,
+// its agency (2.4.2, present defect 61: the step became a bash job with no
+// command).
+const ReasonStepJobNotFound = "Refused: the job this step names is not this workflow's: it is in neither the workflow's repository nor, built in the app, its agency"
+
 // ScopeOutsideAgency reports whether a scope is one a workflow of the agency
 // agencyID may NOT run a step on: the scope is not that agency's alone
 // (another agency's, several agencies', not there), or there is none and the

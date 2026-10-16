@@ -113,7 +113,7 @@ func TestAWorkflowRunIsStampedWithTheWorkflowItIsOf(t *testing.T) {
 	}
 
 	// A sub-workflow that was refused before it was resolved to a row.
-	f.e.recordRefusedChild(ctx, "", "node-1", "nightly", "someone", "cronomicon", 1, "Refused: test")
+	f.e.recordRefusedChild(ctx, "", "node-1", "nightly", "someone", "cronomicon", 1, "Refused: test", true)
 	if err := f.e.db.QueryRow(`SELECT workflow_uid FROM workflow_runs WHERE id = 'node-1'`).Scan(&uid); err != nil {
 		t.Fatal(err)
 	}

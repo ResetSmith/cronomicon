@@ -1136,9 +1136,14 @@ func resolveEnqueueUID(ctx context.Context, database *sql.DB, p EnqueueParams) s
 	if p.JobUID != "" {
 		return p.JobUID
 	}
+	// Only when ONE job holds the name (2.4.2, with present defect 58): this
+	// took whichever row of the name SQLite returned first, so a producer with
+	// no identity was stamped with one of two agencies' twins — and a workflow
+	// step refused for being another agency's, written with no identity on
+	// purpose, was stamped with that agency's job again.
 	var uid sql.NullString
 	_ = database.QueryRowContext(ctx,
-		`SELECT uid FROM jobs WHERE name = ? AND source = ?`,
+		`SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs WHERE name = ? AND source = ?`,
 		p.JobName, p.jobSourceOrDefault()).Scan(&uid)
 	return uid.String
 }
