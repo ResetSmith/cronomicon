@@ -119,9 +119,15 @@ func TestGR0_BinningAChildMakesItsParentRunAnotherAgencysChild(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		scopes, err := workflow.New(pool, slog.New(slog.NewTextHandler(io.Discard, nil))).SubWorkflowJobScopes(context.Background(), steps, "cronomicon")
+		pairs, err := workflow.New(pool, slog.New(slog.NewTextHandler(io.Discard, nil))).SubWorkflowJobAgencyScopesAt(context.Background(), steps, "cronomicon", "")
 		if err != nil {
 			t.Fatal(err)
+		}
+		var scopes []string
+		for _, p := range pairs {
+			if !slices.Contains(scopes, p.Scope) {
+				scopes = append(scopes, p.Scope)
+			}
 		}
 		return scopes
 	}

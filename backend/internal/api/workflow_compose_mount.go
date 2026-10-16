@@ -1216,18 +1216,3 @@ func (s *Server) stepJobAgency(r *http.Request, ref workflow.StepRef) (string, b
 	}
 	return "", false
 }
-
-// collectStepScopes resolves each step job's scope through the same A11
-// precedence execution uses (R2-5) — the input to the workflow name-pool check.
-func (s *Server) collectStepScopes(r *http.Request, steps []workflow.Step) []string {
-	var out []string
-	for _, ref := range workflow.CollectStepRefs(steps) {
-		if ref.Name == "" {
-			continue
-		}
-		if scope, ok := s.stepJobScope(r, ref); ok {
-			out = append(out, scope.String)
-		}
-	}
-	return out
-}

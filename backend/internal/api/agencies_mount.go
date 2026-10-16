@@ -238,20 +238,6 @@ func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Ide
 	return true, true
 }
 
-// namesAnother reports whether targets names an agency that is not in current.
-func namesAnother(current, targets []string) bool {
-	in := make(map[string]bool, len(current))
-	for _, a := range current {
-		in[a] = true
-	}
-	for _, a := range targets {
-		if !in[a] {
-			return true
-		}
-	}
-	return false
-}
-
 // requireBothSides is requireMove's two-sided rule on its own: the kind's
 // permission on every agency the entity is in today and on every agency
 // named. It returns the agencies the entity is in.

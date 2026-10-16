@@ -522,20 +522,14 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 	return newSecret, gitlabUpdated, overlapUntil, nil
 }
 
-// ResolveGitlabRuntime returns the effective URL and token of a repository, for
-// its sync service: for Global's, env (CRONOMICON_GITLAB_BASE_URL /
-// CRONOMICON_GITLAB_TOKEN) wins when set (E.3 precedence); otherwise, and for
-// every other repository, its row.
-func ResolveGitlabRuntime(ctx context.Context, database *sql.DB, appCfg *config.Config, repoID string) (repoURL, pat string) {
-	repoURL, pat, _ = ResolveRepoRuntime(ctx, database, appCfg, repoID)
-	return repoURL, pat
-}
-
-// ResolveRepoRuntime is ResolveGitlabRuntime that says when the row could not
-// be READ. A repository with no row is not an error (it resolves to what the
-// environment gives, which is nothing for any repository but Global's); a
-// query that failed is, and a caller that would build a sync service from the
-// answer must not take "could not read" for "not configured".
+// ResolveRepoRuntime returns the effective URL and token of a repository, for
+// its sync service and a checkout's manifest: for Global's, env
+// (CRONOMICON_GITLAB_BASE_URL / CRONOMICON_GITLAB_TOKEN) wins when set (E.3
+// precedence); otherwise, and for every other repository, its row. A
+// repository with no row is not an error (it resolves to what the environment
+// gives, which is nothing for any repository but Global's); a query that
+// failed is, and a caller must not take "could not read" for "not configured".
+// (ResolveGitlabRuntime, which dropped the error, went in 2.4.2.)
 func ResolveRepoRuntime(ctx context.Context, database *sql.DB, appCfg *config.Config, repoID string) (repoURL, pat string, err error) {
 	repoURL = envURL(appCfg, repoID)
 	pat = envToken(repoID)

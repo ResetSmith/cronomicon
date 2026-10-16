@@ -143,9 +143,6 @@ func (r *Registry) Service(repoID string) *Service {
 	return r.services[repoID]
 }
 
-// Global returns Global's repository's Service.
-func (r *Registry) Global() *Service { return r.Service(repoid.Global) }
-
 // Restart replaces a repository's Service with a new one built from the
 // repository's row as it is now. It is what a write of the connection calls,
 // and it is why such a write needs no restart of the server: the new Service

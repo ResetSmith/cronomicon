@@ -19,12 +19,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 
 	"github.com/robfig/cron/v3"
 
@@ -993,16 +994,6 @@ func (s *Scheduler) fireWorkflow(uid, source, workflowName, scheduleName, envJSO
 // By the definition's IDENTITY where the caller has it (2.4.0): see IsPausedUID.
 func (s *Scheduler) isPaused(ctx context.Context, source, ownerKind, name, uid string) bool {
 	return IsPausedUID(ctx, s.db, source, ownerKind, name, uid)
-}
-
-// IsPaused is the DB-level twin of (*Scheduler).isPaused, exported for trigger
-// paths that live outside this package (ET-D's file-arrival watcher).
-//
-// Nothing downstream of Enqueue consults paused_jobs — the pause is checked by
-// each trigger path, one gate per producer (see the reaction.go note). A new
-// producer that skips this check fires paused jobs.
-func IsPaused(ctx context.Context, database *sql.DB, source, ownerKind, name string) bool {
-	return IsPausedUID(ctx, database, source, ownerKind, name, "")
 }
 
 // IsPausedUID is IsPaused for ONE definition (2.4.0).

@@ -28,11 +28,6 @@ type Handlers struct {
 	reg *Registry
 }
 
-// NewHandlers creates handler wrappers around one fixed Service.
-func NewHandlers(svc *Service) *Handlers {
-	return &Handlers{svc: svc}
-}
-
 // NewRegistryHandlers creates handler wrappers that ask the registry.
 func NewRegistryHandlers(reg *Registry) *Handlers {
 	return &Handlers{reg: reg}
@@ -70,10 +65,6 @@ func (h *Handlers) serviceOf(repoID string) *Service {
 // GET /api/v1/git/sync — sync status
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (h *Handlers) GetSyncStatus(w http.ResponseWriter, r *http.Request) {
-	h.GetSyncStatusOf(repoid.Global, w, r)
-}
-
 // repoService is the running Service of a repository the caller has already
 // been found to have a right to, or nil with 503 written: the server is
 // shutting down, or the repository was disconnected a moment ago.
@@ -109,11 +100,7 @@ func (h *Handlers) GetSyncStatusOf(repoID string, w http.ResponseWriter, r *http
 // POST /api/v1/git/sync — trigger resync
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (h *Handlers) PostSync(w http.ResponseWriter, r *http.Request) {
-	h.PostSyncOf(repoid.Global, w, r)
-}
-
-// PostSyncOf is PostSync for a named repository.
+// PostSyncOf starts a sync of a named repository.
 func (h *Handlers) PostSyncOf(repoID string, w http.ResponseWriter, r *http.Request) {
 	svc := h.repoService(w, repoID)
 	if svc == nil {
@@ -153,12 +140,7 @@ func pageParams(r *http.Request) (page, pageSize int) {
 // GET /api/v1/git/history — list sync events
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (h *Handlers) ListGitHistory(w http.ResponseWriter, r *http.Request) {
-	h.ListGitHistoryOf(repoid.Global, w, r)
-}
-
-// ListGitHistoryOf is ListGitHistory for a named repository: that
-// repository's syncs, and no other's.
+// ListGitHistoryOf lists a named repository's syncs, and no other's.
 func (h *Handlers) ListGitHistoryOf(repoID string, w http.ResponseWriter, r *http.Request) {
 	svc := h.repoService(w, repoID)
 	if svc == nil {

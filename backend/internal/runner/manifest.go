@@ -408,7 +408,12 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		if repo == "" {
 			repo = repoid.Global
 		}
-		repoURL, _ := settings.ResolveGitlabRuntime(r.Context(), s.db, s.cfg, repo)
+		repoURL, _, rerr := settings.ResolveRepoRuntime(r.Context(), s.db, s.cfg, repo)
+		if rerr != nil {
+			// Not "no repository": the row could not be read.
+			httpx.Fail500(w, s.log, "db_error", rerr)
+			return
+		}
 		if repoURL == "" {
 			httpx.Fail(w, http.StatusConflict, "no_checkout_repo",
 				"checkout run cannot resolve the source repository URL; configure the GitLab integration")

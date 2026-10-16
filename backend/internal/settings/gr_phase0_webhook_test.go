@@ -144,13 +144,13 @@ func TestGR2_TheEnvironmentOverridesAreGlobalsAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if u, tok := ResolveGitlabRuntime(ctx, pool, cfg, repoid.Global); u != "https://git.example/global/defs.git" || tok != "env-token-for-global" {
+	if u, tok, _ := ResolveRepoRuntime(ctx, pool, cfg, repoid.Global); u != "https://git.example/global/defs.git" || tok != "env-token-for-global" {
 		t.Errorf("Global's runtime = %q, %q; want the environment's", u, tok)
 	}
-	if u, tok := ResolveGitlabRuntime(ctx, pool, cfg, "r-fin"); u != "https://git.example/finance/defs.git" || tok != "agency-token-9876" {
+	if u, tok, _ := ResolveRepoRuntime(ctx, pool, cfg, "r-fin"); u != "https://git.example/finance/defs.git" || tok != "agency-token-9876" {
 		t.Errorf("the agency's repository's runtime = %q, %q; want its own row's, not the environment's", u, tok)
 	}
-	if u, tok := ResolveGitlabRuntime(ctx, pool, cfg, "no-such-repository"); u != "" || tok != "" {
+	if u, tok, _ := ResolveRepoRuntime(ctx, pool, cfg, "no-such-repository"); u != "" || tok != "" {
 		t.Errorf("a repository that does not exist resolved to %q, %q", u, tok)
 	}
 

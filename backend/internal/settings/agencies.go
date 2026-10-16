@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ResetSmith/cronomicon/internal/agencyid"
-	"github.com/ResetSmith/cronomicon/internal/auditlog"
-	"github.com/ResetSmith/cronomicon/internal/auth"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/auditlog"
+	"github.com/ResetSmith/cronomicon/internal/auth"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/repoid"
@@ -491,15 +492,6 @@ func (e *AgencyInUseError) Blockers() []string {
 	add(e.Hosts, "host record", "host records", "give the record to another agency, or delete it")
 	add(e.Bastions, "bastion", "bastions", "give the bastion to another agency, or delete it")
 	return out
-}
-
-// DeleteAgency removes an agency. It returns *AgencyInUseError (wrapping
-// ErrAgencyInUse, mapped 409) when the agency is still referenced — by a scope (M1),
-// a runner (M2), a membership row (T2.8), or an OWNED entity (RA-15/RA-19).
-// Historical runs.agency name snapshots never block deletion (immutable facts).
-// A connected repository blocks it too; DeleteAgencyWith takes it.
-func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool, error) {
-	return DeleteAgencyWith(ctx, database, id, actor, nil)
 }
 
 // RepoTake removes an agency's repository with the agency (the gitlab

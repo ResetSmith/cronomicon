@@ -1239,13 +1239,6 @@ func (s *Server) agencyRepo(ctx context.Context, agencyID string) string {
 	return repo
 }
 
-// scopeRepo is agencyRepo for the agency a scope belongs to. A job with no
-// scope, a scope that is not there, and a scope several agencies share are
-// Global's, as their runs are.
-func (s *Server) scopeRepo(ctx context.Context, scope string) string {
-	return s.agencyRepo(ctx, s.scopeAgency(ctx, scope))
-}
-
 // jobAgencyByRowID is the agency of the job with this rowid (agencyid.JobSQL),
 // the agency its scope is looked for in (I2: a scope's name is unique within
 // an agency only). Global's for no such job, as such a run is.
@@ -1255,20 +1248,4 @@ func (s *Server) jobAgencyByRowID(ctx context.Context, rowid string) string {
 		return agencyid.Global
 	}
 	return a.String
-}
-
-// scopeAgency is the agency a job on a scope is: the scope's, when one agency
-// alone owns it; Global's for no scope, a scope that is not there, and one
-// several share, as their runs are.
-func (s *Server) scopeAgency(ctx context.Context, scope string) string {
-	if strings.TrimSpace(scope) == "" {
-		return agencyid.Global
-	}
-	var agency sql.NullString
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		  FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?`, scope).Scan(&agency); err != nil || !agency.Valid {
-		return agencyid.Global
-	}
-	return agency.String
 }

@@ -80,8 +80,6 @@ func canonRole(role string) string { return auth.CanonRole(role) }
 
 // ── Roles ────────────────────────────────────────────────────────────────────
 
-type roleResp = auth.Role
-
 func permsForRoles(roles []string) rolePermissions { return auth.PermsForRoles(roles) }
 
 // Permission predicates for requirePerm. Named for readable call sites.

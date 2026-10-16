@@ -476,25 +476,6 @@ func (e *Engine) CancelTree(ctx context.Context, wfTraceID string) bool {
 	return cancelled
 }
 
-// DescendantRunScopes returns the distinct scopes of the job runs that belong to
-// the sub-workflow runs UNDER a workflow run — everything CancelTree would stop
-// beyond the addressed run's own children (GC-10). An unbound run yields "".
-func (e *Engine) DescendantRunScopes(ctx context.Context, wfTraceID string) ([]string, error) {
-	pairs, err := e.DescendantRunAgencyScopes(ctx, wfTraceID)
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	var out []string
-	for _, p := range pairs {
-		if !seen[p.Scope] {
-			seen[p.Scope] = true
-			out = append(out, p.Scope)
-		}
-	}
-	return out, nil
-}
-
 // DescendantRunAgencyScopes is DescendantRunScopes with each run's scope
 // owner, the agency its scope is looked for in (I2), from the run's snapshot.
 func (e *Engine) DescendantRunAgencyScopes(ctx context.Context, wfTraceID string) ([]AgencyScope, error) {

@@ -16,14 +16,9 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
-	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/inventory"
 )
-
-// allScopes aliases the A5 unrestricted sentinel so the seed cannot drift from
-// the resolver's definition of it.
-const allScopes = auth.AllScopes
 
 // Seed inserts demo data when the database is empty. It is a no-op when the
 // jobs cache already has rows, so it is safe to call on every boot and never
