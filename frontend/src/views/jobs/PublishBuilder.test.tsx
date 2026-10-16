@@ -21,7 +21,14 @@ vi.mock("../../api/client", async (importOriginal) => {
     fetchCapabilities: vi.fn(async () => ({ publishSchedule: true, publishScheduleGlobal: globalPublisher })),
     api: {
       GET: vi.fn(async (path: string, init?: { params?: { query?: { repo?: string } } }) => {
-        if (path === "/jobs") return { data: [] };
+        if (path === "/jobs")
+          return {
+            data: [
+              { id: 1, name: "nightly", repoId: "global" },
+              { id: 2, name: "nightly", repoId: "repo-fin" },
+            ],
+          };
+        if (path === "/jobs/{jobId}") return { data: { name: "nightly", type: "bash", command: "echo hi", schedule: "0 7 * * *" } };
         if (path === "/git-repo-names")
           return {
             data: {
@@ -119,5 +126,39 @@ describe("Publish — per repository (R8)", () => {
     await waitFor(() => expect(historyRepos).toContain("repo-fin"));
     await publish();
     expect(await screen.findByText(/The repository refused the push: its branch is protected\./)).toBeTruthy();
+  });
+
+  // An existing job is edited in the repository it came from (from R8): the
+  // publish route writes wherever it is pointed, so another repository would
+  // get a second job of the name. Two jobs of one name are told apart by id.
+  it("publishes an edit of Finance's job to Finance's repository, for a global publisher too", async () => {
+    globalPublisher = true;
+    const select = await open();
+    await waitFor(() => expect(select.options.length).toBe(3));
+    const jobPick = screen.getAllByRole("combobox")[1] as HTMLSelectElement;
+    fireEvent.change(jobPick, { target: { value: "2" } });
+    await waitFor(() => expect(select.value).toBe("repo-fin"));
+    expect(select.disabled).toBe(true);
+    expect(screen.getByText(/nightly is in Finance's repository, and an edit of it is published there\./)).toBeTruthy();
+    await waitFor(() => expect(historyRepos).toContain("repo-fin"));
+    const go = screen.getByRole("button", { name: "Publish to GitLab" }) as HTMLButtonElement;
+    await waitFor(() => expect(go.disabled).toBe(false));
+    fireEvent.click(go);
+    const confirm = await waitFor(() => {
+      const bs = screen.getAllByRole("button").filter((x) => /Publish|Confirm|Commit/.test(x.textContent ?? "") && !(x as HTMLButtonElement).disabled);
+      if (bs.length < 2) throw new Error("no confirm yet");
+      return bs[bs.length - 1];
+    });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].body).toMatchObject({ filePath: "jobs/nightly.yaml", repoId: "repo-fin", new: false });
+  });
+
+  it("offers no other repository for a job in one the caller may not publish to", async () => {
+    const select = await open();
+    await waitFor(() => expect(select.options.length).toBe(1));
+    fireEvent.change(screen.getAllByRole("combobox")[1], { target: { value: "1" } });
+    expect(await screen.findByText(/nightly is in Global repository, which you may not publish to\./)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Publish to GitLab" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

@@ -15,6 +15,8 @@ interface JobListItem {
   id?: number;
   name: string;
   schedule?: string | null;
+  /** 2.4.0 — the repository a Git job is of; absent for one built in the app. */
+  repoId?: string;
 }
 interface ScheduleEntryDetail {
   name?: string;
@@ -131,7 +133,8 @@ export function PublishBuilder() {
   const jobs = rows<JobListItem>(jobsQ.data);
 
   const [selected, setSelected] = useState<string>(NEW_JOB);
-  const job = selected === NEW_JOB ? null : jobs.find((j) => j.name === selected) ?? null;
+  // By id: two agencies may each have a job of a name (2.4.0).
+  const job = selected === NEW_JOB ? null : jobs.find((j) => String(j.id) === selected) ?? null;
   const detailQ = useGet<JobDetail>(
     () => (job?.id != null ? api.GET("/jobs/{jobId}", { params: { path: { jobId: job.id } } }) : Promise.resolve({ data: null })),
     [job?.id],
@@ -164,8 +167,14 @@ export function PublishBuilder() {
   const mine = new Set(agenciesFor(access ?? null, "publishSchedule").map((a) => a.id));
   const publishable = repos.filter((r) => globalPublisher || (r.agencyId !== "global" && mine.has(r.agencyId)));
   const [repoRaw, setRepoRaw] = useState("");
-  const repo = publishable.find((r) => r.id === repoRaw) ?? publishable[0];
+  // An existing Git job is edited in the repository it came from, and nowhere
+  // else: the publish route writes wherever it is pointed, so another
+  // repository would get a second job of the name. When the caller may not
+  // publish there, nothing is offered instead.
+  const jobRepo = job?.repoId || "";
+  const repo = jobRepo ? publishable.find((r) => r.id === jobRepo) : (publishable.find((r) => r.id === repoRaw) ?? publishable[0]);
   const repoId = repo?.id;
+  const jobRepoName = jobRepo ? (repos.find((r) => r.id === jobRepo) ?? { id: jobRepo, agencyId: jobRepo }) : null;
 
   const [syncDep, setSyncDep] = useState(0);
   const syncQ = useGet<unknown>(
@@ -376,14 +385,14 @@ export function PublishBuilder() {
             ) : (
               <select
                 aria-label="Repository"
-                value={repoId}
+                value={repoId ?? ""}
                 onChange={(e) => {
                   setRepoRaw(e.target.value);
                   setShaOverride(null);
                   setResult(null);
                 }}
                 style={{ ...input() }}
-                disabled={publishable.length === 1}
+                disabled={publishable.length === 1 || !!jobRepo}
               >
                 {publishable.map((r) => (
                   <option key={r.id} value={r.id}>
@@ -392,12 +401,19 @@ export function PublishBuilder() {
                 ))}
               </select>
             )}
+            {jobRepoName && (
+              <div role="note" style={{ fontSize: c.fontXs, color: repo ? c.textMuted : c.danger, marginTop: 4 }}>
+                {repo
+                  ? `${job?.name} is in ${repoLabel(jobRepoName)} repository, and an edit of it is published there.`
+                  : `${job?.name} is in ${repoLabel(jobRepoName)} repository, which you may not publish to.`}
+              </div>
+            )}
 
             <label style={label()}>Job</label>
             <select value={selected} onChange={(e) => setSelected(e.target.value)} style={{ ...input() }}>
               <option value={NEW_JOB}>— new job YAML —</option>
               {jobs.map((j) => (
-                <option key={String(j.id ?? j.name)} value={j.name}>
+                <option key={String(j.id ?? j.name)} value={String(j.id)}>
                   {j.name}
                   {j.schedule ? ` (${j.schedule})` : ""}
                 </option>

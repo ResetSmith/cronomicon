@@ -8554,6 +8554,12 @@ components:
           enum: [git, cronomicon]
           readOnly: true
           description: Origin — git (Git-authored) or cronomicon (operator-composed in-app).
+        repoId:
+          type: string
+          readOnly: true
+          description: |
+            v2.4.0 — the repository a Git job is of; `global` for Global's. Absent for a job
+            built in the app. Publish edits a job in this repository.
         sourcePath:
           type: string
           nullable: true

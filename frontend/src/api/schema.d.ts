@@ -5210,6 +5210,11 @@ export interface components {
              * @enum {string}
              */
             readonly source?: "git" | "cronomicon";
+            /**
+             * @description v2.4.0 — the repository a Git job is of; `global` for Global's. Absent for a job
+             *     built in the app. Publish edits a job in this repository.
+             */
+            readonly repoId?: string;
             /** @description Repo-relative file path (e.g. jobs/db/backup.yaml), for folder browsing. Null for Compose-authored jobs. */
             readonly sourcePath?: string | null;
             type?: components["schemas"]["RunType"];

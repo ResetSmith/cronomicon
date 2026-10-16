@@ -159,6 +159,10 @@ type jobRow struct {
 	Name       string  `json:"name"`
 	Source     string  `json:"source"`               // git | cronomicon (A9)
 	SourcePath *string `json:"sourcePath,omitempty"` // repo-relative file path (folder browsing)
+	// RepoID is the repository a Git job is of (2.4.0; jobs.repo_id, 1310);
+	// empty for one built in the app. As the workflow rows have had: Publish
+	// edits a job in the repository it came from (from R8).
+	RepoID     string  `json:"repoId,omitempty"`
 	Type       string  `json:"type"`
 	Host       *string `json:"host"`
 	Scope      *string `json:"scope"`
@@ -337,7 +341,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			j.schedule AS schedule, j.enabled AS enabled,
 			j.concurrency_policy AS concurrency_policy, j.tags AS tags,
 			j.synced_at AS synced_at, j.created_at AS created_at, j.last_modified_at AS last_modified_at, j.source_path AS source_path,
-			j.uid AS uid,
+			j.uid AS uid, j.repo_id AS repo_id,
 			-- THIS job's pause (2.4.0): the one that records it, or one of its
 			-- name that records no owner. By the name, pausing one agency's job
 			-- showed every agency's job of that name as paused.
@@ -447,7 +451,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			target_host, scope, schedule, enabled,
 			concurrency_policy, tags,
 			synced_at, created_at, last_modified_at, source_path,
-			uid,
+			uid, repo_id,
 			last_run_at, last_run_duration_ms, last_skipped_at, last_skip_reason, schedule_count, agencies,
 			owner_agency, last_run_owner,
 			critical, contact, status, COALESCE(last_run_status, ''), last_run_scope
@@ -479,6 +483,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 		lastModifiedAt        sql.NullString
 		sourcePath            sql.NullString
 		uid                   sql.NullString
+		repoID                sql.NullString
 		lastRunAt             sql.NullString
 		lastSkippedAt         sql.NullString
 		lastSkipReason        sql.NullString
@@ -505,7 +510,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			&j.targetHost, &j.scope, &j.schedule, &j.enabled,
 			&j.concPolicy, &j.tags, &j.syncedAt,
 			&j.createdAt, &j.lastModifiedAt, &j.sourcePath,
-			&j.uid,
+			&j.uid, &j.repoID,
 			&j.lastRunAt, &j.lastDurationMs, &j.lastSkippedAt, &j.lastSkipReason,
 			&j.scheduleCount, &j.agencies, &j.ownerAgency, &j.lastRunOwner, &j.critical, &j.contact, &j.status,
 			&j.lastRunStatus, &j.lastRunScope); err != nil {
@@ -614,6 +619,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 		if j.sourcePath.Valid {
 			jr.SourcePath = &j.sourcePath.String
 		}
+		jr.RepoID = j.repoID.String
 		jr.UID = j.uid.String
 		jr.Tags = tagutil.Parse(j.tags)
 		if j.agencies.Valid && j.agencies.String != "" {
@@ -707,6 +713,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		continueOnError                       int
 		createdAt, lastModifiedAt             sql.NullString
 		sourcePath                            sql.NullString
+		repoID                                sql.NullString
 		requiresJSON                          sql.NullString
 		requestable                           int
 		deletedAt                             sql.NullString
@@ -727,7 +734,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		       created_at, last_modified_at, env_json, source_path, prompts_json, requires_json,
 		       COALESCE(prompt_enforcement,'warn'), ssh_user, ssh_credential, env_passthrough,
 		       COALESCE(requestable,0), deleted_at, warn_after_seconds, must_finish_by, watch_json,
-		       uid, COALESCE(`+agencyid.JobSQL("jobs")+`, '`+agencyid.Global+`')
+		       uid, COALESCE(`+agencyid.JobSQL("jobs")+`, '`+agencyid.Global+`'), repo_id
 		FROM jobs WHERE `+whereCol+` = ?
 	`, arg).Scan(&j.rowid, &j.name, &j.source, &j.runType, &j.description, &j.targetHost, &j.scope, &j.schedule,
 		&j.enabled, &j.concPolicy, &j.concKey, &j.tags,
@@ -737,7 +744,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		&j.createdAt, &j.lastModifiedAt, &j.envJSON, &j.sourcePath, &j.promptsJSON, &j.requiresJSON,
 		&j.promptEnforcement, &j.sshUser, &j.sshCredential, &j.envPassthroughJSON,
 		&j.requestable, &j.deletedAt, &j.warnAfterSeconds, &j.mustFinishBy, &j.watchJSON,
-		&j.uid, &j.ownerAgency)
+		&j.uid, &j.ownerAgency, &j.repoID)
 	if err != nil {
 		return nil
 	}
@@ -792,6 +799,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 	if j.sourcePath.Valid {
 		jr.SourcePath = &j.sourcePath.String
 	}
+	jr.RepoID = j.repoID.String
 	if j.scope.Valid {
 		jr.Scope = &j.scope.String
 	}
