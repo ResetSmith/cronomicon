@@ -8,10 +8,11 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 )
 
-// KindGlobalScriptJob — a job built in the app by an agency is joined to a
-// script of Global's repository (2.4.0, §0a, IN-8; the owner's yes to question
-// 31). Until §0a an agency with no script of the name in its own repository
-// found it in Global's, and Global's sync carried its edits to the job. Now a
+// KindGlobalScriptJob — an agency's job (built in the app, or, since 2.4.2, of
+// its repository) is joined to a script of Global's repository (2.4.0, §0a,
+// IN-8; the owner's yes to question 31). Until §0a an agency with no script of
+// the name in its own repository found it in Global's, and Global's sync
+// carried its edits to the job (a Git job's too, until 2.4.2). Now a
 // definition takes nothing from Global's: the job's runs are refused, with the
 // reason, until it is built on a script of its own agency's repository.
 //
@@ -23,7 +24,7 @@ func checkGlobalScriptJob(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT j.uid, j.name, s.name
 		  FROM jobs j JOIN scripts s ON s.uid = j.script_uid
-		 WHERE j.source = 'cronomicon' AND s.repo_id = ? AND COALESCE(j.uid, '') <> '' AND j.deleted_at IS NULL
+		 WHERE s.repo_id = ? AND COALESCE(j.uid, '') <> '' AND j.deleted_at IS NULL
 		 ORDER BY j.name`, agencyid.Global)
 	if err != nil {
 		return err

@@ -2476,9 +2476,9 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 		}
 		// Said, since 2.4.0, because of what it now means: a job built in the app
 		// runs its script as synced, so a job that had no script did not run, and
-		// from this sync it runs THIS repository's script of that name. That may
-		// not be the script it was built on: Global's repository takes in a job
-		// whose own agency's script of the name has been removed (GR-16).
+		// from this sync it runs THIS repository's script of that name, which may
+		// not be the script it was built on (only a job of this repository's
+		// agency is rejoined, above).
 		for _, job := range rejoinedJobs {
 			s.logWarn("a job built in the app had no script and is joined to this repository's script of the name it was built on: it runs that script from now on",
 				"job", job, "script", name, "repo_id", s.repo())
@@ -2529,21 +2529,10 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 			rs.contentHash, nullStr(rs.projectRoot), rs.uid); err != nil {
 			return fmt.Errorf("refresh in-app jobs of script %q: %w", name, err)
 		}
-		// And a job of ANOTHER repository that uses this script (GR-16: an
-		// agency's job may use Global's). Its copy was written by its own
-		// repository's last sync and would otherwise be the old body until that
-		// repository synced again. The columns are the ones upsertJobs copies for
-		// a Git job, the checkout marker among them; the executor as upsertJobs
-		// stores it (the script's when the script has one).
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE jobs
-			    SET run_type = ?, command = ?, script = ?, script_path = ?,
-			        executor = COALESCE(?, executor), content_hash = ?, project_root = ?
-			  WHERE source = 'git' AND script_uid = ? AND COALESCE(repo_id, ?) <> ?`,
-			rs.runType, nullStr(rs.command), nullStr(rs.script), nullStr(rs.scriptPath), nullStr(rs.executor),
-			rs.contentHash, nullStr(rs.projectRoot), rs.uid, repoid.Global, s.repo()); err != nil {
-			return fmt.Errorf("refresh other repositories' jobs of script %q: %w", name, err)
-		}
+		// A Git job of ANOTHER repository joined to this script is not refreshed
+		// (§0a, IN-8: a Git job uses its own repository's scripts, upsertJobs).
+		// Until 2.4.2 one was, from GR-16; what an upgrade leaves joined across
+		// repositories stops and is listed (notice global_script_job).
 	}
 	return nil
 }
@@ -2776,10 +2765,10 @@ func (s *Service) upsertSchedules(ctx context.Context, tx *sql.Tx, resolved map[
 				   SET schedule = (SELECT d.cron FROM definition_schedules d
 				                    WHERE d.owner_kind = ? AND d.owner_uid = `+table+`.uid
 				                    ORDER BY d.position LIMIT 1)
-				 WHERE (source = 'cronomicon' OR (repo_id IS NOT NULL AND repo_id <> ?))
+				 WHERE source = 'cronomicon'
 				   AND uid IN (SELECT owner_uid FROM definition_schedules
 				                WHERE schedule_uid = ? AND owner_kind = ?)`,
-				kind, s.repo(), rs.uid, kind); err != nil {
+				kind, rs.uid, kind); err != nil {
 				return fmt.Errorf("refresh the schedule column of the %ss bound to %q: %w", kind, name, err)
 			}
 		}
@@ -3226,8 +3215,8 @@ func (s *Service) entityCodeFor(ctx context.Context, tx *sql.Tx, kind, name, uid
 // and the reaction engine then matches it by NAME. With one repository that
 // was only late. With two it is wrong: a reaction in one repository that
 // watches `nightly` would fire on the other repository's `nightly` as well.
-// The repository's own definition of the name comes first (GR-16); a name it
-// does not have is left as the writer resolved it.
+// The repository's own definition of the name; a name it does not have is
+// left as the writer resolved it (an in-app definition of its agency, or none).
 func (s *Service) pointReactionsAtTheirUpstreams(ctx context.Context, tx *sql.Tx) error {
 	repo := s.repo()
 	for _, kind := range []string{"job", "workflow"} {
@@ -3307,12 +3296,11 @@ func (s *Service) clearOwnedRows(ctx context.Context, tx *sql.Tx, table, ownerKi
 //
 // The owner is named by its uid, which the caller has just read (2.4.0, GR-13):
 // see clearOwnedRows. The UPSTREAM a reaction watches is still found by name.
-// A Git one: this repository's definition of the name, else Global's (GR-16:
-// a name resolves in the definition's own repository, then in Global's), and
-// NEVER another repository's. As first built this fell back to "the one Git
-// definition of that name, wherever it is", which is another agency's job the
-// moment this repository's own does not sync. One built in the app: only when
-// one such definition holds the name, as before (its rule is Phase R4's).
+// A Git one: this repository's definition of the name, and NEVER another
+// repository's, Global's included (§0a, IN-8; present defect 53: until 2.4.2
+// Global's came next, GR-16, so a reaction whose own upstream did not sync
+// was pinned to Global's definition of the name). One built in the app: only
+// when one such definition of this agency holds the name (Phase R4's rule).
 func (s *Service) writeDefinitionReactions(ctx context.Context, tx *sql.Tx, ownerKind, ownerName, ownerUID string, entries []ReactionEntry) error {
 	const ownerSource = "git"
 	if err := s.clearOwnedRows(ctx, tx, "reactions", ownerKind, ownerName, ownerUID); err != nil {
@@ -3340,7 +3328,6 @@ func (s *Service) writeDefinitionReactions(ctx context.Context, tx *sql.Tx, owne
 			e.DelaySeconds, e.MinIntervalSeconds, children, enabled, i,
 			ownerUID,
 			e.OnSourceOrDefault(), s.repo(), e.OnName,
-			e.OnSourceOrDefault(), e.OnName,
 			e.OnSourceOrDefault(), e.OnName, e.OnSourceOrDefault(),
 		}
 		args = append(args, ofAgencyArgs...)
@@ -3354,7 +3341,6 @@ func (s *Service) writeDefinitionReactions(ctx context.Context, tx *sql.Tx, owne
 				?,
 				COALESCE(
 					(SELECT uid FROM `+ownerTable(e.OnKind)+` WHERE ? = 'git' AND source = 'git' AND repo_id = ? AND name = ?),
-					(SELECT uid FROM `+ownerTable(e.OnKind)+` WHERE ? = 'git' AND source = 'git' AND repo_id = 'global' AND name = ?),
 					(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM `+ownerTable(e.OnKind)+` WHERE ? <> 'git' AND name = ? AND source = ?`+ofAgency+`)))`,
 			args...); err != nil {
 			return err

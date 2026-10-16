@@ -8,8 +8,9 @@ import (
 	"testing"
 )
 
-// A reaction's upstream is found in the reaction's OWN repository, then in
-// Global's, and in no other (GR-16).
+// A reaction's upstream is found in the reaction's OWN repository, and in no
+// other, Global's included (§0a, IN-8; Global's came second from GR-16 until
+// 2.4.2, present defect 53).
 //
 // A sync refuses a reaction to a name its repository has no file for, so the
 // way here is a file that is there and does not sync: `nightly` names a script
@@ -52,15 +53,18 @@ func TestGR3_AReactionsUpstreamIsNeverAnotherRepositorys(t *testing.T) {
 		t.Errorf("the reaction watches %q although neither its repository nor Global's has a nightly that synced", got)
 	}
 
-	// Global's repository gets one: that is where the name resolves next.
+	// Global's repository gets one: it is NOT where the name resolves next
+	// (§0a, IN-8; present defect 53: until 2.4.2 it was, GR-16).
 	grCommitFiles(t, repoA, remoteA, map[string]string{"jobs/nightly.yaml": grJob("nightly", "echo from-global")}, "Global's nightly")
 	grSync(t, a, "Global's repository with a nightly")
 	grSync(t, b, "second repository again")
-	if got, want := watched(), uidOf("global"); got != want {
-		t.Errorf("the reaction watches %q, want Global's nightly %q", got, want)
+	if got := watched(); got == uidOf("global") {
+		t.Errorf("the reaction watches Global's nightly (present defect 53)")
+	} else if got != "(none)" {
+		t.Errorf("the reaction watches %q, want none", got)
 	}
 
-	// And its own repository's comes before Global's.
+	// Its own repository's.
 	grCommitFiles(t, repoB, remoteB, map[string]string{"jobs/nightly.yaml": grJob("nightly", "echo from-b")}, "its own nightly")
 	grSync(t, b, "second repository with its own nightly")
 	if got, want := watched(), uidOf("repo-b"); got != want {
