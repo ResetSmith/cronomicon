@@ -68,10 +68,13 @@ const SORT_COLS: SortColumn<AgencyRow>[] = [
 export function AgenciesTab({
   canEdit,
   globalAdmin,
+  rolesAdmin = false,
 }: {
   canEdit: boolean;
   /** A global administrator for configureApp: the catalog, Vault paths, and a repair of what an agency holds. */
   globalAdmin: boolean;
+  /** A global administrator for manageRoles: an agency's group list (2.5.0 C5, GA-1). */
+  rolesAdmin?: boolean;
 }) {
   const globalWhy = globalOnly(globalAdmin);
   const rowWhy = (a: AgencyRow, flag: boolean | undefined): string =>
@@ -254,7 +257,7 @@ export function AgenciesTab({
                       <td style={{ borderBottom: "none" }} />
                       <td colSpan={5} style={{ padding: "2px 16px 16px", borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
                         <RefreshScope>
-                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} onMembersChanged={() => setDep((n) => n + 1)} />
+                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} rolesAdmin={rolesAdmin} onMembersChanged={() => setDep((n) => n + 1)} />
                         </RefreshScope>
                       </td>
                     </tr>
@@ -430,9 +433,11 @@ function AgencyFormModal({
 // touches only this agency's rows, so two admins editing two different
 // departments cannot race on the same entity — the lost-update hazard a
 // read-modify-write through the entity-centric setters would reintroduce.
-function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }: {
+function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false, onMembersChanged }: {
   agencyId: string;
   canEdit: boolean;
+  /** A global administrator for manageRoles lists the agency's groups (GA-1). */
+  rolesAdmin?: boolean;
   /** A global administrator assigns an agency its Vault paths (LR-80). Moving a
    *  scope is no longer theirs alone: since v2.3.0 it follows the same rule as
    *  a secret or a key (authority over both agencies), which the server checks. */
@@ -720,6 +725,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }:
         />
       )}
       {agencyId !== GLOBAL_AGENCY && <VaultPathsEditor agencyId={agencyId} globalAdmin={globalAdmin} />}
+      {agencyId !== GLOBAL_AGENCY && <GroupsEditor agencyId={agencyId} rolesAdmin={rolesAdmin} />}
     </DetailPanel>
   );
 }
@@ -832,6 +838,122 @@ function VaultPathsEditor({ agencyId, globalAdmin }: { agencyId: string; globalA
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <Btn small primary onClick={save} disabled={busy}>
               {busy ? "Saving…" : "Save Vault paths"}
+            </Btn>
+            <Btn small onClick={() => setDraft(null)} disabled={busy}>
+              Cancel
+            </Btn>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// GroupsEditor — the directory groups one agency's grants may name (2.5.0 C5,
+// GA-1). An agency's administrators of access (its delegates) grant only to
+// these, picked from a list in Users & Access (GA-3); the app cannot look
+// groups up, so a global administrator types them here. A group is matched
+// exactly, as login matches a grant's (question 85). Global has no list: no
+// grant names it.
+//
+// Read by a global administrator and by the agency's delegates (question 82);
+// edited by a global administrator only. For anyone else the read is refused
+// and nothing is shown, as for the Vault paths.
+function GroupsEditor({ agencyId, rolesAdmin }: { agencyId: string; rolesAdmin: boolean }) {
+  const [dep, setDep] = useState(0);
+  const q = useGet<{ groups?: string[] }>(
+    () => api.GET("/agencies/{agencyId}/groups", { params: { path: { agencyId } } }),
+    [agencyId, dep],
+  );
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const groups = q.data?.groups ?? [];
+  useEffect(() => {
+    setDraft(null);
+    setErr(null);
+  }, [agencyId]);
+  if (q.loading) return <InlineLoading what="groups" />;
+  if (q.error) return null;
+  const why = globalOnly(rolesAdmin, "Only a global administrator (a role on every agency) can list the groups an agency's grants may name.");
+
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    const next = (draft ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const { error } = await api.PUT("/agencies/{agencyId}/groups", {
+      params: { path: { agencyId }, header: csrfHeader },
+      body: { groups: next },
+    });
+    setBusy(false);
+    if (error) {
+      setErr(errMsg(error));
+      return;
+    }
+    setDraft(null);
+    setDep((n) => n + 1);
+  };
+
+  return (
+    <div style={{ borderTop: `1px solid ${c.borderLight}`, paddingTop: 10 }}>
+      <div style={{ fontSize: c.fontXs, fontFamily: c.sansCond, fontWeight: 700, color: c.textMuted, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 6 }}>
+        Groups ({groups.length})
+      </div>
+      {draft === null ? (
+        <>
+          {groups.length === 0 ? (
+            <div style={{ fontSize: c.fontSm, color: c.textSec }}>
+              None listed. This agency's administrators cannot grant access to any group; the grants it already has keep
+              working, and are listed in Notices until their groups are listed here.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+              {groups.map((g) => (
+                <code key={g} style={{ fontFamily: c.mono, fontSize: c.fontXs, padding: "2px 8px", borderRadius: c.radiusChip, background: c.panel2, border: `1px solid ${c.border}`, color: c.text }}>
+                  {g}
+                </code>
+              ))}
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+            <Btn small onClick={() => setDraft(groups.join("\n"))} disabled={!!why} title={why || undefined}>
+              Edit groups
+            </Btn>
+            <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+              {why || "The agency's administrators may grant access to these groups, and to no other."}
+            </span>
+          </div>
+        </>
+      ) : (
+        <>
+          <label style={{ ...labelStyle(), display: "block" }}>
+            One directory group per line
+            <textarea
+              aria-label="Directory groups, one per line"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              rows={Math.max(3, draft.split("\n").length + 1)}
+              spellCheck={false}
+              placeholder={"SG-Cronomicon-Tax\nSG-Cronomicon-Tax-Operators"}
+              style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm, marginTop: 4, resize: "vertical" }}
+            />
+          </label>
+          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4, lineHeight: 1.5 }}>
+            Type each group exactly as the directory sends it: a group is matched exactly, case included, as it is at login.
+            Saving replaces the list. Taking a group off does not remove the grants that name it: they keep working and are
+            listed in Notices.
+          </div>
+          {err && (
+            <div role="alert" style={{ fontSize: c.fontSm, color: c.danger, marginTop: 6 }}>
+              {err}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <Btn small primary onClick={save} disabled={busy}>
+              {busy ? "Saving…" : "Save groups"}
             </Btn>
             <Btn small onClick={() => setDraft(null)} disabled={busy}>
               Cancel

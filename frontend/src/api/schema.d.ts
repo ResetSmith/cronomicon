@@ -4464,6 +4464,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agencies/{agencyId}/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The directory groups an agency's grants may name (v2.5.0)
+         * @description A global administrator lists the groups each agency's grants may name
+         *     (2.5.0 C5, GA-1): an agency's administrator of access (a delegate)
+         *     grants only to these, and the grant form offers them (GA-3). The app
+         *     cannot look groups up, so they are typed. None means the agency's
+         *     delegates can grant to no group. Global has no list: no grant names it.
+         *
+         *     Readable by a global administrator and by whoever holds `manageRoles`
+         *     on the agency (question 82); 403 for anyone else.
+         */
+        get: operations["getAgencyGroups"];
+        /**
+         * Set the directory groups an agency's grants may name (v2.5.0)
+         * @description Replaces the list. A global administrator's (`manageRoles` on every
+         *     agency). Each group is trimmed and otherwise kept as typed: it is
+         *     matched exactly, as login matches a grant's group (question 85). An
+         *     empty entry is dropped and a repeat is one group. Global is refused
+         *     (422 `builtin_agency`).
+         *
+         *     Taking a group off the list does not touch the grants that name it
+         *     (GA-2): they keep working, cannot be changed by a delegate until the
+         *     group is listed again, and are listed in `GET /notices` as
+         *     `grant_group_unlisted`. CSRF required.
+         */
+        put: operations["setAgencyGroups"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agencies/{agencyId}/members": {
         parameters: {
             query?: never;
@@ -4899,6 +4939,11 @@ export interface paths {
          * @description Signs out every other session (SU-5). A duplicate `(adGroup, role, where)`
          *     is a 409 — grants are deduplicated by a unique index, so the same authority
          *     cannot be expressed twice.
+         *
+         *     An agency's administrator (a delegate: `manageRoles` there, not
+         *     everywhere) grants only to a group on the agency's list (2.5.0 C5,
+         *     GA-1; `GET /agencies/{agencyId}/groups`), matched exactly: 403
+         *     `group_not_listed` otherwise. A global administrator is not bound.
          */
         post: operations["createAccessGrant"];
         delete?: never;
@@ -4915,10 +4960,21 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Update an access grant (ManageRoles) */
+        /**
+         * Update an access grant (ManageRoles)
+         * @description A delegate's edit is held to the agency's group list on both sides
+         *     (2.5.0 C5): the grant as it stands and as it becomes must name a listed
+         *     group, or 403 `group_not_listed`. A grant naming an unlisted group keeps
+         *     working and is its delegates' to delete, not to change (GA-2). A global
+         *     administrator is not bound.
+         */
         put: operations["updateAccessGrant"];
         post?: never;
-        /** Delete an access grant (ManageRoles) */
+        /**
+         * Delete an access grant (ManageRoles)
+         * @description Not held to the agency's group list (2.5.0 C5, GA-2): a delegate may
+         *     delete a grant of their agency that names an unlisted group.
+         */
         delete: operations["deleteAccessGrant"];
         options?: never;
         head?: never;
@@ -7579,6 +7635,14 @@ export interface components {
              *       when a script of that name is there for the job again (the next
              *       sync joins it), when the job is saved on another script, or when
              *       the job is removed.
+             *     - `grant_group_unlisted` — an access grant of an agency names a
+             *       directory group that is not on the agency's group list (v2.5.0,
+             *       GA-2). The lists started empty, so on the upgrade every agency
+             *       grant is one; later, a global administrator's grant to a group
+             *       not listed is one too. The grant works as before; the agency's
+             *       administrators may delete it but not change it. Subject: the
+             *       grant's id. Filed under the grant's agency. It clears when the
+             *       group is listed or the grant is deleted.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.
@@ -8600,6 +8664,12 @@ export interface components {
             agencyId: string;
             /** @description Normalised, sorted. Empty means the agency can name no Vault path. */
             prefixes: string[];
+        };
+        /** @description The directory groups one agency's grants may name (v2.5.0, GA-1). */
+        AgencyGroups: {
+            agencyId: string;
+            /** @description Sorted, matched exactly. Empty means the agency's delegates can grant to no group. */
+            groups: string[];
         };
         /** @description What the caller may do with this row (v2.4.0 R8), worked out by the same check the row's write route makes, so a screen offers exactly what the server allows. Present on the rows of the scope, secret, variable, SSH key, host record, bastion and agency lists. */
         RowFlags: {
@@ -17856,6 +17926,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgencyVaultPrefixes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    getAgencyGroups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The agency's groups, sorted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgencyGroups"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setAgencyGroups: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @example [
+                     *       "SG-Cronomicon-Tax",
+                     *       "SG-Cronomicon-Tax-Operators"
+                     *     ]
+                     */
+                    groups: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description The stored list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgencyGroups"];
                 };
             };
             401: components["responses"]["Unauthorized"];
