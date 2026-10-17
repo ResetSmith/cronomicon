@@ -73,7 +73,7 @@ afterEach(cleanup);
 // 2.4.0 R8 (question 47): GitLab Connection (Installation) is replaced by
 // Repositories (Agency), which an agency's administrator opens for their own.
 const INSTALLATION = ["General", "Notifications", "Vault", "Observability", "Log Storage", "Audit & Compliance", "Local runner"];
-const AGENCY = ["Users & Access", "Service Accounts", "Repositories", "SSH Targets", "Recycle Bin"];
+const AGENCY = ["Users & Access", "Service Accounts", "Repositories", "SSH Targets", "Alerts", "Recycle Bin"];
 
 const open = async (at = "/settings") => {
   render(

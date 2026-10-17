@@ -70,13 +70,30 @@ describe("Notifications — destinations removed (K-1)", () => {
     config = { provider: "apprise" };
     await renderSection();
     expect(screen.queryByText("Alert Destinations")).toBeNull();
-    // The two cards that remain, and nothing between them.
+    // The relay remains; the alert rules moved to Settings → Alerts (2.5.0 C4).
     expect(screen.getByText("Run Notifications")).toBeTruthy();
-    expect(screen.getByText("Alert Rules")).toBeTruthy();
     // The destination type picker's copy is the specific thing that lied
     // ("delivered to all active sessions") — it must be gone, not reworded.
     expect(screen.queryByText(/delivered to all active sessions/)).toBeNull();
     expect(screen.queryByText(/Add Destination/)).toBeNull();
+  });
+});
+
+// 2.5.0 C4.3 — the relay is the installation's; the alert rules and push targets
+// are one agency's, on Settings → Alerts.
+describe("Notifications — the relay alone (2.5.0 C4)", () => {
+  it("lists no alert rule and reads neither of the per-agency routes", async () => {
+    config = { provider: "apprise" };
+    await renderSection();
+    expect(screen.queryByText("Alert Rules")).toBeNull();
+    expect(gets).not.toContain("/alerts");
+    expect(gets).not.toContain("/alert-targets");
+  });
+
+  it("says the default recipients join Global rules' mail only (question 80)", async () => {
+    config = { provider: "smtp", smtp: {} };
+    await renderSection();
+    expect(screen.getByText(/Added to the mail of Global's alert rules only/)).toBeTruthy();
   });
 });
 

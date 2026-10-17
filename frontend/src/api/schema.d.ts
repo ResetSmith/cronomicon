@@ -1512,6 +1512,12 @@ export interface paths {
          * Export audit data (S5)
          * @description Honours date-range, event-type filters and CSV/JSON format exactly as
          *     surfaced in Settings → Audit & Compliance (S5).
+         *
+         *     Who may export what (2.5.0 C1, CF-5): a global administrator exports
+         *     every row, the authentication trail included; an agency's
+         *     administrator (`configureApp` on it) exports the rows of the agencies
+         *     they administer and no authentication events. Every row names the
+         *     agency it is of (`agency`, the last CSV column).
          */
         get: operations["exportAudit"];
         put?: never;
@@ -3712,7 +3718,7 @@ export interface paths {
         put?: never;
         /**
          * Send a test notification over every configured transport
-         * @description Delivers a fixed test message using the **stored** SMTP and Apprise configuration (K-5, v0.52.25). Takes no body on purpose — every recipient, gateway and target comes from settings, so this cannot be used to mail an arbitrary address. A successful leg stamps that transport's `lastSent` exactly as a real alert does.
+         * @description Delivers a fixed test message using the **stored** SMTP and Apprise configuration (K-5, v0.52.25), to Global's push targets (2.5.0 C4). Takes no body on purpose — every recipient, gateway and target comes from settings, so this cannot be used to mail an arbitrary address. A successful leg stamps that transport's `lastSent` exactly as a real alert does.
          *
          *     Returns **200 whenever the attempt was made**, with per-transport outcomes in the body: a refused SMTP connection is a true answer to "can this reach anyone?", not a server error. Audited, because it delivers to real inboxes.
          */
@@ -3828,10 +3834,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List alert rules (DB-backed per A1.2) */
+        /**
+         * List alert rules (DB-backed per A1.2)
+         * @description The rules the caller reads (2.5.0 C4, AL-1; CF-1): an agency's to its own people, Global's to everywhere-readers only, every rule to an everywhere-reader. Until 2.5.0 every rule was every session's.
+         */
         get: operations["listAlertRules"];
         put?: never;
-        /** Create an alert rule */
+        /**
+         * Create an alert rule
+         * @description AL-3 (2.5.0 C4): `configureApp` on the agency the rule is created in — `ownerAgency`, else the one agency the caller administers (or the one the switcher names); Global's for a global administrator who names none. 403 for an agency the caller does not administer; 422 `unknown_job` when an agency's rule names a job its agency does not have. Until 2.5.0 a global administrator's alone.
+         */
         post: operations["createAlertRule"];
         delete?: never;
         options?: never;
@@ -3847,11 +3859,65 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Update an alert rule */
+        /**
+         * Update an alert rule
+         * @description AL-3 (2.5.0 C4): `configureApp` on the rule's agency; 404 to a caller who does not read the rule. The rule keeps its agency (`ownerAgency` is ignored); 422 `unknown_job` as on create.
+         */
         put: operations["updateAlertRule"];
         post?: never;
-        /** Delete an alert rule */
+        /**
+         * Delete an alert rule
+         * @description AL-3 (2.5.0 C4): `configureApp` on the rule's agency; 404 to a caller who does not read the rule.
+         */
         delete: operations["deleteAlertRule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alert-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List push targets
+         * @description The push targets the caller reads (2.5.0 C4, AL-2; CF-1): an agency's to its own people, Global's to everywhere-readers. A target's `url` is returned only to a caller holding `configureApp` on its agency (question 81); others see `urlSet`.
+         */
+        get: operations["listAlertTargets"];
+        put?: never;
+        /**
+         * Create a push target
+         * @description AL-3: `configureApp` on the agency the target is created in, chosen as for an alert rule. 422 `url_required` without a URL.
+         */
+        post: operations["createAlertTarget"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alert-targets/{targetId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update a push target
+         * @description AL-3: `configureApp` on the target's agency; 404 to a caller who does not read it. The target keeps its agency and the rules that name it.
+         */
+        put: operations["updateAlertTarget"];
+        post?: never;
+        /**
+         * Delete a push target
+         * @description AL-3: `configureApp` on the target's agency; 404 to a caller who does not read it. The rules that named it stop naming it.
+         */
+        delete: operations["deleteAlertTarget"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4764,7 +4830,9 @@ export interface paths {
          * What would break if the departmental-RBAC switches were flipped (RB-4)
          * @description A read-only report of who loses what — and which data must be curated
          *     first — if the departmental-RBAC predicates were switched on right now
-         *     (the rbac-update plan RB-4). Requires `manageRoles`.
+         *     (the rbac-update plan RB-4). A global administrator's (`manageRoles` on
+         *     every agency, 2.5.0 C2): it names every agency's unscoped jobs and
+         *     schedules.
          *
          *     Both switches are now LIVE and the two-axis model's tables are gone
          *     (RB-19, v0.57.8), so the four conversion sections this report originally
@@ -4867,6 +4935,10 @@ export interface paths {
         /**
          * List recent logins (Honest View, A3.2)
          * @description Users appear only after their first successful OIDC round-trip; lastSeen reflects last successful auth. No directory enumeration in v1.
+         *
+         *     A `manageRoles` holder's (2.5.0 C2): a global administrator reads every row; an
+         *     agency's administrator the people whose grants name an agency they administer,
+         *     with only those grants and no AD groups; anyone else 403.
          */
         get: operations["listRecentLogins"];
         put?: never;
@@ -9103,6 +9175,7 @@ export interface components {
             apprise?: {
                 enabled?: boolean;
                 apiUrl?: string;
+                /** @description Global's push targets (2.5.0 C4, AL-2), in their order; an agency's are not listed here. A push goes to the targets the matched rules name, not to every target. On a save a target is matched by its `url`: one kept keeps the rules that name it, one dropped is deleted with its links, and one new is named by no rule until a rule names it. `id` is this list's key (1..N), not the target's. */
                 targets?: {
                     readonly id?: number;
                     label?: string;
@@ -9121,6 +9194,7 @@ export interface components {
                 readonly passwordSet?: boolean;
                 fromAddress?: string;
                 fromName?: string;
+                /** @description Added to a Global rule's mail (2.5.0 C4, question 80); an agency's rule mails its own recipients only. */
                 recipients?: string[];
             };
             /** @description When each transport last delivered, and whether it worked (K-2, v0.52.24). An absent entry means the transport has never sent — a different fact from a failed send. This replaced the per- destination `lastFiredAt`, which was stamped on every enabled destination of a matching type and so could only ever mean "something sent over this transport". */
@@ -9344,6 +9418,31 @@ export interface components {
             owner?: string | null;
             /** @default true */
             enabled: boolean;
+            /** @description The agency the rule is one of (2.5.0 C4, AL-1): it matches only runs, SLA breaches and missed fires of that agency (`all` is all of that agency's), and `jobName` resolves among that agency's jobs. Global's (`global`) match every agency's, as every rule did before 2.5.0; existing rules became Global's. Read on create only; a rule keeps its agency. Deleting an agency is refused while it owns a rule. */
+            ownerAgency?: string;
+            /** @description The push targets an `apprise` channel sends to (2.5.0 C4, AL-2): targets of the rule's own agency only (question 79; 422 `unknown_target` otherwise). Absent on an edit, the rule keeps its targets; absent on create, it names none. Rules that existed before 2.5.0 name every target that existed then. */
+            targetIds?: string[];
+        };
+        AlertTarget: {
+            readonly id?: string;
+            label?: string;
+            service?: string;
+            enabled?: boolean;
+            /** @description The agency the target is one of; set at create. */
+            readonly ownerAgency?: string;
+            /** @description Returned only to a caller holding `configureApp` on the target's agency (question 81): it is often the credential. */
+            url?: string;
+            readonly urlSet?: boolean;
+        } & components["schemas"]["AuditFields"];
+        /** @description A push target (2.5.0 C4, AL-2): an Apprise service URL that one agency's rules name. The Apprise gateway stays the installation's. */
+        AlertTargetInput: {
+            label?: string;
+            service?: string;
+            url: string;
+            /** @default true */
+            enabled: boolean;
+            /** @description Whose a new target is, chosen as for an alert rule; ignored on an edit. */
+            ownerAgency?: string;
         };
         /** @description Per-transport outcomes from a test send (K-5). */
         NotificationTestReport: {
@@ -9881,6 +9980,8 @@ export interface components {
         secretId: string;
         runnerId: string;
         alertId: string;
+        /** @description A push target's id (2.5.0 C4). */
+        targetId: string;
         hostId: string;
         bastionId: string;
         credentialId: string;
@@ -16686,6 +16787,118 @@ export interface operations {
             };
             path: {
                 alertId: components["parameters"]["alertId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAlertTargets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Push targets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertTarget"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createAlertTarget: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertTargetInput"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertTarget"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    updateAlertTarget: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                /** @description A push target's id (2.5.0 C4). */
+                targetId: components["parameters"]["targetId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertTargetInput"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertTarget"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    deleteAlertTarget: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                /** @description A push target's id (2.5.0 C4). */
+                targetId: components["parameters"]["targetId"];
             };
             cookie?: never;
         };
