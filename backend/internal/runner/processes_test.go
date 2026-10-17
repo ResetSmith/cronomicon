@@ -3,6 +3,7 @@ package runner
 import (
 	"database/sql"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -236,5 +237,25 @@ func TestTheReaperResolvesTheIdentityNotice(t *testing.T) {
 	f.svc.offlineRunner(t.Context(), f.id)
 	if _, open, _ := f.notice(t); open {
 		t.Error("the notice is open on a runner the reaper found quiet")
+	}
+}
+
+// TestDeregisteringResolvesTheIdentityNotice: deleting a runner while the
+// notice is open takes its processes with it, and nothing would ever poll to
+// resolve the notice.
+func TestDeregisteringResolvesTheIdentityNotice(t *testing.T) {
+	f := newProcessFixture(t)
+	f.poll(t, 0, "aaaa", false)
+	f.poll(t, 10*time.Second, "bbbb", true)
+	f.poll(t, 20*time.Second, "aaaa", false)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/runners/"+f.id, nil)
+	req.SetPathValue("id", f.id)
+	rec := httptest.NewRecorder()
+	f.svc.HandleDeregisterRunner(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("deregister: %d %s", rec.Code, rec.Body)
+	}
+	if _, open, _ := f.notice(t); open {
+		t.Error("the notice is open on a runner that no longer exists")
 	}
 }

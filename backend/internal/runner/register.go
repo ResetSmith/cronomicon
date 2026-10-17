@@ -745,6 +745,9 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db commit error")
 		return
 	}
+	// Its processes went with the row (C6a): nothing is left to share the
+	// identity, and nothing would ever poll to resolve the notice.
+	s.clearIdentityShared(r.Context(), runnerID)
 
 	// Drop the drift flap-guard entry — ids are never reused, so keeping it
 	// would only leak an entry per deregistered runner for the process lifetime.
