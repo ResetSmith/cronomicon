@@ -95,6 +95,16 @@ describe("Notifications — the relay alone (2.5.0 C4)", () => {
     await renderSection();
     expect(screen.getByText(/Added to the mail of Global's alert rules only/)).toBeTruthy();
   });
+
+  // The save matches Global's targets by URL, so a changed URL is a new target
+  // that no rule names and the old one goes with its links; Alerts edits by id.
+  it("warns that changing a target's URL here drops it from its rules, and says where to change it", async () => {
+    config = { provider: "apprise", apprise: { targets: [{ id: 1, label: "On-call", url: "mailto://oncall", enabled: true }] } };
+    await renderSection();
+    expect(screen.getByText(/Changing a URL here makes a new target that no rule names/).textContent).toMatch(
+      /edit it under Alerts while working in Global/,
+    );
+  });
 });
 
 describe("Notifications — last sent per transport (K-2)", () => {

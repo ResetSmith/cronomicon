@@ -310,10 +310,16 @@ function RunNotificationsCard({ canWrite }: { canWrite: boolean }) {
                 </div>
                 {/* 2.5.0 C4: these are Global's push targets (the save matches
                     them by URL, keeping the rules that name them); each agency's
-                    are on Settings → Alerts. */}
+                    are on Settings → Alerts. A changed URL matches nothing, so
+                    the save makes a new target and deletes the old one with its
+                    rules' links; Alerts edits a target by id and keeps them. */}
                 <div style={{ fontSize: c.fontXs, color: c.textSec }}>
                   Drop in any Apprise URL DSN — changes apply when you hit Save Changes. These are Global's targets: Global's
                   alert rules pick from them, and each agency keeps its own under Alerts.
+                </div>
+                <div style={{ fontSize: c.fontXs, color: c.warning }}>
+                  Changing a URL here makes a new target that no rule names; to change a URL and keep its rules, edit it
+                  under Alerts while working in Global.
                 </div>
               </div>
             </>
