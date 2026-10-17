@@ -10,7 +10,36 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ResetSmith/cronomicon/internal/runnerproto"
 )
+
+// TestEveryPollNamesItsProcess (2.5.0 C6a): a process draws one value and
+// sends it on every poll, and two processes draw different ones. That is how
+// the server tells a copy of the identity file from a restart.
+func TestEveryPollNamesItsProcess(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.Query().Get(runnerproto.PollParamProcess))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	c, err := NewClient(srv.URL, "")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	a, b := newProcessValue(), newProcessValue()
+	if len(a) != 32 || a == b {
+		t.Fatalf("process values %q and %q: want 32 hex characters, drawn afresh", a, b)
+	}
+	id := Identity{ID: "r1", APIKey: "crn_run_x"}
+	_, _ = c.Poll(context.Background(), id, "", 0, pollState{started: true, process: a})
+	_, _ = c.Poll(context.Background(), id, "", 0, pollState{process: a})
+	_, _ = c.Poll(context.Background(), id, "", 0, pollState{})
+	if len(got) != 3 || got[0] != a || got[1] != a || got[2] != "" {
+		t.Errorf("process param on the three polls = %q, want [%s %s \"\"]", got, a, a)
+	}
+}
 
 // TestPollStatusToSentinelError pins the poll status→sentinel mapping the
 // lifecycle loop switches on. The 401 case is the self-heal fix: a rejected

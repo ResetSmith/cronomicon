@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"sync"
@@ -81,6 +83,10 @@ type Agent struct {
 	// poll-loop goroutine.
 	stopping bool
 	answered bool
+	// process is this process's own value (runnerproto.PollParamProcess),
+	// drawn once in New and sent on every poll: the identity file names the
+	// runner, and a copy of it started elsewhere is the same runner twice.
+	process string
 
 	// settings holds server-managed operational overrides applied in-memory
 	// (Phase 4). Shared with a.exec so per-run code sees the same overrides.
@@ -117,7 +123,21 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 		idle:     make(chan struct{}, 1),
 		freed:    make(chan struct{}, 1),
 		settings: store,
+		process:  newProcessValue(),
 	}, nil
+}
+
+// newProcessValue draws the value this process sends on every poll (2.5.0
+// C6a). Random, so a copy of the identity file started from the same image or
+// snapshot draws its own. Empty if the system has no randomness, which the
+// server reads as an agent older than C6a: nothing is detected, nothing is
+// refused.
+func newProcessValue() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
 }
 
 // busyHeartbeat is the longest an agent with a run in flight goes without
@@ -126,7 +146,9 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 // free slot) is answered the moment a kill is queued; one it does not hold (a
 // full or stopping agent, which is handed no work) is answered at once, and
 // this is then how long a kill sent just afterwards waits to be delivered.
-const busyHeartbeat = 5 * time.Second
+// The server reads the same value (runnerproto.BusyHeartbeat) to know how long
+// a live, busy process can go unseen.
+const busyHeartbeat = runnerproto.BusyHeartbeat
 
 // registerTimeout bounds the registration exchange, which a stop signal does
 // not interrupt (register).
@@ -447,7 +469,7 @@ func (a *Agent) pollOnce(ctx context.Context) (again bool) {
 	// as usual was handed the next queued run, could not start it, and left it
 	// shown as running with nobody to end it.
 	pr, err := a.client.Poll(ctx, a.id, a.configDigest, a.settings.applied(),
-		pollState{started: !a.answered, noClaim: a.stopping || a.full()})
+		pollState{started: !a.answered, noClaim: a.stopping || a.full(), process: a.process})
 	if err == nil || errors.Is(err, errNoWork) {
 		a.answered = true
 	}

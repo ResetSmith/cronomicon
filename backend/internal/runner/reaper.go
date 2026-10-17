@@ -134,11 +134,14 @@ func (s *Service) offlineRunner(ctx context.Context, runnerID string) {
 	// last_seen_at as the "offline since" proxy (an offline runner stops updating
 	// it), so adding a column would buy nothing. A reaped runner re-appears and
 	// resumes its identity on the next register/poll.
+	// A start's deferred close (C6a) is done by the line above, and no process
+	// is left to share the identity: both are forgotten with the runner.
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE runners SET status = 'offline', load = 0 WHERE id = ?`, runnerID); err != nil {
+		`UPDATE runners SET status = 'offline', load = 0, lost_runs_before = NULL WHERE id = ?`, runnerID); err != nil {
 		s.log.Error("reaper: mark runner offline", "runner_id", runnerID, "error", err)
 		return
 	}
+	s.clearIdentityShared(ctx, runnerID)
 	s.log.Info("reaper: runner offlined", "runner_id", runnerID, "orphaned_runs", orphans)
 }
 
@@ -150,6 +153,14 @@ func (s *Service) offlineRunner(ctx context.Context, runnerID string) {
 // and nothing will report on them. Returns how many it closed, or -1 when the
 // runs could not be read.
 func (s *Service) failRunningRuns(ctx context.Context, runnerID string) int {
+	return s.failRunningRunsBefore(ctx, runnerID, "")
+}
+
+// failRunningRunsBefore is failRunningRuns for the runs claimed before a time
+// (an RFC3339 string; "" is every run): a deferred close after a start (2.5.0
+// C6a, processes.go), where the process that started may hold runs of its own.
+// A claim stamps started_at, so it is the claim's time.
+func (s *Service) failRunningRunsBefore(ctx context.Context, runnerID, before string) int {
 	ts := now()
 	nowT := reaperNow()
 
@@ -157,7 +168,8 @@ func (s *Service) failRunningRuns(ctx context.Context, runnerID string) int {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, job_name, COALESCE(scope,''), COALESCE(started_at,'')
 		FROM runs
-		WHERE runner_id = ? AND status = 'running'`, runnerID)
+		WHERE runner_id = ? AND status = 'running'
+		  AND (? = '' OR started_at < ?)`, runnerID, before, before)
 	if err != nil {
 		s.log.Error("reaper: query running runs", "runner_id", runnerID, "error", err)
 		return -1

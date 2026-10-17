@@ -128,7 +128,16 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	// and an agent that is restarted, upgraded or crashes and comes back is
 	// never quiet that long. Before the claim below, so a run handed out by
 	// this very poll is not among them.
-	if r.URL.Query().Get(runnerproto.PollParamStarted) == "1" {
+	//
+	// Unless the identity is in use twice (2.5.0 C6a, processes.go): the poll
+	// names its process, and another process was seen on this runner within
+	// the hold window. Then this may be a copy's start beside a live process
+	// that holds those runs, and they are closed only once that process stays
+	// silent (a crash's case); never if it polls again (a copy's).
+	started := r.URL.Query().Get(runnerproto.PollParamStarted) == "1"
+	deferClose := s.noteProcess(r.Context(), runnerID, r.URL.Query().Get(runnerproto.PollParamProcess),
+		httpx.ClientIP(r, s.cfg.TrustedProxyNets()), started)
+	if started && !deferClose {
 		if n := s.failRunningRuns(r.Context(), runnerID); n > 0 {
 			if _, err := s.db.ExecContext(r.Context(),
 				`UPDATE runners SET load = 0 WHERE id = ?`, runnerID); err != nil {

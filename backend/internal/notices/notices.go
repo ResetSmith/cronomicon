@@ -69,6 +69,13 @@ const (
 	// Written and resolved by the sync itself, in its transaction, not by a
 	// check. Subject: the repository's id. Filed under the repository's agency.
 	KindGitSyncProblems = "git_sync_problems"
+	// KindRunnerIdentityShared — two agent processes poll on one runner's
+	// identity (2.5.0 C6a): its identity file was copied (a cloned VM, a
+	// snapshot taken after enrolment, two containers on one volume). Written by
+	// the poll handler when an older process polls after a newer one started,
+	// resolved there when only one process is left, or by the reaper when the
+	// runner goes quiet. Subject: the runner's id. Filed under its owner.
+	KindRunnerIdentityShared = "runner_identity_shared"
 	// (`prune_deferred`, GR-17's, went with borrowing before 2.4.0 was
 	// released: §0a, IN-8; migration 1370 removes its rows.)
 )
