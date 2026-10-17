@@ -309,8 +309,8 @@ func (s *Server) listScripts(w http.ResponseWriter, r *http.Request) {
 	// GR-26: the scripts of Global's repository, and of the repositories of the
 	// agencies the caller is of. The list had no filter: with a second
 	// repository it showed every agency's scripts to every session.
-	if id, ok := auth.IdentityFrom(r.Context()); ok {
-		frag, fargs := readableRepoSQL(id, "s.repo_id")
+	// By the script's repository's agency (CF-1, 2.5.0 C2).
+	if frag, fargs := agencyReadFilter(r, agencyid.ScriptOwnerSQL("s")); frag != "" {
 		where += frag
 		args = append(args, fargs...)
 	}

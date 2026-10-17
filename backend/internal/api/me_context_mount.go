@@ -91,7 +91,12 @@ func (s *Server) agencyChoices(ctx context.Context, id auth.Identity) ([]agencyC
 	if canSeeOverview(id) {
 		out = append(out, agencyChoice{ID: overviewChoice, Name: "Overview: all agencies", Kind: "overview"})
 	}
-	out = append(out, agencyChoice{ID: agencyid.Global, Name: globalName, Kind: "agency"})
+	// Global is a choice for those who read it (2.5.0 C2, question 77), and
+	// the one choice of someone who holds no grant at all, so that the shell
+	// has an agency to work in (its lists are empty to them).
+	if id.ReadsAgency(agencyid.Global) || len(agencies) == 0 {
+		out = append(out, agencyChoice{ID: agencyid.Global, Name: globalName, Kind: "agency"})
+	}
 	return append(out, agencies...), nil
 }
 

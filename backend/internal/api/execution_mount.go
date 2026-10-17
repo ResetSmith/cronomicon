@@ -24,7 +24,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
-	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/runner"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/scheduler"
@@ -2614,8 +2613,9 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 	// read, and theirs who reach every agency. The list had no filter at all.
 	// (A workflow built in the app is not filtered here: who reads those is
 	// 2.5.0's, with the other confidential reads.)
-	if id, ok := auth.IdentityFrom(r.Context()); ok {
-		frag, fargs := readableRepoSQL(id, "w.repo_id")
+	// By the workflow's owner (2.5.0 C2): a workflow built in the app is
+	// judged too, where the repository filter let it through.
+	if frag, fargs := agencyReadFilter(r, agencyid.WorkflowOwnerSQL); frag != "" {
 		cq += frag
 		query += frag
 		args = append(args, fargs...)
@@ -2828,9 +2828,9 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getWorkflow(w http.ResponseWriter, r *http.Request) {
 	wfID := r.PathValue("workflowId")
 	wr := s.fetchWorkflowByID(r, wfID)
-	// GR-26: a workflow of an agency's repository reads as absent to anyone
-	// who is not of that agency and does not reach every agency.
-	if wr != nil && !s.workflowRepoReadable(r, wr) {
+	// CF-1 (2.5.0 C2): a workflow reads as absent to anyone who is not of its
+	// agency and does not reach every agency.
+	if wr != nil && !s.workflowReadable(r, wr) {
 		wr = nil
 	}
 	if wr == nil || wr.DeletedAt != nil {
@@ -2844,25 +2844,20 @@ func (s *Server) getWorkflow(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, wr)
 }
 
-// workflowRepoReadable is GR-26 for one workflow: true for a workflow built in
-// the app and for one of Global's repository; for one of an agency's
-// repository, whether the caller is of that agency or reaches every agency.
-// False when it cannot be told.
-func (s *Server) workflowRepoReadable(r *http.Request, wr *workflowRow) bool {
-	if wr.RepoID == "" || wr.RepoID == repoid.Global {
-		return true
-	}
+// workflowReadable is CF-1 for one workflow (2.5.0 C2): whether the caller is
+// of its agency (agencyid.WorkflowSQL: a Git workflow's repository's, one
+// built in the app its owner's) or reaches every agency. Until C2 a workflow
+// built in the app, and one of Global's repository, read as everyone's.
+func (s *Server) workflowReadable(r *http.Request, wr *workflowRow) bool {
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {
 		return false
 	}
-	agency, err := settings.RepoAgency(r.Context(), s.db, wr.RepoID)
-	if err != nil {
-		// A repository that is no longer connected: its rows are on their way
-		// out, and whose they were is the workflow's own record.
-		agency = wr.OwnerAgency
+	agency := wr.OwnerAgency
+	if wr.UID != "" {
+		agency = s.workflowAgency(r.Context(), wr.UID)
 	}
-	return id.ReadsAgency(agency)
+	return id.ReadsAgency(agencyOrGlobal(agency))
 }
 
 // workflowScopesReadable is the scope guard a workflow write has to pass, shared
@@ -4842,7 +4837,7 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request) {
 	}
 	// Who reads which row (2.5.0 C1, CF-1), then the agency the request works
 	// in (2.4.4), which narrows on top of it and never widens it.
-	if frag, fargs := auditReadFilter(r, activityOwnerSQL); frag != "" {
+	if frag, fargs := agencyReadFilter(r, activityOwnerSQL); frag != "" {
 		base += frag
 		args = append(args, fargs...)
 	}
@@ -4962,7 +4957,7 @@ func (s *Server) listActivityActors(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	where := "WHERE 1=1"
 	var args []any
-	if frag, fargs := auditReadFilter(r, activityOwnerSQL); frag != "" {
+	if frag, fargs := agencyReadFilter(r, activityOwnerSQL); frag != "" {
 		where += frag
 		args = append(args, fargs...)
 	}
@@ -5068,7 +5063,7 @@ func (s *Server) listChangeLog(w http.ResponseWriter, r *http.Request) {
 	}
 	// Who reads which row (2.5.0 C1, CF-1; until then every session read every
 	// agency's changes), then the agency the request works in.
-	if frag, fargs := auditReadFilter(r, changeLogOwnerSQL); frag != "" {
+	if frag, fargs := agencyReadFilter(r, changeLogOwnerSQL); frag != "" {
 		base += frag
 		args = append(args, fargs...)
 	}

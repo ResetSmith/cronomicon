@@ -15,13 +15,13 @@ import (
 // the objects the handlers here change; each is Global's when the object is
 // not there (any longer).
 
-// auditReadFilter is who reads an audit row (2.5.0 C1, CF-1), as a clause over
+// agencyReadFilter is who reads a row of an agency (2.5.0 C1 and C2, CF-1), as a clause over
 // agencyExpr, the row's agency by the no-owner rule: an agency's rows are its
 // own people's and theirs whose grant reaches every agency; Global's rows, and
 // the installation's (which are Global's), are only the latter's: global
 // administrators and a viewer of every agency, the operations team (the
 // owner's answer to question 76). The one place the rule is written.
-func auditReadFilter(r *http.Request, agencyExpr string) (string, []any) {
+func agencyReadFilter(r *http.Request, agencyExpr string) (string, []any) {
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {
 		return " AND 1 = 0", nil

@@ -127,12 +127,11 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 		args = append(args, fargs...)
 	}
 
-	// GR-26: a schedule of an agency's repository is that agency's people's to
-	// read, and theirs who reach every agency. (A schedule built in the app
-	// records no repository and is not filtered here: who reads those is
-	// 2.5.0's.) Both statements below read the table as `sc`.
-	if id, ok := auth.IdentityFrom(r.Context()); ok {
-		frag, fargs := readableRepoSQL(id, "sc.repo_id")
+	// A schedule is its agency's people's to read, and theirs who reach every
+	// agency (CF-1, 2.5.0 C2): by its owner, so one built in the app is judged
+	// too (it had been read by everyone). Both statements below read the table
+	// as `sc`.
+	if frag, fargs := agencyReadFilter(r, agencyid.ColumnOwnerSQL("sc", "owner_agency")); frag != "" {
 		where += frag
 		args = append(args, fargs...)
 	}

@@ -93,10 +93,16 @@ func TestARepositorysSyncAndHistoryAreItsAgencys(t *testing.T) {
 		if got := code(http.MethodGet, path(tmpl, "repo-nope"), gRoot); got != http.StatusNotFound {
 			t.Errorf("a global administrator reading %s of a repository that is not there = %d, want 404", tmpl, got)
 		}
-		// Global's: every session.
-		for _, who := range []string{gTaxAdmin, gFinViewer, gRoot} {
+		// Global's: those who reach every agency (2.5.0 C2, question 77; it
+		// was every session's). To anyone else, as if it were not there.
+		for _, who := range []string{gAllViewer, gRoot} {
 			if got := code(http.MethodGet, path(tmpl, "global"), who); got != http.StatusOK {
 				t.Errorf("%s reading %s = %d, want 200", who, path(tmpl, "global"), got)
+			}
+		}
+		for _, who := range []string{gTaxAdmin, gFinViewer} {
+			if got := code(http.MethodGet, path(tmpl, "global"), who); got != http.StatusNotFound {
+				t.Errorf("%s reading %s = %d, want 404", who, path(tmpl, "global"), got)
 			}
 		}
 	}
@@ -109,7 +115,7 @@ func TestARepositorysSyncAndHistoryAreItsAgencys(t *testing.T) {
 		}
 		return gateReq(t, h, http.MethodGet, p, who, "").Body.String()
 	}
-	if got := history(gFinViewer, ""); !strings.Contains(got, "aaaa0000") || strings.Contains(got, "bbbb0000") || strings.Contains(got, "cccc0000") {
+	if got := history(gRoot, ""); !strings.Contains(got, "aaaa0000") || strings.Contains(got, "bbbb0000") || strings.Contains(got, "cccc0000") {
 		t.Errorf("the history with no repository named is not Global's alone: %s", got)
 	}
 	if got := history(gFinViewer, fin); strings.Contains(got, "aaaa0000") || !strings.Contains(got, "bbbb0000") || !strings.Contains(got, "cccc0000") || !strings.Contains(got, `"totalItems":2`) {
@@ -125,7 +131,7 @@ func TestARepositorysSyncAndHistoryAreItsAgencys(t *testing.T) {
 	if strings.Index(problems, "FIN's file is wrong") > strings.Index(problems, "FIN's file warns") {
 		t.Errorf("the problems do not list errors first: %s", problems)
 	}
-	if got := gateReq(t, h, http.MethodGet, "/api/v1/git-repos/global/problems", gTaxAdmin, "").Body.String(); !strings.Contains(got, "Global's file is wrong") || strings.Contains(got, "FIN's") {
+	if got := gateReq(t, h, http.MethodGet, "/api/v1/git-repos/global/problems", gRoot, "").Body.String(); !strings.Contains(got, "Global's file is wrong") || strings.Contains(got, "FIN's") {
 		t.Errorf("Global's repository's problems are not Global's alone: %s", got)
 	}
 }

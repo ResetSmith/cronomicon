@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/config"
 )
 
@@ -73,6 +74,12 @@ func TestListWorkflowsBatchesPerRowQueries(t *testing.T) {
 	call := func(pageSize int) (envelope, int64) {
 		jobsListQueryCount.Store(0)
 		req := httptest.NewRequest("GET", fmt.Sprintf("/api/v1/workflows?pageSize=%d&page=1", pageSize), nil)
+		// A reader of every agency: the list is filtered by who reads it (C2).
+		req = req.WithContext(auth.WithIdentity(req.Context(), auth.Identity{
+			Roles:         []string{"admin"},
+			AllowedScopes: []string{auth.AllScopes},
+			Grants:        []auth.RoleGrant{{Role: "admin", Scopes: []string{auth.AllScopes}}},
+		}))
 		w := httptest.NewRecorder()
 		s.listWorkflows(w, req)
 		if w.Code != 200 {

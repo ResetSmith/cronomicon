@@ -22,8 +22,8 @@ func TestR8_RepoNamesAreWhatTheCallerMayRead(t *testing.T) {
 		who  string
 		want []string
 	}{
-		{gFinViewer, []string{"global", "repo-fin"}},
-		{gFinApprover, []string{"global", "repo-fin"}},
+		{gFinViewer, []string{"repo-fin"}}, // Global's is everywhere-readers' (C2, question 77)
+		{gFinApprover, []string{"repo-fin"}},
 		{gAllViewer, []string{"global", "repo-fin", "repo-tax"}},
 	} {
 		rec := gateReq(t, h, http.MethodGet, "/api/v1/git-repo-names", c.who, "")

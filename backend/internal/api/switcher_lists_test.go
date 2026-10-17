@@ -211,8 +211,8 @@ var switcherToday = map[string][6]string{
 	"/api/v1/jobs?pageSize=200&noscope=1":     {"YYY", "YYY", "Y.Y", "YYY", "YYY", "Y.Y"},
 	"/api/v1/runs?pageSize=200&noscope=1":     {"YYY", "YYY", "Y.Y", "YYY", "YYY", "Y.Y"},
 	"/api/v1/workflow-runs?pageSize=200":      {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/workflows?pageSize=200":          {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/schedule-defs?pageSize=200":      {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/workflows?pageSize=200":          {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/schedule-defs?pageSize=200":      {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 	"/api/v1/scopes":                          {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
 	"/api/v1/runners":                         {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
 	"/api/v1/env-secrets":                     {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
@@ -224,12 +224,12 @@ var switcherToday = map[string][6]string{
 	"/api/v1/ssh/bastions":                    {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
 	"/api/v1/calendars":                       {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
 	"/api/v1/notices":                         {"YYY", "...", "Y..", ".Y.", "YY.", "..."},
-	"/api/v1/git-repo-names":                  {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
+	"/api/v1/git-repo-names":                  {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 	"/api/v1/git-repos":                       {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
-	"/api/v1/scripts?pageSize=200":            {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
+	"/api/v1/scripts?pageSize=200":            {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 	"/api/v1/access-grants":                   {"YYY", "403", "YYY", "YYY", "YYY", "403"},
 	"/api/v1/service-accounts":                {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
-	"/api/v1/schedule-pushes":                 {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
+	"/api/v1/schedule-pushes":                 {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 	"/api/v1/activity?pageSize=200":           {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 	"/api/v1/activity?pageSize=200&noscope=1": {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 }
@@ -282,7 +282,7 @@ func TestSwitcherListsWithNoAgencyNamedAnswerAsBefore(t *testing.T) {
 // switcherReads is which of FIN, TAX and Global each kind of person may read
 // (auth.Identity.ReadsAgency), in switcherPeople's order: naming an agency
 // they may not read narrows every list to nothing.
-var switcherReads = [6]string{"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"}
+var switcherReads = [6]string{"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."} // Global: everywhere-readers only (C2, question 77)
 
 // Naming an agency (2.4.4 S1) narrows each list to that agency's rows of what
 // the person could see before, and never widens it: FIN's view of a list is
