@@ -572,6 +572,9 @@ func (s *Scheduler) recordMissedFire(ctx context.Context, e detectionEntry, t ti
 	s.raiseAlert(ctx, notify.AlertEvent{
 		Trigger: notify.TriggerMissedRun,
 		JobName: e.ownerName,
+		// By identity (present defect 69, 2.5.0): by name alone the dispatcher
+		// finds the job only when one job anywhere holds the name.
+		JobUID:  e.ownerUID,
 		Scope:   e.scope,
 		Subject: "[Cronomicon] " + e.ownerName + " did not run",
 		Detail: fmt.Sprintf("Schedule %q expected a run at %s and none appeared. "+
