@@ -497,7 +497,7 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	s.auditDefinitionDelete(r.Context(), id.Email, "job", "Jobs", existing.Name, existing.Scope)
+	s.auditDefinitionDelete(r.Context(), s.jobAgency(r.Context(), existing.UID), id.Email, "job", "Jobs", existing.Name, existing.Scope)
 	s.forceScheduleReload(r.Context())
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1015,9 +1015,9 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	if !isCreate {
 		auditAction = "Updated"
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Jobs", auditAction, in.Name, "Cronomicon job "+strings.ToLower(auditAction))
+	_ = workflow.InsertChangeLog(r.Context(), s.db, s.jobAgency(r.Context(), uid), actor, "Jobs", auditAction, in.Name, "Cronomicon job "+strings.ToLower(auditAction))
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Jobs", Action: auditAction, Target: in.Name,
+		Kind: "config", Actor: actor, Category: "Jobs", Action: auditAction, Target: in.Name, JobUID: uid,
 	})
 	s.forceScheduleReload(r.Context())
 
@@ -1181,14 +1181,15 @@ func (s *Server) fetchJobByUID(r *http.Request, uid string) *jobRow {
 // recorded: it is about to be destroyed by this very delete, and SQLite reuses
 // and reassigns rowids, so a stored one would eventually point at an unrelated
 // row. The name is the stable handle every other table already keys on.
-func (s *Server) auditDefinitionDelete(ctx context.Context, actor, entityKind, category, name string, scope *string) {
+func (s *Server) auditDefinitionDelete(ctx context.Context, agency, actor, entityKind, category, name string, scope *string) {
 	summary := "Deleted " + name
 	// change_log keeps its original details text rather than the summary: with
 	// action="Deleted" and target=<name> already on the row, repeating them in
 	// details adds nothing, while "Cronomicon <kind> deleted" records the one thing
 	// the other columns don't — that this was an in-app definition, not a git one.
-	_ = workflow.InsertChangeLog(ctx, s.db, actor, category, "Deleted", name, "Cronomicon "+entityKind+" deleted")
+	_ = workflow.InsertChangeLog(ctx, s.db, agency, actor, category, "Deleted", name, "Cronomicon "+entityKind+" deleted")
 	p := workflow.ActivityParams{
+		AgencyID: agency, // the definition's (C1): a name may be several agencies'
 		Kind:     "config",
 		Outcome:  "success",
 		Actor:    actor,

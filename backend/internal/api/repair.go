@@ -71,8 +71,8 @@ func (s *Server) requireRepair(w http.ResponseWriter, r *http.Request, id auth.I
 // how (change: "agency set to [ag:TAX]", "removed from agency ag:FIN"), and
 // the reason given. A row that cannot be written is logged: the write it
 // records has been made.
-func (s *Server) auditRepair(ctx context.Context, actor, target, change string, rep repairInput) {
-	if err := workflow.InsertChangeLog(ctx, s.db, actor, "Agencies", "Repaired", target,
+func (s *Server) auditRepair(ctx context.Context, agency, actor, target, change string, rep repairInput) {
+	if err := workflow.InsertChangeLog(ctx, s.db, agency, actor, "Agencies", "Repaired", target,
 		change+"; reason: "+strings.TrimSpace(rep.Reason)); err != nil && s.log != nil {
 		s.log.Error("a repair was made and its audit row could not be written",
 			"actor", actor, "target", target, "change", change, "reason", strings.TrimSpace(rep.Reason), "error", err)

@@ -267,7 +267,8 @@ func SetLocalRunner(ctx context.Context, database *sql.DB, forbid bool, enabled 
 	ts := time.Now().UTC().Format(time.RFC3339)
 	note := func(summary string) error {
 		return auditlog.WriteActivity(ctx, tx, auditlog.ActivityParams{
-			At: ts, Kind: "config", Outcome: "success", Actor: actor, Category: "Runners",
+			AgencyID: agencyid.Global, // the local runner is Global's (1380)
+			At:       ts, Kind: "config", Outcome: "success", Actor: actor, Category: "Runners",
 			Target: "runner:" + LocalRunnerName, RunnerName: LocalRunnerName, Summary: summary,
 		})
 	}

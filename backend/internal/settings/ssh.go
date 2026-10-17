@@ -281,7 +281,7 @@ func CreateSshHost(ctx context.Context, database *sql.DB, inp SshHostInput, acto
 	if err != nil {
 		return nil, fmt.Errorf("create ssh host: %w", err)
 	}
-	audit(ctx, database, actor, "SSH Hosts", "created", inp.Hostname, "")
+	audit(ctx, database, owner, actor, "SSH Hosts", "created", inp.Hostname, "")
 	return GetSshHost(ctx, database, id)
 }
 
@@ -317,7 +317,7 @@ func UpdateSshHost(ctx context.Context, database *sql.DB, id string, inp SshHost
 	if n == 0 {
 		return nil, nil
 	}
-	audit(ctx, database, actor, "SSH Hosts", "updated", inp.Hostname, "")
+	audit(ctx, database, RowAgency(ctx, database, "ssh_hosts", "owner_agency", id), actor, "SSH Hosts", "updated", inp.Hostname, "")
 	return GetSshHost(ctx, database, id)
 }
 
@@ -335,7 +335,7 @@ func DeleteSshHost(ctx context.Context, database *sql.DB, id, actor string) (boo
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 && h != nil {
-		audit(ctx, database, actor, "SSH Hosts", "deleted", h.Hostname, "")
+		audit(ctx, database, ownerOrGlobalAgency(h.OwnerAgency), actor, "SSH Hosts", "deleted", h.Hostname, "")
 	}
 	return n > 0, nil
 }
@@ -449,7 +449,7 @@ func CreateBastion(ctx context.Context, database *sql.DB, inp SshBastionInput, a
 	if err != nil {
 		return nil, fmt.Errorf("create bastion: %w", err)
 	}
-	audit(ctx, database, actor, "Bastions", "created", inp.Name, "")
+	audit(ctx, database, owner, actor, "Bastions", "created", inp.Name, "")
 	return GetBastion(ctx, database, id)
 }
 
@@ -475,7 +475,7 @@ func UpdateBastion(ctx context.Context, database *sql.DB, id string, inp SshBast
 	if n == 0 {
 		return nil, nil
 	}
-	audit(ctx, database, actor, "Bastions", "updated", inp.Name, "")
+	audit(ctx, database, RowAgency(ctx, database, "bastions", "owner_agency", id), actor, "Bastions", "updated", inp.Name, "")
 	return GetBastion(ctx, database, id)
 }
 
@@ -488,7 +488,7 @@ func DeleteBastion(ctx context.Context, database *sql.DB, id, actor string) (boo
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 && b != nil {
-		audit(ctx, database, actor, "Bastions", "deleted", b.Name, "")
+		audit(ctx, database, ownerOrGlobalAgency(b.OwnerAgency), actor, "Bastions", "deleted", b.Name, "")
 	}
 	return n > 0, nil
 }

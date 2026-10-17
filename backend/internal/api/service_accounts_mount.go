@@ -6,12 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"github.com/ResetSmith/cronomicon/internal/agencyctx"
-	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
@@ -292,10 +294,11 @@ func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = auditlog.WriteChangeLog(r.Context(), s.db, id.Email, "Access", "Created", in.Name,
+	saAgency := agencyOrGlobal(in.AgencyID) // the account's; one that reaches every agency is Global's (C1)
+	_ = auditlog.WriteChangeLog(r.Context(), s.db, saAgency, id.Email, "Access", "Created", in.Name,
 		"Service account created (role "+in.Role+")")
 	_ = auditlog.WriteActivity(r.Context(), s.db, auditlog.ActivityParams{
-		Kind: "config", Actor: id.Email, Category: "Access", Action: "Created", Target: in.Name,
+		AgencyID: saAgency, Kind: "config", Actor: id.Email, Category: "Access", Action: "Created", Target: in.Name,
 		Summary: "Service account created",
 	})
 
@@ -367,9 +370,10 @@ func (s *Server) revokeServiceAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = auditlog.WriteChangeLog(r.Context(), s.db, id.Email, "Access", "Revoked", name, "Service account revoked")
+	saAgency := settings.RowAgency(r.Context(), s.db, "service_accounts", "agency_id", rowID)
+	_ = auditlog.WriteChangeLog(r.Context(), s.db, saAgency, id.Email, "Access", "Revoked", name, "Service account revoked")
 	_ = auditlog.WriteActivity(r.Context(), s.db, auditlog.ActivityParams{
-		Kind: "config", Actor: id.Email, Category: "Access", Action: "Revoked", Target: name,
+		AgencyID: saAgency, Kind: "config", Actor: id.Email, Category: "Access", Action: "Revoked", Target: name,
 		Summary: "Service account revoked",
 	})
 	w.WriteHeader(http.StatusNoContent)

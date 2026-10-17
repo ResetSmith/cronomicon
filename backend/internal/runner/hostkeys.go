@@ -610,7 +610,7 @@ func (s *Service) resolveBatch(ctx context.Context, runnerID string, approve, re
 			scopeNames = append(scopeNames, sc)
 		}
 		sort.Strings(scopeNames)
-		s.auditHostKeyBatch(ctx, actor, name, scopeNames, "scan", res.Approved, res.Rejected, res.BatchID)
+		s.auditHostKeyBatch(ctx, actor, runnerID, name, scopeNames, "scan", res.Approved, res.Rejected, res.BatchID)
 	}
 	return res, nil
 }
@@ -618,7 +618,7 @@ func (s *Service) resolveBatch(ctx context.Context, runnerID string, approve, re
 // auditHostKeyBatch writes the ONE change-log row a batch gets. It names the
 // runner — the thing the pre-ledger row left out — and the batch id, which is
 // what the change log expands into the individual keys.
-func (s *Service) auditHostKeyBatch(ctx context.Context, actor, runnerName string, scopes []string, source string, approved, rejected int, batchID string) {
+func (s *Service) auditHostKeyBatch(ctx context.Context, actor, runnerID, runnerName string, scopes []string, source string, approved, rejected int, batchID string) {
 	target := "runner:" + runnerName
 	if len(scopes) > 0 {
 		target += " (scope " + strings.Join(scopes, ", ") + ")"
@@ -631,7 +631,7 @@ func (s *Service) auditHostKeyBatch(ctx context.Context, actor, runnerName strin
 		parts = append(parts, strconv.Itoa(rejected)+" rejected")
 	}
 	details := strings.Join(parts, ", ") + "; source " + source + "; batch " + batchID
-	_ = settings.WriteChangeLog(ctx, s.db, actor, "Host Keys", "resolved", target, details)
+	_ = settings.WriteChangeLog(ctx, s.db, settings.RowAgency(ctx, s.db, "runners", "owner_agency", runnerID), actor, "Host Keys", "resolved", target, details)
 }
 
 // HandleResolveHostKeyBatch approves and rejects pending keys of one runner.
@@ -933,7 +933,7 @@ func (s *Service) commitCandidates(ctx context.Context, runnerID, runnerName, sc
 		if scopeName != "" {
 			scopes = []string{scopeName}
 		}
-		s.auditHostKeyBatch(ctx, actor, runnerName, scopes, source, res.Approved, 0, res.BatchID)
+		s.auditHostKeyBatch(ctx, actor, runnerID, runnerName, scopes, source, res.Approved, 0, res.BatchID)
 	}
 	return res, nil
 }
@@ -1095,7 +1095,7 @@ func (s *Service) HandleRemoveHostKey(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
 		return
 	}
-	_ = settings.WriteChangeLog(r.Context(), s.db, actor, "Host Keys", "removed",
+	_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "runners", "owner_agency", runnerID), actor, "Host Keys", "removed",
 		"runner:"+name, e.host+" ("+e.keyType+") "+e.fingerprint+"; batch "+batchID)
 	httpx.JSON(w, http.StatusOK, batchResult{BatchID: batchID})
 }

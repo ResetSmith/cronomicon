@@ -440,6 +440,7 @@ func (s *Service) ApplyPlacement(ctx context.Context, runnerID string, historyID
 	summary := "placement restored: scopes " + strings.Join(scopeNames, ", ") +
 		" re-bound from this runner's previous enrolment (tags: " + strings.Join(merged, ", ") + ")"
 	if err := auditlog.WriteActivity(ctx, tx, auditlog.ActivityParams{
+		AgencyID:   runnerAgency(ctx, tx, runnerID),
 		At:         ts,
 		Kind:       "config",
 		Actor:      actor,
@@ -521,6 +522,7 @@ func (s *Service) DismissPlacement(ctx context.Context, runnerID string, history
 		return ErrPlacementGone
 	}
 	if err := auditlog.WriteActivity(ctx, tx, auditlog.ActivityParams{
+		AgencyID:   runnerAgency(ctx, tx, runnerID),
 		At:         ts,
 		Kind:       "config",
 		Actor:      actor,

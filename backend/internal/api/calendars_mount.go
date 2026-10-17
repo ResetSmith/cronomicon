@@ -346,7 +346,7 @@ func (s *Server) createCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	s.auditCalendar(r, id.Email, "Created", in.Name, "Calendar created with "+strconv.Itoa(len(days))+" day(s)")
+	s.auditCalendar(r, in.OwnerAgency, id.Email, "Created", in.Name, "Calendar created with "+strconv.Itoa(len(days))+" day(s)")
 	s.writeCalendar(w, r, in.OwnerAgency, in.Name, http.StatusCreated)
 }
 
@@ -384,7 +384,7 @@ func (s *Server) updateCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	s.auditCalendar(r, id.Email, "Updated", name, "Calendar updated")
+	s.auditCalendar(r, owner, id.Email, "Updated", name, "Calendar updated")
 	s.writeCalendar(w, r, owner, name, http.StatusOK)
 }
 
@@ -433,7 +433,7 @@ func (s *Server) replaceCalendarDays(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	s.auditCalendar(r, id.Email, "Updated", name, "Calendar days replaced ("+strconv.Itoa(len(days))+" day(s))")
+	s.auditCalendar(r, owner, id.Email, "Updated", name, "Calendar days replaced ("+strconv.Itoa(len(days))+" day(s))")
 	s.writeCalendar(w, r, owner, name, http.StatusOK)
 }
 
@@ -479,7 +479,7 @@ func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	s.auditCalendar(r, id.Email, "Deleted", name, "Calendar deleted")
+	s.auditCalendar(r, owner, id.Email, "Deleted", name, "Calendar deleted")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -774,9 +774,9 @@ func (s *Server) writeCalendar(w http.ResponseWriter, r *http.Request, owner, na
 	httpx.JSON(w, status, rows[0])
 }
 
-func (s *Server) auditCalendar(r *http.Request, actor, action, target, summary string) {
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Calendars", action, target, summary)
+func (s *Server) auditCalendar(r *http.Request, agency, actor, action, target, summary string) {
+	_ = workflow.InsertChangeLog(r.Context(), s.db, agency, actor, "Calendars", action, target, summary)
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Calendars", Action: action, Target: target, Summary: summary,
+		AgencyID: agency, Kind: "config", Actor: actor, Category: "Calendars", Action: action, Target: target, Summary: summary,
 	})
 }

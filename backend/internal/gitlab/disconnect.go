@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/notices"
 	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/settings"
@@ -153,7 +154,8 @@ func (r *Registry) RemoveWithAgency(ctx context.Context, repoID, actor string) (
 				r.logWarn("the repository's clone was not removed", "repo_id", repoID, "dir", dir, "err", err)
 			}
 		}
-		_ = settings.WriteChangeLog(ctx, r.db, actor, "Settings", "deleted", "Repository connection", repoID)
+		// Global's: its agency is deleted with it (C1).
+		_ = settings.WriteChangeLog(ctx, r.db, agencyid.Global, actor, "Settings", "deleted", "Repository connection", repoID)
 		r.mu.Lock()
 		hook := r.onSyncComplete
 		r.mu.Unlock()

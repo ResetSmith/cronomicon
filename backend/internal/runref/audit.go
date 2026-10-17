@@ -49,7 +49,7 @@ func AuditInjectionOnce(ctx context.Context, database *sql.DB, log *slog.Logger,
 	if actor == "" {
 		actor = "system"
 	}
-	if werr := settings.WriteChangeLog(ctx, database, actor, "Secrets", "injected", traceID, AuditDetails(resolved.Refs, scope)); werr != nil {
+	if werr := settings.WriteChangeLog(ctx, database, settings.RowAgency(ctx, database, "runs", "owner_agency", traceID), actor, "Secrets", "injected", traceID, AuditDetails(resolved.Refs, scope)); werr != nil {
 		// Only release the slot WE just claimed (claimed>0); in the repair path the
 		// slot was already 1 and owned by a prior call. Release on a cancellation-proof
 		// context so a disconnected request can't leave the slot wedged (M6).

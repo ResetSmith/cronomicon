@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/db"
 )
 
@@ -141,7 +142,7 @@ func CreateAlertRule(ctx context.Context, database *sql.DB, inp AlertRuleInput, 
 	if err != nil {
 		return nil, fmt.Errorf("create alert rule: %w", err)
 	}
-	audit(ctx, database, actor, "Alerts", "created", alertName(inp), "")
+	audit(ctx, database, agencyid.Global, actor, "Alerts", "created", alertName(inp), "")
 	return GetAlertRule(ctx, database, id)
 }
 
@@ -166,7 +167,7 @@ func UpdateAlertRule(ctx context.Context, database *sql.DB, id string, inp Alert
 	if n == 0 {
 		return nil, nil
 	}
-	audit(ctx, database, actor, "Alerts", "updated", alertName(inp), "")
+	audit(ctx, database, agencyid.Global, actor, "Alerts", "updated", alertName(inp), "")
 	return GetAlertRule(ctx, database, id)
 }
 
@@ -179,7 +180,7 @@ func DeleteAlertRule(ctx context.Context, database *sql.DB, id, actor string) (b
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 && ar != nil {
-		audit(ctx, database, actor, "Alerts", "deleted", alertName(AlertRuleInput{TargetMode: ar.TargetMode, Trigger: ar.Trigger}), "")
+		audit(ctx, database, agencyid.Global, actor, "Alerts", "deleted", alertName(AlertRuleInput{TargetMode: ar.TargetMode, Trigger: ar.Trigger}), "")
 	}
 	return n > 0, nil
 }

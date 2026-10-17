@@ -153,7 +153,7 @@ func CreateEnvVar(ctx context.Context, database *sql.DB, inp EnvVarInput, actor 
 		return nil, fmt.Errorf("create env_var: %w", err)
 	}
 	secrets.RedactionSourceChanged() // AM-4b: a multi-line value is key material
-	audit(ctx, database, actor, "Env Vars", "created", inp.Key, "")
+	audit(ctx, database, ownerOrGlobalAgency(inp.OwnerAgency), actor, "Env Vars", "created", inp.Key, "")
 	return GetEnvVar(ctx, database, id)
 }
 
@@ -181,7 +181,7 @@ func UpdateEnvVar(ctx context.Context, database *sql.DB, id string, inp EnvVarIn
 		return nil, nil
 	}
 	secrets.RedactionSourceChanged() // AM-4b
-	audit(ctx, database, actor, "Env Vars", "updated", inp.Key, "")
+	audit(ctx, database, RowAgency(ctx, database, "env_vars", "owner_agency", id), actor, "Env Vars", "updated", inp.Key, "")
 	return GetEnvVar(ctx, database, id)
 }
 
@@ -198,7 +198,7 @@ func DeleteEnvVar(ctx context.Context, database *sql.DB, id, actor string) (bool
 		secrets.RedactionSourceChanged() // AM-4b
 	}
 	if n > 0 && ev != nil {
-		audit(ctx, database, actor, "Env Vars", "deleted", ev.Key, "")
+		audit(ctx, database, ownerOrGlobalAgency(ev.OwnerAgency), actor, "Env Vars", "deleted", ev.Key, "")
 	}
 	return n > 0, nil
 }

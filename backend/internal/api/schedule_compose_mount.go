@@ -350,9 +350,9 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 	if isCreate {
 		auditAction, status = "Created", http.StatusCreated
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Schedules", auditAction, in.Name, "Cronomicon schedule "+strings.ToLower(auditAction))
+	_ = workflow.InsertChangeLog(r.Context(), s.db, owner, actor, "Schedules", auditAction, in.Name, "Cronomicon schedule "+strings.ToLower(auditAction))
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Schedules", Action: auditAction, Target: in.Name,
+		AgencyID: owner, Kind: "config", Actor: actor, Category: "Schedules", Action: auditAction, Target: in.Name,
 	})
 	// A bare create references no definition_schedules, so a reload is a cheap
 	// no-op — but harmless, and keeps the seam consistent with edit/delete (D8).
@@ -473,9 +473,10 @@ func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 		detail += " — detached " + strconv.Itoa(len(binned)) + " binding(s) held by recycle-binned " +
 			strings.Join(refs, ", ") + "; restore the schedule to recover them"
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Schedules", "Deleted", name, detail)
+	agency := s.definitionAgency(r.Context(), "schedule", schedUID) // the schedule's (C1)
+	_ = workflow.InsertChangeLog(r.Context(), s.db, agency, id.Email, "Schedules", "Deleted", name, detail)
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: id.Email, Category: "Schedules", Action: "Deleted", Target: name,
+		AgencyID: agency, Kind: "config", Actor: id.Email, Category: "Schedules", Action: "Deleted", Target: name,
 		Details: detail,
 	})
 	s.forceScheduleReload(r.Context())

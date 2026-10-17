@@ -194,7 +194,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				return
 			}
 		}
-		s.mountWriteChangeLog(r, "Secrets", "created", inp.Key, id.Email)
+		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "created", inp.Key, id.Email)
 		httpx.JSON(w, http.StatusCreated, sc)
 	})))
 	mux.Handle("PUT /api/v1/env-secrets/{secretId}", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +283,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
-		s.mountWriteChangeLog(r, "Secrets", "updated", inp.Key, id.Email)
+		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "updated", inp.Key, id.Email)
 		httpx.JSON(w, http.StatusOK, sc)
 	})))
 	mux.Handle("DELETE /api/v1/env-secrets/{secretId}", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -302,6 +302,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
 			return
 		}
+		secretAgency := settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid) // read while the row is there
 		found, err := sec.Delete(r.Context(), sid)
 		if err != nil {
 			httpx.Fail500(w, s.log, "delete_failed", err)
@@ -311,7 +312,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
-		s.mountWriteChangeLog(r, "Secrets", "deleted", sid, id.Email)
+		s.mountWriteChangeLog(r, secretAgency, "Secrets", "deleted", sid, id.Email)
 		w.WriteHeader(http.StatusNoContent)
 	})))
 	mux.Handle("POST /api/v1/env-secrets/{secretId}/reveal", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -352,7 +353,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// S1 / PP-B4b: the reveal MUST be audited. Write the change_log row BEFORE
 		// returning the plaintext and fail closed (500, no value) if the audit
 		// write errors — never hand back a secret with no audit trail.
-		if auditErr := settings.WriteChangeLog(r.Context(), s.db, id.Email, "Secrets", "revealed", sc.Key, ""); auditErr != nil {
+		if auditErr := settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid), id.Email, "Secrets", "revealed", sc.Key, ""); auditErr != nil {
 			s.log.Error("secret reveal audit write failed — withholding value", "key", sc.Key, "error", auditErr)
 			httpx.Fail(w, http.StatusInternalServerError, "audit_failed", "could not record the reveal; value withheld")
 			return
@@ -410,7 +411,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
-		s.mountWriteChangeLog(r, "Secrets", "migrated-to-vault", sc.Key, id.Email)
+		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "migrated-to-vault", sc.Key, id.Email)
 		httpx.JSON(w, http.StatusOK, sc)
 	})))
 	// Tags (migration 470): operator-authored, SQLite-only labels on a secret —
@@ -559,7 +560,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				return
 			}
 		}
-		s.mountWriteChangeLog(r, "SSH Keys", "created", c.Label, id.Email)
+		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", "created", c.Label, id.Email)
 		httpx.JSON(w, http.StatusCreated, c)
 	})))
 	mux.Handle("GET /api/v1/ssh/credentials/{credentialId}", s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -628,7 +629,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
-		s.mountWriteChangeLog(r, "SSH Keys", "updated", c.Label, id.Email)
+		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", "updated", c.Label, id.Email)
 		httpx.JSON(w, http.StatusOK, c)
 	})))
 	mux.Handle("DELETE /api/v1/ssh/credentials/{credentialId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -648,6 +649,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		}
 		cid := r.PathValue("credentialId")
 		force := r.URL.Query().Get("force") == "true"
+		keyAgency := settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", cid) // read while the row is there
 		found, err := keys.Delete(r.Context(), cid, force)
 		if err != nil {
 			if errors.Is(err, sshkeys.ErrCredentialInUse) {
@@ -667,7 +669,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
-		s.mountWriteChangeLog(r, "SSH Keys", "deleted", cid, id.Email)
+		s.mountWriteChangeLog(r, keyAgency, "SSH Keys", "deleted", cid, id.Email)
 		w.WriteHeader(http.StatusNoContent)
 	})))
 	mux.Handle("GET /api/v1/ssh/credentials/{credentialId}/usage", s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -725,8 +727,8 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 
 // mountWriteChangeLog writes a change_log row for mutations audited at the API layer
 // (secret reveals and vault migrations, which have no settings-package equivalent).
-func (s *Server) mountWriteChangeLog(r *http.Request, category, action, target, actor string) {
-	_ = settings.WriteChangeLog(r.Context(), s.db, actor, category, action, target, "")
+func (s *Server) mountWriteChangeLog(r *http.Request, agency, category, action, target, actor string) {
+	_ = settings.WriteChangeLog(r.Context(), s.db, agency, actor, category, action, target, "")
 }
 
 // loadSecretInScope loads a secret by id and enforces the actor's scope grants
@@ -1670,7 +1672,7 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if repaired {
-		s.auditRepair(r.Context(), id.Email, "host record "+hid, "owner set to "+inp.OwnerAgency, rep)
+		s.auditRepair(r.Context(), settings.RowAgency(r.Context(), s.db, "ssh_hosts", "owner_agency", hid), id.Email, "host record "+hid, "owner set to "+inp.OwnerAgency, rep)
 	}
 	httpx.JSON(w, http.StatusOK, h)
 }
@@ -1905,10 +1907,10 @@ func (s *Server) handleTestSshHost(w http.ResponseWriter, r *http.Request) {
 		out.HostKeyFingerprint = h.HostKeyFingerprint
 		out.HostKeyType = h.HostKeyType
 	}
-	_ = settings.WriteChangeLog(r.Context(), s.db, idn.Email, "SSH Hosts", "tested", name, res.Status)
+	_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "ssh_hosts", "owner_agency", hid), idn.Email, "SSH Hosts", "tested", name, res.Status)
 	// Additive (V1.1-2): also record the test as a History/Executions run with the
 	// probe output as its Log Output. Best-effort — never fails the test request.
-	s.recordSSHTestRun(r.Context(), name, res, idn.Email)
+	s.recordSSHTestRun(r.Context(), settings.RowAgency(r.Context(), s.db, "ssh_hosts", "owner_agency", hid), name, res, idn.Email)
 	s.log.Info("ssh host connection test", "host", name, "status", res.Status, "latencyMs", res.LatencyMs)
 	httpx.JSON(w, http.StatusOK, out)
 }
@@ -2036,7 +2038,7 @@ func (s *Server) handleUpdateBastion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if repaired {
-		s.auditRepair(r.Context(), id.Email, "bastion "+bid, "owner set to "+inp.OwnerAgency, rep)
+		s.auditRepair(r.Context(), settings.RowAgency(r.Context(), s.db, "bastions", "owner_agency", bid), id.Email, "bastion "+bid, "owner set to "+inp.OwnerAgency, rep)
 	}
 	httpx.JSON(w, http.StatusOK, b)
 }
@@ -2137,10 +2139,10 @@ func (s *Server) handleTestBastion(w http.ResponseWriter, r *http.Request) {
 		out.HostKeyFingerprint = b.HostKeyFingerprint
 		out.HostKeyType = b.HostKeyType
 	}
-	_ = settings.WriteChangeLog(r.Context(), s.db, idn.Email, "Bastions", "tested", name, res.Status)
+	_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "bastions", "owner_agency", bid), idn.Email, "Bastions", "tested", name, res.Status)
 	// Additive (V1.1-2): also record the test as a History/Executions run with the
 	// probe output as its Log Output. Best-effort — never fails the test request.
-	s.recordSSHTestRun(r.Context(), name, res, idn.Email)
+	s.recordSSHTestRun(r.Context(), settings.RowAgency(r.Context(), s.db, "bastions", "owner_agency", bid), name, res, idn.Email)
 	s.log.Info("ssh bastion connection test", "bastion", name, "status", res.Status, "latencyMs", res.LatencyMs)
 	httpx.JSON(w, http.StatusOK, out)
 }
@@ -2410,7 +2412,7 @@ func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) 
 	if report.AnySent() {
 		outcome = "sent"
 	}
-	settings.Audit(r.Context(), s.db, id.Email, "Notifications", "test", outcome, detailForTest(report))
+	settings.Audit(r.Context(), s.db, agencyid.Global, id.Email, "Notifications", "test", outcome, detailForTest(report))
 	httpx.JSON(w, http.StatusOK, report)
 }
 

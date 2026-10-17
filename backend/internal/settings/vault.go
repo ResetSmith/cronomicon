@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
@@ -186,7 +187,7 @@ func UpdateVaultConfig(ctx context.Context, database *sql.DB, appCfg *config.Con
 	}
 
 	secrets.RedactionSourceChanged() // AM-4b: before the audit row, which the dictionary must already cover
-	_ = WriteChangeLog(ctx, database, actor, "Settings", "updated", "HashiCorp Vault Connection", "")
+	_ = WriteChangeLog(ctx, database, agencyid.Global, actor, "Settings", "updated", "HashiCorp Vault Connection", "")
 	return GetVaultConfig(ctx, database, appCfg)
 }
 

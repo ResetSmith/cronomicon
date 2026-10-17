@@ -260,7 +260,7 @@ func (s *Service) HandleSetSecretInjection(w http.ResponseWriter, r *http.Reques
 		if req.Allow {
 			detail = "secret injection enabled"
 		}
-		_ = settings.WriteChangeLog(r.Context(), s.db, idn.Email, "Runners", "updated", name, detail)
+		_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "runners", "owner_agency", runnerID), idn.Email, "Runners", "updated", name, detail)
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"id": runnerID, "allowSecretInjection": req.Allow})
 }
@@ -703,6 +703,7 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 	// AA-4 rule drain/keyscan/resync already follow. In the transaction, so a
 	// deregistration without its audit row cannot exist.
 	if err := auditlog.WriteActivity(r.Context(), tx, auditlog.ActivityParams{
+		AgencyID:   runnerAgency(r.Context(), tx, runnerID), // read before the DELETE below
 		At:         ts,
 		Kind:       "config",
 		Actor:      sessionActor(r),
@@ -808,7 +809,7 @@ func (s *Service) HandleTestRunner(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_ = settings.WriteChangeLog(r.Context(), s.db, idn.Email, "Runners", "tested", name, resultStatus)
+	_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "runners", "owner_agency", runnerID), idn.Email, "Runners", "tested", name, resultStatus)
 
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"status":    resultStatus,

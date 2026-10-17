@@ -555,9 +555,10 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cat := revKindCategory[kind]
-	_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, cat, "Restored", name, "Restored from the recycle bin")
+	agency := s.definitionAgency(r.Context(), kind, restoredUID) // the restored definition's (C1)
+	_ = workflow.InsertChangeLog(r.Context(), s.db, agency, id.Email, cat, "Restored", name, "Restored from the recycle bin")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Outcome: "success", Actor: id.Email, Category: cat,
+		AgencyID: agency, Kind: "config", Outcome: "success", Actor: id.Email, Category: cat,
 		Action: "Restored", Target: name, Summary: "Restored " + name + " from the recycle bin",
 	})
 	// The definition is live again and the scheduler's fingerprint does not
@@ -581,6 +582,7 @@ func (s *Server) purgeFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusBadRequest, "validation", "kind must be job, workflow or schedule")
 		return
 	}
+	agency := s.binnedAgency(r.Context(), kind, name) // read while the rows are there (C1)
 	purged, err := s.purgeDefinition(r.Context(), kind, name)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -591,9 +593,9 @@ func (s *Server) purgeFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cat := revKindCategory[kind]
-	_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, cat, "Purged", name, "Purged from the recycle bin")
+	_ = workflow.InsertChangeLog(r.Context(), s.db, agency, id.Email, cat, "Purged", name, "Purged from the recycle bin")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Outcome: "success", Actor: id.Email, Category: cat,
+		AgencyID: agency, Kind: "config", Outcome: "success", Actor: id.Email, Category: cat,
 		Action: "Purged", Target: name, Summary: "Permanently deleted " + name,
 	})
 	s.forceScheduleReload(r.Context())

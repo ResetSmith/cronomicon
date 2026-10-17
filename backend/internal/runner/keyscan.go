@@ -203,6 +203,7 @@ func (s *Service) HandleKeyscan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = auditlog.WriteActivity(r.Context(), s.db, auditlog.ActivityParams{
+			AgencyID:   runnerAgency(r.Context(), s.db, runnerID), // the runner's, also for a host-key guest of another agency (LR-63)
 			At:         ts,
 			Kind:       "config",
 			Actor:      actor,

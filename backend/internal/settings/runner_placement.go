@@ -138,6 +138,7 @@ func SetRunnerOwner(ctx context.Context, database *sql.DB, runnerID, agencyID, a
 	// In the transaction: who administers a runner is an isolation fact, and a
 	// change of it without its audit row must not exist.
 	if err := auditlog.WriteActivity(ctx, tx, auditlog.ActivityParams{
+		AgencyID:   agencyID, // the agency it was handed to; the summary says it was Global's (D1)
 		At:         time.Now().UTC().Format(time.RFC3339),
 		Kind:       "config",
 		Outcome:    "success",

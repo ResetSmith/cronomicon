@@ -374,7 +374,7 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	for _, m := range repaired {
-		s.auditRepair(r.Context(), id.Email, string(kind)+" "+m.ID, agencySet(m.AgencyIDs), rep)
+		s.auditRepair(r.Context(), s.memberAgency(r.Context(), string(kind), m.ID), id.Email, string(kind)+" "+m.ID, agencySet(m.AgencyIDs), rep)
 	}
 	// Scope membership decides what an agency grant reaches. Since LR-78 that is
 	// resolved per request from the grant snapshot, which the setter itself
@@ -550,7 +550,7 @@ func (s *Server) handleSetRunnerAgencies(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	for _, m := range repaired {
-		s.auditRepair(r.Context(), id.Email, "runner "+m.RunnerID+" placement", agencySet(m.AgencyIDs), rep)
+		s.auditRepair(r.Context(), s.memberAgency(r.Context(), "runner", m.RunnerID), id.Email, "runner "+m.RunnerID+" placement", agencySet(m.AgencyIDs), rep)
 	}
 	list, err := settings.ListRunnerAgencies(r.Context(), s.db)
 	if err != nil {
@@ -842,7 +842,7 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isRepair {
-		s.auditRepair(r.Context(), id.Email, "scope "+sid, agencySet([]string{target}), inp.repairInput)
+		s.auditRepair(r.Context(), s.memberAgency(r.Context(), "scope", sid), id.Email, "scope "+sid, agencySet([]string{target}), inp.repairInput)
 	}
 	httpx.JSON(w, http.StatusOK, sc)
 }
@@ -990,10 +990,10 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 	// setter told the grant snapshot (LR-78). No session is signed out.
 	if repairing {
 		for _, m := range delta.Added {
-			s.auditRepair(r.Context(), id.Email, m.Kind+" "+m.ID, "added to agency "+agencyID, body.repairInput)
+			s.auditRepair(r.Context(), s.memberAgency(r.Context(), m.Kind, m.ID), id.Email, m.Kind+" "+m.ID, "added to agency "+agencyID, body.repairInput)
 		}
 		for _, m := range delta.Removed {
-			s.auditRepair(r.Context(), id.Email, m.Kind+" "+m.ID, "removed from agency "+agencyID, body.repairInput)
+			s.auditRepair(r.Context(), s.memberAgency(r.Context(), m.Kind, m.ID), id.Email, m.Kind+" "+m.ID, "removed from agency "+agencyID, body.repairInput)
 		}
 	}
 

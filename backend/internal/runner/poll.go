@@ -417,6 +417,7 @@ func (s *Service) readmitRunner(ctx context.Context, runnerID string) bool {
 	_ = s.db.QueryRowContext(ctx,
 		`SELECT name FROM runners WHERE id = ?`, runnerID).Scan(&name)
 	_ = auditlog.WriteActivity(ctx, s.db, auditlog.ActivityParams{
+		AgencyID:   runnerAgency(ctx, s.db, runnerID),
 		At:         now(),
 		Kind:       "config",
 		Actor:      "runner:" + runnerID,

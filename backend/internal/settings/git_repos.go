@@ -227,6 +227,12 @@ func PutAgencyRepo(ctx context.Context, database *sql.DB, appCfg *config.Config,
 		}
 		return nil, false, err
 	}
+	if created {
+		// The connection itself is a row in the agency's own log (2.5.0 C1,
+		// the owner's answer to question 75); the settings saved with it have
+		// theirs ("GitLab Connection", naming the repository).
+		audit(ctx, database, agencyID, actor, "Settings", "connected", "Repository connection", "repository "+repoID)
+	}
 	repo, err = GetRepo(ctx, database, appCfg, repoID)
 	return repo, created, err
 }

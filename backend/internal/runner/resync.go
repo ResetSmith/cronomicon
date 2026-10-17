@@ -49,6 +49,7 @@ func (s *Service) HandleResync(w http.ResponseWriter, r *http.Request) {
 	// Audit entry (same shape as drain).
 	ts := now()
 	_ = auditlog.WriteActivity(r.Context(), s.db, auditlog.ActivityParams{
+		AgencyID:   runnerAgency(r.Context(), s.db, runnerID),
 		At:         ts,
 		Kind:       "config",
 		Actor:      sessionActor(r),
@@ -197,6 +198,7 @@ func (s *Service) HandleRedeclare(w http.ResponseWriter, r *http.Request) {
 	// Actor is the runner's id and target its (possibly new) name — the split is
 	// deliberate: the agent acted on itself, and the name may have just changed.
 	_ = auditlog.WriteActivity(r.Context(), s.db, auditlog.ActivityParams{
+		AgencyID:   runnerAgency(r.Context(), s.db, runnerID),
 		At:         ts,
 		Kind:       "config",
 		Actor:      "runner:" + runnerID,

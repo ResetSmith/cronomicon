@@ -2182,9 +2182,10 @@ func EmitActivity(ctx context.Context, database *sql.DB, p ActivityParams) error
 
 // InsertChangeLog writes a change_log row via the single shared auditlog writer
 // (CC.13). Optional columns (target, details) are now stored as empty strings
-// (CC-D2), where this writer previously wrote NULLs.
-func InsertChangeLog(ctx context.Context, database *sql.DB, actor, category, action, target, details string) error {
-	return auditlog.WriteChangeLog(ctx, database, actor, category, action, target, details)
+// (CC-D2), where this writer previously wrote NULLs. agency is the object's
+// (2.5.0 C1, question 74).
+func InsertChangeLog(ctx context.Context, database *sql.DB, agency, actor, category, action, target, details string) error {
+	return auditlog.WriteChangeLog(ctx, database, agency, actor, category, action, target, details)
 }
 
 // ─── SQL helpers ─────────────────────────────────────────────────────────────

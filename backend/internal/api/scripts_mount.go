@@ -537,9 +537,10 @@ func (s *Server) updateScriptTags(w http.ResponseWriter, r *http.Request) {
 	if id, ok := auth.IdentityFrom(r.Context()); ok {
 		actor = id.Email
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Scripts", "Updated", name, "Script tags updated")
+	agency := s.ownerBy(r.Context(), `SELECT `+agencyid.ScriptOwnerSQL("sx")+` FROM scripts sx WHERE sx.uid = ?`, uid) // the script's repository's (C1)
+	_ = workflow.InsertChangeLog(r.Context(), s.db, agency, actor, "Scripts", "Updated", name, "Script tags updated")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Scripts", Action: "Updated", Target: name,
+		AgencyID: agency, Kind: "config", Actor: actor, Category: "Scripts", Action: "Updated", Target: name,
 	})
 
 	// Return the updated script (same shape as GET /scripts/{name}, with an

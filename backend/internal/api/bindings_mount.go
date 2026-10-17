@@ -360,7 +360,12 @@ func (s *Server) writeBindings(w http.ResponseWriter, r *http.Request, owner run
 	// M7: record the RESULTING binding set (kinds + bare names, never values) so a
 	// stale full-replace that silently revokes/resurrects a binding is visible in the
 	// audit — not an empty "updated" row indistinguishable from a tag edit.
-	_ = settings.WriteChangeLog(r.Context(), s.db, actor, category, "updated", target, runref.AuditBindingSet(bs))
+	// The job's agency, or the script's repository's (C1).
+	agency := s.jobAgency(r.Context(), owner.UID)
+	if owner.Kind == "script" {
+		agency = s.ownerBy(r.Context(), `SELECT `+agencyid.ScriptOwnerSQL("sx")+` FROM scripts sx WHERE sx.uid = ?`, owner.UID)
+	}
+	_ = settings.WriteChangeLog(r.Context(), s.db, agency, actor, category, "updated", target, runref.AuditBindingSet(bs))
 	httpx.JSON(w, http.StatusOK, map[string]any{"bindings": bs})
 	return true
 }

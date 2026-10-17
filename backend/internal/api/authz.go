@@ -233,9 +233,9 @@ func (s *Server) globalOnly(perm, message string, next http.Handler) http.Handle
 			return
 		}
 		// 2.4.4: a change to the installation is Global's, whichever agency
-		// the administrator is viewing: its Activity row names no agency, and
-		// its change log entry no "acting in".
-		ctx := auditlog.WithActingAgency(auditlog.WithRequestAgency(r.Context(), ""), "")
+		// the administrator is viewing: its change log entry names no
+		// "acting in". (Its rows name their agency themselves, 2.5.0 C1.)
+		ctx := auditlog.WithActingAgency(r.Context(), "")
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

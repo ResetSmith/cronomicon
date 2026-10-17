@@ -115,7 +115,8 @@ func SetVaultPrefixes(ctx context.Context, database *sql.DB, agencyID string, pr
 		if len(keep) > 0 {
 			detail = strings.Join(keep, ", ")
 		}
-		audit(ctx, database, actor, "Agencies", "vault-prefixes-set", ag.Name, detail)
+		// That agency's row (D4): its people see what was set for them.
+		audit(ctx, database, agencyID, actor, "Agencies", "vault-prefixes-set", ag.Name, detail)
 	}
 	if keep == nil {
 		keep = []string{}

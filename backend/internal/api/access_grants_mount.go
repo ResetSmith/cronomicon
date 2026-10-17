@@ -3,11 +3,12 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
-	"github.com/ResetSmith/cronomicon/internal/agencyctx"
-	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -248,7 +249,7 @@ func (s *Server) handleCreateAccessGrant(w http.ResponseWriter, r *http.Request)
 		httpx.Fail500(w, s.log, "create_failed", err)
 		return
 	}
-	_ = settings.WriteChangeLog(r.Context(), s.db, id.Email, "Roles", "created",
+	_ = settings.WriteChangeLog(r.Context(), s.db, grantAgency(in), id.Email, "Roles", "created",
 		"access grant: "+in.AdGroup, grantWhere(in))
 	auth.GrantsChanged() // LR-78: live sessions pick the change up on their next request
 	httpx.JSON(w, http.StatusCreated, accessGrantResp{
@@ -308,7 +309,7 @@ func (s *Server) handleUpdateAccessGrant(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusNotFound, "not_found", "grant not found")
 		return
 	}
-	_ = settings.WriteChangeLog(r.Context(), s.db, id.Email, "Roles", "updated",
+	_ = settings.WriteChangeLog(r.Context(), s.db, grantAgency(in), id.Email, "Roles", "updated",
 		"access grant: "+in.AdGroup, grantWhere(in))
 	auth.GrantsChanged() // LR-78: live sessions pick the change up on their next request
 	httpx.JSON(w, http.StatusOK, accessGrantResp{
@@ -333,7 +334,8 @@ func (s *Server) handleDeleteAccessGrant(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var adGroup string
-	_ = s.db.QueryRowContext(r.Context(), `SELECT ad_group FROM access_grants WHERE id=?`, grantID).Scan(&adGroup)
+	grantAgencyID := agencyid.Global // the grant's, read while the row is there (C1)
+	_ = s.db.QueryRowContext(r.Context(), `SELECT ad_group, `+agencyid.ColumnOwnerSQL("", "agency_id")+` FROM access_grants WHERE id=?`, grantID).Scan(&adGroup, &grantAgencyID)
 
 	res, err := s.db.ExecContext(r.Context(), `DELETE FROM access_grants WHERE id=?`, grantID)
 	if err != nil {
@@ -344,13 +346,22 @@ func (s *Server) handleDeleteAccessGrant(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusNotFound, "not_found", "grant not found")
 		return
 	}
-	_ = settings.WriteChangeLog(r.Context(), s.db, id.Email, "Roles", "deleted", "access grant: "+adGroup, "")
+	_ = settings.WriteChangeLog(r.Context(), s.db, grantAgencyID, id.Email, "Roles", "deleted", "access grant: "+adGroup, "")
 	auth.GrantsChanged() // LR-78: live sessions pick the change up on their next request
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // grantWhere renders a grant's reach for the change log, so an audit row says
 // where the grant applies rather than only that one was edited.
+// grantAgency is the agency a grant's audit rows are of (C1): the agency it
+// names, Global's for one that reaches every agency.
+func grantAgency(in accessGrantInput) string {
+	if in.AllScopes || in.AgencyID == "" {
+		return agencyid.Global
+	}
+	return in.AgencyID
+}
+
 func grantWhere(in accessGrantInput) string {
 	if in.AllScopes {
 		return in.Role + " on all scopes"

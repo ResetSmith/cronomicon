@@ -541,7 +541,7 @@ func TestAuditWritesChangeLog(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 
-	if err := writeChangeLog(ctx, pool, "alice@example.com", "Env Vars", "created", "API_KEY", ""); err != nil {
+	if err := writeChangeLog(ctx, pool, "global", "alice@example.com", "Env Vars", "created", "API_KEY", ""); err != nil {
 		t.Fatalf("writeChangeLog: %v", err)
 	}
 

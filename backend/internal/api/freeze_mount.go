@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
@@ -71,6 +72,6 @@ func (s *Server) putFreeze(w http.ResponseWriter, r *http.Request) {
 	if !in.On {
 		action, summary = "Thawed", "The installation is no longer frozen"
 	}
-	s.auditCalendar(r, id.Email, action, calendar.FreezeCalendar, summary)
+	s.auditCalendar(r, agencyid.Global, id.Email, action, calendar.FreezeCalendar, summary) // the installation's
 	httpx.JSON(w, http.StatusOK, f)
 }

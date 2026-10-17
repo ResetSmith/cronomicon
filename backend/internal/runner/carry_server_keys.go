@@ -197,7 +197,7 @@ func CarryServerHostKeys(ctx context.Context, database *sql.DB, log *slog.Logger
 			"carried", carried, "not_carried", skipped, "batch", batchID)
 	}
 	if carried > 0 {
-		_ = settings.WriteChangeLog(ctx, database, carriedByUpgrade, "Host Keys", "carried",
+		_ = settings.WriteChangeLog(ctx, database, agencyid.Global, carriedByUpgrade, "Host Keys", "carried", // the local runner is Global's (1380)
 			"runner:"+settings.LocalRunnerName,
 			fmt.Sprintf("%d host key(s) the server had captured before 2.3.0; batch %s", carried, batchID))
 	}

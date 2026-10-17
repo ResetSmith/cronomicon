@@ -148,7 +148,8 @@ func RunLocalRunnerUpgradePass(ctx context.Context, database *sql.DB, log *slog.
 			rec.Placed = append(rec.Placed, a)
 			res.PlacedAgencies = append(res.PlacedAgencies, name)
 			if err := auditlog.WriteActivity(ctx, tx, auditlog.ActivityParams{
-				At: ts, Kind: "config", Actor: "upgrade",
+				AgencyID: agencyid.Global, // the local runner is Global's (1380)
+				At:       ts, Kind: "config", Actor: "upgrade",
 				RunnerName: LocalRunnerName,
 				Summary: "the local runner now serves " + name + " — the server was running that agency's shell jobs, " +
 					"and from 2.3.0 it takes only the runs of the agencies on its list",

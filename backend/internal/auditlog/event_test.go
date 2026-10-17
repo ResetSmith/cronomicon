@@ -134,7 +134,7 @@ func TestWriteChangeLogAlwaysStreams(t *testing.T) {
 	pool := openTestPool(t)
 	stream := installCapture(t)
 
-	if err := WriteChangeLog(context.Background(), pool,
+	if err := WriteChangeLog(context.Background(), pool, "global",
 		"alice@corp.example", "Settings", "updated", "general", "maxConcurrent 5 → 8"); err != nil {
 		t.Fatalf("WriteChangeLog: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestNothingIsStreamedWhenTheInsertFails(t *testing.T) {
 		}
 	}
 
-	if err := WriteChangeLog(ctx, pool, "alice", "Settings", "updated", "general", "x"); err == nil {
+	if err := WriteChangeLog(ctx, pool, "global", "alice", "Settings", "updated", "general", "x"); err == nil {
 		t.Error("WriteChangeLog should fail once change_log is gone")
 	}
 	if err := WriteActivity(ctx, pool, ActivityParams{Kind: "run-end", Outcome: "success", Actor: "alice"}); err == nil {
@@ -269,7 +269,7 @@ func TestSetSinkNilDetachesCleanly(t *testing.T) {
 	stream := installCapture(t)
 	ctx := context.Background()
 
-	if err := WriteChangeLog(ctx, pool, "alice", "Settings", "updated", "a", ""); err != nil {
+	if err := WriteChangeLog(ctx, pool, "global", "alice", "Settings", "updated", "a", ""); err != nil {
 		t.Fatalf("WriteChangeLog: %v", err)
 	}
 	if len(stream.all()) != 1 {
@@ -277,7 +277,7 @@ func TestSetSinkNilDetachesCleanly(t *testing.T) {
 	}
 
 	SetSink(nil)
-	if err := WriteChangeLog(ctx, pool, "alice", "Settings", "updated", "b", ""); err != nil {
+	if err := WriteChangeLog(ctx, pool, "global", "alice", "Settings", "updated", "b", ""); err != nil {
 		t.Fatalf("WriteChangeLog after detach: %v", err)
 	}
 	if err := WriteActivity(ctx, pool, ActivityParams{Kind: "run-end", Outcome: "success", Actor: "alice"}); err != nil {
@@ -316,7 +316,7 @@ func TestRedactorMasksEveryAuditlogWriter(t *testing.T) {
 
 	const secret = "rotated token to hunter2"
 
-	if err := WriteChangeLog(ctx, pool, "alice", "Secrets", "rotated", "vault-token", secret); err != nil {
+	if err := WriteChangeLog(ctx, pool, "global", "alice", "Secrets", "rotated", "vault-token", secret); err != nil {
 		t.Fatalf("WriteChangeLog: %v", err)
 	}
 	if err := WriteActivity(ctx, pool, ActivityParams{
@@ -381,7 +381,7 @@ func TestEmittedDetailsAreTrimmed(t *testing.T) {
 	ctx := context.Background()
 	huge := strings.Repeat("z", 50000)
 
-	if err := WriteChangeLog(ctx, pool, "alice", "Settings", "updated", "general", huge); err != nil {
+	if err := WriteChangeLog(ctx, pool, "global", "alice", "Settings", "updated", "general", huge); err != nil {
 		t.Fatalf("WriteChangeLog: %v", err)
 	}
 	if err := WriteActivity(ctx, pool, ActivityParams{Kind: "config", Actor: "alice", Details: huge}); err != nil {
@@ -409,7 +409,7 @@ func TestEveryEmittedEventCarriesTheSchemaVersion(t *testing.T) {
 	stream := installCapture(t)
 	ctx := context.Background()
 
-	if err := WriteChangeLog(ctx, pool, "alice", "Settings", "updated", "general", ""); err != nil {
+	if err := WriteChangeLog(ctx, pool, "global", "alice", "Settings", "updated", "general", ""); err != nil {
 		t.Fatalf("WriteChangeLog: %v", err)
 	}
 	if err := WriteActivity(ctx, pool, ActivityParams{Kind: "run-end", Outcome: "success", Actor: "alice"}); err != nil {
@@ -493,7 +493,7 @@ func TestRedactorMasksTheDatabaseRowAndNotOnlyTheStream(t *testing.T) {
 
 	// Every caller-supplied text column carries the secret (AM-2): target on
 	// all three writers and reason on auth events, not only details/summary.
-	if err := WriteChangeLog(ctx, pool, "alice", "Secrets", "rotated", secret, secret); err != nil {
+	if err := WriteChangeLog(ctx, pool, "global", "alice", "Secrets", "rotated", secret, secret); err != nil {
 		t.Fatalf("WriteChangeLog: %v", err)
 	}
 	if err := WriteActivity(ctx, pool, ActivityParams{
@@ -551,7 +551,7 @@ func TestMaskRunsBeforeTrim(t *testing.T) {
 	// 4076 bytes of filler puts the cut 20 bytes into the token.
 	text := strings.Repeat("x", 4076) + token + " trailing"
 
-	if err := WriteChangeLog(ctx, pool, "alice", "Secrets", "rotated", "t", text); err != nil {
+	if err := WriteChangeLog(ctx, pool, "global", "alice", "Secrets", "rotated", "t", text); err != nil {
 		t.Fatalf("WriteChangeLog: %v", err)
 	}
 	if err := WriteActivity(ctx, pool, ActivityParams{Kind: "config", Actor: "alice", Summary: text, Details: text}); err != nil {

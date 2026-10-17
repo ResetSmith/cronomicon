@@ -161,11 +161,12 @@ func (s *Service) HandleMintRegistrationToken(w http.ResponseWriter, r *http.Req
 		summary += " (" + req.Label + ")"
 	}
 	_ = auditlog.WriteActivity(r.Context(), s.db, auditlog.ActivityParams{
-		At:      ts,
-		Kind:    "config",
-		Actor:   createdBy,
-		Target:  "runners",
-		Summary: summary,
+		AgencyID: agencyID, // the agency the token enrols for
+		At:       ts,
+		Kind:     "config",
+		Actor:    createdBy,
+		Target:   "runners",
+		Summary:  summary,
 	})
 
 	info := registrationTokenInfo{
@@ -286,11 +287,12 @@ func (s *Service) HandleRevokeRegistrationToken(w http.ResponseWriter, r *http.R
 		}
 		actor := sessionActor(r)
 		_ = auditlog.WriteActivity(r.Context(), s.db, auditlog.ActivityParams{
-			At:      ts,
-			Kind:    "config",
-			Actor:   actor,
-			Target:  "runners",
-			Summary: summary,
+			AgencyID: tokenAgency(r.Context(), s.db, rowID),
+			At:       ts,
+			Kind:     "config",
+			Actor:    actor,
+			Target:   "runners",
+			Summary:  summary,
 		})
 	}
 	w.WriteHeader(http.StatusNoContent)

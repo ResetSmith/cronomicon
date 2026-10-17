@@ -311,6 +311,7 @@ func (s *Service) deregisterRunner(ctx context.Context, runnerID, name string) {
 	// DRF-4 / DRF-Q5: the reap is an event, not just an absence. Naming the
 	// window distinguishes a timeout from a deliberate removal without a join.
 	if err := auditlog.WriteActivity(ctx, tx, auditlog.ActivityParams{
+		AgencyID:   runnerAgency(ctx, tx, runnerID), // read before the DELETE below
 		At:         ts,
 		Kind:       "config",
 		Actor:      "system",

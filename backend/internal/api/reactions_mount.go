@@ -385,7 +385,7 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	s.auditReaction(r, id.Email, "Replaced", kind+"/"+name,
+	s.auditReaction(r, s.definitionAgency(r.Context(), kind, owner.uid), id.Email, "Replaced", kind+"/"+name,
 		"Reactions replaced ("+strconv.Itoa(len(body.Reactions))+" entries)")
 	rows, err := s.loadReactionsWhere(r, mine, mineArgs)
 	if err != nil {
@@ -424,7 +424,7 @@ func (s *Server) deleteReaction(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "reaction not found")
 		return
 	}
-	s.auditReaction(r, id.Email, "Deleted", kind+"/"+name, "Reaction "+entry+" deleted")
+	s.auditReaction(r, s.definitionAgency(r.Context(), kind, owner.uid), id.Email, "Deleted", kind+"/"+name, "Reaction "+entry+" deleted")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1032,10 +1032,10 @@ func (s *Server) reactionDeleteGuard(r *http.Request, kind, source, name string)
 		" — pass ?force=true to delete and leave those reactions dangling", nil
 }
 
-func (s *Server) auditReaction(r *http.Request, actor, action, target, summary string) {
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Reactions", action, target, summary)
+func (s *Server) auditReaction(r *http.Request, agency, actor, action, target, summary string) {
+	_ = workflow.InsertChangeLog(r.Context(), s.db, agency, actor, "Reactions", action, target, summary)
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Reactions", Action: action, Target: target, Summary: summary,
+		AgencyID: agency, Kind: "config", Actor: actor, Category: "Reactions", Action: action, Target: target, Summary: summary,
 	})
 }
 

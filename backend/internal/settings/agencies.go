@@ -198,7 +198,7 @@ func CreateAgency(ctx context.Context, database *sql.DB, inp AgencyInput, actor 
 	if err != nil {
 		return nil, fmt.Errorf("create agency: %w", err)
 	}
-	audit(ctx, database, actor, "Agencies", "created", name, "")
+	audit(ctx, database, agencyid.Global, actor, "Agencies", "created", name, "")
 	return GetAgency(ctx, database, id)
 }
 
@@ -248,7 +248,7 @@ func UpdateAgency(ctx context.Context, database *sql.DB, id string, inp AgencyIn
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("update agency: %w", err)
 	}
-	audit(ctx, database, actor, "Agencies", "updated", name, "")
+	audit(ctx, database, agencyid.Global, actor, "Agencies", "updated", name, "")
 	return GetAgency(ctx, database, id)
 }
 
@@ -723,7 +723,7 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 	committed = true
 	n, _ := res.RowsAffected()
 	if n > 0 {
-		audit(ctx, database, actor, "Agencies", "deleted", existing.Name, "")
+		audit(ctx, database, agencyid.Global, actor, "Agencies", "deleted", existing.Name, "")
 	}
 	return n > 0, nil
 }
@@ -798,6 +798,7 @@ func SetScopeAgency(ctx context.Context, database *sql.DB, scopeID string, agenc
 	//
 	// One transaction: the delete and the insert are a replacement, and a scope
 	// caught between them belongs to no agency — the state every reader refuses.
+	from := RowAgency(ctx, database, "scopes", "owner_agency", scopeID)
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("set scope agency: %w", err)
@@ -816,8 +817,9 @@ func SetScopeAgency(ctx context.Context, database *sql.DB, scopeID string, agenc
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("set scope agency: %w", err)
 	}
-	detail := fmt.Sprintf("%v", val)
-	audit(ctx, database, actor, "Scopes", "agency-set", sc.Scope, detail)
+	// The scope's agency after the move, naming the one it left (D1).
+	detail := fmt.Sprintf("%v (was %s)", val, from)
+	audit(ctx, database, RowAgency(ctx, database, "scopes", "owner_agency", scopeID), actor, "Scopes", "agency-set", sc.Scope, detail)
 	return GetScope(ctx, database, scopeID)
 }
 
@@ -958,8 +960,9 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 		if sameSet(before, after) {
 			continue
 		}
-		var name string
-		if err := tx.QueryRowContext(ctx, `SELECT name FROM runners WHERE id=?`, a.RunnerID).Scan(&name); err != nil {
+		var name, runnerOwner string
+		if err := tx.QueryRowContext(ctx, `SELECT name, `+agencyid.ColumnOwnerSQL("", "owner_agency")+` FROM runners WHERE id=?`,
+			a.RunnerID).Scan(&name, &runnerOwner); err != nil {
 			return err
 		}
 		summary := "agencies set: " + strings.Join(agencyNamesFor(ctx, tx, after), ", ")
@@ -973,6 +976,7 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 		// isolation change, and one without its audit row must not exist. Target
 		// and RunnerName follow the drain/keyscan convention so ?runner= finds it.
 		if err := auditlog.WriteActivity(ctx, tx, auditlog.ActivityParams{
+			AgencyID:   runnerOwner, // the runner's (C1)
 			At:         ts,
 			Kind:       "config",
 			Outcome:    "success",
@@ -994,8 +998,10 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 	// with details naming what moved. The generic activity row it used to pair
 	// with is gone: the per-runner rows above replace it, and the old one said
 	// only "membership-updated runner agencies" — invisible to ?runner=.
+	// Several runners, possibly several agencies': Global's, with the list (D2);
+	// each runner's own agency has its Activity row above.
 	if len(changed) > 0 {
-		_ = writeChangeLog(ctx, database, actor, "Agencies", "membership-updated", "runner agencies",
+		_ = writeChangeLog(ctx, database, agencyid.Global, actor, "Agencies", "membership-updated", "runner agencies",
 			strings.Join(changed, "; "))
 	}
 	return nil

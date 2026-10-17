@@ -269,9 +269,9 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Schedules", "Updated", name, "Schedule tags updated")
+	_ = workflow.InsertChangeLog(r.Context(), s.db, ref.owner, actor, "Schedules", "Updated", name, "Schedule tags updated")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Schedules", Action: "Updated", Target: name,
+		AgencyID: ref.owner, Kind: "config", Actor: actor, Category: "Schedules", Action: "Updated", Target: name,
 	})
 
 	// Re-read the updated schedule with its usedBy reverse index — same shape as

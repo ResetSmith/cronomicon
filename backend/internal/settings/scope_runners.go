@@ -228,7 +228,7 @@ func SetScopeRunners(ctx context.Context, database *sql.DB, scopeID string, runn
 		}
 		detail = strings.Join(names, ", ")
 	}
-	audit(ctx, database, actor, "Scopes", "runners-set", sc.Scope, detail)
+	audit(ctx, database, RowAgency(ctx, database, "scopes", "owner_agency", scopeID), actor, "Scopes", "runners-set", sc.Scope, detail)
 	return GetScope(ctx, database, scopeID)
 }
 
@@ -317,12 +317,14 @@ func ReplaceScopeRunner(ctx context.Context, database *sql.DB, fromRunnerID, toR
 		return nil, err
 	}
 
+	// One row per scope, each its own agency's (D2): the scopes may be several
+	// agencies'.
 	names := make([]string, 0, len(affected))
 	for _, b := range affected {
 		names = append(names, b.scopeName)
+		audit(ctx, database, RowAgency(ctx, database, "scopes", "owner_agency", b.scopeID), actor, "Scopes", "runner-replaced",
+			affected[0].fromName+" → "+toName, b.scopeName)
 	}
-	audit(ctx, database, actor, "Scopes", "runner-replaced",
-		affected[0].fromName+" → "+toName, strings.Join(names, ", "))
 	return names, nil
 }
 
@@ -397,7 +399,9 @@ func DismissRetiredPins(ctx context.Context, database *sql.DB, ids []int64, acto
 		}
 	}
 	if n > 0 {
-		audit(ctx, database, actor, "Scopes", "runner-pin-notices-dismissed", fmt.Sprintf("%d notice(s)", n), "")
+		// A count of 1180's notices, which name no agency of their own: Global's
+		// (D2's alternative; the list is not kept).
+		audit(ctx, database, agencyid.Global, actor, "Scopes", "runner-pin-notices-dismissed", fmt.Sprintf("%d notice(s)", n), "")
 	}
 	return n, nil
 }

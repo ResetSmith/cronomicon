@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 )
@@ -116,7 +117,7 @@ func UpdateGlobalSettings(ctx context.Context, database *sql.DB, inp GlobalSetti
 			return nil, err
 		}
 	}
-	audit(ctx, database, actor, "Settings", "updated", "general", "")
+	audit(ctx, database, agencyid.Global, actor, "Settings", "updated", "general", "")
 	return GetGlobalSettings(ctx, database)
 }
 
@@ -373,7 +374,7 @@ func UpdateNotificationConfig(ctx context.Context, database *sql.DB, appCfg *con
 		return nil, fmt.Errorf("upsert notification_config: %w", err)
 	}
 	secrets.RedactionSourceChanged() // AM-4b
-	audit(ctx, database, actor, "Settings", "updated", "notification", "")
+	audit(ctx, database, agencyid.Global, actor, "Settings", "updated", "notification", "")
 	return GetNotificationConfig(ctx, database)
 }
 

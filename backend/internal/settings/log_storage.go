@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/logarchive"
@@ -446,7 +447,7 @@ func UpdateLogStorageConfig(ctx context.Context, database *sql.DB, appCfg *confi
 	}
 
 	secrets.RedactionSourceChanged() // AM-4b
-	_ = WriteChangeLog(ctx, database, actor, "Settings", "updated", "Log Storage Settings", "")
+	_ = WriteChangeLog(ctx, database, agencyid.Global, actor, "Settings", "updated", "Log Storage Settings", "")
 	return GetLogStorageConfig(ctx, database, appCfg)
 }
 

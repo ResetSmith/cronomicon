@@ -448,6 +448,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		// Dashboard's "last 24h" panels and the History timeline render.
 		audit("INSERT INTO activity", func() error {
 			return auditlog.WriteActivity(ctx, tx, auditlog.ActivityParams{
+				AgencyID:     agencyid.Global, // the demo's history is Global's
 				At:           ago(a.age),
 				Kind:         a.kind,
 				Outcome:      a.outcome,
@@ -483,7 +484,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	}
 	for _, c := range changes {
 		audit("INSERT INTO change_log", func() error {
-			return auditlog.WriteChangeLogAt(ctx, tx, ago(c.age),
+			return auditlog.WriteChangeLogAt(ctx, tx, ago(c.age), agencyid.Global, // the demo's history is Global's
 				c.actor, c.category, c.action, c.target, c.details)
 		})
 	}

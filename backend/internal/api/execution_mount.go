@@ -1931,7 +1931,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Jobs", "Scheduled", jr.Name, "Ad-hoc run scheduled for "+runAt)
+		_ = workflow.InsertChangeLog(r.Context(), s.db, s.jobAgency(r.Context(), jr.UID), id.Email, "Jobs", "Scheduled", jr.Name, "Ad-hoc run scheduled for "+runAt)
 		httpx.JSON(w, http.StatusAccepted, map[string]any{
 			"pending":     true,
 			"id":          pendingID,
@@ -1958,7 +1958,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 				"the concurrency queue for this job is full (cap "+strconv.Itoa(scheduler.QueueCap)+")")
 			return
 		}
-		_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Jobs", "Queued", jr.Name,
+		_ = workflow.InsertChangeLog(r.Context(), s.db, s.jobAgency(r.Context(), jr.UID), id.Email, "Jobs", "Queued", jr.Name,
 			"Run queued behind an active run")
 		httpx.JSON(w, http.StatusAccepted, map[string]any{
 			"queued":         true,
@@ -1989,7 +1989,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	if triggerKind == triggerKindAPI {
 		triggerNote = "Run triggered via the API by " + id.Email
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Jobs", "Triggered", jr.Name, triggerNote)
+	_ = workflow.InsertChangeLog(r.Context(), s.db, s.jobAgency(r.Context(), jr.UID), id.Email, "Jobs", "Triggered", jr.Name, triggerNote)
 
 	run := s.fetchRunByID(r, traceID)
 	httpx.JSON(w, http.StatusAccepted, run)
@@ -2041,9 +2041,9 @@ func (s *Server) pauseJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Jobs", "Paused", jr.Name, "Scheduled runs paused")
+	_ = workflow.InsertChangeLog(r.Context(), s.db, s.jobAgency(r.Context(), jr.UID), id.Email, "Jobs", "Paused", jr.Name, "Scheduled runs paused")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: id.Email, Category: "Jobs", Action: "Paused", Target: jr.Name,
+		Kind: "config", Actor: id.Email, Category: "Jobs", Action: "Paused", Target: jr.Name, JobUID: jr.UID,
 	})
 
 	jr.Status = "paused"
@@ -2090,9 +2090,9 @@ func (s *Server) resumeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Jobs", "Resumed", jr.Name, "Scheduled runs resumed")
+	_ = workflow.InsertChangeLog(r.Context(), s.db, s.jobAgency(r.Context(), jr.UID), id.Email, "Jobs", "Resumed", jr.Name, "Scheduled runs resumed")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: id.Email, Category: "Jobs", Action: "Resumed", Target: jr.Name,
+		Kind: "config", Actor: id.Email, Category: "Jobs", Action: "Resumed", Target: jr.Name, JobUID: jr.UID,
 	})
 
 	jr.Status = s.deriveJobStatus(r, src, jr.Name, jr.UID, 1, func() string {
@@ -2339,7 +2339,7 @@ func (s *Server) killJob(w http.ResponseWriter, r *http.Request) {
 		KilledBy: id.Email,
 	})
 
-	_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Jobs", "Killed", jr.Name,
+	_ = workflow.InsertChangeLog(r.Context(), s.db, s.jobAgency(r.Context(), jr.UID), id.Email, "Jobs", "Killed", jr.Name,
 		"Run "+traceID+" stopped, recorded as "+disposition)
 
 	run := s.fetchRunByID(r, traceID)
@@ -2386,9 +2386,9 @@ func (s *Server) updateJobTags(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Jobs", "Updated", jr.Name, "Job tags updated")
+	_ = workflow.InsertChangeLog(r.Context(), s.db, s.jobAgency(r.Context(), jr.UID), actor, "Jobs", "Updated", jr.Name, "Job tags updated")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Jobs", Action: "Updated", Target: jr.Name,
+		Kind: "config", Actor: actor, Category: "Jobs", Action: "Updated", Target: jr.Name, JobUID: jr.UID,
 	})
 	httpx.JSON(w, http.StatusOK, jr)
 }
@@ -2996,9 +2996,9 @@ func (s *Server) patchWorkflow(eng *workflow.Engine) http.HandlerFunc {
 		if body.Disabled {
 			action = "Disabled"
 		}
-		_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Workflows", action, wr.Name, "")
+		_ = workflow.InsertChangeLog(r.Context(), s.db, s.workflowAgency(r.Context(), wr.UID), id.Email, "Workflows", action, wr.Name, "")
 		_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-			Kind: "config", Actor: id.Email, Category: "Workflows", Action: action, Target: wr.Name,
+			Kind: "config", Actor: id.Email, Category: "Workflows", Action: action, Target: wr.Name, WorkflowUID: wr.UID,
 		})
 
 		wr.Disabled = body.Disabled
@@ -3097,7 +3097,7 @@ func (s *Server) triggerWorkflow(eng *workflow.Engine) http.HandlerFunc {
 				httpx.Fail500(w, s.log, "db_error", err)
 				return
 			}
-			_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Workflows", "Scheduled", wr.Name, "Ad-hoc workflow run scheduled for "+runAt)
+			_ = workflow.InsertChangeLog(r.Context(), s.db, s.workflowAgency(r.Context(), wr.UID), id.Email, "Workflows", "Scheduled", wr.Name, "Ad-hoc workflow run scheduled for "+runAt)
 			httpx.JSON(w, http.StatusAccepted, map[string]any{
 				"pending":      true,
 				"id":           pendingID,
@@ -3131,7 +3131,7 @@ func (s *Server) triggerWorkflow(eng *workflow.Engine) http.HandlerFunc {
 			return
 		}
 
-		_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Workflows", "Triggered", wr.Name, "workflow run "+result.TraceID)
+		_ = workflow.InsertChangeLog(r.Context(), s.db, s.workflowAgency(r.Context(), wr.UID), id.Email, "Workflows", "Triggered", wr.Name, "workflow run "+result.TraceID)
 
 		// Build and return a WorkflowRun response.
 		now := time.Now().UTC().Format(time.RFC3339)
@@ -3248,9 +3248,9 @@ func (s *Server) updateWorkflowTags(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
 		return
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Workflows", "Updated", wr.Name, "Workflow tags updated")
+	_ = workflow.InsertChangeLog(r.Context(), s.db, s.workflowAgency(r.Context(), wr.UID), actor, "Workflows", "Updated", wr.Name, "Workflow tags updated")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Workflows", Action: "Updated", Target: wr.Name,
+		Kind: "config", Actor: actor, Category: "Workflows", Action: "Updated", Target: wr.Name, WorkflowUID: wr.UID,
 	})
 	httpx.JSON(w, http.StatusOK, wr)
 }
@@ -3746,7 +3746,7 @@ func (s *Server) cancelWorkflowRun(eng *workflow.Engine) http.HandlerFunc {
 			return
 		}
 		if id, ok := auth.IdentityFrom(r.Context()); ok {
-			_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Workflows", "Cancelled", traceID, "workflow run cancelled")
+			_ = workflow.InsertChangeLog(r.Context(), s.db, s.workflowRunAgency(r.Context(), traceID), id.Email, "Workflows", "Cancelled", traceID, "workflow run cancelled")
 		}
 		w.WriteHeader(http.StatusAccepted)
 	}
