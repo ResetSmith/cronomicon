@@ -7519,6 +7519,15 @@ export interface components {
              *       it did, is Global's, and can be narrowed and never widened; the
              *       detail gives the order that settles it. Subject: the runner's id.
              *       Filed under Global.
+             *     - `runner_identity_shared` — two agent processes poll on one
+             *       runner's identity: its identity file was copied (a VM cloned or
+             *       a snapshot taken after enrolment, two containers on one volume,
+             *       a backup restored beside it) (v2.5.0). They take each other's
+             *       Stops, drains, settings and host-key deliveries; while both
+             *       poll, a copy's start does not close the other's runs. The detail
+             *       says how to make the copy a runner of its own. Subject: the
+             *       runner's id. Filed under its owner. It clears when only one
+             *       process has polled for the offline window.
              *     - `runner_name_shared` — two or more agents that one agency owns
              *       are registered under the same name and are both polling
              *       (v2.3.2). They run correctly (a runner is identified by its id),
@@ -15006,7 +15015,12 @@ export interface operations {
                  *     it still shows as running on this runner (failure, runner_lost):
                  *     the runs of the process before it, which was killed, crashed or
                  *     lost power and will never report on them. Absent ⇒ nothing is
-                 *     closed; an agent older than 2.3.2 never sends it.
+                 *     closed; an agent older than 2.3.2 never sends it. When the poll
+                 *     also names its `process` and another process was seen on the
+                 *     runner within the hold window (about 45 s), nothing is closed yet
+                 *     (2.5.0): the runs started before this poll are closed once every
+                 *     older process has stayed silent for the window, and never if one
+                 *     polls again (a copy of the identity file).
                  */
                 started?: "1";
                 /**
@@ -15019,6 +15033,15 @@ export interface operations {
                  *     agent holds.
                  */
                 claim?: "0";
+                /**
+                 * @description A random value the agent process draws when it starts and sends on
+                 *     every poll (2.5.0). The identity file names the runner, not the
+                 *     process; an older process that polls after a newer one started is a
+                 *     copy of it, and raises `runner_identity_shared`. Absent (an agent
+                 *     older than 2.5.0, or a longer value) ⇒ nothing is detected and
+                 *     `started` closes at once.
+                 */
+                process?: string;
             };
             header?: never;
             path: {
