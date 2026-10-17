@@ -104,8 +104,8 @@ var routeClasses = map[string]routeClass{
 	"/api/v1/workflows":                            {"one-agency", ""},
 	"/api/v1/workflows/{workflowId}":               {"one-agency", ""},
 	"/api/v1/alerts":                               {"any-session", "one-agency: C4 (AL-1 gives a rule an owner)"},
-	"/api/v1/recent-logins":                        {"any-session", "one-agency: C2, question 68"},
-	"/api/v1/access/recent-logins":                 {"any-session", "one-agency: C2, question 68"},
+	"/api/v1/recent-logins":                        {"one-agency", ""},
+	"/api/v1/access/recent-logins":                 {"one-agency", ""},
 	"/api/v1/definitions/{kind}/{name}/revisions":  {"installation", "one-agency: C3 (SO-2)"},
 	"/api/v1/recycle-bin":                          {"installation", "one-agency: C3 (SO-2)"},
 
@@ -116,26 +116,26 @@ var routeClasses = map[string]routeClass{
 	// ── installation ──
 	"/api/v1/settings/gitlab":        {"installation", ""},
 	"/api/v1/settings/vault":         {"installation", ""},
-	"/api/v1/rbac-preflight":         {"any-session", "installation: C2, rbac-preflight (it lists every agency's names to a manageRoles holder)"},
-	"/api/v1/settings/log-storage":   {"any-session", "installation: C2, question 71"},
-	"/api/v1/settings/observability": {"any-session", "installation: C2, question 71"},
+	"/api/v1/rbac-preflight":         {"installation", ""},
+	"/api/v1/settings/log-storage":   {"installation", ""},
+	"/api/v1/settings/observability": {"installation", ""},
 
 	// ── any-session ──
 	"/api/v1/me":                        {"any-session", ""},
 	"/api/v1/me/access":                 {"any-session", ""},
 	"/api/v1/me/context":                {"any-session", ""},
 	"/api/v1/capabilities":              {"any-session", ""},
-	"/api/v1/agencies":                  {"any-session", "names only for an unread agency: C2, question 69"},
+	"/api/v1/agencies":                  {"any-session", ""},
 	"/api/v1/roles":                     {"any-session", ""},
 	"/api/v1/settings/general":          {"any-session", ""},
 	"/api/v1/settings/freeze":           {"any-session", ""},
 	"/api/v1/settings/audit-compliance": {"any-session", ""},
 	"/api/v1/local-runner":              {"any-session", ""},
-	"/api/v1/settings/notifications":    {"any-session", "masked for all but a global administrator: C2, question 70"},
+	"/api/v1/settings/notifications":    {"any-session", ""},
 
 	// ── public ──
 	"/healthz":               {"public", ""},
-	"/readyz":                {"public", "no failed check's text: C2, question 73"},
+	"/readyz":                {"public", ""},
 	"/version":               {"public", ""},
 	"/agents/{filename}":     {"public", ""},
 	"/install/{token}":       {"public", ""},

@@ -46,7 +46,9 @@ func (s *Server) mountAccess(mux *http.ServeMux) {
 	// Ship and read this BEFORE v0.56.4 (RB-2/RB-26) and again before v0.56.5
 	// (RB-15): those two releases narrow real users' access, and this is what
 	// turns that from a discovery into a decision. Mirrors GET /agency-preflight.
-	mux.Handle("GET /api/v1/rbac-preflight", s.requirePerm("manageRoles", permManageRoles)(http.HandlerFunc(s.handleRbacPreflight)))
+	// A global administrator's (2.5.0 C2): the report is the installation's, and
+	// named every agency's unscoped jobs and schedules to any manageRoles holder.
+	mux.Handle("GET /api/v1/rbac-preflight", s.requireGlobal(auth.PermManageRoles)(http.HandlerFunc(s.handleRbacPreflight)))
 }
 
 // handleRbacPreflight serves the RB-4 report: who loses what, and which data must

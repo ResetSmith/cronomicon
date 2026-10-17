@@ -237,10 +237,40 @@ func (s *Service) RecentLogins(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusInternalServerError, "role_resolution_failed", "could not resolve roles")
 		return
 	}
-	for i := range out {
-		out[i].Grants = grantViews(snap.resolve(out[i].Groups), snap.agencyNames)
+	// Who reads which (2.5.0 C2, the owner's answer to question 68): a global
+	// administrator for manageRoles reads every row; an agency's administrator
+	// the people whose grants name an agency they administer, with only those
+	// grants and no groups (another agency's group names are its content);
+	// anyone else nothing. Every signed-in session read every row before.
+	caller, _ := IdentityFrom(r.Context())
+	everywhere := caller.GlobalAdmin(PermManageRoles)
+	mine := map[string]bool{}
+	for _, a := range caller.AgenciesFor(PermManageRoles) {
+		mine[a] = true
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+	if !everywhere && len(mine) == 0 {
+		httpx.Fail(w, http.StatusForbidden, "forbidden", "insufficient permissions: manageRoles is required")
+		return
+	}
+	kept := out[:0]
+	for _, lr := range out {
+		grants := snap.resolve(lr.Groups)
+		if !everywhere {
+			var own []RoleGrant
+			for _, g := range grants {
+				if !g.Unrestricted() && mine[g.Agency] {
+					own = append(own, g)
+				}
+			}
+			if len(own) == 0 {
+				continue
+			}
+			grants, lr.Groups = own, []string{}
+		}
+		lr.Grants = grantViews(grants, snap.agencyNames)
+		kept = append(kept, lr)
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": kept})
 }
 
 // recordLogin upserts the Honest-View row (A3.2): first_seen_at is preserved,

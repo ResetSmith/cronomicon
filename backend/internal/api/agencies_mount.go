@@ -607,6 +607,15 @@ func (s *Server) handleListAgencies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := auth.IdentityFrom(r.Context())
+	// Names are every session's (CF-1: not confidential, and every view
+	// resolves ids by them); an agency's contents are its people's (2.5.0 C2,
+	// question 69): for one the caller does not read, its id, name and builtin
+	// flag only.
+	for i, a := range list {
+		if !id.ReadsAgency(a.ID) {
+			list[i] = settings.Agency{ID: a.ID, Name: a.Name, Builtin: a.Builtin}
+		}
+	}
 	rows, err := withRowFlags(list, func(a settings.Agency) (rowFlags, error) { return agencyFlags(id, a.ID), nil })
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)

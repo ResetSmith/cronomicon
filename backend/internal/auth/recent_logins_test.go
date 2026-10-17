@@ -33,7 +33,7 @@ type loginGrant struct {
 func recentLogins(t *testing.T, s *Service) map[string][]loginGrant {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	s.RecentLogins(rec, httptest.NewRequest(http.MethodGet, "/api/v1/recent-logins", nil))
+	s.RecentLogins(rec, asRolesAdmin(httptest.NewRequest(http.MethodGet, "/api/v1/recent-logins", nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("RecentLogins = %d, want 200: %s", rec.Code, rec.Body.String())
 	}

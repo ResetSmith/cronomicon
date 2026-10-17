@@ -718,12 +718,14 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/settings/gitlab/webhook-secret/rotate", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleRotateGitlabWebhookSecret)))
 	mux.Handle("GET /api/v1/settings/vault", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleGetVaultSettings)))
 	mux.Handle("PUT /api/v1/settings/vault", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateVaultSettings)))
-	mux.Handle("GET /api/v1/settings/log-storage", s.auth.RequireSession(http.HandlerFunc(s.handleGetLogStorageSettings)))
+	// A global administrator's (2.5.0 C2, question 71: the S3 endpoint, bucket
+	// and access key id were every session's; only Installation settings read it).
+	mux.Handle("GET /api/v1/settings/log-storage", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleGetLogStorageSettings)))
 	mux.Handle("PUT /api/v1/settings/log-storage", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateLogStorageSettings)))
 	// SL-2 / SL-Q8: Sync now is configureApp, the same permission that set the
 	// bucket. 202 with the archive status; 409 while a tick runs; 422 on local.
 	mux.Handle("POST /api/v1/settings/log-storage/sync", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleLogStorageSyncNow)))
-	mux.Handle("GET /api/v1/settings/observability", s.auth.RequireSession(http.HandlerFunc(s.handleGetObservabilitySettings)))
+	mux.Handle("GET /api/v1/settings/observability", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleGetObservabilitySettings))) // question 71
 	mux.Handle("PUT /api/v1/settings/observability", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateObservabilitySettings)))
 
 	// ── Audit Export (ConfigureApp — full change/audit history, Q2/PP-B1) ────────
@@ -2335,6 +2337,13 @@ func (s *Server) handleGetNotifications(w http.ResponseWriter, r *http.Request) 
 			masked.Targets[i] = t
 		}
 		nc.Apprise = &masked
+	}
+	// The relay's address, account and recipients likewise (2.5.0 C2, question
+	// 70: they were every session's); whether email is set up still shows.
+	if nc != nil && nc.SMTP != nil && !isGlobal(r, auth.PermConfigureApp) {
+		masked := *nc.SMTP
+		masked.Host, masked.Username, masked.Recipients = "", "", []string{}
+		nc.SMTP = &masked
 	}
 	httpx.JSON(w, http.StatusOK, nc)
 }
