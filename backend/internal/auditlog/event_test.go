@@ -127,6 +127,28 @@ func TestWriteActivityStreamsOnlyTheAuditableKinds(t *testing.T) {
 	}
 }
 
+// 2.5.0 C1: a streamed line says whose it is, as its row does: the agency a
+// writer named, or the one the row worked out from its run.
+func TestAStreamedLineNamesItsAgency(t *testing.T) {
+	pool := openTestPool(t)
+	stream := installCapture(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, created_at, owner_agency)
+	                        VALUES ('r-fin', 'load', 'bash', 'success', 'x', 'manual', 't', 'ag:FIN')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteChangeLog(ctx, pool, "ag:TAX", "alice@corp.example", "Scopes", "updated", "web", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActivity(ctx, pool, ActivityParams{Kind: "run-end", Outcome: "success", Actor: "x", TraceID: "r-fin"}); err != nil {
+		t.Fatal(err)
+	}
+	got := stream.all()
+	if len(got) != 2 || got[0].Agency != "ag:TAX" || got[1].Agency != "ag:FIN" {
+		t.Errorf("streamed %+v; want a change log line of ag:TAX and an activity line of ag:FIN (its run's)", got)
+	}
+}
+
 // TestWriteChangeLogAlwaysStreams pins the other half of the filter. change_log
 // is the compliance spine — every row of it is an in-app configuration change
 // made by a named actor — so unlike activity it has no kinds and no exclusions.
