@@ -103,7 +103,7 @@ var routeClasses = map[string]routeClass{
 	"/api/v1/workflow-runs/{traceId}":              {"one-agency", ""},
 	"/api/v1/workflows":                            {"one-agency", ""},
 	"/api/v1/workflows/{workflowId}":               {"one-agency", ""},
-	"/api/v1/alerts":                               {"any-session", "one-agency: C4 (AL-1 gives a rule an owner)"},
+	"/api/v1/alerts":                               {"one-agency", ""},
 	"/api/v1/recent-logins":                        {"one-agency", ""},
 	"/api/v1/access/recent-logins":                 {"one-agency", ""},
 	"/api/v1/definitions/{kind}/{name}/revisions":  {"one-agency", ""}, // SO-2 (C3): compose on the definition's agency

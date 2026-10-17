@@ -598,10 +598,11 @@ func (s *Scheduler) recordMissedWorkflowFire(ctx context.Context, e detectionEnt
 	s.log.Warn("sla: expected workflow fire did not happen",
 		"workflow", e.ownerName, "source", e.ownerSource, "schedule", e.name, "expected", t.Format(time.RFC3339))
 	s.raiseAlert(ctx, notify.AlertEvent{
-		Trigger:   notify.TriggerMissedRun,
-		JobName:   e.ownerName,
-		OwnerKind: "workflow",
-		Subject:   "[Cronomicon] workflow " + e.ownerName + " did not run",
+		Trigger:     notify.TriggerMissedRun,
+		JobName:     e.ownerName,
+		WorkflowUID: e.ownerUID, // its agency, for AL-1 (2.5.0 C4)
+		OwnerKind:   "workflow",
+		Subject:     "[Cronomicon] workflow " + e.ownerName + " did not run",
 		Detail: fmt.Sprintf("Workflow schedule %q expected a run at %s and none appeared. "+
 			"No calendar or pause suppression was recorded to explain it.",
 			e.name, t.In(s.location()).Format(time.RFC3339)),

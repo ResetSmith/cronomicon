@@ -422,6 +422,8 @@ type AgencyInUseError struct {
 	// agency that no longer existed.
 	Definitions int
 	Calendars   int
+	// AlertRules are the alert rules the agency owns (2.5.0 C4, AL-1).
+	AlertRules int
 	// Grants, ServiceAccounts and Tokens are what the delete would take with
 	// it silently: access grants and service accounts are ON DELETE CASCADE,
 	// and an unspent registration token would enrol an agent into an agency
@@ -468,6 +470,7 @@ func (e *AgencyInUseError) Blockers() []string {
 		"jobs, workflows and schedules built in the app (or not of its repository)",
 		"delete them, and purge them from the recycle bin; an agency's own definitions are not handed to another")
 	add(e.Calendars, "calendar built in the app", "calendars built in the app", "delete them")
+	add(e.AlertRules, "alert rule", "alert rules", "delete them")
 	add(e.Grants, "access grant", "access grants", "remove those grants first: deleting the agency would revoke them")
 	add(e.ServiceAccounts, "active service account", "active service accounts", "revoke those first")
 	add(e.Tokens, "unspent registration token", "unspent registration tokens",
@@ -641,6 +644,10 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 		`SELECT COUNT(*) FROM bastions WHERE owner_agency = ?`, id).Scan(&inUse.Bastions); err != nil {
 		return false, fmt.Errorf("delete agency: count bastions: %w", err)
 	}
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM alert_config WHERE owner_agency = ?`, id).Scan(&inUse.AlertRules); err != nil {
+		return false, fmt.Errorf("delete agency: count alert rules: %w", err)
+	}
 	if repoID != "" && takeRepo == nil {
 		inUse.Repository = 1
 	}
@@ -656,7 +663,7 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 		return false, err
 	}
 	if runnerRefs > 0 || memberRefs > 0 || ownerRefs > 0 || inUse.records() > 0 || inUse.Repository > 0 ||
-		inUse.Definitions > 0 || inUse.Calendars > 0 || inUse.cascades() > 0 {
+		inUse.Definitions > 0 || inUse.Calendars > 0 || inUse.AlertRules > 0 || inUse.cascades() > 0 {
 		return false, inUse
 	}
 	var removeRepo func(tx *sql.Tx) error
@@ -716,6 +723,7 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_repos WHERE agency_id = ?`, id).Scan(&inUse.Repository)
 			_ = countAgencyDefinitions(ctx, database, id, "", false, inUse)
 			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM runners WHERE owner_agency = ?`, id).Scan(&inUse.OwnedRunners)
+			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_config WHERE owner_agency = ?`, id).Scan(&inUse.AlertRules)
 			return false, inUse
 		}
 		return false, fmt.Errorf("delete agency: %w", err)

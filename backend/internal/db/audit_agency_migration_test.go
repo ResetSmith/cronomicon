@@ -33,7 +33,7 @@ func TestMigrate1520AuditRowsRecordTheirObjectsAgency(t *testing.T) {
 		      VALUES (?, ?, 'git', ?, 'success', 'x', 'manual', 't')`, id, name, u)
 	}
 	wfRun("wr-tax", "w-tax", "close")      // by uid
-	wfRun("wr-tax-old", "", "close")        // before 1010: by source and name
+	wfRun("wr-tax-old", "", "close")       // before 1010: by source and name
 	wfRun("wr-gone", "w-gone", "vanished") // its workflow is gone: Global's
 
 	act := func(id int, kind, trace, jobUID, category, action, stored string) {
@@ -51,24 +51,24 @@ func TestMigrate1520AuditRowsRecordTheirObjectsAgency(t *testing.T) {
 		must(`INSERT INTO activity (id, kind, trace_id, job_uid, category, action, at, created_at, agency_id)
 		      VALUES (?, ?, ?, ?, ?, ?, 't', 't', ?)`, id, kind, tr, ju, category, action, st)
 	}
-	act(1, "run-end", "r-fin", "", "", "", "")                             // its run: FIN
-	act(2, "workflow-end", "wr-tax", "", "", "", "")                       // its workflow run: TAX
-	act(3, "config", "", "j-fin", "Jobs", "paused", "ag-tax")              // its job, over 2.4.4's stamp: FIN
-	act(4, "config", "", "", "Scopes", "updated", "ag-tax")                // no key: 2.4.4's stamp kept
-	act(5, "config", "", "", "Settings", "updated", "")                    // nothing: Global's
-	act(6, "config", "r-fin", "", "Reactions", "Depth ceiling", "ag-tax")  // never by its trace
-	act(7, "config", "r-fin", "", "Reactions", "Depth ceiling", "")        // nor when nothing was stored
+	act(1, "run-end", "r-fin", "", "", "", "")                            // its run: FIN
+	act(2, "workflow-end", "wr-tax", "", "", "", "")                      // its workflow run: TAX
+	act(3, "config", "", "j-fin", "Jobs", "paused", "ag-tax")             // its job, over 2.4.4's stamp: FIN
+	act(4, "config", "", "", "Scopes", "updated", "ag-tax")               // no key: 2.4.4's stamp kept
+	act(5, "config", "", "", "Settings", "updated", "")                   // nothing: Global's
+	act(6, "config", "r-fin", "", "Reactions", "Depth ceiling", "ag-tax") // never by its trace
+	act(7, "config", "r-fin", "", "Reactions", "Depth ceiling", "")       // nor when nothing was stored
 
 	cl := func(id int, category, action, target, details string) {
 		t.Helper()
 		must(`INSERT INTO change_log (id, at, actor, category, action, target, details, created_at, acting_agency)
 		      VALUES (?, 't', 'x', ?, ?, ?, ?, 't', 'ag-tax')`, id, category, action, target, details)
 	}
-	cl(1, "Secrets", "injected", "r-fin", "")                          // a run: FIN
-	cl(2, "Workflows", "Cancelled", "wr-tax", "workflow run cancelled") // a workflow run: TAX
-	cl(3, "Workflows", "Triggered", "close", "workflow run wr-tax")     // a trigger's trace: TAX
+	cl(1, "Secrets", "injected", "r-fin", "")                             // a run: FIN
+	cl(2, "Workflows", "Cancelled", "wr-tax", "workflow run cancelled")   // a workflow run: TAX
+	cl(3, "Workflows", "Triggered", "close", "workflow run wr-tax")       // a trigger's trace: TAX
 	cl(4, "Agencies", "membership-updated", "agency members: ag-fin", "") // an agency id: FIN
-	cl(5, "Scopes", "updated", "web", "")                               // a name, and acting_agency: Global's (D6)
+	cl(5, "Scopes", "updated", "web", "")                                 // a name, and acting_agency: Global's (D6)
 
 	if err := m.Migrate(1520); err != nil {
 		t.Fatalf("migrate to 1520: %v", err)

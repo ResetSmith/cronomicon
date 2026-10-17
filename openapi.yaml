@@ -6314,6 +6314,10 @@ paths:
       tags: [Settings]
       operationId: listAlertRules
       summary: List alert rules (DB-backed per A1.2)
+      description: >-
+        The rules the caller reads (2.5.0 C4, AL-1; CF-1): an agency's to its
+        own people, Global's to everywhere-readers only, every rule to an
+        everywhere-reader. Until 2.5.0 every rule was every session's.
       responses:
         '200':
           description: Alert rules.
@@ -6327,6 +6331,13 @@ paths:
       tags: [Settings]
       operationId: createAlertRule
       summary: Create an alert rule
+      description: >-
+        AL-3 (2.5.0 C4): `configureApp` on the agency the rule is created in —
+        `ownerAgency`, else the one agency the caller administers (or the one
+        the switcher names); Global's for a global administrator who names
+        none. 403 for an agency the caller does not administer; 422
+        `unknown_job` when an agency's rule names a job its agency does not
+        have. Until 2.5.0 a global administrator's alone.
       parameters: [{ $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -6348,6 +6359,10 @@ paths:
       tags: [Settings]
       operationId: updateAlertRule
       summary: Update an alert rule
+      description: >-
+        AL-3 (2.5.0 C4): `configureApp` on the rule's agency; 404 to a caller
+        who does not read the rule. The rule keeps its agency (`ownerAgency`
+        is ignored); 422 `unknown_job` as on create.
       parameters: [{ $ref: '#/components/parameters/alertId' }, { $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -6368,6 +6383,9 @@ paths:
       tags: [Settings]
       operationId: deleteAlertRule
       summary: Delete an alert rule
+      description: >-
+        AL-3 (2.5.0 C4): `configureApp` on the rule's agency; 404 to a caller
+        who does not read the rule.
       parameters: [{ $ref: '#/components/parameters/alertId' }, { $ref: '#/components/parameters/csrf' }]
       responses:
         '204': { description: Deleted. }
@@ -13708,6 +13726,16 @@ components:
         recipients: { type: string }
         owner: { type: [string, 'null'] }
         enabled: { type: boolean, default: true }
+        ownerAgency:
+          type: string
+          description: >-
+            The agency the rule is one of (2.5.0 C4, AL-1): it matches only
+            runs, SLA breaches and missed fires of that agency (`all` is all of
+            that agency's), and `jobName` resolves among that agency's jobs.
+            Global's (`global`) match every agency's, as every rule did before
+            2.5.0; existing rules became Global's. Read on create only; a rule
+            keeps its agency. Deleting an agency is refused while it owns a
+            rule.
 
     NotificationTestReport:
       type: object

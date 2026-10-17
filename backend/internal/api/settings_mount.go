@@ -440,9 +440,12 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 
 	// ── Alerts (writes: ConfigureApp, PP-B1) ────────────────────────────────────
 	mux.Handle("GET /api/v1/alerts", s.auth.RequireSession(http.HandlerFunc(s.handleListAlerts)))
-	mux.Handle("POST /api/v1/alerts", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleCreateAlert)))
-	mux.Handle("PUT /api/v1/alerts/{alertId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateAlert)))
-	mux.Handle("DELETE /api/v1/alerts/{alertId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleDeleteAlert)))
+	// AL-3 (2.5.0 C4): configureApp on the rule's agency (a global
+	// administrator's for Global's), checked in the handlers; they were a
+	// global administrator's while rules had no owner.
+	mux.Handle("POST /api/v1/alerts", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCreateAlert)))
+	mux.Handle("PUT /api/v1/alerts/{alertId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateAlert)))
+	mux.Handle("DELETE /api/v1/alerts/{alertId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDeleteAlert)))
 
 	// ── SSH Hosts (writes + test: ConfigureApp, PP-B1) ──────────────────────────
 	mux.Handle("GET /api/v1/ssh/hosts", s.auth.RequireSession(http.HandlerFunc(s.handleListSshHosts)))
@@ -1486,10 +1489,48 @@ func (s *Server) handleListAlerts(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	if list == nil {
-		list = []settings.AlertRule{}
-	}
+	// Whose each rule is (2.5.0 C4, AL-1; CF-1): every rule, recipients and
+	// all, was every session's.
+	list = keepReadable(r, list, func(a settings.AlertRule) string { return a.OwnerAgency })
 	httpx.JSON(w, http.StatusOK, list)
+}
+
+// alertRuleFor is the rule the route names, if the caller may change it
+// (AL-3): 404 to one who may not read it (question 72), 403 to one who reads
+// it but holds no configureApp on its agency.
+func (s *Server) alertRuleFor(w http.ResponseWriter, r *http.Request, id auth.Identity) (*settings.AlertRule, bool) {
+	ar, err := settings.GetAlertRule(r.Context(), s.db, r.PathValue("alertId"))
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return nil, false
+	}
+	if ar == nil || !readsAgency(r, ar.OwnerAgency) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "alert rule not found")
+		return nil, false
+	}
+	if !id.CanAgency(auth.PermConfigureApp, agencyOrGlobal(ar.OwnerAgency)) {
+		httpx.Fail(w, http.StatusForbidden, "forbidden", "configureApp on the rule's agency is required")
+		return nil, false
+	}
+	return ar, true
+}
+
+// alertJobInAgency refuses an agency's rule that names a job its agency does
+// not have (2.5.0 C4, AL-1): it could match nothing of its own.
+func (s *Server) alertJobInAgency(w http.ResponseWriter, r *http.Request, inp settings.AlertRuleInput, owner string) bool {
+	if owner == agencyid.Global || inp.JobName == nil || *inp.JobName == "" {
+		return true
+	}
+	ok, err := settings.AlertJobInAgency(r.Context(), s.db, *inp.JobName, owner)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if !ok {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_job", "the rule's agency has no job named "+*inp.JobName)
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleCreateAlert(w http.ResponseWriter, r *http.Request) {
@@ -1507,6 +1548,16 @@ func (s *Server) handleCreateAlert(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, code, msg)
 		return
 	}
+	// Whose: the agency the request works in, or one named that the caller
+	// administers; Global only for a global administrator (AL-1, AL-3).
+	owner, ok := s.requireRecordOwnerChoice(w, r, id, inp.OwnerAgency, "alert rule")
+	if !ok {
+		return
+	}
+	inp.OwnerAgency = owner
+	if !s.alertJobInAgency(w, r, *inp, owner) {
+		return
+	}
 	ar, err := settings.CreateAlertRule(r.Context(), s.db, *inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "create_failed", err)
@@ -1522,6 +1573,10 @@ func (s *Server) handleUpdateAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aid := r.PathValue("alertId")
+	cur, ok := s.alertRuleFor(w, r, id)
+	if !ok {
+		return
+	}
 	inp, err := decodeAlertRuleInput(r)
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
@@ -1529,6 +1584,9 @@ func (s *Server) handleUpdateAlert(w http.ResponseWriter, r *http.Request) {
 	}
 	if code, msg := validateAlertRuleInput(*inp); code != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, code, msg)
+		return
+	}
+	if !s.alertJobInAgency(w, r, *inp, agencyOrGlobal(cur.OwnerAgency)) {
 		return
 	}
 	ar, err := settings.UpdateAlertRule(r.Context(), s.db, aid, *inp, id.Email)
@@ -1550,6 +1608,9 @@ func (s *Server) handleDeleteAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aid := r.PathValue("alertId")
+	if _, ok := s.alertRuleFor(w, r, id); !ok {
+		return
+	}
 	found, err := settings.DeleteAlertRule(r.Context(), s.db, aid, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "delete_failed", err)
@@ -1571,6 +1632,8 @@ func decodeAlertRuleInput(r *http.Request) (*settings.AlertRuleInput, error) {
 		Recipients *string  `json:"recipients"`
 		Owner      *string  `json:"owner"`
 		Enabled    bool     `json:"enabled"`
+		// OwnerAgency is whose a new rule is (C4); an edit keeps the rule's.
+		OwnerAgency string `json:"ownerAgency"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		return nil, err
@@ -1578,7 +1641,7 @@ func decodeAlertRuleInput(r *http.Request) (*settings.AlertRuleInput, error) {
 	return &settings.AlertRuleInput{
 		TargetMode: body.TargetMode, JobName: body.JobName,
 		Trigger: body.Trigger, Channels: body.Channels, Recipients: body.Recipients,
-		Owner: body.Owner, Enabled: body.Enabled,
+		Owner: body.Owner, Enabled: body.Enabled, OwnerAgency: body.OwnerAgency,
 	}, nil
 }
 

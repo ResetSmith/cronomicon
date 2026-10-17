@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
@@ -79,9 +80,12 @@ type AlertEvent struct {
 	Trigger string // one of the Trigger* constants above
 	JobName string
 	// JobUID — see RunEvent.JobUID.
-	JobUID  string
-	Scope   string
-	TraceID string
+	JobUID string
+	// WorkflowUID is a workflow-owned alert's workflow (2.5.0 C4): what its
+	// agency is found by when there is no run (a missed workflow fire).
+	WorkflowUID string
+	Scope       string
+	TraceID     string
 	// OwnerKind distinguishes a workflow-owned alert from a job-owned one.
 	// Empty means job, so every existing caller keeps its behaviour.
 	//
@@ -181,7 +185,8 @@ func runDispatchEvent(ev RunEvent) dispatchEvent {
 func (d *Dispatcher) AlertRaised(ev AlertEvent) {
 	subject, body := renderAlert(ev)
 	d.send(dispatchEvent{
-		traceID: ev.TraceID, jobName: ev.JobName, jobUID: ev.JobUID, scope: ev.Scope, ownerKind: ev.OwnerKind,
+		traceID: ev.TraceID, jobName: ev.JobName, jobUID: ev.JobUID, workflowUID: ev.WorkflowUID,
+		scope: ev.Scope, ownerKind: ev.OwnerKind,
 		matchKey: ev.Trigger, isRunOutcome: false, subject: subject, body: body,
 	})
 }
@@ -199,7 +204,10 @@ type dispatchEvent struct {
 	// jobUid is the fired job's permanent identity (R2-4). Empty for a workflow
 	// event, for history predating R2-1, and for a missed-run alert whose job
 	// has since gone — all cases where a uid-targeted rule correctly stays quiet.
-	jobUID       string
+	jobUID      string
+	workflowUID string
+	// agency is whose the event is (2.5.0 C4, AL-1), resolved once in dispatch.
+	agency       string
 	ownerKind    string // "" or "job" ⇒ job-owned; "workflow" ⇒ workflow-owned
 	scope        string
 	matchKey     string
@@ -239,6 +247,7 @@ type notifConfig struct {
 
 func (d *Dispatcher) dispatch(ctx context.Context, ev dispatchEvent) error {
 	ev.jobUID = d.resolveEventJobUID(ctx, ev)
+	ev.agency = d.resolveEventAgency(ctx, ev)
 	rules, err := d.matchingRules(ctx, ev)
 	if err != nil {
 		return fmt.Errorf("load alert rules: %w", err)
@@ -329,7 +338,7 @@ type matchedRule struct {
 // matchingRules returns enabled rules whose trigger + target match the event.
 func (d *Dispatcher) matchingRules(ctx context.Context, ev dispatchEvent) ([]matchedRule, error) {
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT target_mode, job_name, trigger, channels, recipients, job_uid
+		SELECT target_mode, job_name, trigger, channels, recipients, job_uid, owner_agency
 		FROM alert_config WHERE enabled = 1`)
 	if err != nil {
 		return nil, err
@@ -337,10 +346,15 @@ func (d *Dispatcher) matchingRules(ctx context.Context, ev dispatchEvent) ([]mat
 	defer rows.Close()
 	var out []matchedRule
 	for rows.Next() {
-		var targetMode, trigger, channelsJSON string
+		var targetMode, trigger, channelsJSON, owner string
 		var jobName, recipients, jobUID sql.NullString
-		if err := rows.Scan(&targetMode, &jobName, &trigger, &channelsJSON, &recipients, &jobUID); err != nil {
+		if err := rows.Scan(&targetMode, &jobName, &trigger, &channelsJSON, &recipients, &jobUID, &owner); err != nil {
 			return nil, err
+		}
+		// AL-1 (2.5.0 C4): an agency's rule matches only its agency's events
+		// ("all" is all of that agency's); Global's match every agency's.
+		if owner != agencyid.Global && owner != ev.agency {
+			continue
 		}
 		if !triggerMatches(trigger, ev.matchKey, ev.isRunOutcome) {
 			continue
@@ -892,6 +906,31 @@ func (d *Dispatcher) resolveAnnotationOwner(ctx context.Context, ev dispatchEven
 //
 // Unresolvable stays empty, and an empty event uid simply never matches a
 // uid-targeted rule.
+// resolveEventAgency is whose an event is (2.5.0 C4, AL-1): its run's owner
+// (1480) or its workflow run's agency (1520) by its trace; else its job's, or
+// its workflow's, by uid (a missed fire has no run); else Global's.
+func (d *Dispatcher) resolveEventAgency(ctx context.Context, ev dispatchEvent) string {
+	var a sql.NullString
+	if ev.traceID != "" {
+		if d.db.QueryRowContext(ctx, `SELECT COALESCE(
+			NULLIF((SELECT owner_agency FROM runs WHERE id = ?1), ''),
+			NULLIF((SELECT agency_id FROM workflow_runs WHERE id = ?1), ''))`, ev.traceID).Scan(&a) == nil && a.String != "" {
+			return a.String
+		}
+	}
+	if ev.jobUID != "" {
+		if d.db.QueryRowContext(ctx, `SELECT `+agencyid.JobSQL("j")+` FROM jobs j WHERE j.uid = ?`, ev.jobUID).Scan(&a) == nil && a.String != "" {
+			return a.String
+		}
+	}
+	if ev.workflowUID != "" {
+		if d.db.QueryRowContext(ctx, `SELECT `+agencyid.WorkflowSQL+` FROM workflows w WHERE w.uid = ?`, ev.workflowUID).Scan(&a) == nil && a.String != "" {
+			return a.String
+		}
+	}
+	return agencyid.Global
+}
+
 func (d *Dispatcher) resolveEventJobUID(ctx context.Context, ev dispatchEvent) string {
 	if ev.jobUID != "" {
 		return ev.jobUID
