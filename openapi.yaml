@@ -7693,7 +7693,9 @@ paths:
       description: |
         A read-only report of who loses what — and which data must be curated
         first — if the departmental-RBAC predicates were switched on right now
-        (the rbac-update plan RB-4). Requires `manageRoles`.
+        (the rbac-update plan RB-4). A global administrator's (`manageRoles` on
+        every agency, 2.5.0 C2): it names every agency's unscoped jobs and
+        schedules.
 
         Both switches are now LIVE and the two-axis model's tables are gone
         (RB-19, v0.57.8), so the four conversion sections this report originally
@@ -7825,7 +7827,12 @@ paths:
       tags: [Access]
       operationId: listRecentLogins
       summary: List recent logins (Honest View, A3.2)
-      description: Users appear only after their first successful OIDC round-trip; lastSeen reflects last successful auth. No directory enumeration in v1.
+      description: |
+        Users appear only after their first successful OIDC round-trip; lastSeen reflects last successful auth. No directory enumeration in v1.
+
+        A `manageRoles` holder's (2.5.0 C2): a global administrator reads every row; an
+        agency's administrator the people whose grants name an agency they administer,
+        with only those grants and no AD groups; anyone else 403.
       parameters:
         - { $ref: '#/components/parameters/page' }
         - { $ref: '#/components/parameters/pageSize' }
