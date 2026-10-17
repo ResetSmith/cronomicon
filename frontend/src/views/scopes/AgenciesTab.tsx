@@ -31,6 +31,8 @@ interface AgencyRow {
   name: string;
   description?: string | null;
   onlineRunnerCount?: number; // M4 coverage — 0 means jobs bound here will wait
+  // 2.5.0 C6 (QT-1): the agency's own concurrency cap; null is none.
+  maxConcurrent?: number | null;
   createdBy?: string;
   lastModifiedAt?: string;
   // R8 — what the caller may do with this row, from the server.
@@ -257,7 +259,7 @@ export function AgenciesTab({
                       <td style={{ borderBottom: "none" }} />
                       <td colSpan={5} style={{ padding: "2px 16px 16px", borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
                         <RefreshScope>
-                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} rolesAdmin={rolesAdmin} onMembersChanged={() => setDep((n) => n + 1)} />
+                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} rolesAdmin={rolesAdmin} maxConcurrent={a.maxConcurrent ?? null} onMembersChanged={() => setDep((n) => n + 1)} />
                         </RefreshScope>
                       </td>
                     </tr>
@@ -433,9 +435,11 @@ function AgencyFormModal({
 // touches only this agency's rows, so two admins editing two different
 // departments cannot race on the same entity — the lost-update hazard a
 // read-modify-write through the entity-centric setters would reintroduce.
-function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false, onMembersChanged }: {
+function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false, maxConcurrent = null, onMembersChanged }: {
   agencyId: string;
   canEdit: boolean;
+  /** The agency's own concurrency cap, from its row (2.5.0 C6); null is none. */
+  maxConcurrent?: number | null;
   /** A global administrator for manageRoles lists the agency's groups (GA-1). */
   rolesAdmin?: boolean;
   /** A global administrator assigns an agency its Vault paths (LR-80). Moving a
@@ -726,6 +730,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
       )}
       {agencyId !== GLOBAL_AGENCY && <VaultPathsEditor agencyId={agencyId} globalAdmin={globalAdmin} />}
       {agencyId !== GLOBAL_AGENCY && <GroupsEditor agencyId={agencyId} rolesAdmin={rolesAdmin} />}
+      <ConcurrencyEditor agencyId={agencyId} value={maxConcurrent} globalAdmin={globalAdmin} onSaved={onMembersChanged} />
     </DetailPanel>
   );
 }
@@ -954,6 +959,102 @@ function GroupsEditor({ agencyId, rolesAdmin }: { agencyId: string; rolesAdmin: 
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <Btn small primary onClick={save} disabled={busy}>
               {busy ? "Saving…" : "Save groups"}
+            </Btn>
+            <Btn small onClick={() => setDraft(null)} disabled={busy}>
+              Cancel
+            </Btn>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ConcurrencyEditor — the agency's own concurrency cap (2.5.0 C6, QT-1).
+//
+// The installation has one cap (Settings → General). An agency may also have
+// its own: where one of its runs is produced its runs waiting and running are
+// counted against it, and at the claim its running runs. A global
+// administrator sets it, for Global as for any agency; anyone else sees it,
+// with the reason they cannot change it.
+function ConcurrencyEditor({ agencyId, value, globalAdmin, onSaved }: {
+  agencyId: string;
+  value: number | null;
+  globalAdmin: boolean;
+  onSaved?: () => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    setDraft(null);
+    setErr(null);
+  }, [agencyId]);
+  const why = globalOnly(globalAdmin, "Only a global administrator (a role on every agency) can set an agency's concurrency cap.");
+
+  const save = async () => {
+    const text = (draft ?? "").trim();
+    const n = text === "" ? null : Number(text);
+    if (n !== null && (!Number.isInteger(n) || n < 1)) {
+      setErr("A cap is a whole number of runs, 1 or more; leave it empty for none.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    const { error } = await api.PUT("/agencies/{agencyId}/concurrency", {
+      params: { path: { agencyId }, header: csrfHeader },
+      body: { maxConcurrent: n },
+    });
+    setBusy(false);
+    if (error) {
+      setErr(errMsg(error));
+      return;
+    }
+    setDraft(null);
+    onSaved?.();
+  };
+
+  return (
+    <div style={{ borderTop: `1px solid ${c.borderLight}`, paddingTop: 10 }}>
+      <div style={{ fontSize: c.fontXs, fontFamily: c.sansCond, fontWeight: 700, color: c.textMuted, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 6 }}>
+        Concurrency cap
+      </div>
+      {draft === null ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: c.fontSm, color: c.text }}>
+            {value == null ? "None of its own: the installation's cap alone." : `${value} ${value === 1 ? "run" : "runs"} at a time`}
+          </span>
+          <Btn small onClick={() => setDraft(value == null ? "" : String(value))} disabled={!!why} title={why || undefined}>
+            Edit cap
+          </Btn>
+          {why && <span style={{ fontSize: c.fontXs, color: c.textMuted }}>{why}</span>}
+        </div>
+      ) : (
+        <>
+          <label style={{ ...labelStyle(), display: "block" }}>
+            Runs at a time (empty for none)
+            <input
+              aria-label="Concurrency cap"
+              inputMode="numeric"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="none"
+              style={{ ...inputStyle(), width: 120, marginTop: 4, display: "block" }}
+            />
+          </label>
+          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4, lineHeight: 1.5 }}>
+            While this many of the agency's runs are waiting or running, a new one is refused (a scheduled fire is
+            skipped), and a waiting run starts only while fewer than this many are running. The installation's cap still
+            applies. Lowering it stops nothing that is running.
+          </div>
+          {err && (
+            <div role="alert" style={{ fontSize: c.fontSm, color: c.danger, marginTop: 6 }}>
+              {err}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <Btn small primary onClick={save} disabled={busy}>
+              {busy ? "Saving…" : "Save cap"}
             </Btn>
             <Btn small onClick={() => setDraft(null)} disabled={busy}>
               Cancel

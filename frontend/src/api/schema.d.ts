@@ -4464,6 +4464,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agencies/{agencyId}/concurrency": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set an agency's own concurrency cap (v2.5.0)
+         * @description A global administrator's (`configureApp` on every agency), as the agency
+         *     catalog is (QT-1). `maxConcurrent` is a positive number of runs, or null
+         *     for none; the field is required, so a body without it does not clear
+         *     the cap. Global may have one. Lowering a cap below what is running stops
+         *     nothing: the runs finish, and the agency's next run waits for a slot.
+         *     CSRF required.
+         */
+        put: operations["setAgencyConcurrency"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agencies/{agencyId}/groups": {
         parameters: {
             query?: never;
@@ -8111,6 +8136,8 @@ export interface components {
             description?: string | null;
             /** @description Number of online runners assigned to this agency (M4 coverage view). 0 means jobs bound here will wait — no runner can claim them. */
             readonly onlineRunnerCount?: number;
+            /** @description The agency's own concurrency cap (v2.5.0, QT-1); null is none. Where one of its runs is produced, its runs waiting and running are counted against it; at the claim, its running runs. The installation's cap binds as well. Set with PUT /agencies/{agencyId}/concurrency. */
+            readonly maxConcurrent?: number | null;
             /** @description True for **Global** (id `global`), the one agency every installation has (v2.3.0, LR-21). It cannot be renamed or deleted (422 `builtin_agency`), no other agency may be called Global in any letter case (422 `name_reserved`), and no access grant or service account may name it: it belongs to the global administrators, and the way to be one is an all-scopes grant. */
             readonly builtin?: boolean;
         } & components["schemas"]["AuditFields"];
@@ -10647,7 +10674,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description Concurrency cap reached (globalSettings.maxConcurrent; see S16 — per-job cap TBD). */
+            /** @description Concurrency cap reached (`concurrency_cap`). Since 2.5.0 C6: the installation's cap (globalSettings.maxConcurrent) counts the runs running in every agency and the runs waiting in this run's agency ("global concurrency cap reached"); an agency's own cap (Agency.maxConcurrent) counts its runs waiting and running ("<agency>'s concurrency cap reached"). A run that is produced still waits at the claim for a slot under both caps. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -17926,6 +17953,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgencyVaultPrefixes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    setAgencyConcurrency: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    maxConcurrent: number | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The agency as stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agency"];
                 };
             };
             401: components["responses"]["Unauthorized"];
