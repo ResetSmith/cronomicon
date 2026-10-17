@@ -97,6 +97,10 @@ func delegatedGrantServer(t *testing.T) (http.Handler, *sql.DB) {
 // administrator grants and revokes within their agency without being admin.
 func TestDelegateAdministersItsOwnAgency(t *testing.T) {
 	h, pool := delegatedGrantServer(t)
+	// To a group on FIN's list (2.5.0 C5, GA-1).
+	if _, err := pool.Exec(`INSERT INTO agency_groups (agency_id, ad_group, created_at) VALUES ('ag:FIN','fin-operators','t')`); err != nil {
+		t.Fatal(err)
+	}
 
 	rec := composeReq(t, h, http.MethodPost, "/api/v1/access-grants", "fin-govs",
 		`{"adGroup":"fin-operators","role":"operator","agencyId":"ag:FIN","allScopes":false}`)

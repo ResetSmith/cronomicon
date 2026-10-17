@@ -56,7 +56,11 @@ func TestGC_UnrestrictedViewerWhoAdministersOneAgencyIsNotAGlobalAdmin(t *testin
 	if n := count(t, pool, `SELECT COUNT(*) FROM access_grants WHERE ad_group='mine'`); n != 0 {
 		t.Errorf("an all-scopes grant was written by a non-global actor")
 	}
-	// The delegate half still works: the same actor grants inside FIN.
+	// The delegate half still works: the same actor grants inside FIN, to a
+	// group on FIN's list (2.5.0 C5, GA-1).
+	if _, err := pool.Exec(`INSERT INTO agency_groups (agency_id, ad_group, created_at) VALUES ('ag:FIN','fin-ops','t')`); err != nil {
+		t.Fatal(err)
+	}
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/access-grants", gMixed,
 		`{"adGroup":"fin-ops","role":"operator","agencyId":"ag:FIN","allScopes":false}`)
 	if rec.Code != http.StatusCreated {

@@ -192,6 +192,11 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		exec(`INSERT INTO access_grants (id, ad_group, role, agency_id, all_scopes, created_by, created_at, last_modified_by, last_modified_at)
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			db.NewID(), g.group, g.role, agency, all, dev, ago(20*day), dev, ago(20*day))
+		// 2.5.0 C5 (GA-1): an agency grant's group is on that agency's list.
+		if g.agency != "" {
+			exec(`INSERT OR IGNORE INTO agency_groups (agency_id, ad_group, created_by, created_at) VALUES (?, ?, ?, ?)`,
+				g.agency, g.group, dev, ago(20*day))
+		}
 	}
 
 	// ── Recent logins (A3.2 Honest View) ───────────────────────────────────────

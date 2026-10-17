@@ -48,6 +48,11 @@ func (s *Server) mountAgencies(mux *http.ServeMux) {
 	// agency's own administrators, who need to know where they may write.
 	mux.Handle("GET /api/v1/agencies/{agencyId}/vault-prefixes", s.auth.RequireSession(http.HandlerFunc(s.handleListVaultPrefixes)))
 	mux.Handle("PUT /api/v1/agencies/{agencyId}/vault-prefixes", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleSetVaultPrefixes)))
+	// GA-1 (2.5.0 C5): the directory groups an agency's grants may name. Set by
+	// a global administrator; read by the agency's own administrators of access
+	// (question 82), whose grant form offers them (GA-3).
+	mux.Handle("GET /api/v1/agencies/{agencyId}/groups", s.auth.RequireSession(http.HandlerFunc(s.handleListAgencyGroups)))
+	mux.Handle("PUT /api/v1/agencies/{agencyId}/groups", s.requireGlobal(auth.PermManageRoles)(http.HandlerFunc(s.handleSetAgencyGroups)))
 	// Runner ↔ agency membership matrix (M2). Reads session-gated so the Runners
 	// view can render membership; writes ConfigureApp + CSRF (operator-assigned).
 	mux.Handle("GET /api/v1/runner-agencies", s.auth.RequireSession(http.HandlerFunc(s.handleListRunnerAgencies)))
@@ -1201,6 +1206,76 @@ func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail500(w, s.log, "update_failed", err)
 	default:
 		httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes})
+	}
+}
+
+type agencyGroupsJSON struct {
+	AgencyID string   `json:"agencyId"`
+	Groups   []string `json:"groups"`
+}
+
+func (s *Server) handleListAgencyGroups(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	agencyID := r.PathValue("agencyId")
+	// Read by whoever writes the agency's grants (manageRoles there) and by a
+	// global administrator (question 82): the grant form offers the list.
+	if !id.GlobalAdmin(auth.PermManageRoles) && !id.CanAgency(auth.PermManageRoles, agencyID) {
+		s.denyEntityAgency(w, r, id, auth.PermManageRoles, agencyID,
+			"you do not administer access for this agency, so its group list is not yours to read")
+		return
+	}
+	ag, err := settings.GetAgency(r.Context(), s.db, agencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if ag == nil {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+		return
+	}
+	groups, err := settings.ListAgencyGroups(r.Context(), s.db, agencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, agencyGroupsJSON{AgencyID: agencyID, Groups: groups})
+}
+
+func (s *Server) handleSetAgencyGroups(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	agencyID := r.PathValue("agencyId")
+	var body struct {
+		Groups *[]string `json:"groups"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return
+	}
+	// This route REPLACES the list, so a body without the field must not read
+	// as "no groups" and clear it (as for the Vault prefixes).
+	if body.Groups == nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
+			"groups is required: send the whole list, or [] to remove every group")
+		return
+	}
+	groups, err := settings.SetAgencyGroups(r.Context(), s.db, agencyID, *body.Groups, id.Email)
+	switch {
+	case errors.Is(err, settings.ErrUnknownAgency):
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+	case errors.Is(err, settings.ErrGlobalHasNoGroups):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "builtin_agency", err.Error())
+	case err != nil:
+		httpx.Fail500(w, s.log, "update_failed", err)
+	default:
+		httpx.JSON(w, http.StatusOK, agencyGroupsJSON{AgencyID: agencyID, Groups: groups})
 	}
 }
 

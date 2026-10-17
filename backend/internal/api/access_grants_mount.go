@@ -158,6 +158,10 @@ func (s *Server) validateGrant(r *http.Request, in *accessGrantInput) (string, b
 // row as well — otherwise a delegate could re-point a global admin's grant at
 // their own agency, or delete the grant that makes someone else an admin.
 //
+// A fourth rule, the agency's group list (2.5.0 C5, GA-1), is
+// requireGroupListed: a create and both sides of an edit are held to it, a
+// delete is not (GA-2).
+//
 // On refusal it has written the 403 and the audit row; the call site is
 // `if !s.requireGrantWritable(...) { return }`.
 func (s *Server) requireGrantWritable(w http.ResponseWriter, r *http.Request, id auth.Identity, role, agencyID string, allScopes bool) bool {
@@ -197,18 +201,56 @@ func (s *Server) requireGrantWritable(w http.ResponseWriter, r *http.Request, id
 	return true
 }
 
+// requireGroupListed is the fourth rule for a delegate (2.5.0 C5, GA-1): a
+// grant they write names a group a global administrator listed for its
+// agency. Without it a delegate could hand their agency's roles to any group
+// in the directory ("Domain Users" included); the app cannot look groups up
+// (§1.5), so the list is the global administrator's word for which groups
+// belong to the agency. A global administrator is not bound (they may grant
+// everywhere), and an all-agencies grant is theirs alone already.
+//
+// `existing` words the refusal for the row as it stands on an edit: such a
+// grant keeps working, and its delegate may delete it but not change it
+// (GA-2). On refusal it has written the 403 and the audit row.
+func (s *Server) requireGroupListed(w http.ResponseWriter, r *http.Request, id auth.Identity, group, agencyID string, allScopes, existing bool) bool {
+	if id.GlobalAdmin(auth.PermManageRoles) || allScopes {
+		return true
+	}
+	listed, err := settings.AgencyGroupListed(r.Context(), s.db, agencyID, group)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if listed {
+		return true
+	}
+	name := agencyID
+	if ag, err := settings.GetAgency(r.Context(), s.db, agencyID); err == nil && ag != nil {
+		name = ag.Name
+	}
+	msg := "the group " + group + " is not on " + name + "'s list: a global administrator lists the groups an agency's grants may name"
+	if existing {
+		msg = "this grant names " + group + ", which is not on " + name + "'s list: you may delete it, not change it, until a global administrator lists the group"
+	}
+	if s.auth != nil {
+		s.auth.AuditDenied(r, id.Email, "group_not_listed", auth.PermManageRoles, auditDetails(r, msg))
+	}
+	httpx.Fail(w, http.StatusForbidden, "group_not_listed", msg)
+	return false
+}
+
 // loadGrantForWrite reads the grant a write targets, so the EXISTING row can be
 // checked alongside the incoming one. A missing row is a 404 written here.
-func (s *Server) loadGrantForWrite(w http.ResponseWriter, r *http.Request, grantID string) (role, agencyID string, allScopes bool, ok bool) {
+func (s *Server) loadGrantForWrite(w http.ResponseWriter, r *http.Request, grantID string) (adGroup, role, agencyID string, allScopes bool, ok bool) {
 	var agency sql.NullString
 	var all int
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT role, agency_id, all_scopes FROM access_grants WHERE id=?`, grantID).Scan(&role, &agency, &all)
+		`SELECT ad_group, role, agency_id, all_scopes FROM access_grants WHERE id=?`, grantID).Scan(&adGroup, &role, &agency, &all)
 	if err != nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "grant not found")
-		return "", "", false, false
+		return "", "", "", false, false
 	}
-	return role, agency.String, all != 0, true
+	return adGroup, role, agency.String, all != 0, true
 }
 
 func (s *Server) handleCreateAccessGrant(w http.ResponseWriter, r *http.Request) {
@@ -227,7 +269,8 @@ func (s *Server) handleCreateAccessGrant(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// AF-3 — may this actor grant THIS role, HERE?
-	if !s.requireGrantWritable(w, r, id, in.Role, in.AgencyID, in.AllScopes) {
+	if !s.requireGrantWritable(w, r, id, in.Role, in.AgencyID, in.AllScopes) ||
+		!s.requireGroupListed(w, r, id, in.AdGroup, in.AgencyID, in.AllScopes, false) {
 		return
 	}
 	newID := db.NewID()
@@ -278,14 +321,20 @@ func (s *Server) handleUpdateAccessGrant(w http.ResponseWriter, r *http.Request)
 	// AF-3 — BOTH sides. The grant as it stands must be one this actor could
 	// have written, or a delegate could re-point a global admin's grant at their
 	// own agency; and the grant it becomes must be too.
-	curRole, curAgency, curAll, found := s.loadGrantForWrite(w, r, grantID)
+	curGroup, curRole, curAgency, curAll, found := s.loadGrantForWrite(w, r, grantID)
 	if !found {
 		return
 	}
 	if !s.requireGrantWritable(w, r, id, curRole, curAgency, curAll) {
 		return
 	}
-	if !s.requireGrantWritable(w, r, id, in.Role, in.AgencyID, in.AllScopes) {
+	// GA-2: a grant naming an unlisted group is its delegate's to delete, not
+	// to change, even into a listed one: that is a new grant.
+	if !s.requireGroupListed(w, r, id, curGroup, curAgency, curAll, true) {
+		return
+	}
+	if !s.requireGrantWritable(w, r, id, in.Role, in.AgencyID, in.AllScopes) ||
+		!s.requireGroupListed(w, r, id, in.AdGroup, in.AgencyID, in.AllScopes, false) {
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -327,7 +376,9 @@ func (s *Server) handleDeleteAccessGrant(w http.ResponseWriter, r *http.Request)
 	}
 	grantID := r.PathValue("grantId")
 	// AF-3 — revoking is administering: same authority as writing the row.
-	curRole, curAgency, curAll, found := s.loadGrantForWrite(w, r, grantID)
+	// Not held to the group list (GA-2): a grant naming an unlisted group is
+	// its agency's delegates' to delete.
+	_, curRole, curAgency, curAll, found := s.loadGrantForWrite(w, r, grantID)
 	if !found {
 		return
 	}
