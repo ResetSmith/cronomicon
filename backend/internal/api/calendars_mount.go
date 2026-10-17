@@ -86,7 +86,9 @@ func (s *Server) calendarRef(w http.ResponseWriter, r *http.Request) (owner, nam
 			httpx.Fail500(w, s.log, "db_error", err)
 			return "", "", false
 		}
-		if n == 0 {
+		// Of an agency the caller reads (2.5.0 C2, CF-1); else as absent
+		// (question 72).
+		if n == 0 || !readsAgency(r, a) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "calendar not found")
 			return "", "", false
 		}
@@ -101,7 +103,10 @@ func (s *Server) calendarRef(w http.ResponseWriter, r *http.Request) (owner, nam
 	var owners []string
 	for rows.Next() {
 		var o string
-		if rows.Scan(&o) == nil {
+		// Only the agencies the caller reads (2.5.0 C2): another agency's
+		// calendar of the name is neither found nor counted, so "ambiguous" no
+		// longer says that another agency has one (question 72).
+		if rows.Scan(&o) == nil && readsAgency(r, o) {
 			owners = append(owners, o)
 		}
 	}

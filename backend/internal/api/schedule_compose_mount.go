@@ -519,7 +519,11 @@ func (s *Server) scheduleRef(w http.ResponseWriter, r *http.Request, source, git
 		var owner string
 		var uid sql.NullString
 		var isLive int
-		if rows.Scan(&owner, &uid, &isLive) == nil {
+		// Only the agencies the caller reads (2.5.0 C2, CF-1): another agency's
+		// schedule of the name is neither found nor counted (question 72: its
+		// detail, env and usedBy were every session's, and "ambiguous" said
+		// another agency had one).
+		if rows.Scan(&owner, &uid, &isLive) == nil && readsAgency(r, owner) {
 			ref := scheduleRefOf{owner: owner, name: name, uid: uid.String}
 			found = append(found, ref)
 			if isLive == 1 {

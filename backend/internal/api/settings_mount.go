@@ -571,7 +571,9 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		if c == nil {
+		// Whose it is (2.5.0 C2, CF-1: any key, Vault path and all, was every
+		// session's); as absent to anyone else (question 72).
+		if c == nil || !readsAgency(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", r.PathValue("credentialId"))) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
@@ -681,7 +683,8 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		if c == nil {
+		// Whose it is (2.5.0 C2): its usage names hosts and bastions.
+		if c == nil || !readsAgency(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", cid)) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
@@ -1275,7 +1278,9 @@ func (s *Server) handleGetScope(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	if sc == nil {
+	// Whose it is (2.5.0 C2, CF-1; it was every session's, hosts and all):
+	// as absent to anyone else (question 72).
+	if sc == nil || !readsAgency(r, settings.RowAgency(r.Context(), s.db, "scopes", "owner_agency", sid)) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
 		return
 	}

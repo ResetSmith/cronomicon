@@ -45,8 +45,8 @@ func TestI2_TwoAgenciesEachHaveTheirOwnCalendarOfOneName(t *testing.T) {
 	if c, _ := code(gTaxAdmin, http.MethodPut, "/api/v1/calendars/holidays/days?agencyId=ag:TAX", `{"days":[{"day":"2026-07-04"}]}`); c != http.StatusOK {
 		t.Errorf("TAX replacing its holidays' days = %d, want 200", c)
 	}
-	if c, _ := code(gTaxAdmin, http.MethodPut, "/api/v1/calendars/holidays/days?agencyId=ag:FIN", `{"days":[]}`); c != http.StatusForbidden {
-		t.Errorf("TAX replacing FIN's holidays' days = %d, want 403", c)
+	if c, _ := code(gTaxAdmin, http.MethodPut, "/api/v1/calendars/holidays/days?agencyId=ag:FIN", `{"days":[]}`); c != http.StatusNotFound {
+		t.Errorf("TAX replacing FIN's holidays' days = %d, want 404 (question 72: not TAX's to read)", c)
 	}
 	if c, b := code(gFinAdmin, http.MethodGet, "/api/v1/calendars/holidays?agencyId=ag:FIN", ""); c != http.StatusOK || !strings.Contains(b, "2026-12-25") {
 		t.Errorf("FIN's holidays after TAX's edit = %d %s, want its own day kept", c, b)

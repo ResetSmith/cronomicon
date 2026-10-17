@@ -3500,10 +3500,12 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	var triggeredBy, startedAt, completedAt, scheduleName, stepsSnapshot sql.NullString
 	var durationMs sql.NullInt64
 	var cancelled int
+	var wrAgency string
 	err := s.db.QueryRowContext(r.Context(), `
-		SELECT workflow_id, workflow_name, status, triggered_by, started_at, completed_at, schedule_name, duration_ms, steps_snapshot, cancelled
+		SELECT workflow_id, workflow_name, status, triggered_by, started_at, completed_at, schedule_name, duration_ms, steps_snapshot, cancelled,
+		       `+agencyid.ColumnOwnerSQL("workflow_runs", "agency_id")+`
 		FROM workflow_runs WHERE id = ?
-	`, traceID).Scan(&wrid, &wfName, &status, &triggeredBy, &startedAt, &completedAt, &scheduleName, &durationMs, &stepsSnapshot, &cancelled)
+	`, traceID).Scan(&wrid, &wfName, &status, &triggeredBy, &startedAt, &completedAt, &scheduleName, &durationMs, &stepsSnapshot, &cancelled, &wrAgency)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow run not found")
 		return
@@ -3517,12 +3519,19 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	// builds query secrets; SQLite pool rule). Everything below derives from them.
 	children := s.loadWorkflowChildRuns(r, traceID)
 
-	// Scope access check (FR-H2 IDOR mitigation, A5 fix).
+	// Scope access check (FR-H2 IDOR mitigation, A5 fix), after whose the run
+	// is (2.5.0 C2, CF-1; 1520): another agency's run, or Global's, whose jobs
+	// have no scope (or that had not reached a job) passed. Refused as absent
+	// (question 72; it was 403, which confirmed the run).
 	id, hasID := auth.IdentityFrom(r.Context())
 	if hasID && !id.Unrestricted() {
+		if !id.ReadsAgency(wrAgency) {
+			s.notReadable(w, r, "", "workflow run")
+			return
+		}
 		for _, cr := range children {
 			if !auth.ScopeReadableIn(id, cr.scopeOwner, cr.scope) {
-				s.denyScope(w, r, cr.scope, "scope access denied")
+				s.notReadable(w, r, cr.scope, "workflow run")
 				return
 			}
 		}
@@ -3546,7 +3555,7 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 							var sc, owner string
 							if err := rows.Scan(&sc, &owner); err == nil && sc != "" {
 								if !auth.ScopeReadableIn(id, owner, sc) {
-									s.denyScope(w, r, sc, "scope access denied")
+									s.notReadable(w, r, sc, "workflow run")
 									return
 								}
 							}
@@ -4277,8 +4286,12 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 			httpx.Fail500(w, s.log, "db_error", oerr)
 			return
 		}
-		if !auth.ScopeReadableIn(id, runOwner, scope) {
-			s.denyScope(w, r, scope, "scope access denied")
+		// Whose the run is first (2.5.0 C2, CF-1; 1480's owner): another
+		// agency's no-scope run, and Global's, passed the scope check. Refused
+		// as absent (question 72; it was 403, which confirmed the run).
+		owner, _ := run["ownerAgency"].(string)
+		if !id.ReadsAgency(agencyOrGlobal(owner)) || !auth.ScopeReadableIn(id, runOwner, scope) {
+			s.notReadable(w, r, scope, "run")
 			return
 		}
 	}

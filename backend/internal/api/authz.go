@@ -80,6 +80,16 @@ func (s *Server) denyScope(w http.ResponseWriter, r *http.Request, scope, messag
 	httpx.Fail(w, http.StatusForbidden, "forbidden", message)
 }
 
+// notReadable refuses a read of one object the caller may not read (2.5.0 C2,
+// the owner's answer to question 72): audited as denyScope does, but answered
+// 404, as for an object that is not there, so the route confirms nothing.
+func (s *Server) notReadable(w http.ResponseWriter, r *http.Request, scope, what string) {
+	if s.auth != nil {
+		s.auth.AuditDenied(r, auditActor(r), "insufficient_scope", scope, auditDetails(r, what+" not readable"))
+	}
+	httpx.Fail(w, http.StatusNotFound, "not_found", what+" not found")
+}
+
 // requireCan is the in-handler counterpart to requirePerm for SCOPED permissions
 // (RB-1/RB-5, the rbac-update plan).
 //
@@ -138,7 +148,9 @@ func (s *Server) requireReadableJob(w http.ResponseWriter, r *http.Request, jobI
 		if jr.Scope != nil {
 			scope = *jr.Scope
 		}
-		if !auth.ScopeReadableIn(id, jr.OwnerAgency, scope) {
+		// Whose it is first (2.5.0 C2, CF-1): a no-scope job of another agency,
+		// or of Global's, passed the scope check, script body and env and all.
+		if !id.ReadsAgency(agencyOrGlobal(jr.OwnerAgency)) || !auth.ScopeReadableIn(id, jr.OwnerAgency, scope) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 			return nil, false
 		}

@@ -287,9 +287,10 @@ func (s *Server) getReferenceUsage(w http.ResponseWriter, r *http.Request) {
 // a valid 200.
 func (s *Server) getRunReferences(w http.ResponseWriter, r *http.Request) {
 	traceID := r.PathValue("traceId")
-	var scope, runOwner string // runOwner: the agency the run's scope is looked for in (I2)
+	var scope, runOwner, owner string // runOwner: the agency the run's scope is looked for in (I2); owner: whose the run is (1480)
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT COALESCE(scope,''), `+agencyid.RunScopeOwnerSQL("agencies_json")+` FROM runs WHERE id = ?`, traceID).Scan(&scope, &runOwner)
+		`SELECT COALESCE(scope,''), `+agencyid.RunScopeOwnerSQL("agencies_json")+`, `+agencyid.ColumnOwnerSQL("runs", "owner_agency")+`
+		   FROM runs WHERE id = ?`, traceID).Scan(&scope, &runOwner, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 		return
@@ -298,10 +299,10 @@ func (s *Server) getRunReferences(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	// Scope guard, mirroring getRun (FR-H2): a restricted operator must not see the
-	// references of an out-of-scope run.
-	if id, ok := auth.IdentityFrom(r.Context()); ok && !auth.ScopeReadableIn(id, runOwner, scope) {
-		s.denyScope(w, r, scope, "scope access denied")
+	// Whose the run is, then its scope, mirroring getRun (FR-H2; 2.5.0 C2, CF-1):
+	// refused as absent (question 72).
+	if id, ok := auth.IdentityFrom(r.Context()); ok && (!id.ReadsAgency(owner) || !auth.ScopeReadableIn(id, runOwner, scope)) {
+		s.notReadable(w, r, scope, "run")
 		return
 	}
 
@@ -387,9 +388,15 @@ func (s *Server) getJobBindings(w http.ResponseWriter, r *http.Request) {
 	// scope-restricted operator must not read those for an out-of-scope job. Mirror
 	// getRunReferences' guard (403 on out-of-scope). (Job DETAIL is now scope-gated
 	// too — getJob returns 404 out-of-scope, SU-2.)
-	if id, ok := auth.IdentityFrom(r.Context()); ok && jr.Scope != nil &&
-		!auth.ScopeReadableIn(id, jr.OwnerAgency, *jr.Scope) {
-		s.denyScope(w, r, *jr.Scope, "scope access denied")
+	// Whose the job is first (2.5.0 C2, CF-1: a no-scope job of another agency
+	// passed), then its scope; refused as absent (question 72).
+	if id, ok := auth.IdentityFrom(r.Context()); ok && (!id.ReadsAgency(agencyOrGlobal(jr.OwnerAgency)) ||
+		(jr.Scope != nil && !auth.ScopeReadableIn(id, jr.OwnerAgency, *jr.Scope))) {
+		scope := ""
+		if jr.Scope != nil {
+			scope = *jr.Scope
+		}
+		s.notReadable(w, r, scope, "job")
 		return
 	}
 	bs, err := runref.ListBindings(r.Context(), s.db, runref.Owner{Kind: "job", Source: jr.Source, Name: jr.Name, UID: jr.UID})
