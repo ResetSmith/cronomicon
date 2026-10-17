@@ -67,9 +67,10 @@ func TestUnscopedJobRequiresBoundScope(t *testing.T) {
 		t.Errorf("restricted actor binding a held scope = %d, want 202", code)
 	}
 	// Binding a scope they do NOT hold: denied. Otherwise the bind would be a
-	// formality anyone could satisfy with any string.
-	if code := run("sec-operators", `{"scope":"finance"}`); code != http.StatusForbidden {
-		t.Errorf("restricted actor binding an UNHELD scope = %d, want 403", code)
+	// formality anyone could satisfy with any string. Finance's scope is not of
+	// the job's agency either, which is refused first (2.5.0 C2, question 78).
+	if code := run("sec-operators", `{"scope":"finance"}`); code != http.StatusUnprocessableEntity {
+		t.Errorf("restricted actor binding another agency's scope = %d, want 422 scope_not_in_agency", code)
 	}
 	// An unrestricted actor still runs it unbound — the genuinely global case
 	// ("back up the Cronomicon DB") that §2.5 preserves.

@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -341,9 +342,13 @@ func TestGlobalAgency_JobRowFlagsAnswerEachRoutesOwnQuestion(t *testing.T) {
 		{gAllViewer, map[string]flags{
 			"platform-idle": {}, "platform-unbound-run": {}, "platform-fin-run": {}, "fin-job": {}, "fin-job-tax-run": {},
 		}},
+		// Reads Global's jobs (it reaches every agency) but may not run them: a
+		// job with no scope runs against its own agency's scopes, and Global's
+		// are a global administrator's (2.5.0 C2, question 78, LR-24 retired).
+		// FIN's own run of one is still FIN's to stop.
 		{gMixed, map[string]flags{
-			"platform-idle": {true, false, false}, "platform-unbound-run": {true, false, false},
-			"platform-fin-run": {true, true, false}, "fin-job": {true, true, true}, "fin-job-tax-run": {true, false, true},
+			"platform-idle": {false, false, false}, "platform-unbound-run": {false, false, false},
+			"platform-fin-run": {false, true, false}, "fin-job": {true, true, true}, "fin-job-tax-run": {true, false, true},
 		}},
 	} {
 		got := list(c.who)
@@ -379,11 +384,16 @@ func TestGlobalAgency_JobRowFlagsAnswerEachRoutesOwnQuestion(t *testing.T) {
 		t.Errorf("fin operator stopping their own run of a job with no scope = %d, want 2xx (%s)", rec.Code, rec.Body)
 	}
 
-	// LR-24 retired for an agency's people (2.5.0 C2, question 78): Global's job
-	// with no scope is absent to them, so they do not run it against their own
-	// scope. A global administrator still runs it unbound.
+	// LR-24 retired (2.5.0 C2, question 78): Global's job with no scope is not
+	// run against an agency's scope, by the agency (to which it is absent) nor by
+	// a global administrator (IN-3: Global's jobs run on Global's hosts). A
+	// global administrator still runs it unbound.
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-idle")+"/run", gFinOperator, `{"scope":"fin-hosts"}`); rec.Code != http.StatusNotFound {
 		t.Errorf("fin operator running Global's job against FIN's scope = %d, want 404 (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-idle")+"/run", gRoot, `{"scope":"fin-hosts"}`); rec.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(rec.Body.String(), "scope_not_in_agency") {
+		t.Errorf("a global administrator running Global's job against FIN's scope = %d, want 422 scope_not_in_agency (%s)", rec.Code, rec.Body)
 	}
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-idle")+"/run", gRoot, `{}`); rec.Code != http.StatusAccepted {
 		t.Errorf("a global administrator running Global's job unbound = %d, want 202 (%s)", rec.Code, rec.Body)

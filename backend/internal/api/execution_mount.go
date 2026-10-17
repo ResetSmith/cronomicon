@@ -1112,16 +1112,23 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		scope = *jr.Scope
 	}
 	// The scope is looked for in the job's agency (I2). A job with no scope of its
-	// own, run against one named in the request, is that scope's agency's run, as
-	// it was (the one scope of the name).
-	runAgency := jobAgency
+	// own is run against a scope of its OWN agency (IN-3: Global's jobs run only
+	// on Global's hosts, an agency's on its own). Until 2.5.0 the named scope was
+	// looked for by name in any agency, so a department ran Global's job against
+	// its own scope (LR-24, retired by the owner's answer to question 78).
+	runAgency := agencyOrGlobal(jobAgency)
 	if body.Scope != "" && (jr.Scope == nil || *jr.Scope == "") {
-		a, oerr := execspec.ScopeOwnerByName(r.Context(), s.db, body.Scope)
-		if oerr != nil {
-			httpx.Fail500(w, s.log, "db_error", oerr)
+		var n int
+		if err := s.db.QueryRowContext(r.Context(),
+			`SELECT COUNT(*) FROM scopes sc WHERE `+agencyid.ScopeIn("sc", "?", "?"), body.Scope, runAgency).Scan(&n); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		runAgency = a
+		if n == 0 {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "scope_not_in_agency",
+				"a job with no scope runs against a scope of its own agency, and "+body.Scope+" is not one of them")
+			return
+		}
 	}
 	targetHost := body.TargetHost
 	if targetHost == "" && jr.Host != nil {
@@ -2147,10 +2154,10 @@ func (s *Server) requirePauseAuthority(w http.ResponseWriter, r *http.Request, i
 // caller (RB-24), each the way its route's gate answers it:
 //
 //	canRun    may they start a run — runJob. On a job with no scope that is
-//	          "after choosing a scope they hold" (RB-26): the job is Global's
-//	          (LR-24) and a department runs it against its own scope, so the
-//	          verb held anywhere is enough to open the dialog. Only a global
-//	          administrator may run it unbound.
+//	          "after choosing a scope of the job's agency" (RB-26): the verb held
+//	          on the job's agency. Global's job is a global administrator's (LR-24,
+//	          a department running it against its own scope, retired in 2.5.0 C2,
+//	          question 78). Only a global administrator may run one unbound.
 //	canKill   may they stop the run that is active — killJob, which authorizes
 //	          on the RUN's scope, not the job's: a run of an unscoped job
 //	          carries the scope its triggerer bound, and an unbound run is
@@ -2172,7 +2179,7 @@ func rowAuthority(actor auth.Identity, jobAgency, jobScope, lastRunStatus, lastR
 		return auth.ScopeReadableIn(actor, agency, scope) && actor.CanIn(perm, agency, scope)
 	}
 	if jobScope == "" {
-		canRun = actor.CanAnywhere(auth.PermTriggerJobs)
+		canRun = actor.CanAgency(auth.PermTriggerJobs, agencyOrGlobal(jobAgency))
 	} else {
 		canRun = on(auth.PermTriggerJobs, jobAgency, jobScope)
 	}
