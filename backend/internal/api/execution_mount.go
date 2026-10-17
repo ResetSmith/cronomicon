@@ -1008,6 +1008,15 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
+	// A job is run by those who may read it (2.5.0 C2, CF-1): to anyone else it
+	// is absent (question 72). This retires LR-24 for an agency's people: they
+	// ran Global's job with no scope against their own scope without reading it
+	// (the owner's answer to question 78).
+	jobAgency := s.jobAgencyByRowID(r.Context(), jobID)
+	if !id.ReadsAgency(agencyOrGlobal(jobAgency)) {
+		s.notReadable(w, r, "", "job")
+		return
+	}
 
 	// Parse optional scope / target-host / executor / env overrides (R5.1, F1).
 	var body struct {
@@ -1105,7 +1114,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// The scope is looked for in the job's agency (I2). A job with no scope of its
 	// own, run against one named in the request, is that scope's agency's run, as
 	// it was (the one scope of the name).
-	runAgency := s.jobAgencyByRowID(r.Context(), jobID)
+	runAgency := jobAgency
 	if body.Scope != "" && (jr.Scope == nil || *jr.Scope == "") {
 		a, oerr := execspec.ScopeOwnerByName(r.Context(), s.db, body.Scope)
 		if oerr != nil {

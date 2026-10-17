@@ -378,6 +378,16 @@ func TestGlobalAgency_JobRowFlagsAnswerEachRoutesOwnQuestion(t *testing.T) {
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-fin-run")+"/kill", gFinOperator, `{}`); rec.Code/100 != 2 {
 		t.Errorf("fin operator stopping their own run of a job with no scope = %d, want 2xx (%s)", rec.Code, rec.Body)
 	}
+
+	// LR-24 retired for an agency's people (2.5.0 C2, question 78): Global's job
+	// with no scope is absent to them, so they do not run it against their own
+	// scope. A global administrator still runs it unbound.
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-idle")+"/run", gFinOperator, `{"scope":"fin-hosts"}`); rec.Code != http.StatusNotFound {
+		t.Errorf("fin operator running Global's job against FIN's scope = %d, want 404 (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-idle")+"/run", gRoot, `{}`); rec.Code != http.StatusAccepted {
+		t.Errorf("a global administrator running Global's job unbound = %d, want 202 (%s)", rec.Code, rec.Body)
+	}
 }
 
 // A row that is in no agency is refused by every gate, which would make it

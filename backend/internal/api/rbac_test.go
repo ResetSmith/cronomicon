@@ -261,8 +261,10 @@ func TestRunPathScopeGuard(t *testing.T) {
 		return rec.Code
 	}
 
-	if code := run("run-viewers", jobB); code != http.StatusForbidden {
-		t.Errorf("viewer trigger of out-of-scope job (ScopeB) = %d, want 403", code)
+	// ScopeB's job is another agency's: to these actors it is absent (2.5.0 C2,
+	// question 72), where a scope they read but lack the verb on is 403.
+	if code := run("run-viewers", jobB); code != http.StatusNotFound {
+		t.Errorf("viewer trigger of out-of-scope job (ScopeB) = %d, want 404", code)
 	}
 	// 🔴 THE FR-M1 CHANGE. A viewer holds scope access to ScopeA and still may not
 	// execute, because viewer carries no triggerJobs. Before v0.56.4 this was 202.
@@ -275,8 +277,8 @@ func TestRunPathScopeGuard(t *testing.T) {
 		t.Errorf("operator trigger of in-scope job = %d, want 202 — RB-2 must narrow, not revoke", code)
 	}
 	// Scope still bounds the verb: the operator holds triggerJobs but not ScopeB.
-	if code := run("run-operators", jobB); code != http.StatusForbidden {
-		t.Errorf("operator trigger of out-of-scope job = %d, want 403", code)
+	if code := run("run-operators", jobB); code != http.StatusNotFound {
+		t.Errorf("operator trigger of out-of-scope job = %d, want 404 (another agency's)", code)
 	}
 	if code := run("run-admins", jobB); code != http.StatusAccepted {
 		t.Errorf("admin (unrestricted) trigger of any scope = %d, want 202", code)
