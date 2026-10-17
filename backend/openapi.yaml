@@ -2683,6 +2683,12 @@ paths:
       description: |
         Honours date-range, event-type filters and CSV/JSON format exactly as
         surfaced in Settings → Audit & Compliance (S5).
+
+        Who may export what (2.5.0 C1, CF-5): a global administrator exports
+        every row, the authentication trail included; an agency's
+        administrator (`configureApp` on it) exports the rows of the agencies
+        they administer and no authentication events. Every row names the
+        agency it is of (`agency`, the last CSV column).
       parameters:
         - { $ref: '#/components/parameters/from' }
         - { $ref: '#/components/parameters/to' }

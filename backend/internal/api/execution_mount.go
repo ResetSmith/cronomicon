@@ -323,16 +323,15 @@ var runScopeOwnerSQL = agencyid.RunScopeOwnerSQL("agencies_json")
 // the owner stamped when it was queued (migration 1480), by the no-owner rule.
 var runOwnerSQL = agencyid.Owner("owner_agency")
 
-// activityOwnerSQL is whose a row of `activity` is, for the agency context: its
-// run's, or its workflow run's (by the trace id it records), else its job's,
-// else the agency the row records (migration 1510: a sync's or a push's
-// repository's, or the agency a change was made in); Global's for a row that
-// names none (a script's change, history from before 2.4.4).
-var activityOwnerSQL = agencyid.Owner(`COALESCE(
-	(SELECT ru.owner_agency FROM runs ru WHERE ru.id = activity.trace_id),
-	(SELECT ` + agencyid.WorkflowRunSQL("wr") + ` FROM workflow_runs wr WHERE wr.id = activity.trace_id),
-	(SELECT ` + agencyid.JobSQL("aj") + ` FROM jobs aj WHERE aj.uid = activity.job_uid),
-	activity.agency_id)`)
+// activityOwnerSQL is whose a row of `activity` is: the agency it records, its
+// object's, since 2.5.0 C1 (the writer works it out from the row's run,
+// workflow run, job or workflow when the caller names none, and 1520 did the
+// same for the rows before); Global's for a row that names none. 2.4.4 worked
+// it out here, when the row was read, which could not be filtered on.
+var activityOwnerSQL = agencyid.ColumnOwnerSQL("activity", "agency_id")
+
+// changeLogOwnerSQL is whose a row of `change_log` is (1520, C1).
+var changeLogOwnerSQL = agencyid.ColumnOwnerSQL("change_log", "agency_id")
 
 func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -4841,8 +4840,12 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request) {
 		base += " AND at < ?"
 		args = append(args, to)
 	}
-	// 2.4.4: the agency the request works in. (Activity has no read filter of
-	// its own: who reads which is 2.5.0's, CF-2.)
+	// Who reads which row (2.5.0 C1, CF-1), then the agency the request works
+	// in (2.4.4), which narrows on top of it and never widens it.
+	if frag, fargs := auditReadFilter(r, activityOwnerSQL); frag != "" {
+		base += frag
+		args = append(args, fargs...)
+	}
 	if frag, fargs := agencyctx.Narrow(r, activityOwnerSQL); frag != "" {
 		base += frag
 		args = append(args, fargs...)
@@ -4953,13 +4956,20 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request) {
 // Window-scoped (AA-Q5): same from/to as the feed, so the picker offers the
 // population the feed is showing. A global distinct over the 90-day retention
 // would list every runner that ever polled, most of them irrelevant to what is
-// on screen. Note this reveals no actor the feed itself would not — the feed is
-// not scope-filtered today (an SU-series item, deliberately unchanged here), so
-// this endpoint cannot widen an exposure that the rows already carry.
+// on screen. It reveals no actor the feed itself would not: it reads the rows
+// the feed may show (2.5.0 C1, CF-1), in the agency the request works in.
 func (s *Server) listActivityActors(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	where := "WHERE 1=1"
 	var args []any
+	if frag, fargs := auditReadFilter(r, activityOwnerSQL); frag != "" {
+		where += frag
+		args = append(args, fargs...)
+	}
+	if frag, fargs := agencyctx.Narrow(r, activityOwnerSQL); frag != "" {
+		where += frag
+		args = append(args, fargs...)
+	}
 	if from := q.Get("from"); from != "" {
 		where += " AND at >= ?"
 		args = append(args, from)
@@ -5055,6 +5065,16 @@ func (s *Server) listChangeLog(w http.ResponseWriter, r *http.Request) {
 	if to != "" {
 		base += " AND at < ?"
 		args = append(args, to)
+	}
+	// Who reads which row (2.5.0 C1, CF-1; until then every session read every
+	// agency's changes), then the agency the request works in.
+	if frag, fargs := auditReadFilter(r, changeLogOwnerSQL); frag != "" {
+		base += frag
+		args = append(args, fargs...)
+	}
+	if frag, fargs := agencyctx.Narrow(r, changeLogOwnerSQL); frag != "" {
+		base += frag
+		args = append(args, fargs...)
 	}
 
 	// TS-20: allowlisted ?sort=&order= (see listRuns). Keys are the wire/table

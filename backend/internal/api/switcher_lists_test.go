@@ -52,6 +52,10 @@ func seedSwitcher(t *testing.T, pool *sql.DB) {
 	        ('run-end', 'x', 'success', 's0-tax-job',     's0-tax-act',     'r-tax',  ?, ?),
 	        ('run-end', 'x', 'success', 's0-glob-job',    's0-glob-act',    'r-glob', ?, ?),
 	        ('run-end', 'x', 'success', 's0-fin-noscope', 's0-fin0-act',    'r-fin0', ?, ?)`, now, now, now, now, now, now, now, now)
+	// Their agency, as the writer works it out from the run (2.5.0 C1); these
+	// rows are inserted here directly.
+	exec(`UPDATE activity SET agency_id = (SELECT ru.owner_agency FROM runs ru WHERE ru.id = activity.trace_id)
+	       WHERE summary LIKE 's0-%' AND agency_id IS NULL`)
 
 	exec(`INSERT INTO workflows (uid, name, source, owner_agency, steps, created_at) VALUES
 	        ('w-fin',  's0-fin-flow',  'cronomicon', 'ag:FIN', '[]', ?),
@@ -226,8 +230,8 @@ var switcherToday = map[string][6]string{
 	"/api/v1/access-grants":                   {"YYY", "403", "YYY", "YYY", "YYY", "403"},
 	"/api/v1/service-accounts":                {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
 	"/api/v1/schedule-pushes":                 {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/activity?pageSize=200":           {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/activity?pageSize=200&noscope=1": {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/activity?pageSize=200":           {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/activity?pageSize=200&noscope=1": {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 }
 
 // switcherSees asks one list as one person and answers as switcherToday does.

@@ -32,10 +32,10 @@ func seedAuditRows(t *testing.T, pool *sql.DB) {
 // wantRows is the expected unified export, in source-then-time order.
 func wantRows() []AuditRow {
 	return []AuditRow{
-		{Source: "change_log", At: "2026-01-01T01:00:00Z", Actor: "alice", Category: "auth", Action: "login", Target: "session", Details: "ok"},
-		{Source: "activity", At: "2026-01-01T02:00:00Z", Actor: "bob", Category: "config", Action: "updated", Details: "x", TraceID: "t1"},
-		{Source: "runs", At: "2026-01-01T03:00:00Z", Actor: "carol", Category: "executions", Action: "run", Target: "job1", Status: "success", TraceID: "run-1"},
-		{Source: "schedule_pushes", At: "2026-01-01T04:00:00Z", Actor: "dave", Category: "schedulePushes", Action: "push", Target: "sched.yml", Details: "pushed", Status: "success"},
+		{Source: "change_log", At: "2026-01-01T01:00:00Z", Actor: "alice", Category: "auth", Action: "login", Target: "session", Details: "ok", Agency: "global"},
+		{Source: "activity", At: "2026-01-01T02:00:00Z", Actor: "bob", Category: "config", Action: "updated", Details: "x", TraceID: "t1", Agency: "global"},
+		{Source: "runs", At: "2026-01-01T03:00:00Z", Actor: "carol", Category: "executions", Action: "run", Target: "job1", Status: "success", TraceID: "run-1", Agency: "global"},
+		{Source: "schedule_pushes", At: "2026-01-01T04:00:00Z", Actor: "dave", Category: "schedulePushes", Action: "push", Target: "sched.yml", Details: "pushed", Status: "success", Agency: "global"},
 	}
 }
 
@@ -47,7 +47,7 @@ func TestExportAuditStreamJSON(t *testing.T) {
 	seedAuditRows(t, pool)
 
 	var buf bytes.Buffer
-	if err := ExportAudit(context.Background(), pool, &buf, "", "", nil, "json"); err != nil {
+	if err := ExportAudit(context.Background(), pool, &buf, "", "", nil, "json", ExportScope{All: true}); err != nil {
 		t.Fatalf("ExportAudit json: %v", err)
 	}
 	want, _ := json.Marshal(wantRows())
@@ -61,15 +61,15 @@ func TestExportAuditStreamCSV(t *testing.T) {
 	seedAuditRows(t, pool)
 
 	var buf bytes.Buffer
-	if err := ExportAudit(context.Background(), pool, &buf, "", "", nil, "csv"); err != nil {
+	if err := ExportAudit(context.Background(), pool, &buf, "", "", nil, "csv", ExportScope{All: true}); err != nil {
 		t.Fatalf("ExportAudit csv: %v", err)
 	}
 
 	var want bytes.Buffer
 	cw := csv.NewWriter(&want)
-	_ = cw.Write([]string{"source", "at", "actor", "category", "action", "target", "details", "status", "traceId", "actingAgency"})
+	_ = cw.Write([]string{"source", "at", "actor", "category", "action", "target", "details", "status", "traceId", "actingAgency", "agency"})
 	for _, r := range wantRows() {
-		_ = cw.Write([]string{r.Source, r.At, r.Actor, r.Category, r.Action, r.Target, r.Details, r.Status, r.TraceID, r.ActingAgency})
+		_ = cw.Write([]string{r.Source, r.At, r.Actor, r.Category, r.Action, r.Target, r.Details, r.Status, r.TraceID, r.ActingAgency, r.Agency})
 	}
 	cw.Flush()
 	if buf.String() != want.String() {
@@ -83,7 +83,7 @@ func TestExportAuditEmpty(t *testing.T) {
 	pool := openTestPool(t)
 
 	var jbuf bytes.Buffer
-	if err := ExportAudit(context.Background(), pool, &jbuf, "", "", nil, "json"); err != nil {
+	if err := ExportAudit(context.Background(), pool, &jbuf, "", "", nil, "json", ExportScope{All: true}); err != nil {
 		t.Fatalf("json: %v", err)
 	}
 	if jbuf.String() != "[]" {
@@ -91,10 +91,10 @@ func TestExportAuditEmpty(t *testing.T) {
 	}
 
 	var cbuf bytes.Buffer
-	if err := ExportAudit(context.Background(), pool, &cbuf, "", "", nil, "csv"); err != nil {
+	if err := ExportAudit(context.Background(), pool, &cbuf, "", "", nil, "csv", ExportScope{All: true}); err != nil {
 		t.Fatalf("csv: %v", err)
 	}
-	if got := strings.TrimSpace(cbuf.String()); got != "source,at,actor,category,action,target,details,status,traceId,actingAgency" {
+	if got := strings.TrimSpace(cbuf.String()); got != "source,at,actor,category,action,target,details,status,traceId,actingAgency,agency" {
 		t.Errorf("empty CSV = %q, want header only", got)
 	}
 }
@@ -107,7 +107,7 @@ func TestExportAuditFilters(t *testing.T) {
 
 	// Only executions.
 	var buf bytes.Buffer
-	if err := ExportAudit(context.Background(), pool, &buf, "", "", []string{"executions"}, "json"); err != nil {
+	if err := ExportAudit(context.Background(), pool, &buf, "", "", []string{"executions"}, "json", ExportScope{All: true}); err != nil {
 		t.Fatalf("filtered export: %v", err)
 	}
 	var got []AuditRow
@@ -120,7 +120,7 @@ func TestExportAuditFilters(t *testing.T) {
 
 	// Date range excludes the 04:00 schedule push (to is exclusive).
 	buf.Reset()
-	if err := ExportAudit(context.Background(), pool, &buf, "2026-01-01T00:00:00Z", "2026-01-01T04:00:00Z", nil, "json"); err != nil {
+	if err := ExportAudit(context.Background(), pool, &buf, "2026-01-01T00:00:00Z", "2026-01-01T04:00:00Z", nil, "json", ExportScope{All: true}); err != nil {
 		t.Fatalf("ranged export: %v", err)
 	}
 	got = nil
@@ -170,7 +170,7 @@ func TestExportAuthEventsIsNotAnAliasForConfigChanges(t *testing.T) {
 	seedAuthEvent(t, pool, "2026-01-01T05:00:00Z", "login-failed", "failure", "mallory@corp.example")
 
 	var buf bytes.Buffer
-	if err := ExportAudit(context.Background(), pool, &buf, "", "", []string{"authEvents"}, "json"); err != nil {
+	if err := ExportAudit(context.Background(), pool, &buf, "", "", []string{"authEvents"}, "json", ExportScope{All: true}); err != nil {
 		t.Fatalf("ExportAudit authEvents: %v", err)
 	}
 
@@ -214,7 +214,7 @@ func TestExportAuthEventNullActorRendersUnauthenticated(t *testing.T) {
 	seedAuthEvent(t, pool, "2026-01-01T06:00:00Z", "login-failed", "failure", "")
 
 	var buf bytes.Buffer
-	if err := ExportAudit(context.Background(), pool, &buf, "", "", []string{"authEvents"}, "json"); err != nil {
+	if err := ExportAudit(context.Background(), pool, &buf, "", "", []string{"authEvents"}, "json", ExportScope{All: true}); err != nil {
 		t.Fatalf("ExportAudit: %v", err)
 	}
 	var got []AuditRow
@@ -230,7 +230,7 @@ func TestExportAuthEventNullActorRendersUnauthenticated(t *testing.T) {
 
 	// The CSV surface must carry it too: that is the format an auditor opens.
 	buf.Reset()
-	if err := ExportAudit(context.Background(), pool, &buf, "", "", []string{"authEvents"}, "csv"); err != nil {
+	if err := ExportAudit(context.Background(), pool, &buf, "", "", []string{"authEvents"}, "csv", ExportScope{All: true}); err != nil {
 		t.Fatalf("ExportAudit csv: %v", err)
 	}
 	if !strings.Contains(buf.String(), "(unauthenticated)") {
@@ -247,7 +247,7 @@ func TestExportAllIncludesAuthEvents(t *testing.T) {
 	seedAuthEvent(t, pool, "2026-01-01T05:00:00Z", "login", "success", "alice@corp.example")
 
 	var buf bytes.Buffer
-	if err := ExportAudit(context.Background(), pool, &buf, "", "", nil, "json"); err != nil {
+	if err := ExportAudit(context.Background(), pool, &buf, "", "", nil, "json", ExportScope{All: true}); err != nil {
 		t.Fatalf("ExportAudit: %v", err)
 	}
 	var got []AuditRow
@@ -291,7 +291,7 @@ func TestExportHostKeyLedger(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := ExportAudit(context.Background(), pool, &buf, "", "", []string{"hostKeys"}, "json"); err != nil {
+	if err := ExportAudit(context.Background(), pool, &buf, "", "", []string{"hostKeys"}, "json", ExportScope{All: true}); err != nil {
 		t.Fatalf("ExportAudit hostKeys: %v", err)
 	}
 	var got []AuditRow

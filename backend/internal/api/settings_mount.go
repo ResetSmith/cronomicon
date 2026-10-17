@@ -722,7 +722,9 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/settings/observability", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateObservabilitySettings)))
 
 	// ── Audit Export (ConfigureApp — full change/audit history, Q2/PP-B1) ────────
-	mux.Handle("GET /api/v1/audit/export", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleAuditExport)))
+	// 2.5.0 C1 (CF-5): an agency's administrator exports their agencies' rows; a
+	// global administrator everything, authentication events included.
+	mux.Handle("GET /api/v1/audit/export", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleAuditExport)))
 }
 
 // mountWriteChangeLog writes a change_log row for mutations audited at the API layer
@@ -2463,7 +2465,7 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	// Streamed row-by-row (CC.10) so a full-table export stays flat on memory.
 	// Headers + 200 are already sent, so a mid-stream failure can only be logged;
 	// the truncated body signals it to the operator.
-	if err := settings.ExportAudit(r.Context(), s.db, w, from, to, eventTypes, format); err != nil {
+	if err := settings.ExportAudit(r.Context(), s.db, w, from, to, eventTypes, format, auditExportScope(r)); err != nil {
 		s.log.Error("audit export stream failed", "error", err)
 	}
 }

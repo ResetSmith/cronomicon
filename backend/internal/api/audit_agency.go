@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"net/http"
+	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
@@ -11,6 +14,45 @@ import (
 // was viewing (2.5.0 C1; the owner's answer to question 74). These read it for
 // the objects the handlers here change; each is Global's when the object is
 // not there (any longer).
+
+// auditReadFilter is who reads an audit row (2.5.0 C1, CF-1), as a clause over
+// agencyExpr, the row's agency by the no-owner rule: an agency's rows are its
+// own people's and theirs whose grant reaches every agency; Global's rows, and
+// the installation's (which are Global's), are only the latter's: global
+// administrators and a viewer of every agency, the operations team (the
+// owner's answer to question 76). The one place the rule is written.
+func auditReadFilter(r *http.Request, agencyExpr string) (string, []any) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		return " AND 1 = 0", nil
+	}
+	everywhere, agencies := id.AgenciesRead()
+	if everywhere {
+		return "", nil
+	}
+	if len(agencies) == 0 {
+		return " AND 1 = 0", nil
+	}
+	args := make([]any, len(agencies))
+	for i, a := range agencies {
+		args[i] = a
+	}
+	return " AND " + agencyExpr + " IN (" + strings.TrimSuffix(strings.Repeat("?, ", len(agencies)), ", ") + ")", args
+}
+
+// auditExportScope is what the caller's audit export holds (CF-5): everything
+// for a global administrator; the rows of the agencies an agency's
+// administrator administers, and no authentication events.
+func auditExportScope(r *http.Request) settings.ExportScope {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		return settings.ExportScope{}
+	}
+	if id.GlobalAdmin(auth.PermConfigureApp) {
+		return settings.ExportScope{All: true, AuthEvents: true}
+	}
+	return settings.ExportScope{Agencies: id.AgenciesFor(auth.PermConfigureApp)}
+}
 
 // jobAgency is the agency of the job with uid (agencyid.JobOwnerSQL).
 func (s *Server) jobAgency(ctx context.Context, uid string) string {

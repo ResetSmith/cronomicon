@@ -153,7 +153,7 @@ func WriteChangeLogAt(ctx context.Context, db Execer, at, agency, actor, categor
 	// file is an export of it (see Sink).
 	emit(Event{
 		At: now, Source: "change_log",
-		Actor: actor, ActingAgency: acting, Category: category, Action: action,
+		Actor: actor, ActingAgency: acting, Agency: agency, Category: category, Action: action,
 		Target: target, Details: details,
 	})
 	return nil
@@ -218,11 +218,23 @@ func WriteActivity(ctx context.Context, db Execer, p ActivityParams) error {
 			nullStr(p.AgencyID), id); err != nil {
 			return err
 		}
+		// The stream line says whose too; read back what the row worked out.
+		if q, ok := db.(rowQuerier); ok && p.AgencyID == "" {
+			var a sql.NullString
+			if q.QueryRowContext(ctx, `SELECT agency_id FROM activity WHERE id = ?`, id).Scan(&a) == nil {
+				p.AgencyID = a.String
+			}
+		}
 	}
 	if ev, ok := activityEvent(now, p); ok {
 		emit(ev)
 	}
 	return nil
+}
+
+// rowQuerier is the read half of a *sql.DB or *sql.Tx, when the Execer has it.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // activityAgencySQL is an activity row's agency, over the row itself: the
