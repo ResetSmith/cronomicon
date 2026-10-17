@@ -221,8 +221,8 @@ func (s *Server) listCalendars(w http.ResponseWriter, r *http.Request) {
 	items := make([]calendarRow, 0, len(rows))
 	caller, _ := auth.IdentityFrom(r.Context())
 	for _, c := range rows {
-		// 2.4.4: the agency the request works in.
-		if !agencyctx.In(r, c.OwnerAgency) {
+		// Whose it is (2.5.0 C2, CF-1), then the agency the request works in.
+		if !readsAgency(r, c.OwnerAgency) || !agencyctx.In(r, c.OwnerAgency) {
 			continue
 		}
 		c.UsedBy = bindings[calKey(c.OwnerAgency, c.Name)]

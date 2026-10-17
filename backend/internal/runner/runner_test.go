@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/notify"
@@ -554,7 +555,9 @@ func TestRegisterStoresToolchains(t *testing.T) {
 
 	// Surfaced on GET /runners.
 	lrec := httptest.NewRecorder()
-	svc.HandleListRunners(lrec, httptest.NewRequest(http.MethodGet, "/api/v1/runners", nil))
+	// As one who reads every agency: the list is filtered by who reads it (2.5.0 C2).
+	svc.HandleListRunners(lrec, httptest.NewRequest(http.MethodGet, "/api/v1/runners", nil).WithContext(auth.WithIdentity(context.Background(),
+		auth.Identity{Roles: []string{"admin"}, Grants: []auth.RoleGrant{{Role: "admin", Scopes: []string{auth.AllScopes}}}})))
 	if !strings.Contains(lrec.Body.String(), `"ansibleCore":"2.16.3"`) {
 		t.Errorf("GET /runners should surface toolchains: %s", lrec.Body.String())
 	}

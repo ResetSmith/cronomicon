@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/settings"
@@ -38,6 +39,42 @@ func agencyReadFilter(r *http.Request, agencyExpr string) (string, []any) {
 		args[i] = a
 	}
 	return " AND " + agencyExpr + " IN (" + strings.TrimSuffix(strings.Repeat("?, ", len(agencies)), ", ") + ")", args
+}
+
+// readsAgency is agencyReadFilter for a row already read, by its owner's id
+// (none is Global's): whether the caller may read a row of that agency.
+func readsAgency(r *http.Request, owner string) bool {
+	id, ok := auth.IdentityFrom(r.Context())
+	return ok && id.ReadsAgency(agencyOrGlobal(owner))
+}
+
+// readsAnyAgency is readsAgency for a row that names several agencies (a
+// membership): readable when the caller reads one of them; a row of none is
+// Global's.
+func readsAnyAgency(r *http.Request, agencies []string) bool {
+	if len(agencies) == 0 {
+		return readsAgency(r, agencyid.Global)
+	}
+	for _, a := range agencies {
+		if readsAgency(r, a) {
+			return true
+		}
+	}
+	return false
+}
+
+// keepReadable keeps the rows of a list already read that the caller may read
+// (readsAgency, by owner), then narrows them to the agency the request works
+// in (agencyctx.Keep): the reading rule, then the view, for a list filtered in
+// Go.
+func keepReadable[T any](r *http.Request, list []T, owner func(T) string) []T {
+	out := make([]T, 0, len(list))
+	for _, x := range list {
+		if readsAgency(r, owner(x)) {
+			out = append(out, x)
+		}
+	}
+	return agencyctx.Keep(r, out, owner)
 }
 
 // auditExportScope is what the caller's audit export holds (CF-5): everything

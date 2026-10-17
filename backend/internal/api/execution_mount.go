@@ -438,6 +438,12 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 		inner += frag
 		args = append(args, fargs...)
 	}
+	// Whose the job is (2.5.0 C2, CF-1): the scope filter above lets through
+	// another agency's job with no scope, and Global's.
+	if frag, fargs := agencyReadFilter(r, agencyid.JobOwnerSQL("j")); frag != "" {
+		inner += frag
+		args = append(args, fargs...)
+	}
 	// 2.4.4: the agency the request works in, on top of what may be read.
 	if frag, fargs := agencyctx.Narrow(r, agencyid.JobOwnerSQL("j")); frag != "" {
 		inner += frag
@@ -3364,6 +3370,13 @@ func (s *Server) listWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 		base += frag
 		args = append(args, fargs...)
 	}
+	// Whose the workflow run is (2.5.0 C2, CF-1): its agency, recorded since
+	// 1520. The scope filter above gates nothing in practice (the column is
+	// not written), so every agency's workflow runs were everyone's.
+	if frag, fargs := agencyReadFilter(r, agencyid.ColumnOwnerSQL("workflow_runs", "agency_id")); frag != "" {
+		base += frag
+		args = append(args, fargs...)
+	}
 	// 2.4.4: the agency the request works in, on top of what may be read.
 	if frag, fargs := agencyctx.Narrow(r, agencyid.Owner(agencyid.WorkflowRunSQL("workflow_runs"))); frag != "" {
 		base += frag
@@ -4158,6 +4171,12 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		// Empty grant ⇒ GLOBAL only (the A5 fix: empty no longer means "all"); a
 		// grant of an agency's scope reads that agency's runs on it (I2).
 		frag, fargs := s.scopeWhereFragment(r, "scope", runScopeOwnerSQL)
+		base += frag
+		args = append(args, fargs...)
+	}
+	// Whose the run is (2.5.0 C2, CF-1): its owner (1480). The scope filter
+	// above lets through another agency's run with no scope, and Global's.
+	if frag, fargs := agencyReadFilter(r, runOwnerSQL); frag != "" {
 		base += frag
 		args = append(args, fargs...)
 	}

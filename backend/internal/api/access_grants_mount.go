@@ -85,9 +85,10 @@ func (s *Server) handleListAccessGrants(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		g.AllScopes = all != 0
-		// 2.4.4: the agency the request works in. A grant on every agency
-		// names none, and is shown under Global (SW-10).
-		if !agencyctx.In(r, g.AgencyID) {
+		// Whose it is (2.5.0 C2, CF-1: an agency's administrator listed every
+		// agency's grants), then the agency the request works in. A grant on
+		// every agency names none, and is Global's (SW-10).
+		if !readsAgency(r, g.AgencyID) || !agencyctx.In(r, g.AgencyID) {
 			continue
 		}
 		out = append(out, g)

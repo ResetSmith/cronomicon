@@ -213,7 +213,10 @@ func TestReferenceUsageCounts(t *testing.T) {
 	if viewer.Jobs != 1 {
 		t.Errorf("prod-restricted viewer job count = %d, want 1 (staging job must not leak)", viewer.Jobs)
 	}
-	if viewer.Scripts != 1 {
-		t.Errorf("viewer script count = %d, want 1 (scripts are unscoped)", viewer.Scripts)
+	// The script is Global's (no repository of its own): counted only for those
+	// who reach every agency since 2.5.0 C2 (question 77; scripts are unscoped,
+	// so it had been counted for everyone).
+	if viewer.Scripts != 0 {
+		t.Errorf("viewer script count = %d, want 0 (Global's script)", viewer.Scripts)
 	}
 }

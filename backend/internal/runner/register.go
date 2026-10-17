@@ -375,14 +375,31 @@ func (s *Service) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2.4.4: the agency the request works in (agencyctx). A runner is its
-	// owner's (LR-58); one with no owner row is Global's.
-	out = agencyctx.Keep(r, out, func(rr runnerResponse) string {
-		if rr.OwnerAgency == nil {
-			return ""
+	// Whose each runner is (2.5.0 C2, CF-1: every agency's runners, inventory
+	// and toolchains, were listed to everyone), then the agency the request
+	// works in (2.4.4). A runner is its owner's (LR-58); one with no owner row
+	// is Global's.
+	ownerOf := func(rr runnerResponse) string {
+		if rr.OwnerAgency == nil || rr.OwnerAgency.ID == "" {
+			return agencyid.Global
 		}
 		return rr.OwnerAgency.ID
-	})
+	}
+	// Listed to a reader of its owner, or of an agency it serves (a legacy
+	// placement serves several, and its host keys are each one's to review,
+	// LR-63).
+	reader, _ := auth.IdentityFrom(r.Context())
+	readable := out[:0]
+	for _, rr := range out {
+		ok := reader.ReadsAgency(ownerOf(rr))
+		for _, a := range rr.Agencies {
+			ok = ok || reader.ReadsAgency(a.ID)
+		}
+		if ok {
+			readable = append(readable, rr)
+		}
+	}
+	out = agencyctx.Keep(r, readable, ownerOf)
 
 	// DR-7 (c), re-keyed by MA-32: offer to re-point the scope bindings a
 	// previous enrolment under the same name still holds, for the scopes of each

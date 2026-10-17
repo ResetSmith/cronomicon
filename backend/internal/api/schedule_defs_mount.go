@@ -214,7 +214,8 @@ func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 	drows, err := s.db.QueryContext(r.Context(),
 		`SELECT owner_kind, owner_name, ds.owner_uid,
 		        -- the owner's agency (a job's since 1400; until I2 its scope's)
-		        (SELECT a.name FROM agencies a WHERE a.id = `+agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind")+`)
+		        (SELECT a.name FROM agencies a WHERE a.id = `+agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind")+`),
+		        `+agencyid.Owner(agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind"))+`
 		   FROM definition_schedules ds
 		  WHERE schedule_uid = ?
 		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
@@ -224,19 +225,26 @@ func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 		                     AND w2.source=ds.owner_source AND w2.name=ds.owner_name
 		                     AND w2.deleted_at IS NOT NULL)
 		  ORDER BY owner_kind, owner_name`, sd.UID)
+	// CF-7 (2.5.0 C2): only the definitions the caller reads are named;
+	// usedByCount counts them all.
+	total := 0
 	if err == nil {
 		defer drows.Close()
 		for drows.Next() {
-			var kind, owner string
+			var kind, owner, ownerAgency string
 			var uid, agencies sql.NullString
-			if drows.Scan(&kind, &owner, &uid, &agencies) == nil {
+			if drows.Scan(&kind, &owner, &uid, &agencies, &ownerAgency) == nil {
+				total++
+				if !readsAgency(r, ownerAgency) {
+					continue
+				}
 				sd.UsedBy = append(sd.UsedBy, scheduleUsedBy{
 					Name: owner, Kind: kind, UID: uid.String, Agencies: splitAgencies(agencies),
 				})
 			}
 		}
 	}
-	sd.UsedByCount = len(sd.UsedBy)
+	sd.UsedByCount = total
 
 	httpx.JSON(w, http.StatusOK, sd)
 }
@@ -285,7 +293,8 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 	}
 	sd.UsedBy = []scheduleUsedBy{}
 	drows, derr := s.db.QueryContext(r.Context(),
-		`SELECT owner_kind, owner_name FROM definition_schedules ds
+		`SELECT owner_kind, owner_name, `+agencyid.Owner(agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind"))+`
+		   FROM definition_schedules ds
 		  WHERE schedule_uid = ?
 		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
 		                     AND j2.source=ds.owner_source AND j2.name=ds.owner_name
@@ -294,16 +303,20 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 		                     AND w2.source=ds.owner_source AND w2.name=ds.owner_name
 		                     AND w2.deleted_at IS NOT NULL)
 		  ORDER BY owner_kind, owner_name`, sd.UID)
+	total := 0 // CF-7: named if read, counted either way
 	if derr == nil {
 		defer drows.Close()
 		for drows.Next() {
-			var kind, owner string
-			if drows.Scan(&kind, &owner) == nil {
-				sd.UsedBy = append(sd.UsedBy, scheduleUsedBy{Name: owner, Kind: kind})
+			var kind, owner, ownerAgency string
+			if drows.Scan(&kind, &owner, &ownerAgency) == nil {
+				total++
+				if readsAgency(r, ownerAgency) {
+					sd.UsedBy = append(sd.UsedBy, scheduleUsedBy{Name: owner, Kind: kind})
+				}
 			}
 		}
 	}
-	sd.UsedByCount = len(sd.UsedBy)
+	sd.UsedByCount = total
 
 	httpx.JSON(w, http.StatusOK, sd)
 }

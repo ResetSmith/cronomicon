@@ -190,7 +190,7 @@ func TestListSchedulesBatchesPerEntryQueries(t *testing.T) {
 	}
 
 	jobsListQueryCount.Store(0)
-	req := httptest.NewRequest("GET", "/api/v1/schedules", nil)
+	req := asEverywhereReader(httptest.NewRequest("GET", "/api/v1/schedules", nil))
 	w := httptest.NewRecorder()
 	s.listSchedules(w, req)
 	if w.Code != 200 {

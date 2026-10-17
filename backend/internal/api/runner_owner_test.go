@@ -532,7 +532,9 @@ func TestG3_ALegacyPlacementIsNoticedAndHandedOver(t *testing.T) {
 // placement.
 func TestG3_TheRunnerListCarriesTheOwner(t *testing.T) {
 	h, _ := ownerCast(t)
-	rec := gateReq(t, h, http.MethodGet, "/api/v1/runners", gFinViewer, ``)
+	// As one who reads every agency: the list is filtered by who reads it (2.5.0
+	// C2), and this asserts what each row says of its owner.
+	rec := gateReq(t, h, http.MethodGet, "/api/v1/runners", gRoot, ``)
 	if rec.Code != 200 {
 		t.Fatalf("list = %d (%s)", rec.Code, rec.Body)
 	}
@@ -573,8 +575,16 @@ func TestG3_TheRunnerListCarriesTheOwner(t *testing.T) {
 		t.Fatalf("%d local runners listed, want exactly one", local)
 	}
 	rows = agents
-	// A viewer manages nothing and reviews nothing.
-	for _, r := range rows {
+	// A viewer manages nothing and reviews nothing, of what they are listed.
+	var viewed []struct {
+		ID                string `json:"id"`
+		CanManage         bool   `json:"canManage"`
+		CanReviewHostKeys bool   `json:"canReviewHostKeys"`
+	}
+	if err := json.Unmarshal(gateReq(t, h, http.MethodGet, "/api/v1/runners", gFinViewer, ``).Body.Bytes(), &viewed); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range viewed {
 		if r.CanManage || r.CanReviewHostKeys {
 			t.Errorf("a FIN viewer is told they may manage %s (%v) or review its keys (%v)", r.ID, r.CanManage, r.CanReviewHostKeys)
 		}

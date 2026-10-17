@@ -137,8 +137,10 @@ func TestEnvSecretsListSessionReadableAndFiltered(t *testing.T) {
 	for _, s := range got {
 		seen[s.Key] = true
 	}
-	if !seen["SEC_GLOBAL"] || !seen["SEC_PROD"] || seen["SEC_STAGING"] {
-		t.Errorf("scope-restricted viewer list = %v, want SEC_GLOBAL+SEC_PROD only", seen)
+	// Global's agency-wide secret is only theirs who reach every agency
+	// (2.5.0 C2, question 77; it was every session's).
+	if seen["SEC_GLOBAL"] || !seen["SEC_PROD"] || seen["SEC_STAGING"] {
+		t.Errorf("scope-restricted viewer list = %v, want SEC_PROD only", seen)
 	}
 }
 
@@ -165,8 +167,10 @@ func TestEnvSecretsListScopeFiltered(t *testing.T) {
 	for _, s := range got {
 		seen[s.Key] = true
 	}
-	if !seen["SEC_GLOBAL"] || !seen["SEC_PROD"] || seen["SEC_STAGING"] {
-		t.Errorf("scope-restricted list = %v, want SEC_GLOBAL+SEC_PROD only", seen)
+	// Global's agency-wide secret is only theirs who reach every agency
+	// (2.5.0 C2, question 77; it was every session's).
+	if seen["SEC_GLOBAL"] || !seen["SEC_PROD"] || seen["SEC_STAGING"] {
+		t.Errorf("scope-restricted list = %v, want SEC_PROD only", seen)
 	}
 }
 

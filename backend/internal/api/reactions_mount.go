@@ -838,9 +838,21 @@ func (s *Server) definitionReadableByScope(r *http.Request, id auth.Identity, ha
 		return true, nil
 	}
 	if ref.Kind == "workflow" {
-		// A workflow definition carries no scope of its own (scope is a property
-		// of the run), so there is nothing narrower than session access to check.
-		return true, nil
+		// A workflow carries no scope of its own (scope is a property of the
+		// run): it is its agency's (2.5.0 C2, CF-1; it had been everyone's).
+		q := `SELECT ` + agencyid.WorkflowOwnerSQL + ` FROM workflows w WHERE w.source = ? AND w.name = ? ORDER BY w.rowid LIMIT 1`
+		args := []any{ref.Source, ref.Name}
+		if ref.UID != "" {
+			q, args = `SELECT `+agencyid.WorkflowOwnerSQL+` FROM workflows w WHERE w.uid = ?`, []any{ref.UID}
+		}
+		var owner string
+		if err := s.db.QueryRowContext(r.Context(), q, args...).Scan(&owner); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return false, nil
+			}
+			return false, err
+		}
+		return hasID && id.ReadsAgency(owner), nil
 	}
 	// The definition the ref names, by its uid when the ref carries one (I2: a
 	// name may be held in each agency); by the name for a row that records none.
@@ -858,9 +870,12 @@ func (s *Server) definitionReadableByScope(r *http.Request, id auth.Identity, ha
 	if err != nil {
 		return false, err
 	}
+	// The job's agency first (2.5.0 C2, CF-1: an unscoped job had been
+	// everyone's), then its scope, as the job list reads it.
+	if !hasID || !id.ReadsAgency(owner) {
+		return false, nil
+	}
 	if !scope.Valid || scope.String == "" {
-		// An unscoped job is visible to anyone with a session, matching the job
-		// list's own read filter (scope IS NULL rows are global).
 		return true, nil
 	}
 	return auth.ScopeReadableIn(id, owner, scope.String), nil

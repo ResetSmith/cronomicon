@@ -288,10 +288,12 @@ func TestIDORScopeGates(t *testing.T) {
 
 	// 8. SU-2: listWorkflowRuns filters scope-bearing rows (mirrors getWorkflowRun).
 	t.Run("listWorkflowRuns scope filter", func(t *testing.T) {
-		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot, scope)
-		      VALUES ('wf-scoped-prod', 10, 'wf-scoped-prod', 'success', 't', 'manual', '2026-01-02T00:00:00Z', '', 'Production')`)
-		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot, scope)
-		      VALUES ('wf-scoped-stage', 11, 'wf-scoped-stage', 'success', 't', 'manual', '2026-01-02T00:00:00Z', '', 'Staging')`)
+		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot, scope, agency_id)
+		      VALUES ('wf-scoped-prod', 10, 'wf-scoped-prod', 'success', 't', 'manual', '2026-01-02T00:00:00Z', '', 'Production',
+		              (SELECT owner_agency FROM scopes WHERE name = 'Production'))`) // its scope's agency's (1520; no workflow names one)
+		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot, scope, agency_id)
+		      VALUES ('wf-scoped-stage', 11, 'wf-scoped-stage', 'success', 't', 'manual', '2026-01-02T00:00:00Z', '', 'Staging',
+		              (SELECT owner_agency FROM scopes WHERE name = 'Staging'))`) // its scope's agency's (1520; no workflow names one)
 
 		rec := dispatch(http.MethodGet, "/api/v1/workflow-runs", "run-viewers")
 		if rec.Code != http.StatusOK {

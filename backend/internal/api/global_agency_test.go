@@ -327,15 +327,14 @@ func TestGlobalAgency_JobRowFlagsAnswerEachRoutesOwnQuestion(t *testing.T) {
 			"platform-idle": {true, true, true}, "platform-unbound-run": {true, true, true},
 			"platform-fin-run": {true, true, true}, "fin-job": {true, true, true}, "fin-job-tax-run": {true, true, true},
 		}},
+		// Global's jobs are not listed to FIN's people since 2.5.0 C2 (question
+		// 77): only to those who reach every agency (gMixed below).
 		{gFinOperator, map[string]flags{
-			"platform-idle":        {true, false, false}, // run it against FIN's scope; not theirs to pause
-			"platform-unbound-run": {true, false, false}, // Global's run is not theirs to stop
-			"platform-fin-run":     {true, true, false},  // their own run of it is
-			"fin-job":              {true, true, true},
-			"fin-job-tax-run":      {true, false, true}, // the active run is in TAX's scope
+			"fin-job":         {true, true, true},
+			"fin-job-tax-run": {true, false, true}, // the active run is in TAX's scope
 		}},
 		{gFinViewer, map[string]flags{
-			"platform-idle": {}, "platform-unbound-run": {}, "platform-fin-run": {}, "fin-job": {}, "fin-job-tax-run": {},
+			"fin-job": {}, "fin-job-tax-run": {},
 		}},
 		// Reaches every scope, holds no verb: nothing — and the all-scopes viewer
 		// who administers FIN is FIN's administrator, not Global's.
@@ -353,6 +352,13 @@ func TestGlobalAgency_JobRowFlagsAnswerEachRoutesOwnQuestion(t *testing.T) {
 				t.Errorf("%s does not see %s", c.who, name)
 			} else if g != want {
 				t.Errorf("%s on %s: run/kill/pause = %v, want %v", c.who, name, g, want)
+			}
+		}
+		if c.who == gFinOperator || c.who == gFinViewer {
+			for _, name := range []string{"platform-idle", "platform-unbound-run", "platform-fin-run"} {
+				if _, ok := got[name]; ok {
+					t.Errorf("%s sees Global's %s (question 77)", c.who, name)
+				}
 			}
 		}
 	}

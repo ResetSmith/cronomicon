@@ -77,7 +77,9 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		}
 		// 2.4.4: and of the agency the request works in (agencyctx).
 		list, err := sec.List(r.Context(), func(agency, scope string) bool {
-			return auth.ScopeReadableIn(id, agency, scope) && agencyctx.In(r, agency)
+			// Whose it is too (2.5.0 C2): the scope filter lets an
+			// agency-wide secret of any agency through.
+			return auth.ScopeReadableIn(id, agency, scope) && readsAgency(r, agency) && agencyctx.In(r, agency)
 		})
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
@@ -469,11 +471,11 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		if list == nil {
 			list = []sshkeys.Credential{}
 		}
-		// 2.4.4: the agency the request works in. A key names its owner.
-		if _, named := agencyctx.From(r); named {
-			agencyIDs := s.agencyIDsByName(r.Context())
-			list = agencyctx.Keep(r, list, func(c sshkeys.Credential) string { return agencyIDs[c.OwnerAgency] })
-		}
+		// Whose each key is (2.5.0 C2, CF-1; every agency's were listed to
+		// everyone), then the agency the request works in (2.4.4). A key
+		// names its owner.
+		keyAgencies := s.agencyIDsByName(r.Context())
+		list = keepReadable(r, list, func(c sshkeys.Credential) string { return keyAgencies[c.OwnerAgency] })
 		if tagFilter := tagutil.ParseQuery(r.URL.Query()); !tagFilter.Empty() {
 			kept := make([]sshkeys.Credential, 0, len(list))
 			for _, c := range list {
@@ -952,8 +954,10 @@ func (s *Server) handleListEnvVars(w http.ResponseWriter, r *http.Request) {
 	agencyIDs := s.agencyIDsByName(r.Context()) // a row names its owner (I2: whose scope it is)
 	for _, ev := range list {
 		// 2.4.4: and in the agency the request works in (agencyctx).
+		// Whose it is too (2.5.0 C2): the scope filter let an agency-wide
+		// variable of any agency, its plaintext value with it, through.
 		if auth.ScopeReadableIn(id, agencyIDs[ev.OwnerAgency], scopeStrOf(ev.Scope)) && tagFilter.Match(ev.Tags) &&
-			agencyctx.In(r, agencyIDs[ev.OwnerAgency]) {
+			readsAgency(r, agencyIDs[ev.OwnerAgency]) && agencyctx.In(r, agencyIDs[ev.OwnerAgency]) {
 			filtered = append(filtered, ev)
 		}
 	}
@@ -1148,9 +1152,10 @@ func (s *Server) handleListScopes(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.Scope{}
 	}
-	// 2.4.4: the agency the request works in.
+	// Whose each scope is (2.5.0 C2, CF-1; every agency's, hosts and all,
+	// were listed to everyone), then the agency the request works in (2.4.4).
 	// A scope's owner is its one agency, Global's for one several share (1410).
-	list = agencyctx.Keep(r, list, func(sc settings.Scope) string {
+	list = keepReadable(r, list, func(sc settings.Scope) string {
 		if len(sc.Agencies) == 1 {
 			return sc.Agencies[0].ID
 		}
@@ -1607,8 +1612,9 @@ func (s *Server) handleListSshHosts(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.SshHost{}
 	}
-	// 2.4.4: the agency the request works in.
-	list = agencyctx.Keep(r, list, func(h settings.SshHost) string { return h.OwnerAgency })
+	// Whose each record is (2.5.0 C2, CF-1), then the agency the request
+	// works in (2.4.4).
+	list = keepReadable(r, list, func(h settings.SshHost) string { return h.OwnerAgency })
 	id, _ := auth.IdentityFrom(r.Context())
 	rows, err := withRowFlags(list, func(h settings.SshHost) (rowFlags, error) { return s.hostRecordFlags(r.Context(), id, h.ID) })
 	if err != nil {
@@ -1949,8 +1955,9 @@ func (s *Server) handleListBastions(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.SshBastion{}
 	}
-	// 2.4.4: the agency the request works in.
-	list = agencyctx.Keep(r, list, func(b settings.SshBastion) string { return b.OwnerAgency })
+	// Whose each bastion is (2.5.0 C2, CF-1), then the agency the request
+	// works in (2.4.4).
+	list = keepReadable(r, list, func(b settings.SshBastion) string { return b.OwnerAgency })
 	id, _ := auth.IdentityFrom(r.Context())
 	rows, err := withRowFlags(list, func(b settings.SshBastion) (rowFlags, error) { return s.bastionFlags(r.Context(), id, b.ID) })
 	if err != nil {

@@ -115,12 +115,29 @@ func (s *Server) handleAgencyMatrix(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
+	// The rows of what the caller reads (2.5.0 C2, CF-1: every agency's
+	// scopes, keys and runners were listed by name to everyone). A row read
+	// keeps its whole agency list (C0: filter rows, never trim a row's
+	// agencies); the agency columns are names, which are not confidential.
+	rows := make([]settings.MatrixRow, 0, len(m.Rows))
+	for _, row := range m.Rows {
+		if readsAnyAgency(r, row.AgencyIDs) {
+			rows = append(rows, row)
+		}
+	}
+	m.Rows = rows
 	httpx.JSON(w, http.StatusOK, m)
 }
 
 // handleAgencyDetail serves one agency's contents plus the two numbers that decide
 // whether anything will actually run in it (T4.2/T4.3).
 func (s *Server) handleAgencyDetail(w http.ResponseWriter, r *http.Request) {
+	// An agency's contents are its own people's and everywhere-readers'
+	// (2.5.0 C2, CF-1); to anyone else, as if it were not there (question 72).
+	if !readsAgency(r, r.PathValue("agencyId")) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+		return
+	}
 	d, err := settings.BuildAgencyDetail(r.Context(), s.db, r.PathValue("agencyId"))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -139,7 +156,15 @@ func (s *Server) handleListAgencyMembership(w http.ResponseWriter, r *http.Reque
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, list)
+	// The entities the caller reads (2.5.0 C2, CF-1), each with its whole
+	// agency list.
+	kept := make([]settings.AgencyMembership, 0, len(list))
+	for _, m := range list {
+		if readsAnyAgency(r, m.AgencyIDs) {
+			kept = append(kept, m)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, kept)
 }
 
 // membershipAuthzFor maps a membership kind to the permission and join table its
@@ -415,7 +440,9 @@ func (s *Server) handleEnvVarShadows(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]settings.ShadowFinding, 0, len(all))
 	for _, f := range all {
-		if auth.ScopeReadableIn(id, f.OwnerAgency, f.Scope) {
+		// Whose it is too (2.5.0 C2): the scope filter let an agency-wide
+		// finding of any agency through.
+		if auth.ScopeReadableIn(id, f.OwnerAgency, f.Scope) && readsAgency(r, f.OwnerAgency) {
 			out = append(out, f)
 		}
 	}
@@ -431,12 +458,17 @@ func (s *Server) handleEnvVarShadows(w http.ResponseWriter, r *http.Request) {
 		}
 		rows.Close()
 	}
+	// Shown to a reader of one of its owners (2.5.0 C2, CF-1): a key's
+	// ambiguity, or one with no scope, had been shown to everyone.
 	ambiguityReadable := func(f settings.AmbiguityFinding) bool {
-		if f.Kind == "key" || f.Scope == "" || id.Unrestricted() {
+		if id.Unrestricted() {
 			return true
 		}
 		for _, owner := range f.Owners {
-			if auth.ScopeReadableIn(id, agencyIDs[owner], f.Scope) {
+			if !readsAgency(r, agencyIDs[owner]) {
+				continue
+			}
+			if f.Kind == "key" || f.Scope == "" || auth.ScopeReadableIn(id, agencyIDs[owner], f.Scope) {
 				return true
 			}
 		}
@@ -466,7 +498,15 @@ func (s *Server) handleListRunnerAgencies(w http.ResponseWriter, r *http.Request
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, list)
+	// The runners the caller reads (2.5.0 C2, CF-1), each with its whole
+	// agency list.
+	kept := make([]settings.RunnerAgencies, 0, len(list))
+	for _, m := range list {
+		if readsAnyAgency(r, m.AgencyIDs) {
+			kept = append(kept, m)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, kept)
 }
 
 // handleSetRunnerAgencies replaces the agency membership of each posted runner

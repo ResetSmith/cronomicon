@@ -216,7 +216,9 @@ func (s *Server) getReferenceUsage(w http.ResponseWriter, r *http.Request) {
 	// One flat query joined to jobs for the owner's scope — never a nested iterator
 	// (pool deadlock, see db.maxOpenConns).
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT rb.ref_kind, rb.ref_name, rb.owner_kind, COALESCE(j.scope,''), COALESCE(`+agencyid.JobSQL("j")+`, '')
+		SELECT rb.ref_kind, rb.ref_name, rb.owner_kind, COALESCE(j.scope,''),
+		       COALESCE(CASE rb.owner_kind WHEN 'job' THEN `+agencyid.JobSQL("j")+`
+		                ELSE (SELECT `+agencyid.ScriptOwnerSQL("sx")+` FROM scripts sx WHERE sx.uid = rb.owner_uid) END, '')
 		FROM reference_bindings rb
 		LEFT JOIN jobs j
 		  ON rb.owner_kind = 'job' AND j.source = rb.owner_source AND j.name = rb.owner_name`)
@@ -237,6 +239,11 @@ func (s *Server) getReferenceUsage(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&refKind, &refName, &ownerKind, &jobScope, &jobOwner); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
+		}
+		// Whose the binding's owner is (2.5.0 C2, CF-1): a script's, and a
+		// no-scope job's, had been counted for everyone.
+		if !readsAgency(r, jobOwner) {
+			continue
 		}
 		if ownerKind == "job" && !auth.ScopeReadableIn(actor, jobOwner, jobScope) {
 			continue
