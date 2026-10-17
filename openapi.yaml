@@ -6131,7 +6131,7 @@ paths:
       summary: Send a test notification over every configured transport
       description: >-
         Delivers a fixed test message using the **stored** SMTP and Apprise
-        configuration (K-5, v0.52.25). Takes no body on purpose — every
+        configuration (K-5, v0.52.25), to Global's push targets (2.5.0 C4). Takes no body on purpose — every
         recipient, gateway and target comes from settings, so this cannot be used
         to mail an arbitrary address. A successful leg stamps that transport's
         `lastSent` exactly as a real alert does.
@@ -13380,6 +13380,14 @@ components:
                 apiUrl: { type: string }
                 targets:
                   type: array
+                  description: >-
+                    Global's push targets (2.5.0 C4, AL-2), in their order; an
+                    agency's are not listed here. A push goes to the targets
+                    the matched rules name, not to every target. On a save a
+                    target is matched by its `url`: one kept keeps the rules
+                    that name it, one dropped is deleted with its links, and
+                    one new is named by no rule until a rule names it. `id` is
+                    this list's key (1..N), not the target's.
                   items:
                     type: object
                     properties:
@@ -13405,6 +13413,9 @@ components:
                 fromName: { type: string }
                 recipients:
                   type: array
+                  description: >-
+                    Added to a Global rule's mail (2.5.0 C4, question 80); an
+                    agency's rule mails its own recipients only.
                   items: { type: string }
             lastSent:
               type: object

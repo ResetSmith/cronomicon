@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +85,63 @@ func TestEnvVarDescriptionRoundTrip(t *testing.T) {
 
 // ── Notification config ──────────────────────────────────────────────────────
 
+// A Save of the Settings form keeps Global's targets that it keeps (2.5.0 C4,
+// AL-2): matched by URL, each keeps its id and so the rules that name it. A
+// rebuilt set would cut every rule's link on each Save and stop its pushes.
+// A target the form drops goes with its links; a new one is named by no rule.
+// An agency's targets are not the form's.
+func TestNotificationSaveKeepsTheRulesTargets(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	cfg := &config.Config{}
+	must := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v\n%s", err, q)
+		}
+	}
+	must(`INSERT INTO alert_config (id, target_mode, trigger, channels, enabled, created_at) VALUES ('r1', 'all', 'failure', '["apprise"]', 1, 't')`)
+	for i, u := range []string{"slack://keep", "slack://drop"} {
+		must(`INSERT INTO alert_targets (id, owner_agency, url, enabled, position, created_at) VALUES (?, 'global', ?, 1, ?, 't')`, "t"+u[8:], u, i)
+		must(`INSERT INTO alert_rule_targets (rule_id, target_id) VALUES ('r1', ?)`, "t"+u[8:])
+	}
+	must(`INSERT INTO alert_targets (id, owner_agency, url, enabled, created_at) VALUES ('t-fin', 'ag:FIN', 'slack://fin', 1, 't')`)
+	must(`INSERT INTO alert_rule_targets (rule_id, target_id) VALUES ('r1', 't-fin')`)
+
+	// What the form sends back: the ids it was given (1..N), relabelled, one
+	// dropped, one added, reordered.
+	if _, err := UpdateNotificationConfig(ctx, pool, cfg, NotificationConfig{
+		SMTP: &SMTPConfig{Host: "mail.example.com", Port: 25, Encryption: "none"},
+		Apprise: &AppriseConfig{Enabled: true, Targets: []AppriseTarget{
+			{ID: 1, Label: "New", URL: "slack://new", Enabled: true},
+			{ID: 2, Label: "Kept", URL: "slack://keep", Enabled: false},
+		}},
+	}, "tester"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	var links string
+	_ = pool.QueryRow(`SELECT group_concat(target_id, ',') FROM (SELECT target_id FROM alert_rule_targets WHERE rule_id = 'r1' ORDER BY target_id)`).Scan(&links)
+	if links != "t-fin,tkeep" {
+		t.Errorf("r1 names %q after the Save; want its kept target and FIN's untouched", links)
+	}
+	var row string
+	_ = pool.QueryRow(`SELECT label||'|'||enabled||'|'||position FROM alert_targets WHERE id = 'tkeep'`).Scan(&row)
+	if row != "Kept|0|1" {
+		t.Errorf("the kept target is %q; want its new label, enabled flag and place", row)
+	}
+	got, err := GetNotificationConfig(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var urls []string
+	for _, tg := range got.Apprise.Targets {
+		urls = append(urls, tg.URL)
+	}
+	if strings.Join(urls, ",") != "slack://new,slack://keep" {
+		t.Errorf("the form reads %v; want Global's, in the order saved", urls)
+	}
+}
+
 func TestNotificationConfigApprise(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
@@ -137,39 +195,6 @@ func TestNotificationConfigApprise(t *testing.T) {
 	// And the password survives a blank-password update.
 	if got.SMTP == nil || !got.SMTP.PasswordSet {
 		t.Fatalf("smtp password lost on blank update: %+v", got.SMTP)
-	}
-}
-
-func TestParseAppriseTargets(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want []AppriseTarget
-	}{
-		{"empty", "", []AppriseTarget{}},
-		{"blank", "   ", []AppriseTarget{}},
-		{"invalid json", "not-json", []AppriseTarget{}},
-		{"bare strings are skipped (the pre-rich form, dropped in v1.5.41)", `["slack://x","mailto://y"]`, []AppriseTarget{}},
-		{"objects", `[{"label":"L","service":"slack","url":"slack://x","enabled":true},{"url":"mailto://y","enabled":false}]`, []AppriseTarget{
-			{ID: 1, Label: "L", Service: "slack", URL: "slack://x", Enabled: true},
-			{ID: 2, URL: "mailto://y", Enabled: false},
-		}},
-		{"client-echoed id is overwritten", `[{"id":99,"url":"slack://x","enabled":true}]`, []AppriseTarget{
-			{ID: 1, URL: "slack://x", Enabled: true},
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := ParseAppriseTargets(tc.in)
-			if len(got) != len(tc.want) {
-				t.Fatalf("len = %d, want %d (%+v)", len(got), len(tc.want), got)
-			}
-			for i := range tc.want {
-				if got[i] != tc.want[i] {
-					t.Errorf("target %d = %+v, want %+v", i, got[i], tc.want[i])
-				}
-			}
-		})
 	}
 }
 

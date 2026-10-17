@@ -764,8 +764,13 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	}
 
 	// ── Singleton configs + global settings ────────────────────────────────────
-	exec(`INSERT INTO notification_config (id, smtp_host, smtp_port, smtp_from, apprise_targets, last_modified_by, last_modified_at)
-	      VALUES (1, 'smtp.corp.example', 587, 'cronomicon@corp.example', '[{"label":"On-call","service":"email","url":"mailto://oncall@corp.example","enabled":true}]', ?, ?)`, dev, ago(9*day))
+	exec(`INSERT INTO notification_config (id, smtp_host, smtp_port, smtp_from, last_modified_by, last_modified_at)
+	      VALUES (1, 'smtp.corp.example', 587, 'cronomicon@corp.example', ?, ?)`, dev, ago(9*day))
+	// Global's push target (1540), named by every rule above, as the upgrade
+	// names every target from every rule.
+	exec(`INSERT INTO alert_targets (id, owner_agency, label, service, url, enabled, position, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('demo-oncall', 'global', 'On-call', 'email', 'mailto://oncall@corp.example', 1, 0, ?, ?, ?, ?)`, dev, ago(9*day), dev, ago(9*day))
+	exec(`INSERT INTO alert_rule_targets (rule_id, target_id) SELECT id, 'demo-oncall' FROM alert_config`)
 	// The connection of Global's repository. The URL is left EMPTY on purpose:
 	// the demo data is not in a repository, and a URL here would send the sync
 	// service off to clone a host that does not exist. (The four columns this

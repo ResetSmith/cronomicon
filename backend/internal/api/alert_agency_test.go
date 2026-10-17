@@ -134,6 +134,14 @@ func TestAlertRulesBelongToAnAgency(t *testing.T) {
 	if n := count(t, pool, `SELECT COUNT(*) FROM agencies WHERE id='ag:OPS'`); n != 1 {
 		t.Error("the agency was deleted from under its alert rule")
 	}
+	exec(`DELETE FROM alert_config WHERE id = 'a-ops'`)
+	exec(`INSERT INTO alert_targets (id, owner_agency, url, created_at) VALUES ('t-ops', 'ag:OPS', 'json://ops', 't')`)
+	if rec := gateReq(t, h, http.MethodDelete, "/api/v1/agencies/ag:OPS", gRoot, ""); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "push target") {
+		t.Errorf("deleting an agency that owns a push target = %d (%s), want 409 naming it", rec.Code, rec.Body)
+	}
+	exec(`INSERT INTO alert_config (id, target_mode, trigger, channels, enabled, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+	      VALUES ('a-ops', 'all', 'failure', '["email"]', 1, 'seed', '2026-01-01T00:00:00Z', 'seed', '2026-01-01T00:00:00Z', 'ag:OPS')`)
+	exec(`DELETE FROM alert_targets WHERE id = 't-ops'`)
 	// The guard itself (1530), for a delete between the count and the transaction.
 	if _, err := pool.Exec(`DELETE FROM agencies WHERE id='ag:OPS'`); err == nil || !strings.Contains(err.Error(), "agency_in_use") {
 		t.Errorf("the database deleted an agency that owns an alert rule: %v", err)

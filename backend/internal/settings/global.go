@@ -11,6 +11,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/config"
+	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 )
 
@@ -214,6 +215,9 @@ type AppriseConfig struct {
 // gateway delivers to; Label/Service are operator-facing metadata; Enabled gates
 // whether the target actually receives sends. ID is server-assigned (read-only)
 // and exists only to give the UI a stable key — it is not persisted.
+//
+// Since 2.5.0 C4 (AL-2, migration 1540) these are Global's rows of
+// alert_targets, in their order; the 1..N ids stay this form's keys.
 type AppriseTarget struct {
 	ID      int    `json:"id,omitempty"`
 	Label   string `json:"label,omitempty"`
@@ -243,20 +247,24 @@ func GetNotificationConfig(ctx context.Context, database *sql.DB) (*Notification
 	row := database.QueryRowContext(ctx, `
 		SELECT provider, smtp_host, smtp_port, smtp_from, smtp_from_name, smtp_username,
 		       smtp_password_enc, smtp_encryption, smtp_recipients,
-		       apprise_enabled, apprise_url, apprise_targets,
+		       apprise_enabled, apprise_url,
 		       last_email_at, last_email_status, last_apprise_at, last_apprise_status
 		FROM notification_config WHERE id=1`)
 	var provider, smtpHost, smtpFrom, fromName, username, pwEnc, encryption sql.NullString
-	var recipientsJSON, appriseURL, appriseTargets sql.NullString
+	var recipientsJSON, appriseURL sql.NullString
 	var lastEmailAt, lastEmailStatus, lastAppriseAt, lastAppriseStatus sql.NullString
 	var smtpPort, appriseEnabled sql.NullInt64
 	if err := row.Scan(&provider, &smtpHost, &smtpPort, &smtpFrom, &fromName, &username,
-		&pwEnc, &encryption, &recipientsJSON, &appriseEnabled, &appriseURL, &appriseTargets,
+		&pwEnc, &encryption, &recipientsJSON, &appriseEnabled, &appriseURL,
 		&lastEmailAt, &lastEmailStatus, &lastAppriseAt, &lastAppriseStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return &NotificationConfig{Provider: "smtp"}, nil
 		}
 		return nil, fmt.Errorf("read notification_config: %w", err)
+	}
+	targets, err := GlobalAppriseTargets(ctx, database)
+	if err != nil {
+		return nil, err
 	}
 	cfg := &NotificationConfig{Provider: kvStrOr(provider.String, "smtp")}
 	if smtpHost.Valid && smtpHost.String != "" {
@@ -271,7 +279,6 @@ func GetNotificationConfig(ctx context.Context, database *sql.DB) (*Notification
 			Recipients:  parseStrList(recipientsJSON.String),
 		}
 	}
-	targets := ParseAppriseTargets(appriseTargets.String)
 	if appriseEnabled.Int64 == 1 || (appriseURL.Valid && appriseURL.String != "") || len(targets) > 0 {
 		cfg.Apprise = &AppriseConfig{
 			Enabled: appriseEnabled.Int64 == 1,
@@ -329,48 +336,45 @@ func UpdateNotificationConfig(ctx context.Context, database *sql.DB, appCfg *con
 
 	var appriseEnabled int
 	var appriseURL *string
-	// apprise_targets: set from input when an Apprise block is provided, else
-	// preserve the stored value (so an SMTP-only update doesn't wipe targets).
-	appriseTargetsJSON := "[]"
 	if inp.Apprise != nil {
 		if inp.Apprise.Enabled {
 			appriseEnabled = 1
 		}
 		appriseURL = &inp.Apprise.APIURL
-		// id is read-only/server-assigned — don't persist whatever the client echoed back.
-		stored := make([]AppriseTarget, len(inp.Apprise.Targets))
-		for i, t := range inp.Apprise.Targets {
-			t.ID = 0
-			stored[i] = t
-		}
-		if b, err := json.Marshal(stored); err == nil {
-			appriseTargetsJSON = string(b)
-		}
-	} else {
-		var existing sql.NullString
-		if err := database.QueryRowContext(ctx, `SELECT apprise_targets FROM notification_config WHERE id=1`).Scan(&existing); err == nil && existing.Valid && existing.String != "" {
-			appriseTargetsJSON = existing.String
-		}
 	}
 
-	_, err = database.ExecContext(ctx, `
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("upsert notification_config: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO notification_config
 		  (id, provider, smtp_host, smtp_port, smtp_from, smtp_from_name, smtp_username,
 		   smtp_password_enc, smtp_encryption, smtp_recipients, apprise_enabled, apprise_url,
-		   apprise_targets, last_modified_by, last_modified_at)
-		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   last_modified_by, last_modified_at)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 		  provider=excluded.provider, smtp_host=excluded.smtp_host, smtp_port=excluded.smtp_port,
 		  smtp_from=excluded.smtp_from, smtp_from_name=excluded.smtp_from_name,
 		  smtp_username=excluded.smtp_username, smtp_password_enc=excluded.smtp_password_enc,
 		  smtp_encryption=excluded.smtp_encryption, smtp_recipients=excluded.smtp_recipients,
 		  apprise_enabled=excluded.apprise_enabled, apprise_url=excluded.apprise_url,
-		  apprise_targets=excluded.apprise_targets,
 		  last_modified_by=excluded.last_modified_by, last_modified_at=excluded.last_modified_at`,
 		kvStrOr(inp.Provider, "smtp"), smtpHost, smtpPort, smtpFrom, fromName, username,
-		pwEnc, encryption, recipientsJSON, appriseEnabled, appriseURL, appriseTargetsJSON, actor, now,
+		pwEnc, encryption, recipientsJSON, appriseEnabled, appriseURL, actor, now,
 	)
 	if err != nil {
+		return nil, fmt.Errorf("upsert notification_config: %w", err)
+	}
+	// Global's targets: set from input when an Apprise block is provided, else
+	// kept (so an SMTP-only update doesn't wipe them).
+	if inp.Apprise != nil {
+		if err := syncGlobalAppriseTargets(ctx, tx, inp.Apprise.Targets, actor, now); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("upsert notification_config: %w", err)
 	}
 	secrets.RedactionSourceChanged() // AM-4b
@@ -418,38 +422,76 @@ func parseStrList(s string) []string {
 	return out
 }
 
-// ParseAppriseTargets reads the apprise_targets JSON column: an array of
-// {label,service,url,enabled} objects. (The pre-rich bare-string form was
-// dropped in v1.5.41 and migration 1150 rewrote any stored row carrying it, so
-// there is exactly one shape on disk; an entry that is not an object skips like
-// any other unparseable one.) IDs are (re)assigned 1..N so the UI always has a
-// stable key.
-//
-// Exported because the notification DISPATCHER reads the same column through
-// its own SELECT (internal/notify). It parsed the column itself until v1.5.43,
-// which is how the two readers came to disagree about the legacy form: the
-// settings reader dropped it and the dispatcher kept delivering to it. One
-// parser, one answer — do not add a second.
-func ParseAppriseTargets(s string) []AppriseTarget {
-	if strings.TrimSpace(s) == "" {
-		return []AppriseTarget{}
+// GlobalAppriseTargets is Global's push targets (alert_targets, 1540), in
+// their order, as this form shows them: ids 1..N.
+func GlobalAppriseTargets(ctx context.Context, database *sql.DB) ([]AppriseTarget, error) {
+	rows, err := database.QueryContext(ctx, `SELECT label, service, url, enabled FROM alert_targets
+		WHERE owner_agency = ? ORDER BY position, id`, agencyid.Global)
+	if err != nil {
+		return nil, fmt.Errorf("read push targets: %w", err)
 	}
-	var raw []json.RawMessage
-	if err := json.Unmarshal([]byte(s), &raw); err != nil {
-		return []AppriseTarget{}
-	}
-	out := make([]AppriseTarget, 0, len(raw))
-	for _, r := range raw {
-		trimmed := strings.TrimSpace(string(r))
-		if trimmed == "" {
-			continue
-		}
+	defer rows.Close()
+	out := []AppriseTarget{}
+	for rows.Next() {
 		var t AppriseTarget
-		if err := json.Unmarshal(r, &t); err != nil {
-			continue
+		var enabled int
+		if err := rows.Scan(&t.Label, &t.Service, &t.URL, &enabled); err != nil {
+			return nil, err
 		}
+		t.Enabled = enabled == 1
 		t.ID = len(out) + 1
 		out = append(out, t)
 	}
-	return out
+	return out, rows.Err()
+}
+
+// syncGlobalAppriseTargets makes Global's targets the list the form sent.
+// The form keys its rows 1..N, so a row is matched by its URL: one whose URL
+// is kept keeps its id, and with it the rules that name it (alert_rule_targets).
+// Rebuilding the set would cut every rule's link on each Save, and its pushes
+// would stop. A URL that is new is a new target, named by no rule until one
+// is edited to name it; one removed is deleted with its links.
+func syncGlobalAppriseTargets(ctx context.Context, tx *sql.Tx, in []AppriseTarget, actor, now string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, url FROM alert_targets WHERE owner_agency = ? ORDER BY position, id`, agencyid.Global)
+	if err != nil {
+		return fmt.Errorf("read push targets: %w", err)
+	}
+	byURL := map[string][]string{}
+	for rows.Next() {
+		var id, u string
+		if err := rows.Scan(&id, &u); err != nil {
+			rows.Close()
+			return err
+		}
+		byURL[u] = append(byURL[u], id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for pos, t := range in {
+		if ids := byURL[t.URL]; len(ids) > 0 {
+			byURL[t.URL] = ids[1:]
+			if _, err := tx.ExecContext(ctx, `UPDATE alert_targets SET label=?, service=?, enabled=?, position=?,
+				last_modified_by=?, last_modified_at=? WHERE id=?`,
+				t.Label, t.Service, boolInt(t.Enabled), pos, actor, now, ids[0]); err != nil {
+				return fmt.Errorf("update push target: %w", err)
+			}
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO alert_targets
+			(id, owner_agency, label, service, url, enabled, position, created_by, created_at, last_modified_by, last_modified_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			db.NewID(), agencyid.Global, t.Label, t.Service, t.URL, boolInt(t.Enabled), pos, actor, now, actor, now); err != nil {
+			return fmt.Errorf("add push target: %w", err)
+		}
+	}
+	for _, ids := range byURL {
+		for _, id := range ids {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM alert_targets WHERE id=?`, id); err != nil {
+				return fmt.Errorf("remove push target: %w", err)
+			}
+		}
+	}
+	return nil
 }

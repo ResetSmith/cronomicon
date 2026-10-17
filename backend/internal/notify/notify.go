@@ -25,7 +25,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
-	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
 // RunEvent is the terminal-run signal the runner hands the dispatcher.
@@ -242,7 +241,6 @@ type notifConfig struct {
 	smtpRecipients []string
 	appriseEnabled bool
 	appriseGateway string
-	appriseTargets []string
 }
 
 func (d *Dispatcher) dispatch(ctx context.Context, ev dispatchEvent) error {
@@ -262,12 +260,21 @@ func (d *Dispatcher) dispatch(ctx context.Context, ev dispatchEvent) error {
 	}
 
 	wantEmail, wantPush := false, false
+	// globalMail: a Global rule mails this event, so the installation's default
+	// recipients are added (question 80; 2.5.0 C4). An agency's rule mails its
+	// own recipients only: the defaults are the installation's people.
+	globalMail := false
+	var pushRules []string
 	recipients := map[string]struct{}{}
 	for _, r := range rules {
 		for _, ch := range r.channels {
 			if email, push, ok := channelTransport(ch); ok {
 				wantEmail = wantEmail || email
 				wantPush = wantPush || push
+				globalMail = globalMail || (email && r.owner == agencyid.Global)
+				if push {
+					pushRules = append(pushRules, r.id)
+				}
 			} else {
 				// Only reachable for a rule stored before v0.52.23 — the API
 				// refuses these now. Say so once, because the alternative is a
@@ -280,8 +287,10 @@ func (d *Dispatcher) dispatch(ctx context.Context, ev dispatchEvent) error {
 			recipients[rcpt] = struct{}{}
 		}
 	}
-	for _, rcpt := range nc.smtpRecipients {
-		recipients[rcpt] = struct{}{}
+	if globalMail {
+		for _, rcpt := range nc.smtpRecipients {
+			recipients[rcpt] = struct{}{}
+		}
 	}
 
 	// AN-4 — "it failed, and here is who to call". Appended HERE rather than in
@@ -311,17 +320,23 @@ func (d *Dispatcher) dispatch(ctx context.Context, ev dispatchEvent) error {
 		if gateway == "" {
 			gateway = d.cfg.AppriseURL
 		}
+		// AL-2 (2.5.0 C4): the targets the matched rules name, not every
+		// target the installation has.
+		targets, err := d.ruleTargetURLs(ctx, pushRules)
+		if err != nil {
+			return fmt.Errorf("load push targets: %w", err)
+		}
 		switch {
 		case !nc.appriseEnabled && d.cfg.AppriseURL == "":
 			d.log.Warn("alert matched push channel but Apprise is not configured", "trace_id", ev.traceID)
-		case len(nc.appriseTargets) == 0:
-			d.log.Warn("alert matched push channel but no Apprise targets configured", "trace_id", ev.traceID)
+		case len(targets) == 0:
+			d.log.Warn("alert matched push channel but its rules name no enabled push target", "trace_id", ev.traceID)
 		default:
-			if err := d.sendPush(ctx, gateway, nc.appriseTargets, subject, body); err != nil {
+			if err := d.sendPush(ctx, gateway, targets, subject, body); err != nil {
 				d.log.Error("apprise push failed", "trace_id", ev.traceID, "error", err)
 				d.markTransport(ctx, "apprise", "error")
 			} else {
-				d.log.Info("alert push sent", "trace_id", ev.traceID, "targets", len(nc.appriseTargets))
+				d.log.Info("alert push sent", "trace_id", ev.traceID, "targets", len(targets))
 				d.markTransport(ctx, "apprise", "ok")
 			}
 		}
@@ -331,6 +346,8 @@ func (d *Dispatcher) dispatch(ctx context.Context, ev dispatchEvent) error {
 
 // matchedRule is the subset of an alert rule the dispatcher needs.
 type matchedRule struct {
+	id         string
+	owner      string
 	channels   []string
 	recipients string
 }
@@ -338,7 +355,7 @@ type matchedRule struct {
 // matchingRules returns enabled rules whose trigger + target match the event.
 func (d *Dispatcher) matchingRules(ctx context.Context, ev dispatchEvent) ([]matchedRule, error) {
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT target_mode, job_name, trigger, channels, recipients, job_uid, owner_agency
+		SELECT id, target_mode, job_name, trigger, channels, recipients, job_uid, owner_agency
 		FROM alert_config WHERE enabled = 1`)
 	if err != nil {
 		return nil, err
@@ -346,9 +363,9 @@ func (d *Dispatcher) matchingRules(ctx context.Context, ev dispatchEvent) ([]mat
 	defer rows.Close()
 	var out []matchedRule
 	for rows.Next() {
-		var targetMode, trigger, channelsJSON, owner string
+		var id, targetMode, trigger, channelsJSON, owner string
 		var jobName, recipients, jobUID sql.NullString
-		if err := rows.Scan(&targetMode, &jobName, &trigger, &channelsJSON, &recipients, &jobUID, &owner); err != nil {
+		if err := rows.Scan(&id, &targetMode, &jobName, &trigger, &channelsJSON, &recipients, &jobUID, &owner); err != nil {
 			return nil, err
 		}
 		// AL-1 (2.5.0 C4): an agency's rule matches only its agency's events
@@ -364,7 +381,7 @@ func (d *Dispatcher) matchingRules(ctx context.Context, ev dispatchEvent) ([]mat
 		}
 		var channels []string
 		_ = json.Unmarshal([]byte(channelsJSON), &channels)
-		out = append(out, matchedRule{channels: channels, recipients: recipients.String})
+		out = append(out, matchedRule{id: id, owner: owner, channels: channels, recipients: recipients.String})
 	}
 	return out, rows.Err()
 }
@@ -372,15 +389,15 @@ func (d *Dispatcher) matchingRules(ctx context.Context, ev dispatchEvent) ([]mat
 func (d *Dispatcher) loadConfig(ctx context.Context) (notifConfig, error) {
 	var nc notifConfig
 	var host, from, fromName, username, pwEnc, encryption, appriseURL sql.NullString
-	var recipientsJSON, appriseTargetsJSON sql.NullString
+	var recipientsJSON sql.NullString
 	var port sql.NullInt64
 	var appriseEnabled sql.NullInt64
 	err := d.db.QueryRowContext(ctx, `
 		SELECT smtp_host, smtp_port, smtp_from, smtp_from_name, smtp_username, smtp_password_enc,
-		       smtp_encryption, smtp_recipients, apprise_enabled, apprise_url, apprise_targets
+		       smtp_encryption, smtp_recipients, apprise_enabled, apprise_url
 		FROM notification_config WHERE id = 1`).
 		Scan(&host, &port, &from, &fromName, &username, &pwEnc, &encryption,
-			&recipientsJSON, &appriseEnabled, &appriseURL, &appriseTargetsJSON)
+			&recipientsJSON, &appriseEnabled, &appriseURL)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nc, nil
 	}
@@ -406,7 +423,6 @@ func (d *Dispatcher) loadConfig(ctx context.Context) (notifConfig, error) {
 	nc.smtpRecipients = parseJSONList(recipientsJSON.String)
 	nc.appriseEnabled = appriseEnabled.Int64 == 1
 	nc.appriseGateway = appriseURL.String
-	nc.appriseTargets = appriseTargetURLs(appriseTargetsJSON.String)
 	return nc, nil
 }
 
@@ -532,6 +548,12 @@ func (d *Dispatcher) SendTest(ctx context.Context) (TestReport, error) {
 	}
 
 	// ── apprise ──────────────────────────────────────────────────────────────
+	// Global's targets (2.5.0 C4): the test is of the installation's relay,
+	// sent from its Settings by a global administrator.
+	targets, err := d.globalTargetURLs(ctx)
+	if err != nil {
+		return report, err
+	}
 	gateway := nc.appriseGateway
 	if gateway == "" {
 		gateway = d.cfg.AppriseURL
@@ -547,13 +569,13 @@ func (d *Dispatcher) SendTest(ctx context.Context) (TestReport, error) {
 			Transport: "apprise", Skipped: true,
 			Detail: "Apprise is switched off.",
 		})
-	case len(nc.appriseTargets) == 0:
+	case len(targets) == 0:
 		report.Results = append(report.Results, TransportResult{
 			Transport: "apprise", Skipped: true,
 			Detail: "No Apprise targets are configured.",
 		})
 	default:
-		if err := d.sendPush(ctx, gateway, nc.appriseTargets, subject, body); err != nil {
+		if err := d.sendPush(ctx, gateway, targets, subject, body); err != nil {
 			d.log.Error("test push failed", "error", err)
 			d.markTransport(ctx, "apprise", "error")
 			report.Results = append(report.Results, TransportResult{
@@ -563,7 +585,7 @@ func (d *Dispatcher) SendTest(ctx context.Context) (TestReport, error) {
 			d.markTransport(ctx, "apprise", "ok")
 			report.Results = append(report.Results, TransportResult{
 				Transport: "apprise", Sent: true,
-				Detail: fmt.Sprintf("Sent to %d target(s).", len(nc.appriseTargets)),
+				Detail: fmt.Sprintf("Sent to %d target(s).", len(targets)),
 			})
 		}
 	}
@@ -744,25 +766,51 @@ func parseJSONList(s string) []string {
 	return out
 }
 
-// appriseTargetURLs reads the apprise_targets column and returns the URLs of the
-// enabled targets only. A disabled target is skipped so the per-target toggle in
-// the UI actually suppresses delivery.
-//
-// The PARSE is settings.ParseAppriseTargets — the same function the Settings
-// card reads the column with. This package had its own copy until v1.5.43, and
-// the two drifted the moment one was edited: v1.5.41 dropped the pre-rich
-// bare-string form from the settings reader only, so a row still holding it
-// showed zero targets in the UI while every alert kept being delivered here,
-// and the first Save silently wiped it. One parser is the fix; this function is
-// now only the enabled-filter and the URL projection.
-func appriseTargetURLs(s string) []string {
+// ruleTargetURLs is where a push for these rules goes (AL-2, 2.5.0 C4): the
+// enabled targets they name, each once. A disabled target is skipped so its
+// toggle suppresses delivery. Until 1540 the targets were one list on
+// notification_config and every push went to all of them.
+func (d *Dispatcher) ruleTargetURLs(ctx context.Context, ruleIDs []string) ([]string, error) {
+	if len(ruleIDs) == 0 {
+		return nil, nil
+	}
+	q := `SELECT t.url FROM alert_targets t
+		WHERE t.enabled = 1 AND t.url <> ''
+		  AND t.id IN (SELECT target_id FROM alert_rule_targets WHERE rule_id IN (?` +
+		strings.Repeat(",?", len(ruleIDs)-1) + `))
+		ORDER BY t.owner_agency, t.position, t.id`
+	args := make([]any, len(ruleIDs))
+	for i, id := range ruleIDs {
+		args[i] = id
+	}
+	return d.targetURLs(ctx, q, args...)
+}
+
+// globalTargetURLs is Global's enabled targets, for a test send.
+func (d *Dispatcher) globalTargetURLs(ctx context.Context) ([]string, error) {
+	return d.targetURLs(ctx, `SELECT url FROM alert_targets
+		WHERE owner_agency = ? AND enabled = 1 AND url <> '' ORDER BY position, id`, agencyid.Global)
+}
+
+func (d *Dispatcher) targetURLs(ctx context.Context, q string, args ...any) ([]string, error) {
+	rows, err := d.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 	var out []string
-	for _, t := range settings.ParseAppriseTargets(s) {
-		if t.Enabled && t.URL != "" {
-			out = append(out, t.URL)
+	seen := map[string]bool{}
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, err
+		}
+		if !seen[u] {
+			seen[u] = true
+			out = append(out, u)
 		}
 	}
-	return out
+	return out, rows.Err()
 }
 
 func keys(m map[string]struct{}) []string {

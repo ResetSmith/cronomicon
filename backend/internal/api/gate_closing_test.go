@@ -809,11 +809,13 @@ func TestGC_TagsAndNotesNeedAReadableRow(t *testing.T) {
 // GC-14 — an Apprise target's URL is its credential.
 func TestGC_NotificationTargetURLsAreMasked(t *testing.T) {
 	h, pool := gateServer(t)
-	mustExec(t, pool)(`INSERT INTO notification_config (id, apprise_enabled, apprise_url, apprise_targets)
-	      VALUES (1, 1, 'http://apprise.internal:8000',
-	              '[{"label":"ops","service":"slack","url":"slack://TOKENA/TOKENB/TOKENC","enabled":true}]')
+	mustExec(t, pool)(`INSERT INTO notification_config (id, apprise_enabled, apprise_url)
+	      VALUES (1, 1, 'http://apprise.internal:8000')
 	      ON CONFLICT(id) DO UPDATE SET apprise_enabled=excluded.apprise_enabled,
-	              apprise_url=excluded.apprise_url, apprise_targets=excluded.apprise_targets`)
+	              apprise_url=excluded.apprise_url`)
+	// Global's target (1540; until 2.5.0 C4 the apprise_targets list).
+	mustExec(t, pool)(`INSERT INTO alert_targets (id, owner_agency, label, service, url, enabled, created_at)
+	      VALUES ('t-ops', 'global', 'ops', 'slack', 'slack://TOKENA/TOKENB/TOKENC', 1, 't')`)
 	if body := gateReq(t, h, http.MethodGet, "/api/v1/settings/notifications", gRoot, "").Body.String(); !strings.Contains(body, "TOKENA") {
 		t.Fatalf("precondition: a global admin reads the target URL back, got %s", body)
 	}
