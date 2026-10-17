@@ -152,3 +152,123 @@ func TestAlertRulesBelongToAnAgency(t *testing.T) {
 		t.Errorf("fin admin deleting its own rule = %d (%s)", rec.Code, rec.Body)
 	}
 }
+
+// AL-2 and AL-3 (2.5.0 C4): a push target is one agency's, changed with
+// configureApp on it; its URL is read only by those who may change it
+// (question 81); a rule names only its own agency's targets (question 79), and
+// an edit that does not send targetIds keeps the rule's.
+func TestPushTargetsBelongToAnAgency(t *testing.T) {
+	h, pool := gateServer(t)
+	type target struct {
+		ID          string `json:"id"`
+		OwnerAgency string `json:"ownerAgency"`
+		URL         string `json:"url"`
+		URLSet      bool   `json:"urlSet"`
+	}
+	create := func(groups, body string) (int, target) {
+		t.Helper()
+		rec := gateReq(t, h, http.MethodPost, "/api/v1/alert-targets", groups, body)
+		var tg target
+		_ = json.Unmarshal(rec.Body.Bytes(), &tg)
+		return rec.Code, tg
+	}
+	code, fin := create(gFinAdmin, `{"label":"FIN hook","service":"json","url":"json://FINTOKEN"}`)
+	if code != http.StatusCreated || fin.OwnerAgency != "ag:FIN" || fin.URL != "json://FINTOKEN" {
+		t.Fatalf("fin admin creating a target = %d %+v, want 201, ag:FIN and its URL", code, fin)
+	}
+	code, glob := create(gRoot, `{"label":"ops","url":"json://GLOBTOKEN"}`)
+	if code != http.StatusCreated || glob.OwnerAgency != "global" {
+		t.Fatalf("root creating a target = %d %+v, want 201 and global", code, glob)
+	}
+	_, tax := create(gTaxAdmin, `{"label":"TAX hook","url":"json://TAXTOKEN"}`)
+	if c, _ := create(gFinAdmin, `{"label":"x","url":"json://x","ownerAgency":"global"}`); c != http.StatusForbidden {
+		t.Errorf("fin admin creating Global's target = %d, want 403", c)
+	}
+	if c, _ := create(gFinAdmin, `{"label":"x"}`); c != http.StatusUnprocessableEntity {
+		t.Errorf("a target with no URL = %d, want 422", c)
+	}
+
+	// Who reads which, and who reads the URL.
+	list := func(groups string) map[string]target {
+		rec := gateReq(t, h, http.MethodGet, "/api/v1/alert-targets", groups, "")
+		var l []target
+		if err := json.Unmarshal(rec.Body.Bytes(), &l); err != nil {
+			t.Fatalf("GET /alert-targets as %s: %d %s", groups, rec.Code, rec.Body)
+		}
+		out := map[string]target{}
+		for _, tg := range l {
+			out[tg.ID] = tg
+		}
+		return out
+	}
+	if l := list(gFinViewer); len(l) != 1 || l[fin.ID].URL != "" || !l[fin.ID].URLSet {
+		t.Errorf("fin viewer reads %+v; want FIN's target alone, its URL withheld and urlSet", l)
+	}
+	if l := list(gFinAdmin); len(l) != 1 || l[fin.ID].URL != "json://FINTOKEN" {
+		t.Errorf("fin admin reads %+v; want FIN's target with its URL", l)
+	}
+	if l := list(gAllViewer); len(l) != 3 || l[glob.ID].URL != "" || l[fin.ID].URL != "" {
+		t.Errorf("an everywhere-viewer reads %+v; want all three, no URL", l)
+	}
+	if l := list(gRoot); len(l) != 3 || l[tax.ID].URL != "json://TAXTOKEN" {
+		t.Errorf("root reads %+v; want all three with URLs", l)
+	}
+
+	// Changing one: 404 unread, 403 without configureApp.
+	upd := `{"label":"renamed","url":"json://FINTOKEN2","enabled":false}`
+	for _, c := range []struct {
+		groups string
+		want   int
+	}{{gTaxAdmin, http.StatusNotFound}, {gFinViewer, http.StatusForbidden}, {gFinAdmin, http.StatusOK}} {
+		if rec := gateReq(t, h, http.MethodPut, "/api/v1/alert-targets/"+fin.ID, c.groups, upd); rec.Code != c.want {
+			t.Errorf("%s PUT FIN's target = %d, want %d (%s)", c.groups, rec.Code, c.want, rec.Body)
+		}
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM alert_targets WHERE id=? AND owner_agency='ag:FIN' AND label='renamed' AND enabled=0`, fin.ID); n != 1 {
+		t.Error("FIN's edit did not land, or moved the target")
+	}
+
+	// A rule names its own agency's targets only.
+	rule := func(targets string) string {
+		return `{"targetMode":"all","trigger":"failure","channels":["apprise"],"enabled":true,"targetIds":` + targets + `}`
+	}
+	for _, other := range []string{glob.ID, tax.ID, "no-such-target"} {
+		rec := gateReq(t, h, http.MethodPost, "/api/v1/alerts", gFinAdmin, rule(`["`+fin.ID+`","`+other+`"]`))
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "unknown_target" {
+			t.Errorf("FIN's rule naming %s = %d %s, want 422 unknown_target", other, rec.Code, rec.Body)
+		}
+	}
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/alerts", gRoot, rule(`["`+fin.ID+`"]`)); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("a Global rule naming FIN's target = %d, want 422 (%s)", rec.Code, rec.Body)
+	}
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/alerts", gFinAdmin, rule(`["`+fin.ID+`"]`))
+	var made struct {
+		ID        string   `json:"id"`
+		TargetIDs []string `json:"targetIds"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &made)
+	if rec.Code != http.StatusCreated || len(made.TargetIDs) != 1 || made.TargetIDs[0] != fin.ID {
+		t.Fatalf("FIN's rule naming its target = %d %s, want 201 naming it", rec.Code, rec.Body)
+	}
+	// An edit without targetIds keeps them; one with [] names none.
+	noTargets := `{"targetMode":"all","trigger":"failure","channels":["apprise"],"enabled":true}`
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/alerts/"+made.ID, gFinAdmin, noTargets); rec.Code != http.StatusOK {
+		t.Fatalf("edit = %d (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM alert_rule_targets WHERE rule_id=? AND target_id=?`, made.ID, fin.ID); n != 1 {
+		t.Error("an edit that sent no targetIds dropped the rule's target")
+	}
+	// Deleting a target: TAX cannot; FIN can, and the rule stops naming it.
+	if rec := gateReq(t, h, http.MethodDelete, "/api/v1/alert-targets/"+fin.ID, gTaxAdmin, ""); rec.Code != http.StatusNotFound {
+		t.Errorf("tax admin deleting FIN's target = %d, want 404", rec.Code)
+	}
+	if rec := gateReq(t, h, http.MethodDelete, "/api/v1/alert-targets/"+fin.ID, gFinAdmin, ""); rec.Code != http.StatusNoContent {
+		t.Errorf("fin admin deleting its target = %d (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM alert_rule_targets WHERE rule_id=?`, made.ID); n != 0 {
+		t.Error("a deleted target is still named by the rule")
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM change_log WHERE category='Alerts' AND agency_id='ag:FIN' AND target LIKE 'push target%'`); n != 3 {
+		t.Errorf("FIN's target's audit rows carrying FIN: %d, want create, edit and delete", n)
+	}
+}

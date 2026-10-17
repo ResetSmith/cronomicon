@@ -446,6 +446,11 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/alerts", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCreateAlert)))
 	mux.Handle("PUT /api/v1/alerts/{alertId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateAlert)))
 	mux.Handle("DELETE /api/v1/alerts/{alertId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDeleteAlert)))
+	// Push targets (2.5.0 C4, AL-2): rows with an owner, gated as the rules are.
+	mux.Handle("GET /api/v1/alert-targets", s.auth.RequireSession(http.HandlerFunc(s.handleListAlertTargets)))
+	mux.Handle("POST /api/v1/alert-targets", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCreateAlertTarget)))
+	mux.Handle("PUT /api/v1/alert-targets/{targetId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateAlertTarget)))
+	mux.Handle("DELETE /api/v1/alert-targets/{targetId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDeleteAlertTarget)))
 
 	// ── SSH Hosts (writes + test: ConfigureApp, PP-B1) ──────────────────────────
 	mux.Handle("GET /api/v1/ssh/hosts", s.auth.RequireSession(http.HandlerFunc(s.handleListSshHosts)))
@@ -1515,6 +1520,164 @@ func (s *Server) alertRuleFor(w http.ResponseWriter, r *http.Request, id auth.Id
 	return ar, true
 }
 
+// alertTargetsInAgency refuses a rule that names a push target not of its own
+// agency (2.5.0 C4, AL-2; question 79, IN-6): an agency's rule sends to its
+// agency's targets, a Global rule to Global's. One the caller cannot read is
+// refused the same way as one that does not exist.
+func (s *Server) alertTargetsInAgency(w http.ResponseWriter, r *http.Request, inp settings.AlertRuleInput, owner string) bool {
+	if len(inp.TargetIDs) == 0 {
+		return true
+	}
+	bad, err := settings.AlertTargetsOutsideAgency(r.Context(), s.db, inp.TargetIDs, owner)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if len(bad) > 0 {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_target",
+			"the rule's agency has no push target "+strings.Join(bad, ", ")+": a rule sends to its own agency's targets")
+		return false
+	}
+	return true
+}
+
+// alertTargetView is a push target as this caller may see it (question 81):
+// its URL is often the credential itself, and only one who may change the
+// target (configureApp on its agency) reads it; others see that one is set.
+func alertTargetView(id auth.Identity, t settings.AlertTarget) settings.AlertTarget {
+	if !id.CanAgency(auth.PermConfigureApp, agencyOrGlobal(t.OwnerAgency)) {
+		t.URL = ""
+	}
+	return t
+}
+
+func (s *Server) handleListAlertTargets(w http.ResponseWriter, r *http.Request) {
+	id, _ := auth.IdentityFrom(r.Context())
+	list, err := settings.ListAlertTargets(r.Context(), s.db)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	list = keepReadable(r, list, func(t settings.AlertTarget) string { return t.OwnerAgency })
+	for i := range list {
+		list[i] = alertTargetView(id, list[i])
+	}
+	httpx.JSON(w, http.StatusOK, list)
+}
+
+// alertTargetFor is the target the route names, if the caller may change it:
+// 404 to one who may not read it (question 72), 403 to one who reads it but
+// holds no configureApp on its agency (AL-3).
+func (s *Server) alertTargetFor(w http.ResponseWriter, r *http.Request, id auth.Identity) (*settings.AlertTarget, bool) {
+	t, err := settings.GetAlertTarget(r.Context(), s.db, r.PathValue("targetId"))
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return nil, false
+	}
+	if t == nil || !readsAgency(r, t.OwnerAgency) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "push target not found")
+		return nil, false
+	}
+	if !id.CanAgency(auth.PermConfigureApp, agencyOrGlobal(t.OwnerAgency)) {
+		httpx.Fail(w, http.StatusForbidden, "forbidden", "configureApp on the target's agency is required")
+		return nil, false
+	}
+	return t, true
+}
+
+func decodeAlertTargetInput(w http.ResponseWriter, r *http.Request) (*settings.AlertTargetInput, bool) {
+	var body struct {
+		Label       string `json:"label"`
+		Service     string `json:"service"`
+		URL         string `json:"url"`
+		Enabled     *bool  `json:"enabled"`
+		OwnerAgency string `json:"ownerAgency"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return nil, false
+	}
+	inp := &settings.AlertTargetInput{
+		Label: strings.TrimSpace(body.Label), Service: strings.TrimSpace(body.Service),
+		URL: strings.TrimSpace(body.URL), Enabled: body.Enabled == nil || *body.Enabled,
+		OwnerAgency: strings.TrimSpace(body.OwnerAgency),
+	}
+	if inp.URL == "" {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "url_required", "a push target needs its Apprise URL")
+		return nil, false
+	}
+	return inp, true
+}
+
+func (s *Server) handleCreateAlertTarget(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	inp, ok := decodeAlertTargetInput(w, r)
+	if !ok {
+		return
+	}
+	owner, ok := s.requireRecordOwnerChoice(w, r, id, inp.OwnerAgency, "push target")
+	if !ok {
+		return
+	}
+	inp.OwnerAgency = owner
+	t, err := settings.CreateAlertTarget(r.Context(), s.db, *inp, id.Email)
+	if err != nil {
+		httpx.Fail500(w, s.log, "create_failed", err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, alertTargetView(id, *t))
+}
+
+func (s *Server) handleUpdateAlertTarget(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	if _, ok := s.alertTargetFor(w, r, id); !ok {
+		return
+	}
+	inp, ok := decodeAlertTargetInput(w, r)
+	if !ok {
+		return
+	}
+	t, err := settings.UpdateAlertTarget(r.Context(), s.db, r.PathValue("targetId"), *inp, id.Email)
+	if err != nil {
+		httpx.Fail500(w, s.log, "update_failed", err)
+		return
+	}
+	if t == nil {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "push target not found")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, alertTargetView(id, *t))
+}
+
+func (s *Server) handleDeleteAlertTarget(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	if _, ok := s.alertTargetFor(w, r, id); !ok {
+		return
+	}
+	found, err := settings.DeleteAlertTarget(r.Context(), s.db, r.PathValue("targetId"), id.Email)
+	if err != nil {
+		httpx.Fail500(w, s.log, "delete_failed", err)
+		return
+	}
+	if !found {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "push target not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // alertJobInAgency refuses an agency's rule that names a job its agency does
 // not have (2.5.0 C4, AL-1): it could match nothing of its own.
 func (s *Server) alertJobInAgency(w http.ResponseWriter, r *http.Request, inp settings.AlertRuleInput, owner string) bool {
@@ -1555,7 +1718,7 @@ func (s *Server) handleCreateAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inp.OwnerAgency = owner
-	if !s.alertJobInAgency(w, r, *inp, owner) {
+	if !s.alertJobInAgency(w, r, *inp, owner) || !s.alertTargetsInAgency(w, r, *inp, owner) {
 		return
 	}
 	ar, err := settings.CreateAlertRule(r.Context(), s.db, *inp, id.Email)
@@ -1586,7 +1749,8 @@ func (s *Server) handleUpdateAlert(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, code, msg)
 		return
 	}
-	if !s.alertJobInAgency(w, r, *inp, agencyOrGlobal(cur.OwnerAgency)) {
+	if !s.alertJobInAgency(w, r, *inp, agencyOrGlobal(cur.OwnerAgency)) ||
+		!s.alertTargetsInAgency(w, r, *inp, agencyOrGlobal(cur.OwnerAgency)) {
 		return
 	}
 	ar, err := settings.UpdateAlertRule(r.Context(), s.db, aid, *inp, id.Email)
@@ -1634,15 +1798,21 @@ func decodeAlertRuleInput(r *http.Request) (*settings.AlertRuleInput, error) {
 		Enabled    bool     `json:"enabled"`
 		// OwnerAgency is whose a new rule is (C4); an edit keeps the rule's.
 		OwnerAgency string `json:"ownerAgency"`
+		// TargetIDs: absent keeps an edited rule's targets (AL-2).
+		TargetIDs *[]string `json:"targetIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		return nil, err
 	}
-	return &settings.AlertRuleInput{
+	inp := &settings.AlertRuleInput{
 		TargetMode: body.TargetMode, JobName: body.JobName,
 		Trigger: body.Trigger, Channels: body.Channels, Recipients: body.Recipients,
 		Owner: body.Owner, Enabled: body.Enabled, OwnerAgency: body.OwnerAgency,
-	}, nil
+	}
+	if body.TargetIDs != nil {
+		inp.TargetIDs = append([]string{}, *body.TargetIDs...)
+	}
+	return inp, nil
 }
 
 // validateAlertRuleInput refuses a rule that could never fire (VF-15 / J-3).

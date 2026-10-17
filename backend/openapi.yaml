@@ -6393,6 +6393,86 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /alert-targets:
+    get:
+      tags: [Settings]
+      operationId: listAlertTargets
+      summary: List push targets
+      description: >-
+        The push targets the caller reads (2.5.0 C4, AL-2; CF-1): an agency's
+        to its own people, Global's to everywhere-readers. A target's `url` is
+        returned only to a caller holding `configureApp` on its agency
+        (question 81); others see `urlSet`.
+      responses:
+        '200':
+          description: Push targets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AlertTarget' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Settings]
+      operationId: createAlertTarget
+      summary: Create a push target
+      description: >-
+        AL-3: `configureApp` on the agency the target is created in, chosen as
+        for an alert rule. 422 `url_required` without a URL.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlertTargetInput' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertTarget' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /alert-targets/{targetId}:
+    put:
+      tags: [Settings]
+      operationId: updateAlertTarget
+      summary: Update a push target
+      description: >-
+        AL-3: `configureApp` on the target's agency; 404 to a caller who does
+        not read it. The target keeps its agency and the rules that name it.
+      parameters: [{ $ref: '#/components/parameters/targetId' }, { $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlertTargetInput' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertTarget' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+    delete:
+      tags: [Settings]
+      operationId: deleteAlertTarget
+      summary: Delete a push target
+      description: >-
+        AL-3: `configureApp` on the target's agency; 404 to a caller who does
+        not read it. The rules that named it stop naming it.
+      parameters: [{ $ref: '#/components/parameters/targetId' }, { $ref: '#/components/parameters/csrf' }]
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   # ── SSH inventory (DB-backed per A1.3) ─────────────────────────────────────
   /ssh/hosts:
     get:
@@ -8548,6 +8628,12 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    targetId:
+      name: targetId
+      in: path
+      required: true
+      description: A push target's id (2.5.0 C4).
+      schema: { type: string }
     hostId:
       name: hostId
       in: path
@@ -13747,6 +13833,50 @@ components:
             2.5.0; existing rules became Global's. Read on create only; a rule
             keeps its agency. Deleting an agency is refused while it owns a
             rule.
+        targetIds:
+          type: array
+          items: { type: string }
+          description: >-
+            The push targets an `apprise` channel sends to (2.5.0 C4, AL-2):
+            targets of the rule's own agency only (question 79; 422
+            `unknown_target` otherwise). Absent on an edit, the rule keeps its
+            targets; absent on create, it names none. Rules that existed
+            before 2.5.0 name every target that existed then.
+
+    AlertTarget:
+      allOf:
+        - type: object
+          properties:
+            id: { type: string, readOnly: true }
+            label: { type: string }
+            service: { type: string }
+            enabled: { type: boolean }
+            ownerAgency:
+              type: string
+              readOnly: true
+              description: The agency the target is one of; set at create.
+            url:
+              type: string
+              description: >-
+                Returned only to a caller holding `configureApp` on the
+                target's agency (question 81): it is often the credential.
+            urlSet: { type: boolean, readOnly: true }
+        - $ref: '#/components/schemas/AuditFields'
+
+    AlertTargetInput:
+      type: object
+      required: [url]
+      description: >-
+        A push target (2.5.0 C4, AL-2): an Apprise service URL that one
+        agency's rules name. The Apprise gateway stays the installation's.
+      properties:
+        label: { type: string }
+        service: { type: string }
+        url: { type: string }
+        enabled: { type: boolean, default: true }
+        ownerAgency:
+          type: string
+          description: Whose a new target is, chosen as for an alert rule; ignored on an edit.
 
     NotificationTestReport:
       type: object

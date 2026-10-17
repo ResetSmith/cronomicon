@@ -48,12 +48,15 @@ type AlertRule struct {
 	// OwnerAgency is whose the rule is (2.5.0 C4, AL-1): it matches only runs
 	// of that agency; Global's match every agency's. Set at create, from the
 	// agency the request works in; not changed by an edit.
-	OwnerAgency    string `json:"ownerAgency"`
-	Enabled        bool   `json:"enabled"`
-	CreatedBy      string `json:"createdBy"`
-	CreatedAt      string `json:"createdAt"`
-	LastModifiedBy string `json:"lastModifiedBy"`
-	LastModifiedAt string `json:"lastModifiedAt"`
+	OwnerAgency string `json:"ownerAgency"`
+	// TargetIDs is the push targets the rule sends to (2.5.0 C4, AL-2): its
+	// own agency's (question 79). Until then a push went to every target.
+	TargetIDs      []string `json:"targetIds"`
+	Enabled        bool     `json:"enabled"`
+	CreatedBy      string   `json:"createdBy"`
+	CreatedAt      string   `json:"createdAt"`
+	LastModifiedBy string   `json:"lastModifiedBy"`
+	LastModifiedAt string   `json:"lastModifiedAt"`
 }
 
 // AlertRuleInput is the caller-supplied payload.
@@ -67,6 +70,9 @@ type AlertRuleInput struct {
 	Enabled    bool
 	// OwnerAgency is read by CreateAlertRule only (Global's when empty).
 	OwnerAgency string
+	// TargetIDs is the push targets to name; nil leaves an edited rule's as
+	// they are (a client that does not send them), and a new rule with none.
+	TargetIDs []string
 }
 
 // ListAlertRules returns all alert rules.
@@ -87,7 +93,17 @@ func ListAlertRules(ctx context.Context, database *sql.DB) ([]AlertRule, error) 
 		}
 		out = append(out, *ar)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	links, err := ruleTargetIDs(ctx, database, "")
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].TargetIDs = nullSlice(links[out[i].ID])
+	}
+	return out, nil
 }
 
 // GetAlertRule fetches a single rule by ID.
@@ -103,7 +119,17 @@ func GetAlertRule(ctx context.Context, database *sql.DB, id string) (*AlertRule,
 	if !rows.Next() {
 		return nil, nil
 	}
-	return scanAlertRule(rows)
+	ar, err := scanAlertRule(rows)
+	if err != nil {
+		return nil, err
+	}
+	rows.Close()
+	links, err := ruleTargetIDs(ctx, database, id)
+	if err != nil {
+		return nil, err
+	}
+	ar.TargetIDs = nullSlice(links[id])
+	return ar, nil
 }
 
 func scanAlertRule(rows *sql.Rows) (*AlertRule, error) {
@@ -161,6 +187,11 @@ func CreateAlertRule(ctx context.Context, database *sql.DB, inp AlertRuleInput, 
 	if err != nil {
 		return nil, fmt.Errorf("create alert rule: %w", err)
 	}
+	if inp.TargetIDs != nil {
+		if err := setRuleTargets(ctx, database, id, cleanIDs(inp.TargetIDs)); err != nil {
+			return nil, err
+		}
+	}
 	audit(ctx, database, owner, actor, "Alerts", "created", alertName(inp), "")
 	return GetAlertRule(ctx, database, id)
 }
@@ -190,6 +221,11 @@ func UpdateAlertRule(ctx context.Context, database *sql.DB, id string, inp Alert
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return nil, nil
+	}
+	if inp.TargetIDs != nil {
+		if err := setRuleTargets(ctx, database, id, cleanIDs(inp.TargetIDs)); err != nil {
+			return nil, err
+		}
 	}
 	audit(ctx, database, owner, actor, "Alerts", "updated", alertName(inp), "")
 	return GetAlertRule(ctx, database, id)

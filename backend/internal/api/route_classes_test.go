@@ -103,6 +103,7 @@ var routeClasses = map[string]routeClass{
 	"/api/v1/workflow-runs/{traceId}":              {"one-agency", ""},
 	"/api/v1/workflows":                            {"one-agency", ""},
 	"/api/v1/workflows/{workflowId}":               {"one-agency", ""},
+	"/api/v1/alert-targets":                        {"one-agency", ""},
 	"/api/v1/alerts":                               {"one-agency", ""},
 	"/api/v1/recent-logins":                        {"one-agency", ""},
 	"/api/v1/access/recent-logins":                 {"one-agency", ""},
