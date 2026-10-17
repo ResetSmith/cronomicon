@@ -106,8 +106,8 @@ var routeClasses = map[string]routeClass{
 	"/api/v1/alerts":                               {"any-session", "one-agency: C4 (AL-1 gives a rule an owner)"},
 	"/api/v1/recent-logins":                        {"one-agency", ""},
 	"/api/v1/access/recent-logins":                 {"one-agency", ""},
-	"/api/v1/definitions/{kind}/{name}/revisions":  {"installation", "one-agency: C3 (SO-2)"},
-	"/api/v1/recycle-bin":                          {"installation", "one-agency: C3 (SO-2)"},
+	"/api/v1/definitions/{kind}/{name}/revisions":  {"one-agency", ""}, // SO-2 (C3): compose on the definition's agency
+	"/api/v1/recycle-bin":                          {"one-agency", ""}, // SO-2 (C3)
 
 	// ── all-agencies (the Operations overview) ──
 	"/api/v1/overview":        {"all-agencies", ""},

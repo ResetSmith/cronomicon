@@ -81,52 +81,6 @@ func (s *Server) requireCompose(next http.Handler) http.Handler {
 	return s.requirePerm(auth.PermCompose, func(p rolePermissions) bool { return p.Compose })(next)
 }
 
-// requireComposeAdmin keeps the ORIGINAL admin-only gate for the authoring surfaces
-// AF-2 deliberately did not widen: schedule-defs, calendars, reactions, and the
-// revisions/recycle-bin. Every one of them acts on an object with NO scope of its
-// own — a reusable schedule template, a global working calendar, a reaction that
-// attaches to a definition by name, a bin spanning every definition — so
-// "agency-bound" has no meaning for them yet, and handing them to a departmental
-// composer would be a cross-agency escalation, not a delegation: retiming another
-// department's schedule, editing a shared calendar, attaching a reaction that
-// TRIGGERS someone else's job, or restoring/purging anything from anyone's bin.
-//
-// Widening any of these is its own decision with its own agency model to design
-// first.
-//
-// GC-4 (v2.2.2): the gate is PERMISSIONS on an UNRESTRICTED grant, not a role
-// name. It was RequireRole("admin"), which asked whether ANY of the caller's
-// grants named the built-in role — so an `admin` of one agency reached every one
-// of these install-wide surfaces, while a custom role holding every permission
-// on every scope reached none. Neither was the "unrestricted admin" the
-// paragraph above describes.
-//
-// It asks for compose AND configureApp on ONE unrestricted grant, not compose
-// alone. These surfaces are authoring, but what they author is installation
-// state: a `global` calendar freezes every agency's fires, a purge is
-// irreversible, a reusable schedule retimes everyone who references it. Compose
-// alone would have handed all of that to any custom all-agency role that can
-// author jobs — a widening no one decided on. The pair is what the built-in
-// admin holds and what "administrator of the installation" means in permission
-// terms; loosening it per surface is a later, deliberate change.
-func (s *Server) requireComposeAdmin(next http.Handler) http.Handler {
-	return s.requirePerm(auth.PermCompose, func(p rolePermissions) bool { return p.Compose })(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id, ok := auth.IdentityFrom(r.Context())
-			if !ok {
-				httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-				return
-			}
-			if !isComposeAdmin(id) {
-				s.denyEntityAgency(w, r, id, auth.PermCompose, auth.AllScopes,
-					"reusable schedules, calendars, reactions, revisions and the recycle bin are shared by "+
-						"every agency — only an administrator holding compose and configureApp on every agency may change them")
-				return
-			}
-			next.ServeHTTP(w, r)
-		}))
-}
-
 // isComposeAdmin reports whether ONE of the caller's grants is unrestricted and
 // carries both compose and configureApp — the same-grant rule (RB): the two
 // permissions may not come from different grants.

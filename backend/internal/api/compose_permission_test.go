@@ -291,31 +291,11 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 	})
 }
 
-// TestSharedAuthoringSurfacesStayAdminOnly — AF2-D1. The old admin gate covered six
-// surfaces; AF-2 widened only the two whose objects carry a scope. These four act on
-// objects with NO scope — a reusable schedule template, a global calendar, a
-// reaction that attaches to a definition by name, a bin spanning every definition —
-// so a departmental composer reaching them would be a cross-agency escalation, not
-// a delegation: retiming another department's schedule, attaching a reaction that
-// TRIGGERS their job, or purging their recycle bin.
-func TestSharedAuthoringSurfacesStayAdminOnly(t *testing.T) {
-	h, _ := composeRBACServer(t)
-
-	// (Schedules built in the app and calendars left this list with §0a,
-	// question 32 and SO-1: each has an owner, and writing it takes compose on
-	// that owner. TestI1_AScheduleIsItsOwnersToWrite, TestI1_ACalendarIsItsAgencys.
-	// Reactions left it in 2.4.2, question 61: they are their definition's
-	// agency's, TestRV_ADefinitionsReactionsAreItsAgencysToWrite.)
-	for _, tc := range []struct{ what, method, path, body string }{
-		{"recycle bin list", http.MethodGet, "/api/v1/recycle-bin", ""},
-	} {
-		// Even the UNRESTRICTED composer is refused: this is about the surface, not
-		// about reach. Only admin authors shared objects.
-		if rec := composeReq(t, h, tc.method, tc.path, "unrestricted-composers", tc.body); rec.Code != http.StatusForbidden {
-			t.Errorf("%s as a non-admin composer = %d, want 403 — AF-2 did not widen this surface", tc.what, rec.Code)
-		}
-	}
-}
+// The shared authoring surfaces AF-2 left a global administrator's are gone:
+// schedules and calendars have owners (§0a, question 32, SO-1), reactions are
+// their definition's agency's (question 61), and the recycle bin and revisions
+// are compose on the definition's agency since 2.5.0 C3 (SO-2;
+// TestC3_AnAgencyRestoresItsOwnBinnedJobAndSeesNoOther).
 
 // TestComposeCapabilityFlagsReflectTheGrant — the SPA gates its authoring
 // affordances on these, so they must track the permission rather than the old role

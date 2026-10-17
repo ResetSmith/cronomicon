@@ -31,7 +31,8 @@ const (
 	// predicate in the handler).
 	clsGlobal gateClass = "global"
 	// clsComposeAdmin — compose AND configureApp on one unrestricted grant
-	// (requireComposeAdmin): the shared authoring surfaces with no owner.
+	// (requireComposeAdmin, removed in 2.5.0 C3): the shared authoring surfaces
+	// with no owner. None is left: each has an owner since §0a and SO-2.
 	clsComposeAdmin gateClass = "composeAdmin"
 	// clsObject — a permission checked against the object's own agency or
 	// scope. The note names the check.
@@ -115,9 +116,9 @@ var writeRouteGates = map[string]routeGate{
 	"DELETE /api/v1/pending-runs/{id}":                                {clsVerb, "a run verb on every scope the pending run would touch (GC-11)"},
 	"PUT /api/v1/reactions/{ownerKind}/{ownerName}":                   {clsObject, "compose on the owner definition's agency (question 61; its upstream is its own agency's)"},
 	"DELETE /api/v1/reactions/{ownerKind}/{ownerName}/{name}":         {clsObject, "compose on the owner definition's agency (question 61)"},
-	"POST /api/v1/definitions/{kind}/{name}/revisions/{no}/restore":   {clsComposeAdmin, "revisions span every agency's definitions"},
-	"POST /api/v1/recycle-bin/{kind}/{name}/restore":                  {clsComposeAdmin, "the bin spans every agency's definitions"},
-	"DELETE /api/v1/recycle-bin/{kind}/{name}":                        {clsComposeAdmin, "a purge is irreversible and spans every agency"},
+	"POST /api/v1/definitions/{kind}/{name}/revisions/{no}/restore":   {clsObject, "compose on the definition's agency; the name among the caller's (SO-2, 2.5.0 C3)"},
+	"POST /api/v1/recycle-bin/{kind}/{name}/restore":                  {clsObject, "compose on the binned definition's agency; the name among the caller's (SO-2, 2.5.0 C3)"},
+	"DELETE /api/v1/recycle-bin/{kind}/{name}":                        {clsObject, "compose on the binned definition's agency, purged by its uid (SO-2, 2.5.0 C3)"},
 	"PUT /api/v1/runner-tags/{runnerId}":                              {clsObject, "requireRunnerAgency"},
 	"POST /api/v1/runners/register":                                   {clsAgent, "a single-use registration token"},
 	"POST /api/v1/runners/registration-tokens":                        {clsObject, "configureApp on the agency the token enrols an agent for (LR-61); Global's is a global administrator's"},

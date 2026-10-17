@@ -130,30 +130,6 @@ func (s *Server) definitionAgency(ctx context.Context, kind, uid string) string 
 	return s.ownerBy(ctx, `SELECT `+expr+` FROM `+table+` `+alias+` WHERE `+alias+`.uid = ?`, uid)
 }
 
-// binnedAgency is the agency of what the recycle bin holds of kind under name,
-// read before a purge: the one owner they have, else Global's (a purge by name
-// takes every binned row of it).
-func (s *Server) binnedAgency(ctx context.Context, kind, name string) string {
-	table, alias, expr := definitionOwner(kind)
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT `+expr+` FROM `+table+` `+alias+
-		` WHERE `+alias+`.source = 'cronomicon' AND `+alias+`.name = ? AND `+alias+`.deleted_at IS NOT NULL`, name)
-	if err != nil {
-		return agencyid.Global
-	}
-	defer rows.Close()
-	var owners []string
-	for rows.Next() {
-		var o string
-		if rows.Scan(&o) == nil {
-			owners = append(owners, o)
-		}
-	}
-	if len(owners) != 1 {
-		return agencyid.Global
-	}
-	return owners[0]
-}
-
 // memberAgency is the agency, read now, of a member of an agency by its kind
 // as the membership routes name it (scope, secret, env-var, ssh-credential,
 // runner): after a repair, the agency the object ended up in (D1).
