@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/runcap"
 	"strings"
 )
 
@@ -282,8 +283,22 @@ const (
 // with a stale "nobody can claim this" would be worse than saying nothing.
 func StampUnclaimableReason(ctx context.Context, database *sql.DB, runID string) (string, error) {
 	reason, err := UnclaimableReason(ctx, database, runID)
-	if err != nil || reason == "" {
+	if err != nil {
 		return "", err
+	}
+	// 2.5.0 C6: a run a runner could take may still wait for a slot, held by
+	// the concurrency cap at the claim (runcap). Said here, not in
+	// UnclaimableReason, whose "" means "no runner gate holds it" to its
+	// other readers (ScopeBindingBlock, the stuck-run hint).
+	if reason == "" {
+		var agency sql.NullString
+		_ = database.QueryRowContext(ctx, `SELECT owner_agency FROM runs WHERE id = ?`, runID).Scan(&agency)
+		if agency.Valid {
+			reason = runcap.HeldAtClaim(ctx, database, agency.String)
+		}
+	}
+	if reason == "" {
+		return "", nil
 	}
 	_, err = database.ExecContext(ctx,
 		`UPDATE runs SET queued_reason = ? WHERE id = ? AND status = 'queued'`, reason, runID)

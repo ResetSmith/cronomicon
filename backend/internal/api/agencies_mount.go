@@ -53,6 +53,9 @@ func (s *Server) mountAgencies(mux *http.ServeMux) {
 	// (question 82), whose grant form offers them (GA-3).
 	mux.Handle("GET /api/v1/agencies/{agencyId}/groups", s.auth.RequireSession(http.HandlerFunc(s.handleListAgencyGroups)))
 	mux.Handle("PUT /api/v1/agencies/{agencyId}/groups", s.requireGlobal(auth.PermManageRoles)(http.HandlerFunc(s.handleSetAgencyGroups)))
+	// QT-1 (2.5.0 C6): an agency's own concurrency cap, a global administrator's,
+	// as the agency catalog is. Read on the agency's row (maxConcurrent).
+	mux.Handle("PUT /api/v1/agencies/{agencyId}/concurrency", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleSetAgencyConcurrency)))
 	// Runner ↔ agency membership matrix (M2). Reads session-gated so the Runners
 	// view can render membership; writes ConfigureApp + CSRF (operator-assigned).
 	mux.Handle("GET /api/v1/runner-agencies", s.auth.RequireSession(http.HandlerFunc(s.handleListRunnerAgencies)))
@@ -1276,6 +1279,42 @@ func (s *Server) handleSetAgencyGroups(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "update_failed", err)
 	default:
 		httpx.JSON(w, http.StatusOK, agencyGroupsJSON{AgencyID: agencyID, Groups: groups})
+	}
+}
+
+func (s *Server) handleSetAgencyConcurrency(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return
+	}
+	// null removes the cap, so a body without the field must not read as null.
+	raw, present := body["maxConcurrent"]
+	if !present {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
+			"maxConcurrent is required: a number of runs, or null for no cap of the agency's own")
+		return
+	}
+	var maxConcurrent *int
+	if err := json.Unmarshal(raw, &maxConcurrent); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "maxConcurrent must be a whole number of runs, or null")
+		return
+	}
+	a, err := settings.SetAgencyConcurrency(r.Context(), s.db, r.PathValue("agencyId"), maxConcurrent, id.Email)
+	switch {
+	case errors.Is(err, settings.ErrUnknownAgency):
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+	case errors.Is(err, settings.ErrValidation):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+	case err != nil:
+		httpx.Fail500(w, s.log, "update_failed", err)
+	default:
+		httpx.JSON(w, http.StatusOK, a)
 	}
 }
 

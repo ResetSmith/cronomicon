@@ -71,7 +71,7 @@ func TestScheduledFiresOfAProjectJobWithNoCheckoutAgentDoNotFillTheCap(t *testin
 	if n := runsOf(t, pool, "proj", "skipped"); n != 1 {
 		t.Errorf("skipped rows after %d refused fires of one day = %d, want 1 (a standing refusal)", limit+2, n)
 	}
-	if AtCapacity(ctxb(), pool) {
+	if AtCapacity(ctxb(), pool, "global") {
 		t.Fatalf("the installation is at capacity after fires that were all refused")
 	}
 	// Another job's fire is not held up.

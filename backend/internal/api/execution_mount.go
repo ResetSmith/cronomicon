@@ -25,6 +25,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/runner"
+	"github.com/ResetSmith/cronomicon/internal/runcap"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/scheduler"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
@@ -1669,7 +1670,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 			// (FX-Q2: "promotion re-evaluates at the promotion instant").
 			if !deferred {
 				if g.Gate == "cap" {
-					httpx.Fail(w, http.StatusConflict, "concurrency_cap", "global concurrency cap reached")
+					httpx.Fail(w, http.StatusConflict, "concurrency_cap", capMessage(g.CapAgency))
 				} else {
 					httpx.Fail(w, http.StatusConflict, "suppressed_by_calendar", g.Reason)
 				}
@@ -3124,14 +3125,16 @@ func (s *Server) triggerWorkflow(eng *workflow.Engine) http.HandlerFunc {
 			return
 		}
 
-		// WB-S1: honor the global concurrency cap at the workflow-trigger boundary —
+		// WB-S1: honor the concurrency cap at the workflow-trigger boundary —
 		// the same gate runJob applies — so a workflow can't start a fan-out while the
 		// system is already at capacity. (Deferred runs are judged at promotion.)
-		maxConcurrent := s.maxConcurrent(r)
-		var active int
-		_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM runs WHERE status IN ('queued','running')`).Scan(&active)
-		if active >= maxConcurrent {
-			httpx.Fail(w, http.StatusConflict, "concurrency_cap", "global concurrency cap reached")
+		// 2.5.0 C6: the workflow's agency's, as for a job (internal/runcap).
+		if v := runcap.AtProduction(r.Context(), s.db, s.workflowAgency(r.Context(), wr.UID)); v.Reached {
+			agency := ""
+			if v.Agency {
+				agency = v.AgencyName
+			}
+			httpx.Fail(w, http.StatusConflict, "concurrency_cap", capMessage(agency))
 			return
 		}
 
@@ -5212,15 +5215,13 @@ func (s *Server) deriveJobStatus(r *http.Request, source, jobName, jobUID string
 	return "idle"
 }
 
-func (s *Server) maxConcurrent(r *http.Request) int {
-	var val sql.NullString
-	_ = s.db.QueryRowContext(r.Context(), `SELECT value FROM settings WHERE key = 'maxConcurrent'`).Scan(&val)
-	if val.Valid && val.String != "" {
-		if n, err := strconv.Atoi(val.String); err == nil && n > 0 {
-			return n
-		}
+// capMessage is a 409 concurrency_cap's message: the installation's cap in
+// the words integrations know, an agency's own cap naming it (2.5.0 C6).
+func capMessage(agency string) string {
+	if agency != "" {
+		return agency + "'s concurrency cap reached"
 	}
-	return 5
+	return "global concurrency cap reached"
 }
 
 // dbStatusFilter reverse-maps a display RunStatus (the value mapRunStatus emits,

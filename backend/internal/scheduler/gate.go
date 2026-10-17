@@ -9,6 +9,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
+	"github.com/ResetSmith/cronomicon/internal/runcap"
 )
 
 // The run-admission gates, and the one place that says which producer applies
@@ -193,6 +194,9 @@ type GateOutcome struct {
 	Calendar string
 	// Day is the application-zone day the calendar verdict was taken on.
 	Day string
+	// CapAgency names the agency whose own cap refused the run, when Gate ==
+	// "cap" and it was not the installation's (2.5.0 C6).
+	CapAgency string
 }
 
 func allowed() GateOutcome { return GateOutcome{Allowed: true} }
@@ -240,8 +244,14 @@ func Evaluate(ctx context.Context, database *sql.DB, log logger, req GateRequest
 		}
 	}
 
-	if pol.fleetCap && AtCapacity(ctx, database) {
-		return GateOutcome{Gate: "cap", Reason: reasonConcurrencyCap}
+	if pol.fleetCap {
+		if v := runcap.AtProduction(ctx, database, definitionAgency(ctx, database, req.UID, kind)); v.Reached {
+			out := GateOutcome{Gate: "cap", Reason: capReason(v)}
+			if v.Agency {
+				out.CapAgency = v.AgencyName
+			}
+			return out
+		}
 	}
 
 	return allowed()

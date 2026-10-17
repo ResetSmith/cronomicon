@@ -32,6 +32,11 @@ type Agency struct {
 	// migration 1220). It cannot be renamed or deleted, and no access grant may
 	// name it: it belongs to the global administrators.
 	Builtin bool `json:"builtin"`
+	// MaxConcurrent is the agency's own concurrency cap (2.5.0 C6, QT-1): its
+	// runs, waiting and running, where one is produced, and its running runs
+	// at the claim (internal/runcap). nil is none; the installation's cap
+	// binds either way. Set by a global administrator (SetAgencyConcurrency).
+	MaxConcurrent *int `json:"maxConcurrent"`
 	// OnlineRunnerCount is the number of ONLINE runners assigned to this agency
 	// (agency-support.md M4 coverage view). 0 ⇒ jobs bound here will wait — no
 	// runner can claim them. Computed per list read; not stored.
@@ -103,7 +108,7 @@ var (
 // ListAgencies returns the agency catalog ordered by name.
 func ListAgencies(ctx context.Context, database *sql.DB) ([]Agency, error) {
 	rows, err := database.QueryContext(ctx,
-		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin
+		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin, max_concurrent
 		 FROM agencies ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list agencies: %w", err)
@@ -148,7 +153,7 @@ func ListAgencies(ctx context.Context, database *sql.DB) ([]Agency, error) {
 // GetAgency fetches one agency by id; returns (nil, nil) if not found.
 func GetAgency(ctx context.Context, database *sql.DB, id string) (*Agency, error) {
 	row := database.QueryRowContext(ctx,
-		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin
+		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin, max_concurrent
 		 FROM agencies WHERE id=?`, id)
 	a, err := scanAgency(row)
 	if err != nil {
@@ -163,8 +168,13 @@ func GetAgency(ctx context.Context, database *sql.DB, id string) (*Agency, error
 func scanAgency(rs interface{ Scan(...any) error }) (Agency, error) {
 	var a Agency
 	var desc, createdBy, lmBy, lmAt sql.NullString
-	if err := rs.Scan(&a.ID, &a.Name, &desc, &createdBy, &a.CreatedAt, &lmBy, &lmAt, &a.Builtin); err != nil {
+	var maxConc sql.NullInt64
+	if err := rs.Scan(&a.ID, &a.Name, &desc, &createdBy, &a.CreatedAt, &lmBy, &lmAt, &a.Builtin, &maxConc); err != nil {
 		return a, err
+	}
+	if maxConc.Valid {
+		n := int(maxConc.Int64)
+		a.MaxConcurrent = &n
 	}
 	if desc.Valid {
 		a.Description = &desc.String

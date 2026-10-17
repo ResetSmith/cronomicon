@@ -683,7 +683,14 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Concurrency cap reached (globalSettings.maxConcurrent; see S16 — per-job cap TBD).
+          description: >-
+            Concurrency cap reached (`concurrency_cap`). Since 2.5.0 C6: the
+            installation's cap (globalSettings.maxConcurrent) counts the runs
+            running in every agency and the runs waiting in this run's agency
+            ("global concurrency cap reached"); an agency's own cap
+            (Agency.maxConcurrent) counts its runs waiting and running
+            ("<agency>'s concurrency cap reached"). A run that is produced
+            still waits at the claim for a slot under both caps.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -7279,6 +7286,39 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/Validation' }
 
+  /agencies/{agencyId}/concurrency:
+    put:
+      tags: [Agencies]
+      operationId: setAgencyConcurrency
+      summary: Set an agency's own concurrency cap (v2.5.0)
+      description: |
+        A global administrator's (`configureApp` on every agency), as the agency
+        catalog is (QT-1). `maxConcurrent` is a positive number of runs, or null
+        for none; the field is required, so a body without it does not clear
+        the cap. Global may have one. Lowering a cap below what is running stops
+        nothing: the runs finish, and the agency's next run waits for a slot.
+        CSRF required.
+      parameters: [{ $ref: '#/components/parameters/agencyId' }, { $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [maxConcurrent]
+              properties:
+                maxConcurrent: { type: [integer, 'null'], minimum: 1 }
+      responses:
+        '200':
+          description: The agency as stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agency' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+
   /agencies/{agencyId}/groups:
     get:
       tags: [Agencies]
@@ -12155,6 +12195,14 @@ components:
               type: integer
               readOnly: true
               description: Number of online runners assigned to this agency (M4 coverage view). 0 means jobs bound here will wait — no runner can claim them.
+            maxConcurrent:
+              type: [integer, 'null']
+              readOnly: true
+              description: >-
+                The agency's own concurrency cap (v2.5.0, QT-1); null is none. Where
+                one of its runs is produced, its runs waiting and running are counted
+                against it; at the claim, its running runs. The installation's cap
+                binds as well. Set with PUT /agencies/{agencyId}/concurrency.
             builtin:
               type: boolean
               readOnly: true
