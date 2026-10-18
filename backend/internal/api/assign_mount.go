@@ -12,8 +12,8 @@ import (
 )
 
 // POST /api/v1/agencies/{agencyId}/assign — a global administrator gives a job
-// of one agency's repository to the agency in the path, as one commit into its
-// repository (2.5.0 C10.1, IN-12; gitlab/assign.go).
+// or a workflow of one agency's repository to the agency in the path, as one
+// commit into its repository (2.5.0 C10.1, C10.2; IN-12; gitlab/assign.go).
 //
 // The one create whose object's agency is the PATH's, not the agency the
 // request works in: an assignment is made from the origin's side (a global
@@ -27,21 +27,22 @@ func (s *Server) handleAssign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Kind          string `json:"kind"`
-		UID           string `json:"uid"`
-		Scope         string `json:"scope"`
-		CommitMessage string `json:"commitMessage"`
+		Kind          string            `json:"kind"`
+		UID           string            `json:"uid"`
+		Scope         string            `json:"scope"`
+		Scopes        map[string]string `json:"scopes"`
+		CommitMessage string            `json:"commitMessage"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
-	if body.Kind != "job" {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", `kind must be "job"`)
+	if body.Kind != "job" && body.Kind != "workflow" {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", `kind must be "job" or "workflow"`)
 		return
 	}
 	if body.UID == "" {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "uid is required: the job to assign")
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "uid is required: the job or workflow to assign")
 		return
 	}
 	if s.git == nil {
@@ -49,8 +50,9 @@ func (s *Server) handleAssign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target := r.PathValue("agencyId")
-	res, err := s.git.AssignJob(r.Context(), gitlab.AssignJobRequest{
-		JobUID: body.UID, TargetAgency: target, Scope: body.Scope, CommitMessage: body.CommitMessage, Actor: id.Email,
+	res, err := s.git.Assign(r.Context(), gitlab.AssignRequest{
+		Kind: body.Kind, UID: body.UID, TargetAgency: target, Scope: body.Scope, Scopes: body.Scopes,
+		CommitMessage: body.CommitMessage, Actor: id.Email,
 	})
 	var refusal *gitlab.AssignError
 	var protected *gitlab.ProtectedBranchError
@@ -70,7 +72,7 @@ func (s *Server) handleAssign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := settings.WriteChangeLog(r.Context(), s.db, target, id.Email, "Assignment", "assigned",
-		"job:"+res.JobName, gitlab.AssignmentDetails(res)); err != nil {
+		res.Kind+":"+res.Name, gitlab.AssignmentDetails(res)); err != nil {
 		s.log.Error("assignment: change log", "error", err)
 	}
 	httpx.JSON(w, http.StatusCreated, res)

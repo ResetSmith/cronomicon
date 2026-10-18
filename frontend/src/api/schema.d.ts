@@ -4499,22 +4499,29 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Give a job to an agency by one commit into its repository (v2.5.0)
+         * Give a job or a workflow to an agency by one commit into its repository (v2.5.0)
          * @description A global administrator's (`configureApp` on every agency; 2.5.0 C10,
-         *     IN-12). The job (`uid`) is a file of another agency's repository, Global's
-         *     or an agency's; one built in the app is refused (422 `not_in_git`). One
-         *     commit into the path agency's repository carries its file, its script
-         *     and the reusable schedules it names, as they are at the commit its
-         *     repository last synced, on the branch the agency syncs (fetched first,
-         *     pushed without force). The copy names `scope`, a scope the agency owns
-         *     alone (422 `unknown_scope` otherwise), and every YAML file carries
-         *     `metadata.origin` (agency, repository, path, commit).
+         *     IN-12). The job or workflow (`uid`) is a file of another agency's
+         *     repository, Global's or an agency's; one built in the app is refused
+         *     (422 `not_in_git`). One commit into the path agency's repository carries
+         *     its file and what it needs, as they are at the commit its repository
+         *     last synced, on the branch the agency syncs (fetched first, pushed
+         *     without force): a job's script and the reusable schedules it names; a
+         *     workflow's schedules, every job its steps run (in every kind of step)
+         *     with theirs, and every sub-workflow, followed through. A step that runs
+         *     a job built in the app is refused (`not_in_git`). Each copied job names a
+         *     scope the agency owns alone (422 `unknown_scope` otherwise): `scopes`
+         *     by the scope the job runs on in the origin (`""` for none), else
+         *     `scope`; with neither, 422 `scope_required` names the job. Every YAML
+         *     file carries `metadata.origin` (agency, repository, path, commit).
          *
-         *     A script or schedule the agency has by name is its own and is used, not
-         *     added (`files[].action: usesOwn`, `differs` when its content is not the
-         *     origin's). A job name the agency has, or a file at a path the commit
-         *     would add, refuses the whole assignment (422 `name_taken`, `paths`), and
-         *     nothing is pushed. Secrets, variables and keys are the agency's own:
+         *     A script, schedule, job or sub-workflow the agency's repository has by
+         *     name is its own and is used, not added (`files[].action: usesOwn`,
+         *     `differs` when its content is not the origin's); one the agency has only
+         *     in the app refuses, as the copy's steps would not run it. The
+         *     definition's own name taken in the agency, or a file at a path the
+         *     commit would add, refuses the whole assignment (422 `name_taken`,
+         *     `paths`), and nothing is pushed. Secrets, variables and keys are the agency's own:
          *     `bindings` lists the job's (and its script's) bindings, which the copy
          *     does not have, and `lacks` what it names that the agency does not have,
          *     with the calendars its schedules skip or keep to (calendars are not
@@ -8764,7 +8771,7 @@ export interface components {
             files: {
                 path: string;
                 /** @enum {string} */
-                role: "definition" | "script" | "schedule";
+                role: "definition" | "job" | "workflow" | "script" | "schedule";
                 /** @enum {string} */
                 action: "added" | "usesOwn";
                 /** @description usesOwn: the agency's file is not the origin's. */
@@ -18115,11 +18122,15 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @enum {string} */
-                    kind: "job";
-                    /** @description The job to assign. */
+                    kind: "job" | "workflow";
+                    /** @description The job or workflow to assign. */
                     uid: string;
-                    /** @description The agency's scope the copy names. */
-                    scope: string;
+                    /** @description The agency's scope a copied job names, unless scopes names one for it. */
+                    scope?: string;
+                    /** @description The agency's scope for the copied jobs that run on each origin scope (key "" for a job with none). */
+                    scopes?: {
+                        [key: string]: string;
+                    };
                     commitMessage?: string;
                 };
             };

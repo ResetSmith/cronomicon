@@ -37,7 +37,7 @@ type assignFixture struct {
 	finScope string
 }
 
-func newAssignFixture(t *testing.T, finFiles map[string]string) *assignFixture {
+func newAssignFixture(t *testing.T, globalFiles, finFiles map[string]string) *assignFixture {
 	t.Helper()
 	a, repoA, remoteA := newSyncFixture(t)
 	// Global's calendar, which its schedule skips (a sync refuses a schedule
@@ -45,11 +45,15 @@ func newAssignFixture(t *testing.T, finFiles map[string]string) *assignFixture {
 	if _, err := a.db.Exec(`INSERT INTO calendars (source, name, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 't', 't', 'global')`); err != nil {
 		t.Fatal(err)
 	}
-	grCommitFiles(t, repoA, remoteA, map[string]string{
+	template := map[string]string{
 		"scripts/nightly.sh":          assignScript,
 		"schedules/nightly-cron.yaml": assignSchedule,
 		"jobs/nightly.yaml":           assignJob,
-	}, "the template")
+	}
+	for k, v := range globalFiles {
+		template[k] = v
+	}
+	grCommitFiles(t, repoA, remoteA, template, "the template")
 	if r := grSync(t, a, "Global's repository"); r.Status != "success" {
 		t.Fatalf("Global's sync: %s %s", r.Status, r.ErrorMessage)
 	}
@@ -88,8 +92,8 @@ func (f *assignFixture) head() string {
 }
 
 func (f *assignFixture) assign() (*AssignResult, error) {
-	res, err := f.reg.AssignJob(context.Background(), AssignJobRequest{
-		JobUID: f.jobUID, TargetAgency: "ag-fin", Scope: f.finScope, Actor: "admin@example.com",
+	res, err := f.reg.Assign(context.Background(), AssignRequest{
+		Kind: "job", UID: f.jobUID, TargetAgency: "ag-fin", Scope: f.finScope, Actor: "admin@example.com",
 	})
 	f.fin.wg.Wait() // the sync it started
 	return res, err
@@ -109,7 +113,7 @@ func refusalCode(err error) string {
 // which Finance has. The record has one row per file. Finance's sync brings
 // the job in as Finance's.
 func TestAnAssignmentIsOneCommitCarryingTheWholeSet(t *testing.T) {
-	f := newAssignFixture(t, nil)
+	f := newAssignFixture(t, nil, nil)
 	before := f.head()
 	globalSHA := grString(t, f.global.db, `SELECT last_sha FROM git_repos WHERE id = 'global'`)
 
@@ -202,7 +206,7 @@ func TestAnAssignmentIsOneCommitCarryingTheWholeSet(t *testing.T) {
 // A job name Finance already has refuses the assignment, naming the file, and
 // nothing is pushed.
 func TestATakenNameRefusesWithNothingPushed(t *testing.T) {
-	f := newAssignFixture(t, map[string]string{"jobs/mine.yaml": jobYAML("nightly")})
+	f := newAssignFixture(t, nil, map[string]string{"jobs/mine.yaml": jobYAML("nightly")})
 	before := f.head()
 	_, err := f.assign()
 	if refusalCode(err) != "name_taken" {
@@ -219,7 +223,7 @@ func TestATakenNameRefusesWithNothingPushed(t *testing.T) {
 // A scope that is Finance's but in several agencies is not one Finance's sync
 // would accept for its job: refused before anything is committed.
 func TestAScopeNotTheTargetsAloneRefusesWithNothingPushed(t *testing.T) {
-	f := newAssignFixture(t, nil)
+	f := newAssignFixture(t, nil, nil)
 	grAgencyScope(t, f.global.db, "ag-tax", "tax-hosts")
 	if _, err := f.global.db.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('id-hosts-of-repo-fin', 'ag-tax')`); err != nil {
 		t.Fatal(err)
@@ -237,7 +241,7 @@ func TestAScopeNotTheTargetsAloneRefusesWithNothingPushed(t *testing.T) {
 // A script Finance has by name is Finance's own: it is used, not added, and
 // the answer says that it differs from Global's. It has no row in the record.
 func TestADependencyTheTargetHasIsUsedAndReported(t *testing.T) {
-	f := newAssignFixture(t, map[string]string{"scripts/nightly.sh": "#!/bin/sh\necho finances-own\n"})
+	f := newAssignFixture(t, nil, map[string]string{"scripts/nightly.sh": "#!/bin/sh\necho finances-own\n"})
 	res, err := f.assign()
 	if err != nil {
 		t.Fatalf("assign: %v", err)
@@ -263,7 +267,7 @@ func TestADependencyTheTargetHasIsUsedAndReported(t *testing.T) {
 // connected) is asked to wait for the sync the refusal starts, as one whose
 // clone is behind its branch.
 func TestATargetWithNoCloneYetStartsASync(t *testing.T) {
-	f := newAssignFixture(t, nil)
+	f := newAssignFixture(t, nil, nil)
 	if err := os.RemoveAll(f.fin.cloneDir); err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +285,7 @@ func TestATargetWithNoCloneYetStartsASync(t *testing.T) {
 
 // A job built in the app is not a file of a repository (question 87).
 func TestAJobBuiltInTheAppIsRefused(t *testing.T) {
-	f := newAssignFixture(t, nil)
+	f := newAssignFixture(t, nil, nil)
 	if _, err := f.global.db.Exec(`UPDATE jobs SET source = 'cronomicon' WHERE uid = ?`, f.jobUID); err != nil {
 		t.Fatal(err)
 	}
