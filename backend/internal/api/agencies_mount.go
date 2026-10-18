@@ -53,6 +53,8 @@ func (s *Server) mountAgencies(mux *http.ServeMux) {
 	// (question 82), whose grant form offers them (GA-3).
 	mux.Handle("GET /api/v1/agencies/{agencyId}/groups", s.auth.RequireSession(http.HandlerFunc(s.handleListAgencyGroups)))
 	mux.Handle("PUT /api/v1/agencies/{agencyId}/groups", s.requireGlobal(auth.PermManageRoles)(http.HandlerFunc(s.handleSetAgencyGroups)))
+	// 2.5.0 C10.1 (IN-12): a job given to the agency by one commit into its repository.
+	mux.Handle("POST /api/v1/agencies/{agencyId}/assign", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleAssign)))
 	// QT-1 (2.5.0 C6): an agency's own concurrency cap, a global administrator's,
 	// as the agency catalog is. Read on the agency's row (maxConcurrent).
 	mux.Handle("PUT /api/v1/agencies/{agencyId}/concurrency", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleSetAgencyConcurrency)))

@@ -78,6 +78,7 @@ var writeRouteGates = map[string]routeGate{
 	"PUT /api/v1/scopes/{scopeId}/agency":                             {clsObject, "requireMove: a scope is moved to another agency by a global administrator only (2.4.0; LR-7's two sides until then); naming where it is already takes configureApp on that agency"},
 	"PUT /api/v1/agencies/{agencyId}/vault-prefixes":                  {clsGlobal, "which part of the installation's one Vault an agency may point at (LR-80)"},
 	"PUT /api/v1/agencies/{agencyId}/groups":                          {clsGlobal, "which directory groups an agency's delegates may grant to (GA-1)"},
+	"POST /api/v1/agencies/{agencyId}/assign":                         {clsGlobal, "a definition given to an agency by one commit into its repository (IN-12)"},
 	"PUT /api/v1/agencies/{agencyId}/concurrency":                     {clsGlobal, "an agency's own concurrency cap (QT-1)"},
 	"PUT /api/v1/agencies/{agencyId}/members":                         {clsObject, "per member: requireMove on both sides for an add, the permission on this agency for a removal; a SCOPE is added by a global administrator only (2.4.0); a runner by its OWNER either way (requireRunnerOwner)"},
 	"PUT /api/v1/runner-agencies":                                     {clsObject, "per runner: requireRunnerOwner, and each agency named; the writer's invariant decides what may be written (MA-11)"},

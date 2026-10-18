@@ -4489,6 +4489,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agencies/{agencyId}/assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give a job to an agency by one commit into its repository (v2.5.0)
+         * @description A global administrator's (`configureApp` on every agency; 2.5.0 C10,
+         *     IN-12). The job (`uid`) is a file of another agency's repository, Global's
+         *     or an agency's; one built in the app is refused (422 `not_in_git`). One
+         *     commit into the path agency's repository carries its file, its script
+         *     and the reusable schedules it names, as they are at the commit its
+         *     repository last synced, on the branch the agency syncs (fetched first,
+         *     pushed without force). The copy names `scope`, a scope the agency owns
+         *     alone (422 `unknown_scope` otherwise), and every YAML file carries
+         *     `metadata.origin` (agency, repository, path, commit).
+         *
+         *     A script or schedule the agency has by name is its own and is used, not
+         *     added (`files[].action: usesOwn`, `differs` when its content is not the
+         *     origin's). A job name the agency has, or a file at a path the commit
+         *     would add, refuses the whole assignment (422 `name_taken`, `paths`), and
+         *     nothing is pushed. Secrets, variables and keys are the agency's own:
+         *     `bindings` lists the job's (and its script's) bindings, which the copy
+         *     does not have, and `lacks` what it names that the agency does not have,
+         *     with the calendars its schedules skip or keep to (calendars are not
+         *     files before 2.6.0; the agency's sync refuses a schedule naming one it
+         *     lacks, and the job with it, until it has one).
+         *
+         *     The agency in the path, not the one the request works in, owns the copy:
+         *     the one create that `X-Cronomicon-Agency` does not place. The change-log
+         *     row is the agency's. A sync of its repository is started; the job
+         *     appears when it finishes. 409 `target_unsynced` when the agency's branch
+         *     has commits the server has not synced (a sync is started; assign again),
+         *     409 `origin_unsynced`, 409 `protected_branch`. CSRF required.
+         */
+        post: operations["assignToAgency"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agencies/{agencyId}/groups": {
         parameters: {
             query?: never;
@@ -8706,6 +8752,40 @@ export interface components {
             agencyId: string;
             /** @description Sorted, matched exactly. Empty means the agency's delegates can grant to no group. */
             groups: string[];
+        };
+        /** @description What an assignment committed (v2.5.0, IN-12). */
+        Assignment: {
+            assignmentId: string;
+            /** @description The commit on the agency's branch. */
+            commitSha: string;
+            branch: string;
+            /** @description The commit of the origin's repository the files were read at. */
+            originCommit: string;
+            files: {
+                path: string;
+                /** @enum {string} */
+                role: "definition" | "script" | "schedule";
+                /** @enum {string} */
+                action: "added" | "usesOwn";
+                /** @description usesOwn: the agency's file is not the origin's. */
+                differs?: boolean;
+            }[];
+            /** @description What the job names that the agency does not have. */
+            lacks: {
+                /** @enum {string} */
+                kind: "secret" | "variable" | "key" | "calendar" | "reactionUpstream" | "targetHost";
+                name: string;
+                why?: string;
+            }[];
+            /** @description The origin job's and script's bindings, which the copy does not have. */
+            bindings: {
+                /** @enum {string} */
+                kind: "secret" | "var" | "key";
+                name: string;
+                as?: string;
+            }[];
+            /** @description The agency's sync was started; the job appears when it finishes. */
+            syncStarted: boolean;
         };
         /** @description What the caller may do with this row (v2.4.0 R8), worked out by the same check the row's write route makes, so a screen offers exactly what the server allows. Present on the rows of the scope, secret, variable, SSH key, host record, bastion and agency lists. */
         RowFlags: {
@@ -18016,6 +18096,48 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    assignToAgency: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    kind: "job";
+                    /** @description The job to assign. */
+                    uid: string;
+                    /** @description The agency's scope the copy names. */
+                    scope: string;
+                    commitMessage?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Committed. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Assignment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["Validation"];
         };
     };
