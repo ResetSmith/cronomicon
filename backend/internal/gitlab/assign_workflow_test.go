@@ -164,6 +164,31 @@ func TestAWorkflowsJobsTakeTheirScopeByTheOriginsScope(t *testing.T) {
 	}
 }
 
+// A sub-workflow and a job named by two steps are planned once: one file each
+// in the commit and one record row each. It is the same early return that ends
+// a cycle.
+func TestAWorkflowNamingADependencyTwicePlansItOnce(t *testing.T) {
+	files := workflowTemplate()
+	files["workflows/twice.yaml"] = "apiVersion: cronomicon.io/v1\nkind: Workflow\nmetadata:\n  name: twice\nspec:\n  steps:\n" +
+		"    - {type: workflow, name: first, workflow: notify}\n    - {type: job, name: ping}\n" +
+		"    - type: sequence\n      steps:\n        - {type: workflow, name: again, workflow: notify}\n        - {type: job, name: ping}\n"
+	f := newAssignFixture(t, files, nil)
+	res, err := f.assignWorkflow("twice", f.finScope, nil)
+	if err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+	changed := strings.Fields(sysGit(t, f.finBare, "diff-tree", "--no-commit-id", "--name-only", "-r", res.CommitSHA))
+	if want := []string{"jobs/ping.yaml", "workflows/notify.yaml", "workflows/twice.yaml"}; strings.Join(changed, " ") != strings.Join(want, " ") {
+		t.Errorf("the commit carries %v, want %v", changed, want)
+	}
+	if len(res.Files) != 3 {
+		t.Errorf("files answered: %+v, want three", res.Files)
+	}
+	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ?`, res.AssignmentID); n != "3" {
+		t.Errorf("record rows: %s, want 3", n)
+	}
+}
+
 func TestWalkStepRefsVisitsEveryContainer(t *testing.T) {
 	steps := []any{
 		map[string]any{"type": "job", "name": "a"},
