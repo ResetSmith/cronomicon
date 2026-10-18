@@ -93,8 +93,13 @@ func (s *Service) CommitFiles(ctx context.Context, files []FileWrite, msg string
 		return nil, err
 	}
 	repo, err := gogit.PlainOpen(s.cloneDir)
+	if errors.Is(err, gogit.ErrRepositoryNotExists) {
+		// No sync has made the clone yet (a repository just connected): the
+		// caller starts one, as for a clone that is behind.
+		return nil, &PreconditionError{Unsynced: true}
+	}
 	if err != nil {
-		return nil, fmt.Errorf("open clone (run a sync first): %w", err)
+		return nil, fmt.Errorf("open clone: %w", err)
 	}
 	remoteSHA, err := s.fetchBranchHead(ctx, repo, branch)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -255,6 +256,26 @@ func TestADependencyTheTargetHasIsUsedAndReported(t *testing.T) {
 	}
 	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ? AND role = 'script'`, res.AssignmentID); n != "0" {
 		t.Errorf("a file not written has a record row")
+	}
+}
+
+// An agency whose repository has no clone yet (no sync has run since it was
+// connected) is asked to wait for the sync the refusal starts, as one whose
+// clone is behind its branch.
+func TestATargetWithNoCloneYetStartsASync(t *testing.T) {
+	f := newAssignFixture(t, nil)
+	if err := os.RemoveAll(f.fin.cloneDir); err != nil {
+		t.Fatal(err)
+	}
+	before := f.head()
+	if _, err := f.assign(); refusalCode(err) != "target_unsynced" {
+		t.Fatalf("want target_unsynced, got %v", err)
+	}
+	if f.head() != before {
+		t.Error("pushed without a clone")
+	}
+	if _, err := os.Stat(filepath.Join(f.fin.cloneDir, ".git")); err != nil {
+		t.Errorf("the sync the refusal started made no clone: %v", err)
 	}
 }
 
