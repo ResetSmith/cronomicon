@@ -5690,8 +5690,10 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <ul>
                     <li><strong>Refused</strong>, saying why: a definition built in the app (only a file of a
                         repository can be given), a calendar the copy's schedules name that the agency lacks
-                        (<code>calendar_missing</code> &mdash; create it in the agency and give again), and a name the
-                        agency holds only in the app.</li>
+                        (<code>calendar_missing</code> &mdash; create it in the agency and give again), a schedule
+                        that keeps to a calendar the agency has as global (<code>calendar_not_bindable</code>), a
+                        reaction to a definition the agency would not have (<code>upstream_missing</code> &mdash; give
+                        that one first), and a name the agency holds only in the app.</li>
                     <li><strong>When the original changes</strong>, the agency is told: <a
                             href="#notices">Notices</a> lists <code>assignment_update_available</code> (<em>An assigned
                             definition has changed in its origin</em>) under the agency that has the copy, naming the

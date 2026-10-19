@@ -101,6 +101,17 @@ describe("AssignDialog", () => {
     expect(alert.textContent).toMatch(/Calendars: holidays/);
   });
 
+  // 2.5.0 C11, defect 89: a reaction whose upstream the agency would not have.
+  it("shows what the copy reacts to that the agency would not have", async () => {
+    postAnswer = { error: { code: "upstream_missing", message: "the copy reacts to job:extract, which Finance would not have", upstreams: ["job:extract"] } };
+    open();
+    fireEvent.change(await screen.findByLabelText("Agency"), { target: { value: "ag-fin" } });
+    await waitFor(() => expect((screen.getByLabelText("Scope for jobs with no scope") as HTMLSelectElement).value).toBe("fin-hosts"));
+    fireEvent.click(screen.getByRole("button", { name: "Give to the agency" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/Reacts to: job:extract/);
+  });
+
   it("works out a workflow's origin scopes from its jobs and sub-workflows", () => {
     const wf = { name: "release", repoId: "global", source: "git" as const, steps: [
       { type: "job" as const, name: "build" },

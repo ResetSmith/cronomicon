@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -71,7 +72,7 @@ type AssignedFile struct {
 
 // AssignLack is something the copy needs that the target agency does not have.
 type AssignLack struct {
-	Kind string `json:"kind"` // secret, variable, key, reactionUpstream, targetHost
+	Kind string `json:"kind"` // secret, variable, key, targetHost (reactionUpstream: refused as upstream_missing since 2.5.0 C11)
 	Name string `json:"name"`
 }
 
@@ -109,7 +110,8 @@ type AssignError struct {
 	Code      string
 	Message   string
 	Paths     []string
-	Calendars []string // calendar_missing: the calendars the target lacks
+	Calendars []string // calendar_missing, calendar_not_bindable: the calendars
+	Upstreams []string // upstream_missing: kind:name of each reaction's upstream
 }
 
 func (e *AssignError) Error() string { return e.Message }
@@ -176,11 +178,19 @@ type assignState struct {
 	jobsSeen, wfsSeen map[string]bool
 	scopesChecked     map[string]bool
 	calendars         map[string]bool
-	missingCalendars  []string
-	bindingOwners     []string
-	secrets, keys     []string
-	reactions         []ReactionEntry
-	hosts             [][2]string // target host, the scope it must be in
+	// onlyCalendars are the calendars named to keep to (onlyCalendars), apart:
+	// a global calendar may not be one (calendar.ValidateBinding), and the
+	// target's sync refuses a schedule that names one (C11, defect 89).
+	onlyCalendars    map[string]bool
+	missingCalendars []string
+	// unbindableCalendars and missingUpstreams refuse the assignment as the
+	// target's sync would refuse the copy (C11, defect 89).
+	unbindableCalendars []string
+	missingUpstreams    []string
+	bindingOwners       []string
+	secrets, keys       []string
+	reactions           []ReactionEntry
+	hosts               [][2]string // target host, the scope it must be in
 }
 
 // Assign makes one assignment (see the top of this file).
@@ -206,7 +216,7 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 	}
 
 	st := &assignState{ctx: ctx, r: r, req: req, originRepo: top.repo, originAgency: top.owner,
-		jobsSeen: map[string]bool{}, wfsSeen: map[string]bool{}, scopesChecked: map[string]bool{}, calendars: map[string]bool{},
+		jobsSeen: map[string]bool{}, wfsSeen: map[string]bool{}, scopesChecked: map[string]bool{}, calendars: map[string]bool{}, onlyCalendars: map[string]bool{},
 		res: &AssignResult{Kind: req.Kind, OriginAgency: top.owner, Name: top.name, Files: []AssignedFile{}, Lacks: []AssignLack{}, Bindings: []AssignBinding{}}}
 	if err := q.QueryRowContext(ctx, `SELECT name FROM agencies WHERE id = ?`, req.TargetAgency).Scan(&st.targetName); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -278,6 +288,20 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 			"%s has no calendar named %s, which the copy's schedules name: its sync would refuse them, and what names them. Create the calendars in %s and assign again",
 			st.targetName, strings.Join(st.missingCalendars, ", "), st.targetName)
 		e.Calendars = st.missingCalendars
+		return nil, e
+	}
+	if len(st.unbindableCalendars) > 0 {
+		e := refuse(http.StatusUnprocessableEntity, "calendar_not_bindable",
+			"%s's calendar %s is global: it freezes the whole agency, and may be skipped but not kept to, so its sync would refuse the copy's schedules that keep to it. Make the calendar not global in %s, or change the origin's schedules, and assign again",
+			st.targetName, strings.Join(st.unbindableCalendars, ", "), st.targetName)
+		e.Calendars = st.unbindableCalendars
+		return nil, e
+	}
+	if len(st.missingUpstreams) > 0 {
+		e := refuse(http.StatusUnprocessableEntity, "upstream_missing",
+			"the copy reacts to %s, which %s would not have: its sync would refuse the definition that reacts. Assign the upstream to %s first (a Git one), or create it there (one built in the app), and assign again",
+			strings.Join(st.missingUpstreams, ", "), st.targetName, st.targetName)
+		e.Upstreams = st.missingUpstreams
 		return nil, e
 	}
 
@@ -614,6 +638,9 @@ func (st *assignState) addSchedules(refs []string, entries []ScheduleEntry) erro
 		for _, c := range append(append([]string{}, e.SkipCalendars...), e.OnlyCalendars...) {
 			st.calendars[c] = true
 		}
+		for _, c := range e.OnlyCalendars {
+			st.onlyCalendars[strings.TrimSpace(c)] = true
+		}
 	}
 	q := st.r.db
 	for _, ref := range refs {
@@ -655,6 +682,9 @@ func (st *assignState) addSchedules(refs []string, entries []ScheduleEntry) erro
 		if yaml.Unmarshal(files[0].Content, &sy) == nil {
 			for _, c := range append(append([]string{}, sy.Spec.SkipCalendars...), sy.Spec.OnlyCalendars...) {
 				st.calendars[c] = true
+			}
+			for _, c := range sy.Spec.OnlyCalendars {
+				st.onlyCalendars[strings.TrimSpace(c)] = true
 			}
 		}
 		if err := st.stamped(files[0], "schedule", nil); err != nil {
@@ -964,29 +994,52 @@ func (st *assignState) computeLacks() error {
 		// Calendars are not files before 2.6.0 (question 88), and a sync
 		// refuses a schedule naming one its agency does not have, and the
 		// definition with it: the assignment is refused (question 94).
-		var ok bool
-		if err := q.QueryRowContext(st.ctx, `SELECT EXISTS (SELECT 1 FROM calendars WHERE name = ? AND owner_agency = ?)`, c, agency).Scan(&ok); err != nil {
+		var global sql.NullBool
+		if err := q.QueryRowContext(st.ctx, `SELECT MAX(global) FROM calendars WHERE name = ? AND owner_agency = ?`, c, agency).Scan(&global); err != nil {
 			return err
 		}
-		if !ok {
+		switch {
+		case !global.Valid:
 			st.missingCalendars = append(st.missingCalendars, c)
+		case global.Bool && st.onlyCalendars[c]:
+			// The target's calendar of the name freezes its whole agency: it may
+			// be skipped, never kept to, and the sync refuses the schedule (C11).
+			st.unbindableCalendars = append(st.unbindableCalendars, c)
 		}
 	}
+	// A reaction's upstream, by the target's sync's own rule (sync.go,
+	// badReactions): a Git one (the default source) is a file of the target's
+	// repository, which is what this assignment writes or the target already
+	// has; one built in the app is the target agency's. A reaction whose
+	// upstream is neither made the sync refuse the copied file, and a refused
+	// file turned the target's prune off on every later sync: it refuses the
+	// assignment instead (2.5.0 C11, defect 89; until then it was listed as a
+	// lack and committed).
 	for _, re := range st.reactions {
 		name := strings.TrimSpace(re.OnName)
 		if name == "" {
 			continue
 		}
-		if re.OnKind == "job" && st.jobsSeen[name] || re.OnKind == "workflow" && st.wfsSeen[name] {
-			continue // part of this assignment, or the target's own of that name
-		}
 		table := "jobs"
+		seen := st.jobsSeen[name]
 		if re.OnKind == "workflow" {
-			table = "workflows"
+			table, seen = "workflows", st.wfsSeen[name]
 		}
-		if err := lack("reactionUpstream", re.OnKind+":"+name,
-			`SELECT 1 FROM `+table+` WHERE name = ? AND owner_agency = ? AND deleted_at IS NULL`, name, agency); err != nil {
+		var ok bool
+		var err error
+		if re.OnSourceOrDefault() == "git" {
+			ok = seen
+			if !ok {
+				err = q.QueryRowContext(st.ctx, `SELECT EXISTS (SELECT 1 FROM `+table+` WHERE name = ? AND source = 'git' AND repo_id = ?)`, name, st.targetRepo).Scan(&ok)
+			}
+		} else {
+			err = q.QueryRowContext(st.ctx, `SELECT EXISTS (SELECT 1 FROM `+table+` WHERE name = ? AND source = 'cronomicon' AND owner_agency = ?)`, name, agency).Scan(&ok)
+		}
+		if err != nil {
 			return err
+		}
+		if up := re.OnKind + ":" + name; !ok && !slices.Contains(st.missingUpstreams, up) {
+			st.missingUpstreams = append(st.missingUpstreams, up)
 		}
 	}
 	for _, h := range st.hosts {

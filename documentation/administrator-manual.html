@@ -4027,7 +4027,15 @@ cronomicon validate .                # Global's repository
                     <li><strong>Calendars.</strong> Calendars are not files until 2.6.0. A calendar that the copy's
                         schedules name, and that the target agency does not have, refuses the assignment
                         (<code>422 calendar_missing</code>), because the target's sync would refuse the schedule and
-                        the definition with it.</li>
+                        the definition with it. So does a schedule that keeps to (<code>onlyCalendars</code>) a
+                        calendar that the target has as global, which may be skipped and never kept to
+                        (<code>422 calendar_not_bindable</code>).</li>
+                    <li><strong>Reactions.</strong> A reaction whose upstream the target would not have refuses the
+                        assignment (<code>422 upstream_missing</code>, naming each as <code>kind:name</code>): a Git
+                        upstream that is neither in the target's repository nor in the assignment, or one built in
+                        the app that is not the target agency's. Give the upstream first, or create it there. (Until
+                        2.5.0's last fixes the copy was committed, the target's sync refused it, and every later sync
+                        of that agency left its prune off.)</li>
                     <li><strong>The commit.</strong> It goes to the branch that the agency syncs, as a publish does:
                         fetched first, never forced, and the server's clone is put back if the commit fails. The
                         assignment starts the target's sync, and the copy shows in the agency when that sync
@@ -8917,7 +8925,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     <code>POST &hellip;/git-repo/webhook-secret/rotate</code>,
                                     <code>GET /git-repos/{repoId}/problems</code> (&sect;5.6);
                                     <code>POST /agencies/{agencyId}/assign</code> (&sect;5.7; <code>422
-                                        calendar_missing</code> / <code>name_taken</code> /
+                                        calendar_missing</code> / <code>calendar_not_bindable</code> /
+                                    <code>upstream_missing</code> / <code>name_taken</code> /
                                     <code>changed_by_agency</code>, <code>409 up_to_date</code>)</td>
                                 <td>ConfigureApp on the repository's agency (Global's = a global administrator);
                                     an assignment = a global administrator</td>

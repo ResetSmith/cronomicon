@@ -7263,7 +7263,14 @@ paths:
         refuses the assignment (422 `calendar_missing`, `calendars`; question
         94): calendars are not files before 2.6.0, and the agency's sync would
         refuse the schedule naming it, and the definition with it. Create the
-        calendars in the agency and assign again.
+        calendars in the agency and assign again. So does, for the same reason
+        (2.5.0 C11), a schedule that keeps to (`onlyCalendars`) a calendar the
+        agency has as global (422 `calendar_not_bindable`, `calendars`), and a
+        reaction whose upstream the agency would not have: a Git one not in its
+        repository nor in the assignment, one built in the app not the agency's
+        (422 `upstream_missing`, `upstreams`, each `kind:name`). Until C11 the
+        copy was committed, its file refused by the agency's sync, and every
+        later sync of the agency left its prune off.
 
         Assigning a definition the agency was given before is an UPDATE (C10.3):
         it replaces only the files the last assignment wrote whose origin has
