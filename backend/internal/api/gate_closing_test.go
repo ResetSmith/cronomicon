@@ -966,12 +966,14 @@ func TestGC_AnotherAgencysSameNamedWorkflowIsNotAVeto(t *testing.T) {
 	      VALUES ('fin-job','cronomicon','bash','fin-hosts',1,'2026-01-01T00:00:00Z'),
 	             ('tax-job','cronomicon','bash','tax-hosts',1,'2026-01-01T00:00:00Z')`)
 	// FIN's "cleanup" exists first; TAX then creates its own of the same name.
-	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
-	      VALUES ('cleanup','cronomicon','[{"type":"job","name":"fin-job"}]',1,'2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
-	      VALUES ('fin-parent','cronomicon','[{"type":"workflow","name":"go","workflow":"cleanup"}]',1,'2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
-	      VALUES ('cleanup','cronomicon','[{"type":"job","name":"tax-job"}]',1,'2026-02-01T00:00:00Z')`)
+	// Each workflow is its agency's (1360; C11: a write answers 404 on another
+	// agency's, and this fixture's rows used to default to Global's).
+	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at, owner_agency)
+	      VALUES ('cleanup','cronomicon','[{"type":"job","name":"fin-job"}]',1,'2026-01-01T00:00:00Z','ag:FIN')`)
+	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at, owner_agency)
+	      VALUES ('fin-parent','cronomicon','[{"type":"workflow","name":"go","workflow":"cleanup"}]',1,'2026-01-01T00:00:00Z','ag:FIN')`)
+	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at, owner_agency)
+	      VALUES ('cleanup','cronomicon','[{"type":"job","name":"tax-job"}]',1,'2026-02-01T00:00:00Z','ag:TAX')`)
 	parent := rowID(t, pool, `SELECT rowid FROM workflows WHERE name='fin-parent'`)
 
 	if rec := gateReq(t, h, http.MethodPatch, "/api/v1/workflows/"+parent, gFinOperator, `{"disabled":true}`); rec.Code/100 != 2 {
@@ -1242,10 +1244,12 @@ func TestGC_PausingAJobWithNoScopeNeedsTheVerbUnbound(t *testing.T) {
 	}
 
 	// An operator of FIN, an administrator of FIN, and an all-agencies viewer who
-	// also administers FIN: none holds killJobs unbound.
-	for _, who := range []string{gFinOperator, gFinAdmin, gMixed} {
-		if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/pause", who, `{}`); rec.Code != http.StatusForbidden {
-			t.Errorf("%s pausing a job with no scope = %d, want 403 (%s)", who, rec.Code, rec.Body)
+	// also administers FIN: none holds killJobs unbound. The job is Global's, so
+	// to FIN's people it is absent (2.5.0 C11, question 109); the viewer of every
+	// agency reads it and is refused the verb.
+	for who, want := range map[string]int{gFinOperator: http.StatusNotFound, gFinAdmin: http.StatusNotFound, gMixed: http.StatusForbidden} {
+		if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/pause", who, `{}`); rec.Code != want {
+			t.Errorf("%s pausing a job with no scope = %d, want %d (%s)", who, rec.Code, want, rec.Body)
 		}
 	}
 	if paused("platform-job") != 0 {
@@ -1255,9 +1259,9 @@ func TestGC_PausingAJobWithNoScopeNeedsTheVerbUnbound(t *testing.T) {
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/pause", gRoot, `{}`); rec.Code != http.StatusOK {
 		t.Fatalf("root pausing it = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
-	for _, who := range []string{gFinOperator, gFinAdmin, gMixed} {
-		if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/resume", who, `{}`); rec.Code != http.StatusForbidden {
-			t.Errorf("%s resuming a job with no scope = %d, want 403 (%s)", who, rec.Code, rec.Body)
+	for who, want := range map[string]int{gFinOperator: http.StatusNotFound, gFinAdmin: http.StatusNotFound, gMixed: http.StatusForbidden} {
+		if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/resume", who, `{}`); rec.Code != want {
+			t.Errorf("%s resuming a job with no scope = %d, want %d (%s)", who, rec.Code, want, rec.Body)
 		}
 	}
 	if paused("platform-job") != 1 {

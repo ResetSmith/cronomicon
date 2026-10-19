@@ -397,7 +397,11 @@ func (s *Server) requireJobVisible(w http.ResponseWriter, r *http.Request, jobID
 	if jr.Scope != nil {
 		scope = *jr.Scope
 	}
-	if !id.Unrestricted() && !auth.ScopeReadableIn(id, jr.OwnerAgency, scope) {
+	// Whose it is first (2.5.0 C11, defect 71): C2 put CF-1 on the GETs only,
+	// and a no-scope job of another agency, or of Global's, passed the scope
+	// check here — and the tags and annotation writes answer with the row,
+	// script body and all.
+	if !id.Unrestricted() && (!readsAgency(r, jr.OwnerAgency) || !auth.ScopeReadableIn(id, jr.OwnerAgency, scope)) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return false
 	}
@@ -504,6 +508,12 @@ func (s *Server) requireWorkflowVisible(w http.ResponseWriter, r *http.Request, 
 	}
 	if id.Unrestricted() {
 		return true
+	}
+	// Whose it is first (2.5.0 C11, defect 71): a workflow none of whose jobs
+	// resolve passed below, whatever its agency.
+	if !s.workflowReadable(r, wr) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
+		return false
 	}
 	// With the workflow's home (GR-16): the jobs the engine would run for THIS
 	// workflow, which for a Git workflow are its own repository's.

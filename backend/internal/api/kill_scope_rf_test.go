@@ -58,9 +58,10 @@ func TestKillAuthorizesOnTheRunsScopeNotTheJobs(t *testing.T) {
 	}
 	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at)
 	      VALUES ('s-fin','finance','cronomicon','2026-01-01T00:00:00Z')`)
-	// The template job (§2.5): no scope of its own.
-	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	      VALUES ('restart-service','cronomicon','bash',NULL,1)`)
+	// The template job (§2.5): no scope of its own; prod's (1400), so the
+	// caller reads it and the run's scope is what answers (2.5.0 C11).
+	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled, owner_agency)
+	      VALUES ('restart-service','cronomicon','bash',NULL,1,'ag:prod')`)
 	killPath := "/api/v1/jobs/" + jobRowIDStr(t, pool, "restart-service") + "/kill"
 
 	// A run bound to FINANCE. The prod operator holds killJobs — but not there.
@@ -104,8 +105,10 @@ func TestKillOfAnUnboundRunIsUnrestrictedOnly(t *testing.T) {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	      VALUES ('nightly-backup','cronomicon','bash',NULL,1)`)
+	// prod's own job (1400), so the caller reads it and the unbound rule is
+	// what refuses (2.5.0 C11: Global's would be absent).
+	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled, owner_agency)
+	      VALUES ('nightly-backup','cronomicon','bash',NULL,1,'ag:prod')`)
 	killPath := "/api/v1/jobs/" + jobRowIDStr(t, pool, "nightly-backup") + "/kill"
 	seedRunFor(t, exec, "r-unbound", "nightly-backup", "")
 

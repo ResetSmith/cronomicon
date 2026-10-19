@@ -24,8 +24,8 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
-	"github.com/ResetSmith/cronomicon/internal/runner"
 	"github.com/ResetSmith/cronomicon/internal/runcap"
+	"github.com/ResetSmith/cronomicon/internal/runner"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/scheduler"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
@@ -163,15 +163,15 @@ type jobRow struct {
 	// RepoID is the repository a Git job is of (2.4.0; jobs.repo_id, 1310);
 	// empty for one built in the app. As the workflow rows have had: Publish
 	// edits a job in the repository it came from (from R8).
-	RepoID     string  `json:"repoId,omitempty"`
-	Type       string  `json:"type"`
-	Host       *string `json:"host"`
-	Scope      *string `json:"scope"`
+	RepoID string  `json:"repoId,omitempty"`
+	Type   string  `json:"type"`
+	Host   *string `json:"host"`
+	Scope  *string `json:"scope"`
 	// OwnerAgency is whose the job is (agencyid.JobSQL): the agency its scope is
 	// looked for in, and whose grant is asked of it (I2). Set by fetchJobDetail,
 	// and sent with the detail since 2.4.2 (present defect 68: the Run dialog's
 	// calendar note had no agency to judge the job's schedules by).
-	OwnerAgency string `json:"ownerAgency,omitempty"`
+	OwnerAgency string  `json:"ownerAgency,omitempty"`
 	Status      string  `json:"status"`
 	Schedule    *string `json:"schedule"`
 	LastRunAt   *string `json:"lastRunAt"`
@@ -2036,7 +2036,9 @@ func (s *Server) pauseJob(w http.ResponseWriter, r *http.Request) {
 	if jr.Scope != nil {
 		jobScope = *jr.Scope
 	}
-	if !auth.ScopeReadableIn(id, jr.OwnerAgency, jobScope) {
+	// Whose it is first (C11, defect 72): another agency's no-scope job passed
+	// the scope check and answered 403 below, saying it exists.
+	if !readsAgency(r, jr.OwnerAgency) || !auth.ScopeReadableIn(id, jr.OwnerAgency, jobScope) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
@@ -2089,7 +2091,8 @@ func (s *Server) resumeJob(w http.ResponseWriter, r *http.Request) {
 	if jr.Scope != nil {
 		jobScope = *jr.Scope
 	}
-	if !auth.ScopeReadableIn(id, jr.OwnerAgency, jobScope) {
+	// Whose it is first (C11, defect 72), as pauseJob.
+	if !readsAgency(r, jr.OwnerAgency) || !auth.ScopeReadableIn(id, jr.OwnerAgency, jobScope) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
@@ -2203,6 +2206,12 @@ func (s *Server) killJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
+	// Whose it is (C11, defect 72): another agency's job answered 409 or a 403
+	// naming its run's scope, which said it exists. The authorization target
+	// is the RUN (below), so a caller who may not read the job may still stop
+	// a run bound to a scope of their own (a 2.4 run of Global's job against
+	// FIN's scope is FIN's to stop, question 78); anyone else is answered 404.
+	jobReadable := readsAgency(r, jr.OwnerAgency)
 
 	// RX-4 — the disposition. Stopping a run and saying what it MEANT are two
 	// different acts: `status` becomes the outcome, `killed_by` stays the proof a
@@ -2255,6 +2264,10 @@ func (s *Server) killJob(w http.ResponseWriter, r *http.Request) {
 		ORDER BY r.created_at DESC LIMIT 1
 	`, jr.Source, jr.Name).Scan(&traceID, &currentStatus, &runScopeRaw, &startedAtRaw, &runnerNameRaw, &runOwner)
 	if errors.Is(err, sql.ErrNoRows) {
+		if !jobReadable {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
+			return
+		}
 		httpx.Fail(w, http.StatusConflict, "no_active_run", "job has no active run")
 		return
 	}
@@ -2263,6 +2276,10 @@ func (s *Server) killJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runScope := runScopeRaw.String
+	if !jobReadable && (runScope == "" || !readsAgency(r, runOwner) || !auth.ScopeReadableIn(id, runOwner, runScope)) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
+		return
+	}
 
 	// PP-L2 scope guard + RB-2 verb guard, both against the RUN's effective scope.
 	// A genuinely unbound run (system-global, or a scheduled fire of an unscoped job
@@ -2978,7 +2995,10 @@ func (s *Server) patchWorkflow(eng *workflow.Engine) http.HandlerFunc {
 		}
 		wfID := r.PathValue("workflowId")
 		wr := s.fetchWorkflowByID(r, wfID)
-		if wr == nil || wr.DeletedAt != nil {
+		// Whose it is first (C11, defect 72): a workflow of another agency whose
+		// steps resolve to no scoped job passed the scope loop below, and was
+		// paused; one whose steps did answered 403 naming their scope.
+		if wr == nil || wr.DeletedAt != nil || !s.workflowReadable(r, wr) {
 			// RH: pausing a binned workflow is meaningless — it reads as absent.
 			httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
 			return
@@ -3031,7 +3051,8 @@ func (s *Server) triggerWorkflow(eng *workflow.Engine) http.HandlerFunc {
 		}
 		wfID := r.PathValue("workflowId")
 		wr := s.fetchWorkflowByID(r, wfID)
-		if wr == nil || wr.DeletedAt != nil {
+		// Whose it is first (C11, defect 72), before the disabled answer too.
+		if wr == nil || wr.DeletedAt != nil || !s.workflowReadable(r, wr) {
 			// RH: a binned workflow reads as absent, exactly as a binned job does in
 			// getJob/runJob. fetchWorkflowByID deliberately returns deleted rows so the
 			// recycle bin can read them, so every path that ACTS on the definition
@@ -3630,15 +3651,25 @@ func (s *Server) cancelWorkflowRun(eng *workflow.Engine) http.HandlerFunc {
 		var status, wfSource string
 		var stepsSnapshot sql.NullString
 		var workflowID int64
+		var wrAgency string
 		err := s.db.QueryRowContext(r.Context(), `
-			SELECT status, steps_snapshot, COALESCE(workflow_source,''), COALESCE(workflow_id, 0) FROM workflow_runs WHERE id = ?
-		`, traceID).Scan(&status, &stepsSnapshot, &wfSource, &workflowID)
+			SELECT status, steps_snapshot, COALESCE(workflow_source,''), COALESCE(workflow_id, 0),
+			       `+agencyid.ColumnOwnerSQL("workflow_runs", "agency_id")+`
+			FROM workflow_runs WHERE id = ?
+		`, traceID).Scan(&status, &stepsSnapshot, &wfSource, &workflowID, &wrAgency)
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "workflow run not found")
 			return
 		}
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		// Whose it is first (C11, defect 72), as getWorkflowRun: another agency's
+		// run, or Global's, with no child run yet passed every check below and
+		// was cancelled.
+		if !readsAgency(r, wrAgency) {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "workflow run not found")
 			return
 		}
 

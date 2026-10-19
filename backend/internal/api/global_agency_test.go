@@ -371,11 +371,13 @@ func TestGlobalAgency_JobRowFlagsAnswerEachRoutesOwnQuestion(t *testing.T) {
 	// The flags are a promise about the routes. Keep them honest on the two rows
 	// where they differ from each other.
 	id := func(name string) string { return rowID(t, pool, `SELECT rowid FROM jobs WHERE name=?`, name) }
-	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-fin-run")+"/pause", gFinOperator, `{}`); rec.Code != http.StatusForbidden {
-		t.Errorf("fin operator pausing a job with no scope = %d, want 403 (%s)", rec.Code, rec.Body)
+	// Global's jobs are absent to FIN's people (question 77), so their writes
+	// answer 404, not a 403 that says the job is there (2.5.0 C11, question 109).
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-fin-run")+"/pause", gFinOperator, `{}`); rec.Code != http.StatusNotFound {
+		t.Errorf("fin operator pausing Global's job with no scope = %d, want 404 (%s)", rec.Code, rec.Body)
 	}
-	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-unbound-run")+"/kill", gFinOperator, `{}`); rec.Code != http.StatusForbidden {
-		t.Errorf("fin operator stopping Global's unbound run = %d, want 403 (%s)", rec.Code, rec.Body)
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-unbound-run")+"/kill", gFinOperator, `{}`); rec.Code != http.StatusNotFound {
+		t.Errorf("fin operator stopping Global's unbound run = %d, want 404 (%s)", rec.Code, rec.Body)
 	}
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("fin-job-tax-run")+"/kill", gFinOperator, `{}`); rec.Code/100 == 2 {
 		t.Errorf("fin operator stopping a run in TAX's scope = %d, want a refusal (%s)", rec.Code, rec.Body)

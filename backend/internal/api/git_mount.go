@@ -203,7 +203,10 @@ func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) strin
 		return deny("no scope", "a job you publish must name a scope you hold publishSchedule on; "+
 			"an unscoped job is shared by every agency")
 	}
-	if !id.Can(perm, t.NewScope) {
+	// The scope of the repository's agency (C11, defect 73): a scope's name is
+	// unique within an agency only (I2), and Can matched a grant on another
+	// agency's scope of the same name.
+	if !id.CanIn(perm, t.Agency, t.NewScope) {
 		return deny("scope "+t.NewScope, "insufficient permissions: publishSchedule is required on scope "+t.NewScope)
 	}
 	// The name check below is only as good as the name. Sync falls back to the
@@ -216,7 +219,7 @@ func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) strin
 	// One sentence for every "it is someone else's" case, so the refusal does
 	// not say whether the path or the name was the one already taken.
 	const taken = "this would replace a definition outside your access — choose another file name and job name"
-	if t.OldExists && (!t.OldParsed || t.OldScope == "" || !id.Can(perm, t.OldScope)) {
+	if t.OldExists && (!t.OldParsed || t.OldScope == "" || !id.CanIn(perm, t.Agency, t.OldScope)) {
 		return deny("replaces file", taken)
 	}
 	{
@@ -235,7 +238,7 @@ func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) strin
 			if err := rows.Scan(&sc); err != nil {
 				return deny("db error", "could not verify the job name; try again")
 			}
-			if sc == "" || !id.Can(perm, sc) {
+			if sc == "" || !id.CanIn(perm, t.Agency, sc) {
 				return deny("replaces name", taken)
 			}
 		}

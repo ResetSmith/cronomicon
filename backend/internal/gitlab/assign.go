@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -352,10 +353,27 @@ func (st *assignState) read(p string) ([]CommitFile, error) {
 // origin is the metadata.origin stamp of a file of the origin.
 func (st *assignState) origin(p string) []string {
 	o := []string{"agency", st.originAgency}
-	if st.originURL != "" {
-		o = append(o, "repository", st.originURL)
+	if repo := originRepository(st.originURL); repo != "" {
+		o = append(o, "repository", repo)
 	}
 	return append(o, "path", p, "commit", st.originSHA)
+}
+
+// originRepository is the origin's URL as the stamp names it: without a user,
+// a password, a query or a fragment (2.5.0 C11, defect 74, question 111).
+// Global's stored URL may carry `user:token@` (settings.CheckRepoURL holds
+// only an agency's to the no-user rule), and the stamp is committed to the
+// target agency's repository, where its history would keep the token.
+func originRepository(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		if strings.Contains(raw, "@") {
+			return "" // not a URL we can clean: name none rather than leak one
+		}
+		return raw
+	}
+	u.User, u.RawQuery, u.Fragment = nil, "", ""
+	return u.String()
 }
 
 // add plans a file, once. A file the last assignment wrote (an update) is

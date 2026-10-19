@@ -207,10 +207,12 @@ func TestIDORScopeGates(t *testing.T) {
 
 	// 5. Test cancelWorkflowRun (POST /api/v1/workflows/runs/{traceId}/cancel)
 	t.Run("cancelWorkflowRun scope gate", func(t *testing.T) {
-		// Viewer cancelling Prod workflow run (due to steps snapshot) -> 403 Forbidden
+		// Viewer cancelling Prod workflow run (another agency's) -> 404, as its GET
+		// answers (question 72; 2.5.0 C11, question 109: it was 403, which said the
+		// run is there).
 		rec := dispatch(http.MethodPost, "/api/v1/workflows/runs/wf-prod-run/cancel", "run-viewers")
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("viewer cancel Prod workflow run (snapshot): status = %d, want 403", rec.Code)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("viewer cancel Prod workflow run (snapshot): status = %d, want 404", rec.Code)
 		}
 
 		// Viewer cancelling Stage workflow run -> 403: cancel is run suppression and

@@ -81,9 +81,11 @@ func (s *Server) cancelPendingRun(w http.ResponseWriter, r *http.Request) {
 	// promotion finds the definition (by uid, or by source and name).
 	ownerAgency := s.definitionAgencyFor(r.Context(), kind, ownerUID.String, source, name)
 	// SU-2: a restricted actor may only touch pending runs whose owner scope
-	// they can read — the same rule the upcoming listing applies.
-	if !auth.ScopeReadableIn(id, ownerAgency, scope.String) {
-		s.denyScope(w, r, scope.String, "your scope grants do not cover this pending run's scope")
+	// they can read — the same rule the upcoming listing applies. Whose it is
+	// first (C11, defect 72, question 109): another agency's pending run, or
+	// Global's, is absent to the caller, not a 403 naming its scope.
+	if !readsAgency(r, ownerAgency) || !auth.ScopeReadableIn(id, ownerAgency, scope.String) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "pending run not found (it may have fired or been cancelled)")
 		return
 	}
 	// GC-11: reading is not authority. The check above passes for every caller

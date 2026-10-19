@@ -59,10 +59,12 @@ func TestWorkflowTriggerScopeGuard(t *testing.T) {
 	exec(`INSERT INTO jobs(name, source, run_type, command, scope, content_hash, source_path, synced_at)
 	      VALUES('job-b','git','bash','echo b','ScopeB','sha256:b','jobs/b.yaml','t')`)
 	// Two enabled cronomicon workflows: wf-a runs the ScopeA job, wf-b the ScopeB job.
-	exec(`INSERT INTO workflows(name, source, description, steps, enabled, created_at, last_modified_at)
-	      VALUES('wf-a','cronomicon','', '[{"type":"job","name":"job-a"}]', 1, 't','t')`)
-	exec(`INSERT INTO workflows(name, source, description, steps, enabled, created_at, last_modified_at)
-	      VALUES('wf-b','cronomicon','', '[{"type":"job","name":"job-b"}]', 1, 't','t')`)
+	// Both are agency-a's (1360), so the caller reads them and the scope guard
+	// is what answers (2.5.0 C11: another agency's workflow is absent).
+	exec(`INSERT INTO workflows(name, source, description, steps, enabled, created_at, last_modified_at, owner_agency)
+	      VALUES('wf-a','cronomicon','', '[{"type":"job","name":"job-a"}]', 1, 't','t','ag-a')`)
+	exec(`INSERT INTO workflows(name, source, description, steps, enabled, created_at, last_modified_at, owner_agency)
+	      VALUES('wf-b','cronomicon','', '[{"type":"job","name":"job-b"}]', 1, 't','t','ag-a')`)
 	rowid := func(name string) string {
 		t.Helper()
 		var id int64
