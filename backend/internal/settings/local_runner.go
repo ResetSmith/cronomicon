@@ -119,25 +119,6 @@ func LocalRunnerEnabled(ctx context.Context, database *sql.DB, forbid bool) (boo
 	return v == "true", nil
 }
 
-// SSHExecutorWasOn reports whether the SSH executor was turned on when 2.3.0
-// first started against this database: the value the switch was seeded with.
-// It is what the upgrade pass acts on. Neither the present switch nor the
-// host's forbid answers that question — an operator may have changed the one,
-// and the other says what the server may do from now on, not what it was
-// doing. (A database seeded before this record existed has only the switch,
-// and falls back to it.)
-func SSHExecutorWasOn(ctx context.Context, database *sql.DB) (bool, error) {
-	var v string
-	err := database.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, localRunnerSeedKey).Scan(&v)
-	if errors.Is(err, sql.ErrNoRows) {
-		return LocalRunnerEnabled(ctx, database, false)
-	}
-	if err != nil {
-		return false, err
-	}
-	return v == "true", nil
-}
-
 // EnsureLocalRunner creates the local runner's row and seeds its switch, once.
 // It is idempotent and is called at every boot before anything claims.
 //

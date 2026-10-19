@@ -215,13 +215,11 @@ func (s *Service) Start(ctx context.Context) {
 	s.base, s.localID = ctx, id
 	s.runMu.Unlock()
 
-	// Once, on the first start of 2.3.0: put the local runner where the server
-	// was serving, record how each scope's shell jobs were served, and move
-	// the rows still queued for the SSH executor (settings.RunLocalRunnerUpgradePass).
-	// Before Apply, so the loop's first claim already sees the placements. A
-	// failure is logged and tried again at the next start: nothing was marked
-	// done.
-	// Once, likewise: the host keys this server had captured on first connect
+	// (The 2.3.0 upgrade pass, which moved the rows still queued for the SSH
+	// executor and recorded where each scope's shell jobs had been served, was
+	// retired in 2.5.0, question 60: an installation from before 2.3.0 clears
+	// its queued runs before it upgrades.)
+	// Once: the host keys this server had captured on first connect
 	// become the local runner's approved keys (runner.CarryServerHostKeys), so
 	// every host it was connecting to goes on being connected to now that it
 	// verifies against its ledger and captures nothing.
@@ -230,12 +228,6 @@ func (s *Service) Start(ctx context.Context) {
 			"hosts it has no approved key for will fail host_key_unverified until this succeeds at a later start", "error", cerr)
 	}
 
-	wasOn, werr := settings.SSHExecutorWasOn(ctx, s.db)
-	if werr != nil {
-		s.log.Error("local runner: could not read what the SSH executor was for the upgrade pass", "error", werr)
-	} else if _, uerr := settings.RunLocalRunnerUpgradePass(ctx, s.db, s.log, wasOn); uerr != nil {
-		s.log.Error("local runner: the 2.3.0 upgrade pass failed; it will be tried again at the next start", "error", uerr)
-	}
 
 	// The periodic orphan reaper runs whether or not the local runner is on: a
 	// run it started can outlive the switch being turned off.

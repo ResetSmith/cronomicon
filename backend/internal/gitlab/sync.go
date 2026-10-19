@@ -2289,12 +2289,11 @@ type resolvedScript struct {
 // nothing, and validation no longer refuses a value it never had — but both
 // columns still carry CHECK (executor IN ('runner','ssh')), so a value outside
 // it would fail the INSERT and, with it, the whole sync. The two values the
-// key did have are kept, because the 2.3.0 upgrade pass and the
-// leftover_executor_key notice read them; anything else is stored as nothing
-// and reported by the warnings alone.
+// key did have are kept, because the leftover_executor_key notice reads them;
+// anything else is stored as nothing and reported by the warnings alone.
 func storableExecutor(v string) string {
 	switch v = strings.TrimSpace(v); v {
-	case execspec.ExecutorSSH, execspec.ExecutorRunner:
+	case "ssh", execspec.ExecutorRunner:
 		return v
 	}
 	return ""
