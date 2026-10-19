@@ -31,6 +31,9 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   record_key_outside_owner: { title: "A host record or bastion names a key its owner cannot use", to: "/settings?tab=targets", toLabel: "SSH Targets" },
   vault_path_outside_prefix: { title: "A Vault path outside its agency's prefixes", to: "/scopes?tab=agencies", toLabel: "Agencies" },
   legacy_placement: { title: "A runner that serves agencies it is not owned by", to: "/runners", toLabel: "Runners" },
+  // 2.5.0 C10.3: a global administrator takes the update by assigning again;
+  // the detail names the files and those the agency changed in its copy.
+  assignment_update_available: { title: "An assigned definition has changed in its origin", to: "/jobs", toLabel: "Jobs" },
   // 2.5.0 C6a: the remedy (stop the copy, delete its identity file, enrol it
   // afresh) is done on the copy's host; the detail says how.
   runner_identity_shared: { title: "Two agent processes share one runner's identity", to: "/runners", toLabel: "Runners" },
