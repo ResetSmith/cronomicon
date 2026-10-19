@@ -9385,17 +9385,10 @@ export interface components {
         NotificationConfig: {
             /** @enum {string} */
             provider?: "apprise" | "smtp";
+            /** @description The Apprise gateway, the installation's relay. The service URLs it delivers to are each agency's push targets, Global's included: `/alert-targets` (2.5.0 C4). Until 2.5.0 C7 this block carried Global's as `targets` and saved them as a list matched by URL (question 99); a `targets` key sent now is ignored. */
             apprise?: {
                 enabled?: boolean;
                 apiUrl?: string;
-                /** @description Global's push targets (2.5.0 C4, AL-2), in their order; an agency's are not listed here. A push goes to the targets the matched rules name, not to every target. On a save a target is matched by its `url`: one kept keeps the rules that name it, one dropped is deleted with its links, and one new is named by no rule until a rule names it. `id` is this list's key (1..N), not the target's. */
-                targets?: {
-                    readonly id?: number;
-                    label?: string;
-                    service?: string;
-                    url?: string;
-                    enabled?: boolean;
-                }[];
             };
             smtp?: {
                 host?: string;

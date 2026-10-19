@@ -2557,18 +2557,12 @@ func (s *Server) handleGetNotifications(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	// GC-14: an Apprise target URL IS its credential (a Slack webhook, a
-	// PagerDuty key), and this read is open to every session so the alert
-	// editor can list targets by label. Only the administrator who may write
-	// the config gets the URLs back; everyone else gets the labels.
+	// The gateway's address is the administrator's to read (GC-14). The push
+	// targets, whose URLs are their credentials, are no longer here (2.5.0 C7,
+	// question 99): /alert-targets serves them, by its own rule (question 81).
 	if nc != nil && nc.Apprise != nil && !isGlobal(r, auth.PermConfigureApp) {
 		masked := *nc.Apprise
 		masked.APIURL = ""
-		masked.Targets = make([]settings.AppriseTarget, len(nc.Apprise.Targets))
-		for i, t := range nc.Apprise.Targets {
-			t.URL = ""
-			masked.Targets[i] = t
-		}
 		nc.Apprise = &masked
 	}
 	// The relay's address, account and recipients likewise (2.5.0 C2, question

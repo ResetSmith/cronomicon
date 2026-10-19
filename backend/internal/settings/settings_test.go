@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -85,12 +86,12 @@ func TestEnvVarDescriptionRoundTrip(t *testing.T) {
 
 // ── Notification config ──────────────────────────────────────────────────────
 
-// A Save of the Settings form keeps Global's targets that it keeps (2.5.0 C4,
-// AL-2): matched by URL, each keeps its id and so the rules that name it. A
-// rebuilt set would cut every rule's link on each Save and stop its pushes.
-// A target the form drops goes with its links; a new one is named by no rule.
-// An agency's targets are not the form's.
-func TestNotificationSaveKeepsTheRulesTargets(t *testing.T) {
+// A Save of the relay leaves the push targets as they are (2.5.0 C7, question
+// 99): they are /alert-targets', edited by id there. Until C7 the form carried
+// Global's and saved them as a list matched by URL, so a changed URL was a new
+// target no rule named. A body that still carries `targets` (an older client)
+// is read without them.
+func TestANotificationSaveLeavesThePushTargets(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 	cfg := &config.Config{}
@@ -101,44 +102,33 @@ func TestNotificationSaveKeepsTheRulesTargets(t *testing.T) {
 		}
 	}
 	must(`INSERT INTO alert_config (id, target_mode, trigger, channels, enabled, created_at) VALUES ('r1', 'all', 'failure', '["apprise"]', 1, 't')`)
-	for i, u := range []string{"slack://keep", "slack://drop"} {
-		must(`INSERT INTO alert_targets (id, owner_agency, url, enabled, position, created_at) VALUES (?, 'global', ?, 1, ?, 't')`, "t"+u[8:], u, i)
-		must(`INSERT INTO alert_rule_targets (rule_id, target_id) VALUES ('r1', ?)`, "t"+u[8:])
-	}
-	must(`INSERT INTO alert_targets (id, owner_agency, url, enabled, created_at) VALUES ('t-fin', 'ag:FIN', 'slack://fin', 1, 't')`)
-	must(`INSERT INTO alert_rule_targets (rule_id, target_id) VALUES ('r1', 't-fin')`)
+	must(`INSERT INTO alert_targets (id, owner_agency, label, url, enabled, position, created_at) VALUES ('tkeep', 'global', 'Ops', 'slack://keep', 1, 0, 't')`)
+	must(`INSERT INTO alert_rule_targets (rule_id, target_id) VALUES ('r1', 'tkeep')`)
 
-	// What the form sends back: the ids it was given (1..N), relabelled, one
-	// dropped, one added, reordered.
-	if _, err := UpdateNotificationConfig(ctx, pool, cfg, NotificationConfig{
-		SMTP: &SMTPConfig{Host: "mail.example.com", Port: 25, Encryption: "none"},
-		Apprise: &AppriseConfig{Enabled: true, Targets: []AppriseTarget{
-			{ID: 1, Label: "New", URL: "slack://new", Enabled: true},
-			{ID: 2, Label: "Kept", URL: "slack://keep", Enabled: false},
-		}},
-	}, "tester"); err != nil {
+	var inp NotificationConfig
+	body := `{"smtp":{"host":"mail.example.com","port":25,"encryption":"none"},
+	          "apprise":{"enabled":true,"apiUrl":"http://apprise:8000","targets":[{"id":1,"label":"New","url":"slack://new","enabled":true}]}}`
+	if err := json.Unmarshal([]byte(body), &inp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateNotificationConfig(ctx, pool, cfg, inp, "tester"); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	var links string
-	_ = pool.QueryRow(`SELECT group_concat(target_id, ',') FROM (SELECT target_id FROM alert_rule_targets WHERE rule_id = 'r1' ORDER BY target_id)`).Scan(&links)
-	if links != "t-fin,tkeep" {
-		t.Errorf("r1 names %q after the Save; want its kept target and FIN's untouched", links)
-	}
-	var row string
-	_ = pool.QueryRow(`SELECT label||'|'||enabled||'|'||position FROM alert_targets WHERE id = 'tkeep'`).Scan(&row)
-	if row != "Kept|0|1" {
-		t.Errorf("the kept target is %q; want its new label, enabled flag and place", row)
+	var targets, links string
+	_ = pool.QueryRow(`SELECT group_concat(id||'|'||label||'|'||url, ',') FROM alert_targets`).Scan(&targets)
+	_ = pool.QueryRow(`SELECT group_concat(target_id, ',') FROM alert_rule_targets WHERE rule_id = 'r1'`).Scan(&links)
+	if targets != "tkeep|Ops|slack://keep" || links != "tkeep" {
+		t.Errorf("after a Save the targets are %q and r1 names %q; want them as they were", targets, links)
 	}
 	got, err := GetNotificationConfig(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var urls []string
-	for _, tg := range got.Apprise.Targets {
-		urls = append(urls, tg.URL)
+	if got.Apprise == nil || !got.Apprise.Enabled || got.Apprise.APIURL != "http://apprise:8000" {
+		t.Errorf("the gateway was not saved: %+v", got.Apprise)
 	}
-	if strings.Join(urls, ",") != "slack://new,slack://keep" {
-		t.Errorf("the form reads %v; want Global's, in the order saved", urls)
+	if b, _ := json.Marshal(got); strings.Contains(string(b), "targets") {
+		t.Errorf("the answer still carries targets: %s", b)
 	}
 }
 
@@ -149,14 +139,11 @@ func TestNotificationConfigApprise(t *testing.T) {
 	_, _ = rand.Read(kek)
 	cfg := &config.Config{SecretKEKEnv: base64.StdEncoding.EncodeToString(kek)}
 
-	// Configure Apprise with targets + an SMTP password.
+	// Configure the Apprise gateway and an SMTP password.
 	_, err := UpdateNotificationConfig(ctx, pool, cfg, NotificationConfig{
 		Provider: "apprise",
 		SMTP:     &SMTPConfig{Host: "mail.example.com", Port: 587, Encryption: "starttls", Password: "p4ss"},
-		Apprise: &AppriseConfig{Enabled: true, APIURL: "http://apprise:8000", Targets: []AppriseTarget{
-			{Label: "Ops Slack", Service: "slack", URL: "slack://x", Enabled: true},
-			{Label: "Ops Mail", Service: "email", URL: "mailto://y", Enabled: false},
-		}},
+		Apprise:  &AppriseConfig{Enabled: true, APIURL: "http://apprise:8000"},
 	}, "tester")
 	if err != nil {
 		t.Fatalf("update: %v", err)
@@ -166,22 +153,16 @@ func TestNotificationConfigApprise(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Apprise == nil || len(got.Apprise.Targets) != 2 {
-		t.Fatalf("apprise targets not round-tripped: %+v", got.Apprise)
-	}
-	// Rich fields survive the round-trip and ids are server-assigned (1..N).
-	if t0 := got.Apprise.Targets[0]; t0.URL != "slack://x" || t0.Label != "Ops Slack" || !t0.Enabled || t0.ID != 1 {
-		t.Fatalf("first target wrong: %+v", t0)
-	}
-	if t1 := got.Apprise.Targets[1]; t1.URL != "mailto://y" || t1.Enabled || t1.ID != 2 {
-		t.Fatalf("second target wrong (enabled flag must persist): %+v", t1)
+	if got.Apprise == nil || !got.Apprise.Enabled || got.Apprise.APIURL != "http://apprise:8000" {
+		t.Fatalf("apprise gateway not round-tripped: %+v", got.Apprise)
 	}
 	// Password is write-only: stored (PasswordSet) but never returned.
 	if got.SMTP == nil || !got.SMTP.PasswordSet || got.SMTP.Password != "" {
 		t.Fatalf("smtp password handling wrong: %+v", got.SMTP)
 	}
 
-	// An SMTP-only update (no Apprise block) must preserve the targets.
+	// An SMTP-only update (no Apprise block) and a blank password keep the
+	// stored password.
 	_, err = UpdateNotificationConfig(ctx, pool, cfg, NotificationConfig{
 		SMTP: &SMTPConfig{Host: "mail2.example.com", Port: 25, Encryption: "none"},
 	}, "tester")
@@ -189,10 +170,6 @@ func TestNotificationConfigApprise(t *testing.T) {
 		t.Fatalf("smtp-only update: %v", err)
 	}
 	got, _ = GetNotificationConfig(ctx, pool)
-	if got.Apprise == nil || len(got.Apprise.Targets) != 2 {
-		t.Fatalf("apprise targets wiped by SMTP-only update: %+v", got.Apprise)
-	}
-	// And the password survives a blank-password update.
 	if got.SMTP == nil || !got.SMTP.PasswordSet {
 		t.Fatalf("smtp password lost on blank update: %+v", got.SMTP)
 	}
