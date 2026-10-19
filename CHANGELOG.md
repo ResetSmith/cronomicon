@@ -21,8 +21,8 @@ nobody else; its alerts, its recycle bin, the groups its grants may name and
 its concurrency are its own; a global administrator hands a job or workflow to
 an agency as one commit into its repository, and is told when the original
 changes. A copied runner identity file is detected. The first published release
-since 2.2.3: the upgrade below reads every step from 2.2.3 as one. Seven
-migrations in this release (1520 to 1580, schema v1580); runner protocol 14 is
+since 2.2.3: the upgrade below reads every step from 2.2.3 as one. Eight
+migrations in this release (1520 to 1590, schema v1590); runner protocol 14 is
 unchanged.
 
 ### Upgrading from 2.2.3 (or any release since)
@@ -33,15 +33,21 @@ order, is here. An installation with no data has nothing to do but upgrade the
 agents with the server.
 
 1. **Before you stop the old server, let queued runs finish, or cancel them.**
-   A run still queued for the in-app SSH executor of 2.2.x is claimed by
-   nothing from 2.5.0 on: the 2.3.0 pass that moved such runs to the local
-   runner is retired in this release (below). The same goes for a run pinned
-   to a runner tag (2.3.0): bind the scope after the upgrade, or let it finish
-   first.
+   A run still queued for the in-app SSH executor of 2.2.x is closed at the
+   upgrade as skipped, with the reason (migration 1590): nothing has claimed
+   such a run since 2.3.0, and the 2.3.0 pass that moved them to the local
+   runner is retired in this release (below). Run its job again afterwards. A
+   run pinned to a runner tag (2.3.0) waits: bind the scope after the upgrade,
+   or let it finish first.
 2. **Take a backup**, then run the report with the new binary against the
-   existing database: `cronomicon preflight` (read-only). It covers what 2.3.0
-   changes on first start; there is no 2.4.0 or 2.5.0 section, as their
-   conversions are reported in the Notices inbox instead.
+   existing database: `cronomicon preflight` (read-only). It says what 2.3.0
+   changes, and in its last block what 2.4.0 and 2.5.0 stop or move at the
+   first start, for this installation: the Git jobs on an agency's scope that
+   stop running (step 6), the Git scopes that become an agency's own, the
+   hand-written host records an agency's runs stop finding, the global
+   calendars each agency gets a copy of, the queued runs step 1 closes, and
+   the run history that becomes Global's (below). Lines marked `!!` need
+   action before the upgrade; the Notices inbox lists each item after it.
 3. **Upgrade every agent with the server** (**Copy upgrade command** on a
    runner's row). Protocol 14 is the floor. Drain the agents first or run the
    command when nothing is running: the agents being replaced are older than
@@ -68,14 +74,23 @@ agents with the server.
 6. **Give each agency its repository** if it has none (Settings →
    Repositories): every agency syncs its own, and the single GitLab connection
    of 2.2.x became Global's (its webhook is on unless it was configured off).
-   The connection's token must be able to push.
+   The connection's token must be able to push. **A Git job of 2.2.x whose
+   scope is an agency's stops running at the upgrade**: it is Global's
+   repository's, and a job of Global's repository runs on Global's scopes only,
+   so each of its runs is refused, with the reason (`global_job_on_agency_scope`).
+   Move its file to the agency's repository, or give it to the agency
+   (**Give to an agency…** on the job). The report of step 2 lists them.
 
 **What reads differently after the upgrade.** People of one agency no longer
 see Global's rows (its jobs, runs, scopes, runners, notices and the rest),
 nor its activity; only a global administrator and a viewer of every agency do.
-A request that names an object the caller may not read is answered 404. An
-existing alert rule is Global's, and so is every existing push target; each
-rule pushes where it pushed before. The audit export's rows and stream lines
+A request that names an object the caller may not read is answered 404. **The
+run history of 2.2.x Git jobs is Global's**, with the activity of those runs:
+a run belongs to its job's agency (2.4.0), and every 2.2.x Git job is Global's
+repository's, so an agency's people no longer see their own history of those
+runs (a global administrator and a viewer of every agency do). The history of
+jobs built in the app stays their agency's. An existing alert rule is Global's,
+and so is every existing push target; each rule pushes where it pushed before. The audit export's rows and stream lines
 gain an `agency` column (last), after 2.4.4's `actingAgency`.
 
 ### Added
@@ -182,7 +197,8 @@ gain an `agency` column (last), after 2.4.4's `actingAgency`.
 - Migrations: 1520 (audit rows' agency), 1530 `alert_config.owner_agency`,
   1540 `alert_targets` and `alert_rule_targets`, 1550 `agency_groups`, 1560
   `agencies.max_concurrent`, 1570 `runner_processes`, 1580 `assignments` and
-  `assignment_files`.
+  `assignment_files`, 1590 (queued runs for the SSH executor closed as skipped;
+  its down is a no-op).
 
 ## [2.4.4] - 2026-10-16
 

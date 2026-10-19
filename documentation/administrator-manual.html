@@ -2246,7 +2246,7 @@
                 </div>
 
                 <p>This manual describes the service as it stands: the current database schema is
-                    <strong>1580</strong>, and the runner wire protocol is <strong>v14</strong>. Cronomicon follows
+                    <strong>1590</strong>, and the runner wire protocol is <strong>v14</strong>. Cronomicon follows
                     Semantic Versioning. The project's <a
                         href="https://gitlab.example.com/ops/cronomicon/-/blob/main/CHANGELOG.md"><code>CHANGELOG.md</code></a>
                     in the Cronomicon repository records the reasoning behind each behavior in this book.</p>
@@ -6636,21 +6636,27 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                 <h4 id="upgrade-2-5">Upgrading from 2.2.3 to 2.5.0</h4>
                 <p>2.5.0 is the first published release since 2.2.3. Production and every published image go from
                     2.2.3 (or any release since) to 2.5.0 <strong>in one step</strong>: there is no stop at 2.3.x or
-                    2.4.x. The schema goes from 1210 to <strong>1580</strong>, and the runner protocol stays at
+                    2.4.x. The schema goes from 1210 to <strong>1590</strong>, and the runner protocol stays at
                     <strong>14</strong>. The project's <code>CHANGELOG.md</code> says what each release in between
                     did. What has to be done, in order, is this. An installation with no data has nothing to do but
                     upgrade the agents with the server.</p>
                 <ol class="steps">
                     <li><strong>Before you stop the old server, let queued runs finish, or cancel them.</strong> A
-                        run still queued for the in-app SSH executor of 2.2.x is claimed by nothing from 2.5.0 on:
-                        the 2.3.0 pass that moved such runs to the local runner is retired in 2.5.0. The same is
-                        true of a run pinned to a runner tag: bind the scope after the upgrade (&sect;7.10), or let
+                        run still queued for the in-app SSH executor of 2.2.x is closed at the upgrade as skipped,
+                        with the reason (migration 1590): nothing has claimed such a run since 2.3.0, and the 2.3.0
+                        pass that moved them to the local runner is retired in 2.5.0. Run its job again afterwards.
+                        A run pinned to a runner tag waits: bind the scope after the upgrade (&sect;7.10), or let
                         the run finish first.</li>
                     <li><strong>Take a backup</strong> that you can put back, then run the report with the new
-                        binary against the existing database: <code>cronomicon preflight</code> (read-only). It
-                        covers what 2.3.0 changes on the first start (below). There is no 2.4.0 or 2.5.0 section:
-                        their conversions are reported in the Notices inbox instead. The only way back is to
-                        restore the backup under the old binary; the runs made in the interval are lost.</li>
+                        binary against the existing database: <code>cronomicon preflight</code> (read-only). It says
+                        what 2.3.0 changes on the first start (below), and in its last block what 2.4.0 and 2.5.0
+                        stop or move, for this installation: the Git jobs on an agency's scope that stop running
+                        (step 6), the Git scopes that become an agency's own, the hand-written host records that an
+                        agency's runs stop finding, the global calendars that each agency gets a copy of, the queued
+                        runs that step 1 closes, and the run history that becomes Global's (below). Lines marked
+                        <code>!!</code> need action before the upgrade; the Notices inbox lists each item after it.
+                        The only way back is to restore the backup under the old binary; the runs made in the
+                        interval are lost.</li>
                     <li><strong>Upgrade every agent with the server</strong> (<strong>Copy upgrade
                             command</strong> on a runner's row). Protocol 14 is the floor. Drain the agents first, or
                         run the command when nothing is running: the agents being replaced are older than 2.3.2,
@@ -6675,18 +6681,30 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <li><strong>Give each agency its repository</strong> if it has none (Settings &rarr;
                         Repositories, &sect;5.6). Every agency syncs its own, and the single GitLab connection of
                         2.2.x became Global's (its webhook is on unless it was configured off). The connection's
-                        token must be able to push.</li>
+                        token must be able to push. <strong>A Git job of 2.2.x whose scope is an agency's stops
+                            running at the upgrade:</strong> it is Global's repository's, and a job of Global's
+                        repository runs on Global's scopes only, so each of its runs is refused, with the reason
+                        (<code>global_job_on_agency_scope</code>). Move its file to the agency's repository, or give
+                        it to the agency (<strong>Give to an agency&hellip;</strong> on the job, &sect;5.7). The
+                        report of step 2 lists them.</li>
                 </ol>
                 <p><strong>What reads differently after the upgrade.</strong> People of one agency no longer see
                     Global's rows (its jobs, runs, scopes, runners, notices and the rest), nor its activity; only a
                     global administrator and a viewer of every agency do (&sect;3). A request that names an object
-                    that the caller may not read is answered <code>404</code>. An existing alert rule is Global's,
+                    that the caller may not read is answered <code>404</code>. <strong>The run history of 2.2.x
+                        Git jobs is Global's</strong>, with the activity of those runs: a run belongs to its job's
+                    agency (2.4.0), and every 2.2.x Git job is Global's repository's, so an agency's people no
+                    longer see their own history of those runs (a global administrator and a viewer of every agency
+                    do). The history of jobs built in the app stays their agency's. An existing alert rule is Global's,
                     and so is every existing push target; each rule pushes where it pushed before (&sect;8.11). The
                     audit export's rows and stream lines gain two columns at the end: <code>actingAgency</code>
                     (2.4.4), then <code>agency</code> (2.5.0); a reader that takes columns by position sees two
                     more.</p>
                 <p><strong>Two results of the independent model are easy to miss.</strong></p>
                 <ul>
+                    <li><strong>A Git job on an agency's scope does not run</strong> until its file is in that
+                        agency's repository (step 6). The upgrade does not move it: Global's repository is one
+                        agency's, and its jobs run on Global's scopes.</li>
                     <li><strong>An agency's shell jobs need an agent of the agency.</strong> The local runner serves
                         Global only. An agency whose shell jobs the server ran in 2.2.x waits for an agent of its
                         own (<code>local_runner_served</code> for an agency that 2.3.x placed on the local runner;

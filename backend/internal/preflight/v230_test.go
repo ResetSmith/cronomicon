@@ -59,21 +59,25 @@ func TestThe230SectionSaysWhatTheUpgradeWillFind(t *testing.T) {
 	runner("r-pool", "pool-agent", `["bash"]`)
 	exec(`INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_by, bound_at) VALUES ('sc-bound', 'r-fin', 'fin-agent', 'x', 't')`)
 
-	job := func(name, runType, scope, executor, requires, target string) {
+	// A job built in the app on an agency's scope goes on running there; a Git
+	// one stops (from 2.4.0 a job of Global's repository runs on Global's scopes
+	// only), and is listed apart (2.5.0 C11).
+	job := func(name, source, runType, scope, executor, requires, target string) {
 		exec(`INSERT INTO jobs (uid, name, source, run_type, scope, executor, requires_json, target_host, concurrency_policy, enabled, synced_at)
-		      VALUES (?, ?, 'git', ?, NULLIF(?, ''), NULLIF(?, ''), COALESCE(NULLIF(?, ''), '[]'), NULLIF(?, ''), 'Allow', 1, 't')`,
-			"u-"+name, name, runType, scope, executor, requires, target)
+		      VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), COALESCE(NULLIF(?, ''), '[]'), NULLIF(?, ''), 'Allow', 1, 't')`,
+			"u-"+name, name, source, runType, scope, executor, requires, target)
 	}
-	job("fin-default", "bash", "fin-prod", "", "", "web01")         // resolved to ssh; Finance has agents with a shell type
-	job("fin-off-scope", "bash", "fin-prod", "ssh", "", "db99")     // its target is not a host of the scope
-	job("tax-runner", "python", "tax-prod", "runner", `["jq"]`, "") // ran on agents, where requires was already read
-	job("fin-needs", "bash", "fin-prod", "", `["jq"]`, "")          // ran from the server, which ignored requires
-	job("bound-needs", "bash", "fin-bound", "ssh", `["jq"]`, "")    // a bound scope's jobs ran on its runners
-	job("tax-default", "bash", "tax-prod", "", "", "")              // …and one that ran from the server: the scope is both
-	job("pooled", "perl", "nobody", "", "", "")                     // a scope in no agency
-	job("unscoped", "bash", "", "", "", "")                         // no scope at all
-	job("bound", "bash", "fin-bound", "ssh", "", "")                // a bound scope is not the pass's business
-	job("play", "ansible", "fin-prod", "", `["vault"]`, "")         // not a shell job
+	const app, git = "cronomicon", "git"
+	job("fin-default", app, "bash", "fin-prod", "", "", "web01")         // resolved to ssh; Finance has agents with a shell type
+	job("fin-off-scope", git, "bash", "fin-prod", "ssh", "", "db99")     // its target is not a host of the scope; a Git job of Finance's: stops
+	job("tax-runner", app, "python", "tax-prod", "runner", `["jq"]`, "") // ran on agents, where requires was already read
+	job("fin-needs", app, "bash", "fin-prod", "", `["jq"]`, "")          // ran from the server, which ignored requires
+	job("bound-needs", git, "bash", "fin-bound", "ssh", `["jq"]`, "")    // a bound scope's jobs ran on its runners
+	job("tax-default", app, "bash", "tax-prod", "", "", "")              // …and one that ran from the server: the scope is both
+	job("pooled", git, "perl", "nobody", "", "", "")                     // a scope in no agency
+	job("unscoped", git, "bash", "", "", "", "")                         // no scope at all
+	job("bound", git, "bash", "fin-bound", "ssh", "", "")                // a bound scope is not the pass's business
+	job("play", git, "ansible", "fin-prod", "", `["vault"]`, "")         // not a shell job
 	exec(`INSERT INTO scripts (name, run_type, executor, content_hash, synced_at) VALUES ('s1', 'bash', 'runner', 'h', 't')`)
 
 	exec(`INSERT INTO secrets (id, key, scope, source, created_at) VALUES
@@ -118,11 +122,14 @@ func TestThe230SectionSaysWhatTheUpgradeWillFind(t *testing.T) {
 	if _, bound := by["fin-bound"]; bound || len(by) != 4 {
 		t.Fatalf("shell scopes = %+v, want fin-prod, tax-prod, nobody and the no-scope jobs — never a bound scope", by)
 	}
-	if s := by["fin-prod"]; !s.FromServer || s.OnAgents || s.Jobs != 3 || strings.Join(s.Agents, ",") != "both-agent,fin-agent" {
-		t.Errorf("fin-prod = %+v, want from the server, 3 jobs, and both agents that serve Finance with a shell type", s)
+	// Since 2.4.0 a runner that served several agencies is Global's and takes
+	// Global's runs only, so an agency's scope is taken by its own agents; and
+	// the Git job on fin-prod is not counted, as it runs nowhere.
+	if s := by["fin-prod"]; !s.FromServer || s.OnAgents || s.Jobs != 2 || strings.Join(s.Agents, ",") != "fin-agent" {
+		t.Errorf("fin-prod = %+v, want from the server, 2 jobs, and Finance's own agent with a shell type", s)
 	}
-	if s := by["tax-prod"]; !s.FromServer || !s.OnAgents || strings.Join(s.Agents, ",") != "both-agent" {
-		t.Errorf("tax-prod = %+v, want both places, and only the agent with a shell type (not the ansible-only one)", s)
+	if s := by["tax-prod"]; !s.FromServer || !s.OnAgents || len(s.Agents) != 0 {
+		t.Errorf("tax-prod = %+v, want both places, and no agent (Tax's own has no shell type; both-agent is Global's)", s)
 	}
 	if s := by["nobody"]; strings.Join(s.Agencies, ",") != "Global" || strings.Join(s.Agents, ",") != "pool-agent" {
 		t.Errorf("a scope in no agency = %+v, want Global's, takeable by the runner in no agency", s)
@@ -154,8 +161,17 @@ func TestThe230SectionSaysWhatTheUpgradeWillFind(t *testing.T) {
 	if len(rep.KeyConflicts) != 1 || rep.KeyConflicts[0].Address != "10.0.0.5:22" || len(rep.KeyConflicts[0].Records) != 2 {
 		t.Errorf("key conflicts = %+v, want the two records at 10.0.0.5:22", rep.KeyConflicts)
 	}
-	if rep.ExecutorJobs != 4 || rep.ExecutorScripts != 1 {
-		t.Errorf("executor keys: %d job(s), %d script(s); want 4 and 1", rep.ExecutorJobs, rep.ExecutorScripts)
+	if rep.ExecutorJobs != 3 || rep.ExecutorScripts != 1 {
+		t.Errorf("executor keys: %d job(s), %d script(s); want 3 and 1", rep.ExecutorJobs, rep.ExecutorScripts)
+	}
+	// What stops at the first start (C11, present defect 81): every Git job on
+	// one agency's scope, whatever its type or binding.
+	var stopped []string
+	for _, j := range rep.GitJobsOnAgencyScopes {
+		stopped = append(stopped, j.Job+"/"+j.Detail)
+	}
+	if got := strings.Join(stopped, ","); got != "bound/Finance,bound-needs/Finance,fin-off-scope/Finance,play/Finance" {
+		t.Errorf("Git jobs on an agency's scope = %s, want Finance's four", got)
 	}
 	if len(rep.VaultSecrets) != 1 || rep.VaultSecrets[0].Key != "VAULTED" || len(rep.VaultKeys) != 1 || rep.VaultKeys[0].Name != "vault_key" {
 		t.Errorf("vault-backed rows = %+v / %+v", rep.VaultSecrets, rep.VaultKeys)
@@ -173,11 +189,15 @@ func TestThe230SectionSaysWhatTheUpgradeWillFind(t *testing.T) {
 		"signs every user out, once",
 		"scope shared — Finance, Tax",
 		"both-agent — Finance, Tax",
-		"scope fin-prod (Finance), 3 shell job(s) — both-agent, fin-agent",
+		"scope fin-prod (Finance), 2 shell job(s) — fin-agent",
 		"fin-needs (scope fin-prod) requires [\"jq\"]",
 		"The SSH executor",
 		"!! Jobs whose fixed target host is not in their scope (1). From 2.3.0 a job runs",
-		"4 job(s) and 1 script(s) synced from Git declare `executor`",
+		"3 job(s) and 1 script(s) synced from Git declare `executor`",
+		"What stops or moves at the first start (2.4.0 and 2.5.0)",
+		"!! Git jobs on an agency's scope (4) STOP RUNNING",
+		"fin-off-scope — scope fin-prod (Finance)",
+		"!! Runners that serve several agencies (1)",
 		"fresh (10.0.0.7:22)",
 		"bastion jump (10.0.0.9:22)",
 		"10.0.0.5:22 — host web01; host web01-alias",
@@ -197,11 +217,19 @@ func TestThe230SectionSaysWhatTheUpgradeWillFind(t *testing.T) {
 		t.Errorf("with the SSH executor off, nothing is placed and the server takes nothing:\n%s", off)
 	}
 	// Off or on, an agent may take what the server ran (or never ran).
-	if !strings.Contains(off, "may now be taken by an AGENT (4") {
+	if !strings.Contains(off, "may now be taken by an AGENT (3") {
 		t.Errorf("the agent line must not depend on the switch:\n%s", off)
 	}
 	if !strings.Contains(unknown, "could not be read here") || !strings.Contains(unknown, "It will serve") {
 		t.Errorf("when the switch cannot be read the report says so and shows the on case:\n%s", unknown)
+	}
+	// Until C11 the report said the upgrade "converts nothing: what it finds keeps
+	// working", and that a legacy runner "keeps working as it does" (present
+	// defect 81): since 2.4.0 neither holds.
+	for _, gone := range []string{"converts nothing", "keeps working"} {
+		if strings.Contains(on, gone) {
+			t.Errorf("the report still says %q:\n%s", gone, on)
+		}
 	}
 }
 
@@ -246,7 +274,7 @@ func TestThe230SectionWarnsAboutAnAgencyCalledGlobal(t *testing.T) {
 		`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc', 'ops', 'cronomicon', 't')`,
 		`INSERT INTO scope_agencies VALUES ('sc', 'ag-g')`,
 		`INSERT INTO jobs (uid, name, source, run_type, scope, requires_json, concurrency_policy, enabled, synced_at)
-		 VALUES ('u', 'j', 'git', 'bash', 'ops', '[]', 'Allow', 1, 't')`,
+		 VALUES ('u', 'j', 'cronomicon', 'bash', 'ops', '[]', 'Allow', 1, 't')`,
 	} {
 		if _, err := pool.Exec(q); err != nil {
 			t.Fatalf("seed: %v\n%s", err, q)

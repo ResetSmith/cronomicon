@@ -14,9 +14,13 @@ import (
 // 2.3.0 changes more on upgrade than any release before it, and almost all of
 // it is decided by what the installation holds: which rows sit in several
 // agencies, which runners serve more than one, where shell jobs ran from, and
-// which hosts the server has a key for. The upgrade converts nothing by force
-// (LR-16): it keeps what works working and files a notice. This section says,
-// before the upgrade, what those notices will be about.
+// which hosts the server has a key for. 2.3.0 converted nothing by force
+// (LR-16); 2.4.0 and 2.5.0 do (§0a): a repository and a row are one agency's,
+// and what an agency had through Global's stops. Since 2.5.0 an installation
+// goes from 2.2.3 to 2.5.0 in one step, so this section says, before the
+// upgrade, what that one step changes, and the last block of it what stops at
+// the first start (2.5.0 C11, present defect 81; until then it described 2.3.0
+// alone and said that what it found "keeps working").
 //
 // Like the rest of the package it is read-only and reads the PREVIOUS
 // release's schema (2.2.x, v1210): no Global agency row, "no agency" as the
@@ -87,6 +91,44 @@ type Report230 struct {
 	// are those whose new name is already taken, for which the migration
 	// refuses to run.
 	NamedGlobal, RenameBlocked []string
+
+	// From 2.4.0 and 2.5.0, read from the 2.2 schema (C11, present defect 81):
+	// what stops or moves at the first start.
+	//
+	// GitJobsOnAgencyScopes are the Git jobs whose scope is one agency's: every
+	// Git job is Global's repository's, and from 2.4.0 a job of Global's
+	// repository runs on Global's scopes only, so each of their runs is refused
+	// (runref.RepoScopeMismatch; the notice global_job_on_agency_scope).
+	GitJobsOnAgencyScopes []NamedJob
+	// AgencyGitScopes are the Git scopes of one agency: 1470 makes each that
+	// agency's own, in the app, with its hosts, and its file in Global's
+	// repository makes no scope any more.
+	AgencyGitScopes []SharedRow
+	// GlobalHostRecords are the hand-written host records (Global's since
+	// 1230) whose host a scope of one agency lists: from 2.4.0 a record of
+	// Global's is used by Global's runs only (the notice global_host_record).
+	GlobalHostRecords []SharedRow
+	// GlobalCalendars are the calendars that froze every agency: 1430 gives
+	// each agency a copy, which freezes that agency; Global's then freezes
+	// Global only.
+	GlobalCalendars []string
+	// QueuedSSHRuns are the runs still queued for the SSH executor: 1590
+	// closes them as skipped (present defect 80).
+	QueuedSSHRuns int
+	// AgencyGitRuns count, per agency, the runs of Git jobs recorded for that
+	// agency alone: from 2.4.0 a run is its job's agency's (1480), and every
+	// 2.2 Git job is Global's, so they become Global's history (question 104).
+	AgencyGitRuns []AgencyCount
+	// Agencies and AgencyGrants: each agency needs a repository of its own
+	// (agency_no_repository), and each grant of an agency names a group that
+	// no agency's group list holds yet (grant_group_unlisted).
+	Agencies, AgencyGrants int
+}
+
+// AgencyCount is a number of rows of one agency.
+type AgencyCount struct {
+	Agency string
+	N      int
 }
 
 func names(ctx context.Context, db *sql.DB, query string, args ...any) ([]string, error) {
@@ -218,6 +260,7 @@ func Build230(ctx context.Context, db *sql.DB) (Report230, error) {
 		 WHERE j.deleted_at IS NULL AND j.run_type IN (`+in+`)
 		   AND TRIM(COALESCE(j.requires_json, '')) NOT IN ('', '[]', 'null')
 		   AND NOT EXISTS (SELECT 1 FROM scope_runners sr WHERE sr.scope_id = sc.id)
+		   AND NOT (j.source = 'git' AND sc.id IS NOT NULL AND `+oneAgencyScope+`) -- runs nowhere from 2.4.0 (build24)
 		   AND CASE WHEN COALESCE(j.executor, '') IN ('ssh', 'runner') THEN j.executor ELSE ? END = 'ssh'
 		 ORDER BY j.name`, fallback); err != nil {
 		return fail("job requirements", err)
@@ -293,7 +336,80 @@ func Build230(ctx context.Context, db *sql.DB) (Report230, error) {
 		 ORDER BY 1, 2`); err != nil {
 		return fail("SSH keys", err)
 	}
+	if err := build24(ctx, db, &rep); err != nil {
+		return rep, err
+	}
 	return rep, nil
+}
+
+// oneAgencyScope is the condition that the scope `sc` is in exactly one
+// agency (2.2 schema): the scopes 2.3.0 gives that agency.
+const oneAgencyScope = `(SELECT COUNT(*) FROM scope_agencies s1 WHERE s1.scope_id = sc.id) = 1`
+
+// build24 reads what 2.4.0 and 2.5.0 stop or move at the first start.
+func build24(ctx context.Context, db *sql.DB, rep *Report230) error {
+	fail := func(what string, err error) error { return fmt.Errorf("read %s: %w", what, err) }
+	var err error
+	if rep.GitJobsOnAgencyScopes, err = jobs(ctx, db, `
+		SELECT j.name, j.scope, COALESCE(a.name, sa.agency_id)
+		  FROM jobs j JOIN scopes sc ON sc.name = j.scope
+		  JOIN scope_agencies sa ON sa.scope_id = sc.id
+		  LEFT JOIN agencies a ON a.id = sa.agency_id
+		 WHERE j.source = 'git' AND j.deleted_at IS NULL AND `+oneAgencyScope+`
+		 ORDER BY 3, 1`); err != nil {
+		return fail("Git jobs", err)
+	}
+	if rep.AgencyGitScopes, err = grouped(ctx, db, "scope", `
+		SELECT sc.name, COALESCE(a.name, sa.agency_id)
+		  FROM scopes sc JOIN scope_agencies sa ON sa.scope_id = sc.id
+		  LEFT JOIN agencies a ON a.id = sa.agency_id
+		 WHERE sc.source = 'git' AND `+oneAgencyScope+`
+		 ORDER BY 1, 2`); err != nil {
+		return fail("Git scopes", err)
+	}
+	if rep.GlobalHostRecords, err = grouped(ctx, db, "host", `
+		SELECT DISTINCT h.hostname, COALESCE(a.name, sa.agency_id)
+		  FROM ssh_hosts h
+		  JOIN scope_hosts sh ON sh.host = h.hostname
+		  JOIN scopes sc ON sc.id = sh.scope_id
+		  JOIN scope_agencies sa ON sa.scope_id = sc.id
+		  LEFT JOIN agencies a ON a.id = sa.agency_id
+		 WHERE COALESCE(h.scope_id, '') = '' AND `+oneAgencyScope+`
+		 ORDER BY 1, 2`); err != nil {
+		return fail("host records", err)
+	}
+	if rep.GlobalCalendars, err = names(ctx, db, `SELECT name FROM calendars WHERE global = 1 ORDER BY name`); err != nil {
+		return fail("calendars", err)
+	}
+	if rep.QueuedSSHRuns, err = count(ctx, db, `SELECT COUNT(*) FROM runs WHERE status = 'queued' AND executor = 'ssh'`); err != nil {
+		return fail("queued runs", err)
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT json_extract(agencies_json, '$[0]'), COUNT(*) FROM runs
+		 WHERE COALESCE(job_source, 'git') = 'git'
+		   AND json_valid(agencies_json) AND json_array_length(agencies_json) = 1
+		 GROUP BY 1 ORDER BY 1`)
+	if err != nil {
+		return fail("runs", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c AgencyCount
+		if err := rows.Scan(&c.Agency, &c.N); err != nil {
+			return fail("runs", err)
+		}
+		rep.AgencyGitRuns = append(rep.AgencyGitRuns, c)
+	}
+	if err := rows.Err(); err != nil {
+		return fail("runs", err)
+	}
+	if rep.Agencies, err = count(ctx, db, `SELECT COUNT(*) FROM agencies`); err != nil {
+		return fail("agencies", err)
+	}
+	if rep.AgencyGrants, err = count(ctx, db, `SELECT COUNT(*) FROM access_grants WHERE agency_id IS NOT NULL`); err != nil {
+		return fail("grants", err)
+	}
+	return nil
 }
 
 func jobs(ctx context.Context, db *sql.DB, query string) ([]NamedJob, error) {
@@ -391,6 +507,8 @@ func shellScopes(ctx context.Context, db *sql.DB) ([]ShellScope, error) {
 		  FROM jobs j LEFT JOIN scopes sc ON sc.name = j.scope
 		 WHERE j.deleted_at IS NULL AND j.run_type IN (`+in+`)
 		   AND NOT EXISTS (SELECT 1 FROM scope_runners sr WHERE sr.scope_id = sc.id)
+		   -- A Git job on one agency's scope runs nowhere from 2.4.0 (build24).
+		   AND NOT (j.source = 'git' AND sc.id IS NOT NULL AND `+oneAgencyScope+`)
 		 ORDER BY 2`)
 	if err != nil {
 		return nil, err
@@ -455,19 +573,31 @@ func shellScopes(ctx context.Context, db *sql.DB) ([]ShellScope, error) {
 			 WHERE sa.scope_id = ? ORDER BY 1`, k.id); err != nil {
 			return nil, err
 		}
-		if len(s.Agencies) == 0 {
+		switch {
+		case len(s.Agencies) == 0:
 			s.Agencies = []string{"Global"}
 			s.Agents, err = names(ctx, db, `
 				SELECT r.name FROM runners r
 				 WHERE NOT EXISTS (SELECT 1 FROM runner_agencies ra WHERE ra.runner_id = r.id) AND `+shellCap+`
 				 ORDER BY r.name`)
-		} else {
+		case len(s.Agencies) == 1:
+			// One agency's scope: its own agents, those that serve it alone
+			// (from 2.4.0 a runner that served several is Global's, and takes
+			// Global's runs only).
 			s.Agents, err = names(ctx, db, `
 				SELECT DISTINCT r.name FROM runners r
 				  JOIN runner_agencies ra ON ra.runner_id = r.id
 				  JOIN scope_agencies sa ON sa.agency_id = ra.agency_id AND sa.scope_id = ?
 				 WHERE `+shellCap+`
+				   AND (SELECT COUNT(*) FROM runner_agencies r2 WHERE r2.runner_id = r.id) = 1
 				 ORDER BY r.name`, k.id)
+		default:
+			// A scope of several agencies is Global's (1410): Global's runners,
+			// those of no agency and those that served several.
+			s.Agents, err = names(ctx, db, `
+				SELECT r.name FROM runners r
+				 WHERE (SELECT COUNT(*) FROM runner_agencies ra WHERE ra.runner_id = r.id) <> 1 AND `+shellCap+`
+				 ORDER BY r.name`)
 		}
 		if err != nil {
 			return nil, err
@@ -530,16 +660,16 @@ func listed(p func(string, ...any), items []string, max int) {
 // command may be run somewhere other than where the server runs.
 func (r Report230) Write(w io.Writer, sshExecutor *bool) {
 	p := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format+"\n", a...) }
-	p("Cronomicon 2.3.0 — what this upgrade changes for this installation")
+	p("Cronomicon 2.3.0 to 2.5.0 — what this upgrade changes for this installation")
 	p("")
-	p("Take a backup immediately before the first start of 2.3.0 (the `VACUUM INTO`")
-	p("snapshot or the S3 backup). Rolling back is restoring it under the 2.2.x binary;")
-	p("runs made in between are lost. The first start signs every user out, once:")
+	p("Take a backup immediately before the first start of the new release (the `VACUUM")
+	p("INTO` snapshot or the S3 backup). Rolling back is restoring it under the 2.2.x")
+	p("binary; runs made in between are lost. The first start signs every user out, once:")
 	p("from 2.3.0 a change to access grants takes effect at once, not at the next sign-in.")
 	p("")
-	p("With the exceptions marked !! below, the upgrade converts nothing: what it finds")
-	p("keeps working and is listed in the app under Notices. This report says the same")
-	p("before the upgrade.")
+	p("The upgrade is one step to 2.5.0. The sections below say what 2.3.0 changes, and")
+	p("the last one what 2.4.0 and 2.5.0 stop or move at the first start. Lines marked !!")
+	p("need action before the upgrade. After it, the app lists each item under Notices.")
 
 	p("")
 	p("Agencies")
@@ -562,10 +692,11 @@ func (r Report230) Write(w io.Writer, sshExecutor *bool) {
 	if len(r.Shared) == 0 {
 		p("  No scope, secret, variable or SSH key is in several agencies.")
 	} else {
-		p("  Rows in several agencies (%d). They keep working as they are, and each can be", len(r.Shared))
-		p("  moved to one agency afterwards: a move needs the permission on every agency the")
-		p("  row is in. For a scope: an agent of ANY of its agencies may take its runs, and")
-		p("  from 2.3.0 each of those agencies can enrol an agent of its own.")
+		p("  Rows in several agencies (%d). Each becomes Global's and keeps serving the agencies", len(r.Shared))
+		p("  it is in until it is given to one (a scope's runs are then Global's, taken by")
+		p("  Global's runners, and refuse a secret, variable or key name two of its agencies")
+		p("  both hold). Give each to one agency afterwards; if several agencies run against")
+		p("  the same hosts, give each a scope of its own.")
 		for _, s := range r.Shared {
 			p("    %s %s — %s", s.Kind, s.Name, strings.Join(s.Agencies, ", "))
 		}
@@ -586,8 +717,9 @@ func (r Report230) Write(w io.Writer, sshExecutor *bool) {
 	if len(r.LegacyRunners) == 0 {
 		p("  No runner serves more than one agency.")
 	} else {
-		p("  Runners that serve several agencies (%d). Each keeps working as it does, becomes", len(r.LegacyRunners))
-		p("  Global's, and can be narrowed but never widened. To settle one, in this order:")
+		p("  !! Runners that serve several agencies (%d). Each becomes Global's and, from 2.4.0,", len(r.LegacyRunners))
+		p("  takes Global's runs only: the runs of the other agencies on its list wait for an")
+		p("  agent of their own. It can be narrowed but never widened. To settle one, in order:")
 		p("  enrol an agent for each agency; re-bind each of that agency's scopes to its new")
 		p("  agent; copy the approved host keys for that agency's hosts to it; then narrow or")
 		p("  deregister the old runner. A second agent can run on the same machine, under an")
@@ -748,5 +880,86 @@ func (r Report230) Write(w io.Writer, sshExecutor *bool) {
 		for _, j := range r.TargetsOutsideScope {
 			p("    %s — %s is not a host of scope %s", j.Job, j.Detail, j.Scope)
 		}
+	}
+	r.write24(p)
+}
+
+// write24 is the last block: what 2.4.0 and 2.5.0 stop or move at the first
+// start (C11, present defect 81).
+func (r Report230) write24(p func(string, ...any)) {
+	p("")
+	p("What stops or moves at the first start (2.4.0 and 2.5.0)")
+	p("")
+	p("  From 2.4.0 every agency has a repository of its own, and a row is one agency's:")
+	p("  what an agency had through Global's (its Git jobs, Git scopes, hand-written host")
+	p("  records) is Global's, and Global's serves Global's runs only.")
+	if len(r.GitJobsOnAgencyScopes) > 0 {
+		p("")
+		p("  !! Git jobs on an agency's scope (%d) STOP RUNNING: every Git job is Global's", len(r.GitJobsOnAgencyScopes))
+		p("     repository's, and from 2.4.0 a job of Global's repository runs on Global's")
+		p("     scopes only, so each of their runs (scheduled, by hand, by a token) is refused,")
+		p("     with the reason. Give each agency its repository and move these files there")
+		p("     (or, after the upgrade, Give to an agency… on the job). The notice")
+		p("     global_job_on_agency_scope lists them.")
+		for _, j := range r.GitJobsOnAgencyScopes {
+			p("    %s — scope %s (%s)", j.Job, j.Scope, j.Detail)
+		}
+	}
+	if len(r.AgencyGitScopes) > 0 {
+		p("")
+		p("  Git scopes of one agency (%d) become that agency's own, built in the app, with", len(r.AgencyGitScopes))
+		p("  their hosts, groups, variables and runner bindings. Their files in Global's")
+		p("  repository make no scope any more: remove them, or move them to the agency's")
+		p("  repository (which then defines the scope again).")
+		for _, sc := range r.AgencyGitScopes {
+			p("    scope %s — %s", sc.Name, strings.Join(sc.Agencies, ", "))
+		}
+	}
+	if len(r.GlobalHostRecords) > 0 {
+		p("")
+		p("  !! Hand-written host records that an agency's scope uses (%d) are Global's, and", len(r.GlobalHostRecords))
+		p("     from 2.4.0 a record of Global's is used by Global's runs only: that agency's")
+		p("     runs on the host find no record and fail there. Give the agency a record of")
+		p("     its own (by hand, or imported with the scope's inventory). The notice")
+		p("     global_host_record lists them.")
+		for _, h := range r.GlobalHostRecords {
+			p("    %s — %s", h.Name, strings.Join(h.Agencies, ", "))
+		}
+	}
+	if len(r.GlobalCalendars) > 0 {
+		p("")
+		p("  Calendars that froze every agency (%d): each agency gets a copy of its own, which", len(r.GlobalCalendars))
+		p("  freezes that agency; Global's then freezes Global only. A change to Global's")
+		p("  calendar no longer reaches the agencies: edit each copy, or use the")
+		p("  installation-wide freeze in Settings.")
+		listed(p, r.GlobalCalendars, 20)
+	}
+	if r.QueuedSSHRuns > 0 {
+		p("")
+		p("  Runs queued for the SSH executor (%d) are closed as skipped, with the reason:", r.QueuedSSHRuns)
+		p("  nothing has claimed them since 2.3.0. Let them run, or cancel them, before you")
+		p("  stop the old server, or run their jobs again after the upgrade.")
+	}
+	if len(r.AgencyGitRuns) > 0 {
+		p("")
+		p("  The run history of Git jobs becomes Global's, with the activity of those runs:")
+		p("  a run is its job's agency's from 2.4.0, and every 2.2 Git job is Global's. An")
+		p("  agency's people no longer see their own history of these runs (a global")
+		p("  administrator and a viewer of every agency do). Runs of jobs built in the app")
+		p("  stay their agency's.")
+		for _, c := range r.AgencyGitRuns {
+			p("    %s — %d run(s)", c.Agency, c.N)
+		}
+	}
+	if r.Agencies > 0 {
+		p("")
+		p("  Each agency (%d) needs a repository of its own (Settings → Integrations); until", r.Agencies)
+		p("  it has one it works as before and cannot be given a definition.")
+	}
+	if r.AgencyGrants > 0 {
+		p("")
+		p("  Grants of an agency (%d) name groups that no agency's group list holds yet: they", r.AgencyGrants)
+		p("  work as before, and an agency's administrators can change them only once a")
+		p("  global administrator lists the groups (Scopes → Agencies).")
 	}
 }
