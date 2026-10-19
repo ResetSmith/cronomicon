@@ -246,6 +246,13 @@ func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// In the agency the request works in, as every creation (2.5.0 C11, defect
+	// 87; question 108): an account of another agency, or of every agency
+	// (Global's), was made and never listed, the list being narrowed to the
+	// agency in use.
+	if !s.ownerMatchesContext(w, r, in.AgencyID, "service account") {
+		return
+	}
 	// GC-5 — minting a service account IS granting a role (this file's own
 	// header says so), so it gets the grant's rules: own agencies only, never
 	// all-scopes, never a permission the caller does not hold there. Until

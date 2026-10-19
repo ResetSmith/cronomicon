@@ -268,6 +268,13 @@ func (s *Server) handleCreateAccessGrant(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", msg)
 		return
 	}
+	// In the agency the request works in, as every creation (2.5.0 C11, defect
+	// 87; question 108): a grant on another agency, or on every agency (none
+	// named: Global's), was made and then never listed, as the list is
+	// narrowed to the agency in use, so it read as if nothing had happened.
+	if !s.ownerMatchesContext(w, r, in.AgencyID, "access grant") {
+		return
+	}
 	// AF-3 — may this actor grant THIS role, HERE?
 	if !s.requireGrantWritable(w, r, id, in.Role, in.AgencyID, in.AllScopes) ||
 		!s.requireGroupListed(w, r, id, in.AdGroup, in.AgencyID, in.AllScopes, false) {

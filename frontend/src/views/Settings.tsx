@@ -6,6 +6,7 @@ import { accessChip } from "../components/UserMenu";
 import { fetchCapabilities, type Capabilities } from "../api/client";
 import { useMyAccess } from "../api/access";
 import { GeneralSection } from "./settings/General";
+import { InstallationFreezeCard } from "./settings/InstallationFreeze";
 import { NotificationsSection } from "./settings/Notifications";
 import { AlertsSection } from "./settings/Alerts";
 import { SshTargetsSection } from "./settings/SshTargets";
@@ -171,7 +172,12 @@ export function Settings() {
           })}
         </div>
         <div>
-          {section === "general" && <GeneralSection canWrite={isGlobal} />}
+          {section === "general" && (
+            <>
+              <InstallationFreezeCard canWrite={isGlobal} />
+              <GeneralSection canWrite={isGlobal} />
+            </>
+          )}
           {section === "notifications" && <NotificationsSection canWrite={isGlobal} />}
           {section === "repositories" && <RepositoriesSection isGlobal={isGlobal} />}
           {section === "vault" && <VaultSection canWrite={isGlobal} />}

@@ -7,6 +7,7 @@ import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { SkeletonRows } from "../../components/ui";
 import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../../api/access";
+import { useAgencyOptional } from "../../agency";
 import { Btn, Card, StatusBadge, csrfHeader, errMsg, fmtDateTime, inputStyle } from "./ui";
 
 type SshHost = components["schemas"]["SshHost"];
@@ -259,6 +260,9 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
     ? [{ id: GLOBAL_AGENCY, name: "Global" }, ...catalog.filter((a) => a.id !== GLOBAL_AGENCY)]
     : agenciesFor(access ?? null, "configureApp");
   const mine = new Set(owners.map((a) => a.id));
+  // The agency the person works in, where a new record is created (below).
+  const ag = useAgencyOptional();
+  const here: AgencyRef | null = ag ? { id: ag.agency, name: ag.agencyName } : null;
   // Whether the caller's agencies are KNOWN. While /me/access is loading, or
   // if it cannot be read, nothing here claims a record is somebody else's or
   // that there is no agency to create one for: the controls stay live and the
@@ -267,7 +271,12 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
   const ownerName = (id?: string | null, name?: string | null) =>
     name || owners.find((a) => a.id === id)?.name || catalog.find((a) => a.id === id)?.name || (id === GLOBAL_AGENCY || !id ? "Global" : id);
   // Why "+ Add" is disabled: the caller administers no agency to create one for.
-  const addWhy = known && owners.length === 0 ? "You do not administer an agency, so there is none to create this for." : "";
+  const addWhy =
+    known && owners.length === 0
+      ? "You do not administer an agency, so there is none to create this for."
+      : known && here && !mine.has(here.id)
+        ? `You do not administer ${here.name}: switch to an agency you administer to add one there.`
+        : "";
   // Why a record's actions are disabled: it is another owner's. A caller on an
   // older server (no owner on the row) is not second-guessed: the server decides.
   const ownedWhy = (owner: string | undefined | null, name: string | undefined | null, what: string): string => {
@@ -288,7 +297,14 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
       ? `This ${what} is Global's — only a global administrator (a role on every agency) can change it.`
       : `This ${what} belongs to ${ownerName(owner, name)} — only that agency's administrators can change it.`;
   };
-  const defaultOwner = canWrite ? GLOBAL_AGENCY : owners.length === 1 ? owners[0].id : "";
+  // 2.5.0 C11, defect 86: a record is created in the agency the person works
+  // in (the server refuses another, agency_context_mismatch). A global
+  // administrator working in Finance was offered every agency, Global by
+  // default, and refused; the key list then held Global's keys, which the
+  // narrowed credentials list does not carry. Outside a provider (tests, an
+  // older shell) the choice stays as it was.
+  const createOwners: AgencyRef[] = here ? [here] : owners;
+  const defaultOwner = here ? here.id : canWrite ? GLOBAL_AGENCY : owners.length === 1 ? owners[0].id : "";
   const [bump, setBump] = useState(0);
   const hostsQ = useGet<unknown>(() => api.GET("/ssh/hosts"), [bump]);
   const bastionsQ = useGet<unknown>(() => api.GET("/ssh/bastions"), [bump]);
@@ -782,13 +798,17 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
     <select
       aria-label={`Agency that owns this ${what}`}
       value={value || defaultOwner}
-      disabled={owners.length <= 1}
+      disabled={createOwners.length <= 1}
       onChange={(e) => set(e.target.value)}
-      title={`The agency that owns this ${what}: its administrators change it, and its runs (and no other agency's) use it.`}
-      style={smallInput({ cursor: owners.length <= 1 ? "default" : "pointer" })}
+      title={
+        here
+          ? `This ${what} is created in ${here.name}, the agency you are working in: its administrators change it, and its runs (and no other agency's) use it.`
+          : `The agency that owns this ${what}: its administrators change it, and its runs (and no other agency's) use it.`
+      }
+      style={smallInput({ cursor: createOwners.length <= 1 ? "default" : "pointer" })}
     >
-      {!canWrite && owners.length > 1 && <option value="">Owner…</option>}
-      {owners.map((a) => (
+      {!here && !canWrite && owners.length > 1 && <option value="">Owner…</option>}
+      {createOwners.map((a) => (
         <option key={a.id} value={a.id}>
           {a.name}
         </option>

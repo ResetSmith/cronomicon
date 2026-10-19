@@ -25,6 +25,21 @@ const WORKFLOWS = [
 // of the Delete button sound rather than a race.
 const laterTick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+// The agency in use and the person's access (2.5.0 C11): none unless a test
+// sets them.
+const { inUse, myAccess } = vi.hoisted(() => ({
+  inUse: { current: null as null | { agency: string; agencyName: string } },
+  myAccess: { current: null as unknown },
+}));
+vi.mock("../agency", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agency")>();
+  return { ...actual, useAgencyOptional: () => inUse.current };
+});
+vi.mock("../api/access", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/access")>();
+  return { ...actual, useMyAccess: () => myAccess.current };
+});
+
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
   return {
@@ -68,7 +83,11 @@ beforeEach(() => {
   deleteStatus = 200;
   deletes.length = 0;
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  inUse.current = null;
+  myAccess.current = null;
+});
 
 const renderWorkflows = async () => {
   const { container } = render(
@@ -133,6 +152,23 @@ describe("Workflows — expanded-row Delete", () => {
     const off = await renderWorkflows();
     await waitFor(() => expect(off.queryByText("git-wf")).toBeTruthy());
     expect(off.queryByRole("link", { name: "+ Create" })).toBeNull();
+  });
+
+  // 2.5.0 C11, defect 88: + Create and Delete are offered in an agency the person
+  // composes in, not wherever they compose somewhere.
+  it("offers + Create and Delete only in an agency the person composes in", async () => {
+    myAccess.current = {
+      grants: [{ role: "composer", allScopes: false, agencyId: "ag-fin", agencyName: "Finance", scopes: [], permissions: ["compose"], groups: [], origin: "group" }],
+    };
+    inUse.current = { agency: "ag-tax", agencyName: "Tax" };
+    const tax = await renderWorkflows();
+    await waitFor(() => expect(tax.queryByText("git-wf")).toBeTruthy());
+    expect(tax.queryByRole("link", { name: "+ Create" })).toBeNull();
+    cleanup();
+
+    inUse.current = { agency: "ag-fin", agencyName: "Finance" };
+    const fin = await renderWorkflows();
+    await waitFor(() => expect(fin.getByRole("link", { name: "+ Create" })).toBeTruthy());
   });
 
   it("confirms before deleting, then DELETEs the expanded workflow's id", async () => {

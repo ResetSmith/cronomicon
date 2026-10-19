@@ -40,6 +40,13 @@ const { POST, PUT, PATCH } = vi.hoisted(() => ({
   PUT: vi.fn(async (_path: string, _init?: unknown) => ({ data: [] }) as { data?: unknown; error?: unknown }),
 }));
 
+// The agency in use (2.5.0 C11): none unless a test sets one.
+const { inUse } = vi.hoisted(() => ({ inUse: { current: null as null | { agency: string; agencyName: string } } }));
+vi.mock("../agency", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agency")>();
+  return { ...actual, useAgencyOptional: () => inUse.current };
+});
+
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
   return {
@@ -98,6 +105,7 @@ afterEach(() => {
   cleanup();
   POST.mockClear();
   PUT.mockClear();
+  inUse.current = null;
 });
 
 const renderRunners = () =>
@@ -526,6 +534,23 @@ describe("Runners — nothing to run a job (LR-38)", () => {
 
 describe("Runners — a registration token names the owner (LR-61)", () => {
   const ownerSelects = () => screen.getAllByRole("combobox", { name: "Agency the runner is for" }) as HTMLSelectElement[];
+
+  // 2.5.0 C11, defect 86: a token is minted in the agency the person works in,
+  // and the server refuses another (agency_context_mismatch): a global
+  // administrator working in Finance was offered Global by default.
+  it("mints a global administrator's token in the agency in use", async () => {
+    inUse.current = { agency: "ag-fin", agencyName: "Finance" };
+    renderRunners();
+    await screen.findByText("fin-agent");
+    const sel = ownerSelects()[0];
+    expect(Array.from(sel.options).map((o) => o.textContent)).toEqual(["For Finance"]);
+    expect(sel.value).toBe("ag-fin");
+    expect(sel.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Mint token" }));
+    await waitFor(() =>
+      expect(POST).toHaveBeenCalledWith("/runners/registration-tokens", expect.objectContaining({ body: { agencyId: "ag-fin" } })),
+    );
+  });
 
   it("offers a global administrator Global and every agency, and sends the one chosen", async () => {
     renderRunners();

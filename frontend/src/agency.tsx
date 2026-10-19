@@ -21,6 +21,20 @@ import { c } from "./theme";
 export const OVERVIEW = "overview";
 export const AGENCY_PARAM = "agency";
 
+/**
+ * VIEW_PARAMS are the query parameters that say how a page is shown, and are
+ * kept when the person switches agency; every other one names an object of the
+ * agency left, and goes (2.5.0 C11, defect 85).
+ */
+export const VIEW_PARAMS = new Set(["tab", "triggerKind", "result", "stopped", "theme"]);
+
+/** EDITOR_LIST: an editor whose object went with a switch shows its list. */
+export const EDITOR_LIST: Record<string, string> = {
+  "/compose": "/jobs",
+  "/workflow-editor": "/workflows",
+  "/schedule-builder": "/schedules",
+};
+
 export type AgencyChoice = { id: string; name: string; kind: "overview" | "agency" };
 
 type MeContext = {
@@ -43,8 +57,12 @@ type AgencyCtx = {
   /** Where a visit with no agency in its address starts. */
   effectiveDefault: string;
   nameOf: (id: string) => string;
-  /** Switch to an agency, or to the overview. */
-  switchTo: (id: string, notice?: string) => void;
+  /**
+   * Switch to an agency, or to the overview. The page's object (a run, a job
+   * being edited) is dropped and the page's list shown, unless keepPage says
+   * the switch is TO that object's agency (useEnsureAgency).
+   */
+  switchTo: (id: string, notice?: string, opts?: { keepPage?: boolean }) => void;
   /** Store (or clear, with null) the person's own default. */
   setDefault: (id: string | null) => Promise<string | null>;
 };
@@ -75,7 +93,7 @@ export function useEnsureAgency(owner: string | null | undefined) {
     if (!ctx || !owner) return;
     if (owner === ctx.agency && !ctx.onOverview) return;
     if (!ctx.choices.some((ch) => ch.id === owner && ch.kind === "agency")) return;
-    ctx.switchTo(owner, `Switched to ${ctx.nameOf(owner)}`);
+    ctx.switchTo(owner, `Switched to ${ctx.nameOf(owner)}`, { keepPage: true });
     // Only when the object's owner, or the agency viewed, changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner, ctx?.agency]);
@@ -89,6 +107,10 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
   const [agency, setAgency] = useState<string>("");
   const [toast, fire] = useToast(4000);
   const started = useRef(false);
+  // The agency a switch from the switcher is on its way to (C11, defect 85):
+  // the address is changed first, and the effect below takes the agency from
+  // it, without the "Switched to" notice a link's switch gets.
+  const quietSwitch = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     const { data, error } = await api.GET("/me/context");
@@ -136,7 +158,8 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
     }
     if (urlAgency && urlAgency !== agency) {
       if (isChoice(urlAgency)) {
-        if (agency) fire(`Switched to ${nameOf(urlAgency)}`);
+        if (agency && quietSwitch.current !== urlAgency) fire(`Switched to ${nameOf(urlAgency)}`);
+        quietSwitch.current = null;
         next = urlAgency;
       } else {
         fire(`That agency is not available to you; showing ${nameOf(next)}`);
@@ -154,16 +177,36 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
   }, [me, urlAgency, location.pathname]);
 
   const switchTo = useCallback(
-    (id: string, notice?: string) => {
+    (id: string, notice?: string, opts?: { keepPage?: boolean }) => {
       if (id === OVERVIEW) {
         navigate("/overview");
         return;
       }
       if (!isChoice(id)) return;
-      setAgency(id);
       const params = new URLSearchParams(location.pathname === "/overview" ? "" : location.search);
+      let path = location.pathname === "/overview" ? "/" : location.pathname;
+      if (opts?.keepPage) {
+        setAgency(id);
+      } else {
+        // The address goes first and the agency follows it (the effect above):
+        // a navigation is a transition (React Router 7), so setting the agency
+        // here as well rendered the page in the new agency with the old
+        // object still in the address, and the page switched back to it.
+        quietSwitch.current = id;
+        // 2.5.0 C11, defect 85: the page's object (?trace=, ?id=, ?agencyId=,
+        // a folder ?path=) is another agency's once the switch is made, and the
+        // page switched straight back to it (useEnsureAgency). Only what says
+        // how a page is shown stays, and an editor gives way to its list.
+        let dropped = false;
+        for (const k of [...params.keys()]) {
+          if (k !== AGENCY_PARAM && !VIEW_PARAMS.has(k)) {
+            params.delete(k);
+            dropped = true;
+          }
+        }
+        if (dropped && EDITOR_LIST[path]) path = EDITOR_LIST[path];
+      }
       params.set(AGENCY_PARAM, id);
-      const path = location.pathname === "/overview" ? "/" : location.pathname;
       navigate({ pathname: path, search: "?" + params.toString() });
       if (notice) fire(notice);
     },

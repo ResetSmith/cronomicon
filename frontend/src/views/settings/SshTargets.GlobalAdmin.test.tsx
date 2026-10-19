@@ -61,6 +61,13 @@ vi.mock("../../api/client", async (importOriginal) => {
   };
 });
 
+// The agency in use (2.5.0 C11): none unless a test sets one.
+const { inUse } = vi.hoisted(() => ({ inUse: { current: null as null | { agency: string; agencyName: string } } }));
+vi.mock("../../agency", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agency")>();
+  return { ...actual, useAgencyOptional: () => inUse.current };
+});
+
 vi.mock("../../api/access", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/access")>();
   return { ...actual, useMyAccess: () => ACCESS };
@@ -73,6 +80,7 @@ const grant = (a: { id: string; name: string }) => ({
 });
 
 beforeEach(() => {
+  inUse.current = null;
   ACCESS = null;
   writes.length = 0;
   putHostError = null;
@@ -271,5 +279,38 @@ describe("SSH Targets — a global administrator", () => {
     expect(badge.getAttribute("title")).toMatch(/Nothing is captured on first connect/);
     expect(rowOf("jump-dmz").getByText("approved")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Clear pin" })).toBeNull();
+  });
+});
+
+// 2.5.0 C11, defect 86: a record is created in the agency the person works in,
+// and the server refuses another (agency_context_mismatch). A global
+// administrator working in Finance was offered every agency, Global by default,
+// and refused; and the key list held Global's keys, which the narrowed
+// credentials list does not carry, so it was empty.
+describe("SSH Targets — working in an agency", () => {
+  it("creates a global administrator's record in the agency in use, with that agency's keys", async () => {
+    inUse.current = { agency: "ag-fin", agencyName: "Finance" };
+    await open(true);
+    fireEvent.click(button(screen, "+ Add Host"));
+    const owner = (await waitFor(() => screen.getByLabelText("Agency that owns this host record"))) as HTMLSelectElement;
+    expect(Array.from(owner.options).map((o) => o.textContent)).toEqual(["Finance"]);
+    expect(owner.value).toBe("ag-fin");
+    expect(owner.disabled).toBe(true);
+    const keys = Array.from((screen.getByTitle(/SSH key: a credential/) as HTMLSelectElement).options).map((o) => o.textContent);
+    expect(keys).toContain("fin_key");
+    expect(keys).not.toContain("shared_key");
+    fireEvent.change(screen.getByPlaceholderText("Hostname"), { target: { value: "new-host" } });
+    fireEvent.click(button(screen, "Add"));
+    await waitFor(() => expect(writes.some((w) => w.method === "POST" && w.path === "/ssh/hosts")).toBe(true));
+    expect(writes.find((w) => w.path === "/ssh/hosts")!.body).toMatchObject({ hostname: "new-host", ownerAgency: "ag-fin" });
+  });
+
+  it("says why + Add is off in an agency the person does not administer", async () => {
+    inUse.current = { agency: "ag-tax", agencyName: "Tax" };
+    ACCESS = { grants: [grant(FIN)] };
+    await open(false);
+    const add = button(screen, "+ Add Host");
+    expect(add.disabled).toBe(true);
+    expect(add.title).toMatch(/You do not administer Tax/);
   });
 });

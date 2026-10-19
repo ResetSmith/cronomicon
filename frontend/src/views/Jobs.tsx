@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
 import { useAgencyOptional } from "../agency";
+import { agenciesFor, useMyAccess } from "../api/access";
 import { AssignDialog } from "./AssignDialog";
 import { useGet, rows, paged, useClientPager, useColumnWidths, useInlineAnnotation, useInlineTags, useTableSort, useToast } from "../hooks";
 import { AnnotationBanner, AnnotationSection, CriticalChip, annotationOf, type Annotation } from "../components/Annotation";
@@ -190,6 +191,8 @@ export function Jobs() {
   // the "+ Publish to the repository" button on the PublishSchedule permission (PP-B1).
   // triggerJobs/killJobs gate Run/Kill/Pause/Resume (RB-3).
   const [canCompose, setCanCompose] = useState(false);
+  const [composeAdmin, setComposeAdmin] = useState(false);
+  const composeAgency = useAgencyOptional()?.agency;
   const [canPublish, setCanPublish] = useState(false);
   // GC (v2.2.2) — a definition's revision history is cross-agency (it can restore
   // a body that names another agency's references), so the server lists and
@@ -208,10 +211,21 @@ export function Jobs() {
     fetchCapabilities().then((caps) => {
       setGlobalAdmin(!!caps.configureAppGlobal);
       setCanCompose(caps.compose);
+      setComposeAdmin(!!caps.composeAdmin);
       setCanPublish(caps.publishSchedule);
       setCapsCanRun(caps.triggerJobs);
     });
   }, []);
+  // 2.5.0 C11, defect 88: what is created and edited here is the agency in
+  // use's, and the server answers 403 to someone who composes elsewhere but
+  // not in it. "May compose somewhere" (caps.compose) offered + Create, Edit,
+  // Clone and Delete in an agency where the person only views. As Schedules and
+  // Calendars gate it: a global composer, or compose on the agency in use (and,
+  // while access is not yet read, nothing is claimed).
+  const composeAccess = useMyAccess();
+  const canComposeHere =
+    canCompose &&
+    (composeAdmin || composeAccess == null || !composeAgency || agenciesFor(composeAccess, "compose").some((a) => a.id === composeAgency));
 
   // Per-row authority (RB-24). The server computes each flag the way the route
   // behind the button decides, so a restricted operator sees Run on their
@@ -671,8 +685,8 @@ export function Jobs() {
                 resolveAnnotation={(base) => inlineAnnotation.valueFor(j, base)}
                 onSaveAnnotation={(next) => inlineAnnotation.save(j, next)}
                 annotationErr={inlineAnnotation.errors[String(j.id)]}
-                canEdit={canCompose && j.source === "cronomicon"}
-                actions={(rowCanRun(j) || rowCanKill(j) || rowCanPause(j) || (canCompose && j.source === "cronomicon") || (globalAdmin && j.source === "git")) ? (
+                canEdit={canComposeHere && j.source === "cronomicon"}
+                actions={(rowCanRun(j) || rowCanKill(j) || rowCanPause(j) || (canComposeHere && j.source === "cronomicon") || (globalAdmin && j.source === "git")) ? (
                 <>
                   {/* Run stays available while a run is active — overlapping runs are
                       legal under the Allow policy (the default), and Forbid/Queue jobs
@@ -706,7 +720,7 @@ export function Jobs() {
                       hides them for git rows + non-admins). Delete was previously
                       editor-only (D4); it is now also a row action here, behind the
                       same confirm. */}
-                  {canCompose && j.source === "cronomicon" && (
+                  {canComposeHere && j.source === "cronomicon" && (
                     <Link to={`/compose?id=${j.id}`} style={{ textDecoration: "none" }}>
                       <Btn small>Edit</Btn>
                     </Link>
@@ -714,13 +728,13 @@ export function Jobs() {
                   {/* Clone: the composer prefilled from this job, in create mode —
                       for "same settings, different purpose" (same gate as Edit:
                       the result is an cronomicon-source job). */}
-                  {canCompose && j.source === "cronomicon" && (
+                  {canComposeHere && j.source === "cronomicon" && (
                     <Link to={`/compose?cloneFrom=${j.id}`} style={{ textDecoration: "none" }}>
                       <Btn small>Clone</Btn>
                     </Link>
                   )}
                   {/* RH: in-app definitions get history here; git rows get it from Git. */}
-                  {canCompose && j.source === "cronomicon" && (
+                  {canComposeHere && j.source === "cronomicon" && (
                     <Btn
                       small
                       onClick={() => setHistoryFor(j.name ?? "")}
@@ -728,7 +742,7 @@ export function Jobs() {
                       History
                     </Btn>
                   )}
-                  {canCompose && j.source === "cronomicon" && (
+                  {canComposeHere && j.source === "cronomicon" && (
                     <Btn small dangerQuiet disabled={busy || delBusy} onClick={() => setDeleting(j)}>
                       Delete
                     </Btn>
@@ -815,7 +829,7 @@ export function Jobs() {
             saw a primary button that led to JobComposer's "requires the Compose
             capability" notice: the page disagreed with itself, and the
             disagreement cost a click to discover. */}
-        {canCompose && (
+        {canComposeHere && (
           <Link to="/compose" style={{ textDecoration: "none" }}>
             <Btn primary style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ Create</Btn>
           </Link>
@@ -864,7 +878,7 @@ export function Jobs() {
             {pg.totalItems === 0 ? (
               <>
                 <div>No jobs yet. Jobs are synced from the jobs/ directory of the definitions repo, or authored in Compose.</div>
-                {canCompose && (
+                {canComposeHere && (
                   <div style={{ marginTop: 12 }}>
                     <Link to="/compose" style={{ textDecoration: "none" }}>
                       <Btn small>Create a job</Btn>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, csrfHeader } from "../../api/client";
 import { c } from "../../theme";
+import { useAgencyOptional } from "../../agency";
 import { Btn, Card, SettingRow, StatusBadge, errMsg, fmtDateTime, inputStyle, lblStyle, tdStyle, thStyle } from "./ui";
 
 // Service Accounts (ET-A/ET-C, the prod-features plan §1).
@@ -58,7 +59,15 @@ export function ServiceAccountsSection({ canGrantEverywhere }: { canGrantEverywh
   const [role, setRole] = useState("operator");
   // "" = all scopes for a global administrator; "" = nothing chosen yet for a
   // delegate, who must name an agency. Otherwise the agency id.
-  const [where, setWhere] = useState<string>("");
+  const [wherePick, setWhere] = useState<string>("");
+  // 2.5.0 C11, defect 87 (question 108): an account is made in the agency the
+  // person works in, and the list shows that agency's accounts only; one of
+  // another agency, or of every agency, was made and never listed, and the
+  // server now refuses it. In Global, "" is every agency's, for a global
+  // administrator; elsewhere the agency in use.
+  const ag = useAgencyOptional();
+  const fixedWhere: string | null = ag ? (ag.agency === "global" ? "" : ag.agency) : null;
+  const where = fixedWhere ?? wherePick;
   const needsAgency = !canGrantEverywhere && where === "";
   const [expiresAt, setExpiresAt] = useState("");
 
@@ -210,6 +219,15 @@ export function ServiceAccountsSection({ canGrantEverywhere }: { canGrantEverywh
               : "Bind the token to one agency's scopes — an agency you administer. A token for every scope is a global administrator's to mint."
           }
         >
+          {fixedWhere !== null ? (
+            <span data-testid="sa-where" style={{ color: c.textSec, fontSize: c.fontSm }}>
+              {fixedWhere
+                ? `In ${ag?.agencyName}, the agency you are working in. To mint one elsewhere, switch to that agency.`
+                : canGrantEverywhere
+                  ? "Every agency (you are working in Global). To bind it to one agency, switch to that agency."
+                  : "Only a global administrator mints a token here: switch to an agency you administer."}
+            </span>
+          ) : (
           <select aria-label="Where" style={inputStyle()} value={where} onChange={(e) => setWhere(e.target.value)}>
             {canGrantEverywhere ? (
               <option value="">All scopes (*)</option>
@@ -224,6 +242,7 @@ export function ServiceAccountsSection({ canGrantEverywhere }: { canGrantEverywh
               </option>
             ))}
           </select>
+          )}
         </SettingRow>
         <SettingRow
           label="Expires"

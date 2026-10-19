@@ -6,6 +6,7 @@ import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../comp
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { DOC_LINKS } from "../../components/docLinks";
+import { useAgencyOptional } from "../../agency";
 import { AlertBanner, ConfirmDialog, SearchBar, SkeletonRows, SortableLabel, DocLink } from "../../components/ui";
 import { Btn, Card, csrfHeader, errMsg, fmtDateTime, inputStyle, tdStyle, thStyle } from "./ui";
 
@@ -341,7 +342,7 @@ function AccessGrantsCard() {
 
   const [adGroup, setAdGroup] = useState("");
   const [role, setRole] = useState("");
-  const [where, setWhere] = useState(""); // agency id, or "*" for all scopes
+  const [wherePick, setWhere] = useState(""); // agency id, or "*" for all scopes
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<AccessGrant | null>(null);
@@ -361,6 +362,14 @@ function AccessGrantsCard() {
   // administrator is not bound, and types it; the form says when the group is
   // not listed, since such a grant is listed in Notices (question 84).
   const delegate = canGrantEverywhere === false;
+  // 2.5.0 C11, defect 87 (question 108): a grant is made in the agency the
+  // person works in, and the list shows that agency's grants only. One on
+  // another agency, or on every agency, was made and never listed, and the
+  // server now refuses it (agency_context_mismatch). So "where" is the agency
+  // in use; in Global it is "every agency", for a global administrator.
+  const ag = useAgencyOptional();
+  const fixedWhere: string | null = ag ? (ag.agency === "global" ? (canGrantEverywhere ? "*" : "") : ag.agency) : null;
+  const where = fixedWhere ?? wherePick;
   const listQ = useGet<{ groups?: string[] }>(
     () =>
       where && where !== "*"
@@ -454,6 +463,15 @@ function AccessGrantsCard() {
         <select value={role} onChange={(e) => setRole(e.target.value)} style={{ ...inputStyle(), width: 150, cursor: "pointer" }}>
           {roles.map((r) => <option key={r.name} value={r.name ?? ""}>{r.name}</option>)}
         </select>
+        {fixedWhere !== null ? (
+          <span
+            data-testid="grant-where"
+            title="A grant is made in the agency you are working in. To grant elsewhere, switch to that agency (Global, for a grant on every agency)."
+            style={{ color: c.textSec, fontSize: c.fontSm, width: 190 }}
+          >
+            {fixedWhere === "*" ? "On every agency" : fixedWhere ? `In ${ag?.agencyName}` : "Only a global administrator grants here"}
+          </span>
+        ) : (
         <select
           value={where}
           onChange={(e) => {
@@ -473,6 +491,7 @@ function AccessGrantsCard() {
           {canGrantEverywhere && <option value="*">All scopes (unrestricted)</option>}
           {grantable.map((a) => <option key={a.id} value={a.id ?? ""}>{a.name}</option>)}
         </select>
+        )}
         <Btn primary onClick={add} disabled={busy || !adGroup.trim() || !role || !where}>+ Add</Btn>
       </div>
       {where && where !== "*" && (() => {
@@ -498,11 +517,14 @@ function AccessGrantsCard() {
             <option value="">All roles</option>
             {roles.map((r) => <option key={r.name} value={r.name ?? ""}>{r.name}</option>)}
           </select>
-          <select value={agencyFilter} onChange={(e) => setAgencyFilter(e.target.value)} style={{ ...inputStyle(), width: 190, cursor: "pointer" }}>
-            <option value="">All agencies</option>
-            <option value="*">All scopes (unrestricted)</option>
-            {grantable.map((a) => <option key={a.id} value={a.id ?? ""}>{a.name}</option>)}
-          </select>
+          {/* The list is of the agency in use (C11): an agency filter has nothing to filter. */}
+          {!ag && (
+            <select value={agencyFilter} onChange={(e) => setAgencyFilter(e.target.value)} style={{ ...inputStyle(), width: 190, cursor: "pointer" }}>
+              <option value="">All agencies</option>
+              <option value="*">All scopes (unrestricted)</option>
+              {grantable.map((a) => <option key={a.id} value={a.id ?? ""}>{a.name}</option>)}
+            </select>
+          )}
           {visible.length !== grants.length && (
             <span style={{ color: c.textSec, fontSize: c.fontSm }}>{visible.length} of {grants.length}</span>
           )}
