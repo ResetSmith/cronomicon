@@ -130,7 +130,7 @@ func TestRBACManageRolesGate(t *testing.T) {
 // a viewer and allow an admin (PP-B1 B1-3/B1-7).
 func TestRBACConfigureAppGate(t *testing.T) {
 	h := rbacServer(t)
-	for _, path := range []string{"/api/v1/settings/gitlab", "/api/v1/settings/vault", "/api/v1/audit/export"} {
+	for _, path := range []string{"/api/v1/settings/vault", "/api/v1/audit/export"} {
 		if rec := asGroup(t, h, path, "rbac-viewers"); rec.Code != http.StatusForbidden {
 			t.Errorf("viewer GET %s = %d, want 403", path, rec.Code)
 		}

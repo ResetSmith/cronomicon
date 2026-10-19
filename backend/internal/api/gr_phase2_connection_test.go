@@ -89,13 +89,13 @@ func TestGR2_ASavedConnectionIsSyncedWithoutARestart(t *testing.T) {
 	}
 
 	first, branch1, sha1 := grLocalRepo(t, "from-first")
-	a.must(http.MethodPut, "/api/v1/settings/gitlab", connection(first, branch1), http.StatusOK)
+	a.must(http.MethodPut, "/api/v1/agencies/global/git-repo", connection(first, branch1), http.StatusOK)
 	wait("the repository that was just connected to be synced", func() bool { return jobs("from-first") == 1 })
 	wait("the sync status to name its commit", func() bool { return status() == sha1 })
 
 	// The connection is changed to another repository.
 	second, branch2, sha2 := grLocalRepo(t, "from-second")
-	a.must(http.MethodPut, "/api/v1/settings/gitlab", connection(second, branch2), http.StatusOK)
+	a.must(http.MethodPut, "/api/v1/agencies/global/git-repo", connection(second, branch2), http.StatusOK)
 	wait("the newly named repository to be synced", func() bool { return jobs("from-second") == 1 })
 	wait("the sync status to name the new repository's commit", func() bool { return status() == sha2 })
 

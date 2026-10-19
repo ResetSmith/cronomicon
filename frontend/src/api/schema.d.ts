@@ -3615,62 +3615,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/settings/gitlab": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get GitLab connection config (PAT masked)
-         * @deprecated
-         * @description Deprecated in 2.4.0, kept for one minor release. It addresses Global's repository only: use `GET /agencies/{agencyId}/git-repo`, where the id `global` is Global's.
-         */
-        get: operations["getGitlabConfig"];
-        /**
-         * Update GitLab connection config
-         * @deprecated
-         * @description Deprecated in 2.4.0, kept for one minor release. It addresses Global's repository only: use `PUT /agencies/{agencyId}/git-repo`, where the id `global` is Global's. Omit `pat` to keep the stored token; the masked value a read returns in `pat` is taken the same way when it is sent back. The connection is applied when it is saved, with no restart of the server: the repository's sync service is rebuilt from it and syncs at once. The environment variables `CRONOMICON_GITLAB_BASE_URL` and `CRONOMICON_GITLAB_TOKEN`, when set, override the stored URL and token of this repository (§11.2).
-         */
-        put: operations["updateGitlabConfig"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/settings/gitlab/webhook-secret/rotate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Rotate the GitLab webhook secret (S15)
-         * @deprecated
-         * @description Deprecated in 2.4.0, kept for one minor release. It addresses Global's
-         *     repository only: use
-         *     `POST /agencies/{agencyId}/git-repo/webhook-secret/rotate`, where the id
-         *     `global` is Global's.
-         *
-         *     Two-step rotation per S15 — writes the new secret to Cronomicon and (if
-         *     updateGitlab=true) updates the webhook config in GitLab via API. Both
-         *     old and new secrets are accepted for an overlap window (>= 5 min). If
-         *     GitLab cannot be updated automatically, the response notes manual
-         *     reconfiguration is required. CSRF required.
-         */
-        post: operations["rotateWebhookSecret"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/settings/vault": {
         parameters: {
             query?: never;
@@ -10591,17 +10535,6 @@ export interface operations {
                      *     content is the operator's responsibility.
                      */
                     ansibleLimit?: string;
-                    /**
-                     * @deprecated
-                     * @description **Ignored since v2.3.0**, and kept in the contract for one more
-                     *     minor so that a caller which sends it does not break (LR-50).
-                     *     There is one executor: every run is written for the runner
-                     *     executor, and which runner takes it — an agent, or the server
-                     *     itself as the local runner — is decided when it is claimed, by
-                     *     agency, scope binding and capability. Nothing on a run or a job
-                     *     chooses. The field is not checked; leave it out.
-                     */
-                    executor?: string;
                     /** @description QP — claim priority for this run only. Higher is claimed first; ties break oldest-first. There is deliberately no job-spec default: a standing priority is how one job starves another permanently rather than merely going first today. */
                     priority?: number;
                     /**
@@ -10797,8 +10730,10 @@ export interface operations {
              *     `ansible_only` — `ansibleLimit`, or one of the advanced ansible
              *     options, was given for a run type that is not ansible.
              *     (`invalid_executor` and `scope_requires_runner`, returned until
-             *     v2.3.0, are retired: there is no executor to ask for, and the
-             *     `executor` field of this body is ignored, whatever it holds.)
+             *     v2.3.0, are retired: there is no executor to ask for. The body's
+             *     `executor` field, ignored since v2.3.0, left the contract in
+             *     v2.5.0; a body that still sends it is accepted and the key is not
+             *     read.)
              *     `scope_membership` / `group_membership` — a
              *     targetHosts/targetGroups entry that is not a member of the effective scope's
              *     inventory (F2/M3). `prompt_required` (JR-Q5) — the job is
@@ -16472,107 +16407,6 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["Validation"];
-        };
-    };
-    getGitlabConfig: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Config; pat is always masked on read. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GitlabConfig"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-        };
-    };
-    updateGitlabConfig: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
-                "X-CSRF-Token": components["parameters"]["csrf"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GitlabConfig"];
-            };
-        };
-        responses: {
-            /** @description Updated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GitlabConfig"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            422: components["responses"]["Validation"];
-        };
-    };
-    rotateWebhookSecret: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
-                "X-CSRF-Token": components["parameters"]["csrf"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": {
-                    /** @default true */
-                    updateGitlab?: boolean;
-                    /** @default 5 */
-                    overlapMinutes?: number;
-                };
-            };
-        };
-        responses: {
-            /** @description Rotated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @description New secret. Shown once. */
-                        secret?: string;
-                        gitlabUpdated?: boolean;
-                        /** Format: date-time */
-                        overlapUntil?: string;
-                    };
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            /** @description GitLab unreachable; secret not rotated. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
         };
     };
     getVaultConfig: {

@@ -302,13 +302,13 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 
 	// 1. GitLab Settings GET / PUT
 	var gitlabCfg settings.GitlabConfig
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/settings/gitlab", nil)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/agencies/global/git-repo", nil)
 	r, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.StatusCode != http.StatusOK {
-		t.Fatalf("GET /settings/gitlab = %d", r.StatusCode)
+		t.Fatalf("GET /agencies/global/git-repo = %d", r.StatusCode)
 	}
 	json.NewDecoder(r.Body).Decode(&gitlabCfg)
 	r.Body.Close()
@@ -316,7 +316,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	gitlabCfg.BotName = "custom-bot-name"
 	gitlabCfg.Pat = "new-pat-token"
 	b, _ := json.Marshal(gitlabCfg)
-	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings/gitlab", bytes.NewReader(b))
+	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/agencies/global/git-repo", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrfToken)
 	r, err = client.Do(req)
@@ -325,7 +325,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	}
 	if r.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(r.Body)
-		t.Fatalf("PUT /settings/gitlab = %d, body = %s", r.StatusCode, body)
+		t.Fatalf("PUT /agencies/global/git-repo = %d, body = %s", r.StatusCode, body)
 	}
 	r.Body.Close()
 
@@ -481,7 +481,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 		"overlapMinutes": 10,
 	}
 	b, _ = json.Marshal(rotInput)
-	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/v1/settings/gitlab/webhook-secret/rotate", bytes.NewReader(b))
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/v1/agencies/global/git-repo/webhook-secret/rotate", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrfToken)
 	r, err = client.Do(req)
@@ -490,7 +490,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	}
 	if r.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(r.Body)
-		t.Fatalf("POST /settings/gitlab/webhook-secret/rotate = %d, body = %s", r.StatusCode, body)
+		t.Fatalf("POST /agencies/global/git-repo/webhook-secret/rotate = %d, body = %s", r.StatusCode, body)
 	}
 	var rotResult map[string]any
 	json.NewDecoder(r.Body).Decode(&rotResult)
@@ -921,6 +921,8 @@ func TestRunTriggerIgnoresEveryExecutorChoice(t *testing.T) {
 	want("a terraform job whose executor says ssh", code, run)
 
 	// Ignored means ignored: not even a value the field never had is refused.
+	// Since 2.5.0 (question 60) the field is not in the contract at all; a
+	// client that still sends it is accepted, as these calls show.
 	code, run = triggerRun(t, client, csrf, ts.URL, gID, map[string]any{"executor": "bogus"})
 	want("an executor the field never had", code, run)
 }
@@ -1003,7 +1005,7 @@ func TestRequestBodySizeLimit(t *testing.T) {
 	}
 
 	put := func(body []byte) int {
-		req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings/gitlab", bytes.NewReader(body))
+		req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/agencies/global/git-repo", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-CSRF-Token", csrfToken)
 		r, err := client.Do(req)

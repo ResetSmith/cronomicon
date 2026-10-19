@@ -20,7 +20,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/envref"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/notify"
-	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/sshexec"
@@ -721,9 +720,8 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/settings/notifications/test", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleTestNotification)))
 	mux.Handle("GET /api/v1/settings/audit-compliance", s.auth.RequireSession(http.HandlerFunc(s.handleGetAuditCompliance)))
 	mux.Handle("PUT /api/v1/settings/audit-compliance", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateAuditCompliance)))
-	mux.Handle("GET /api/v1/settings/gitlab", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleGetGitlabSettings)))
-	mux.Handle("PUT /api/v1/settings/gitlab", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateGitlabSettings)))
-	mux.Handle("POST /api/v1/settings/gitlab/webhook-secret/rotate", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleRotateGitlabWebhookSecret)))
+	// /settings/gitlab* (Global's repository before a repository was a row) were
+	// removed in 2.5.0 (question 60): /agencies/global/git-repo is the same.
 	mux.Handle("GET /api/v1/settings/vault", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleGetVaultSettings)))
 	mux.Handle("PUT /api/v1/settings/vault", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateVaultSettings)))
 	// A global administrator's (2.5.0 C2, question 71: the S3 endpoint, bucket
@@ -2716,60 +2714,6 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	if err := settings.ExportAudit(r.Context(), s.db, w, from, to, eventTypes, format, auditExportScope(r)); err != nil {
 		s.log.Error("audit export stream failed", "error", err)
 	}
-}
-
-func (s *Server) handleGetGitlabSettings(w http.ResponseWriter, r *http.Request) {
-	// The /settings/gitlab routes mean Global's repository (GR-9; an agency's
-	// own repository gets routes of its own in Phase R6).
-	cfg, err := settings.GetGitlabConfig(r.Context(), s.db, s.cfg, repoid.Global)
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, cfg)
-}
-
-func (s *Server) handleUpdateGitlabSettings(w http.ResponseWriter, r *http.Request) {
-	id, ok := auth.IdentityFrom(r.Context())
-	if !ok {
-		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-		return
-	}
-	var inp settings.GitlabConfig
-	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
-		return
-	}
-	// Tested before it is written, as PUT /agencies/global/git-repo is (IN-2;
-	// from the review of I3: this route, the one the Integrations screen
-	// uses for Global, was not).
-	if !s.requirePushableConnection(w, r, repoid.Global, true, inp) {
-		return
-	}
-	cfg, err := settings.UpdateGitlabConfig(r.Context(), s.db, s.cfg, repoid.Global, inp, id.Email)
-	if err != nil {
-		httpx.Fail500(w, s.log, "update_failed", err)
-		return
-	}
-	// The connection has been written: the repository's sync service is built
-	// again from it, and syncs (GR-11). Until 2.4.0 the service resolved the URL
-	// and the token once, at start-up, and this handler logged that the change
-	// would take effect at the next restart.
-	if s.git != nil {
-		if err := s.git.Restart(r.Context(), repoid.Global); err != nil {
-			s.log.Error("gitlab settings saved, but the sync service could not be restarted with them", "actor", id.Email, "error", err)
-		}
-	}
-	httpx.JSON(w, http.StatusOK, cfg)
-}
-
-func (s *Server) handleRotateGitlabWebhookSecret(w http.ResponseWriter, r *http.Request) {
-	id, ok := auth.IdentityFrom(r.Context())
-	if !ok {
-		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-		return
-	}
-	s.rotateWebhookSecret(w, r, repoid.Global, id.Email)
 }
 
 // rotateWebhookSecret rotates one repository's webhook secret and answers with

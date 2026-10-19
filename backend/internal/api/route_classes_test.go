@@ -116,7 +116,6 @@ var routeClasses = map[string]routeClass{
 	"/api/v1/overview/search": {"all-agencies", ""},
 
 	// ── installation ──
-	"/api/v1/settings/gitlab":        {"installation", ""},
 	"/api/v1/settings/vault":         {"installation", ""},
 	"/api/v1/rbac-preflight":         {"installation", ""},
 	"/api/v1/settings/log-storage":   {"installation", ""},

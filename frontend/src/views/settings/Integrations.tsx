@@ -28,7 +28,7 @@ const VAULT_STATUS: Record<string, string> = {
 // useSettingForm / SaveBtn / Status moved to ./ui when the retention card became
 // their third consumer — same behaviour, one copy.
 
-// GC (v2.2.2) — GET /settings/gitlab and GET /settings/vault are refused for
+// GC (v2.2.2) — GET /settings/vault is refused for
 // anyone but a global administrator (they expose connection config), so these two
 // sections must not fetch at all for an administrator of one agency: the card
 // would load, 403, and show "Error: forbidden" for a rule the caller cannot fix.

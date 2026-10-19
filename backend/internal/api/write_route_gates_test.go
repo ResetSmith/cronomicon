@@ -201,8 +201,6 @@ var writeRouteGates = map[string]routeGate{
 	"PUT /api/v1/settings/notifications":                              {clsGlobal, "install-wide setting"},
 	"POST /api/v1/settings/notifications/test":                        {clsGlobal, "sends over the installation's transports"},
 	"PUT /api/v1/settings/audit-compliance":                           {clsGlobal, "install-wide setting"},
-	"PUT /api/v1/settings/gitlab":                                     {clsGlobal, "install-wide setting"},
-	"POST /api/v1/settings/gitlab/webhook-secret/rotate":              {clsGlobal, "install-wide setting"},
 	"PUT /api/v1/settings/vault":                                      {clsGlobal, "install-wide setting"},
 	"PUT /api/v1/settings/log-storage":                                {clsGlobal, "install-wide setting"},
 	"POST /api/v1/settings/log-storage/sync":                          {clsGlobal, "install-wide setting"},

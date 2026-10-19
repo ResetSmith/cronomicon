@@ -1019,14 +1019,15 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		return
 	}
 
-	// Parse optional scope / target-host / executor / env overrides (R5.1, F1).
+	// Parse optional scope / target-host / env overrides (R5.1, F1). The
+	// `executor` field, ignored since 2.3.0 (LR-50), left the contract in 2.5.0
+	// (question 60); a body that still sends it is read without it.
 	var body struct {
 		Scope        string            `json:"scope"`
 		TargetHost   string            `json:"targetHost"`
 		TargetHosts  []string          `json:"targetHosts"`  // F2 host subset within the bound scope
 		TargetGroups []string          `json:"targetGroups"` // M3 group subset within the bound scope
 		AnsibleLimit string            `json:"ansibleLimit"` // M3 raw --limit passthrough (ansible/runner only)
-		Executor     string            `json:"executor"`     // per-trigger override: ssh|runner
 		Env          map[string]string `json:"env"`          // F1 per-run env overrides (plaintext k/v)
 		// CA (the ssh-user plan) — per-run "connect as" identity:
 		// remote username and/or stored SSH credential LABEL (CA-Q2, names only —
@@ -1750,8 +1751,6 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	if body.Scope != "" {
 		override["scope"] = body.Scope
 	}
-	// body.Executor is ignored (LR-50) and so is not recorded: an override
-	// that changed nothing has no place in "what was overridden".
 	if len(body.TargetHosts) > 0 {
 		override["hosts"] = body.TargetHosts
 	}

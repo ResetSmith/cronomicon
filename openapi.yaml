@@ -483,17 +483,6 @@ paths:
                     which cannot honor a raw pattern. Takes precedence over the structured
                     host∪group limit. Exec-safe (a single argv element, no shell); its
                     content is the operator's responsibility.
-                executor:
-                  type: string
-                  deprecated: true
-                  description: |
-                    **Ignored since v2.3.0**, and kept in the contract for one more
-                    minor so that a caller which sends it does not break (LR-50).
-                    There is one executor: every run is written for the runner
-                    executor, and which runner takes it — an agent, or the server
-                    itself as the local runner — is decided when it is claimed, by
-                    agency, scope binding and capability. Nothing on a run or a job
-                    chooses. The field is not checked; leave it out.
                 priority:
                   type: integer
                   description: >-
@@ -700,8 +689,10 @@ paths:
             `ansible_only` — `ansibleLimit`, or one of the advanced ansible
             options, was given for a run type that is not ansible.
             (`invalid_executor` and `scope_requires_runner`, returned until
-            v2.3.0, are retired: there is no executor to ask for, and the
-            `executor` field of this body is ignored, whatever it holds.)
+            v2.3.0, are retired: there is no executor to ask for. The body's
+            `executor` field, ignored since v2.3.0, left the contract in
+            v2.5.0; a body that still sends it is accepted and the key is not
+            read.)
             `scope_membership` / `group_membership` — a
             targetHosts/targetGroups entry that is not a member of the effective scope's
             inventory (F2/M3). `prompt_required` (JR-Q5) — the job is
@@ -5983,102 +5974,6 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Validation' }
-
-  /settings/gitlab:
-    get:
-      tags: [Settings]
-      operationId: getGitlabConfig
-      summary: Get GitLab connection config (PAT masked)
-      deprecated: true
-      description: >-
-        Deprecated in 2.4.0, kept for one minor release. It addresses Global's
-        repository only: use `GET /agencies/{agencyId}/git-repo`, where the
-        id `global` is Global's.
-      responses:
-        '200':
-          description: Config; pat is always masked on read.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/GitlabConfig' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-    put:
-      tags: [Settings]
-      operationId: updateGitlabConfig
-      summary: Update GitLab connection config
-      deprecated: true
-      description: >-
-        Deprecated in 2.4.0, kept for one minor release. It addresses Global's
-        repository only: use `PUT /agencies/{agencyId}/git-repo`, where the
-        id `global` is Global's.
-        Omit `pat` to keep the stored token; the masked value a read returns in
-        `pat` is taken the same way when it is sent back. The connection is
-        applied when it is saved, with no restart of the server: the
-        repository's sync service is rebuilt from it and syncs at once. The
-        environment variables `CRONOMICON_GITLAB_BASE_URL` and
-        `CRONOMICON_GITLAB_TOKEN`, when set, override the stored URL and token
-        of this repository (§11.2).
-      parameters: [{ $ref: '#/components/parameters/csrf' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/GitlabConfig' }
-      responses:
-        '200':
-          description: Updated.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/GitlabConfig' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '422': { $ref: '#/components/responses/Validation' }
-
-  /settings/gitlab/webhook-secret/rotate:
-    post:
-      tags: [Settings]
-      operationId: rotateWebhookSecret
-      summary: Rotate the GitLab webhook secret (S15)
-      deprecated: true
-      description: |
-        Deprecated in 2.4.0, kept for one minor release. It addresses Global's
-        repository only: use
-        `POST /agencies/{agencyId}/git-repo/webhook-secret/rotate`, where the id
-        `global` is Global's.
-
-        Two-step rotation per S15 — writes the new secret to Cronomicon and (if
-        updateGitlab=true) updates the webhook config in GitLab via API. Both
-        old and new secrets are accepted for an overlap window (>= 5 min). If
-        GitLab cannot be updated automatically, the response notes manual
-        reconfiguration is required. CSRF required.
-      parameters: [{ $ref: '#/components/parameters/csrf' }]
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                updateGitlab: { type: boolean, default: true }
-                overlapMinutes: { type: integer, default: 5, minimum: 5 }
-      responses:
-        '200':
-          description: Rotated.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  secret: { type: string, description: New secret. Shown once. }
-                  gitlabUpdated: { type: boolean }
-                  overlapUntil: { type: string, format: date-time }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '503':
-          description: GitLab unreachable; secret not rotated.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
 
   /settings/vault:
     get:
