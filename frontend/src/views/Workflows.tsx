@@ -1,7 +1,6 @@
 import { Fragment, Suspense, lazy, useEffect, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
-import { COMPOSE_ADMIN_ONLY, globalOnly } from "../api/globalAdmin";
 import { useLiveGet, rows, useClientPager, useColumnWidths, useInlineAnnotation, useInlineTags, useTableSort, useToast } from "../hooks";
 import { AnnotationSection, CriticalChip, annotationOf, type Annotation } from "../components/Annotation";
 import { useGet } from "../hooks";
@@ -225,12 +224,10 @@ export function Workflows() {
   // GC (v2.2.2) — revision history is listed and restored only for a compose
   // ADMINISTRATOR (see the same note in Jobs.tsx); a departmental composer keeps
   // the row's History button, disabled with the reason.
-  const [composeAdmin, setComposeAdmin] = useState(false);
   useEffect(() => {
     fetchCapabilities().then((caps) => {
       setCanCompose(!!caps.compose);
       setCanRun(!!caps.triggerJobs);
-      setComposeAdmin(!!caps.composeAdmin);
     });
   }, []);
 
@@ -651,8 +648,6 @@ export function Workflows() {
                     <Btn
                       small
                       onClick={() => setHistoryFor(w.name ?? "")}
-                      disabled={!composeAdmin}
-                      title={globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY) || undefined}
                     >
                       History
                     </Btn>

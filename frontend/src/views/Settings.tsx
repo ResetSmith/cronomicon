@@ -10,7 +10,7 @@ import { NotificationsSection } from "./settings/Notifications";
 import { AlertsSection } from "./settings/Alerts";
 import { SshTargetsSection } from "./settings/SshTargets";
 import { UsersAccessSection } from "./settings/UsersAccess";
-import { AuditComplianceSection } from "./settings/AuditCompliance";
+import { AuditComplianceSection, AuditExportSection } from "./settings/AuditCompliance";
 import { ServiceAccountsSection } from "./settings/ServiceAccounts";
 import { RecycleBinSection } from "./settings/RecycleBin";
 import { VaultSection, LogStorageSection, ObservabilitySection } from "./settings/Integrations";
@@ -28,9 +28,9 @@ import { TimezoneAlert } from "./settings/TimezoneAlert";
 //   the house rule (FX-7) says to hide. A single control with an unmet
 //   precondition is still disabled with its reason.
 //
-//   AGENCY — what an agency's administrators change for their own agency:
-//   access grants and roles, service accounts, SSH targets, alerts, and the
-//   recycle bin. `requires` is the flat /capabilities permission the section needs
+//   AGENCY — what an agency's people change for their own agency: access
+//   grants and roles, service accounts, SSH targets, alerts, the audit export,
+//   and the recycle bin (a composer's). `requires` is the flat /capabilities permission the section needs
 //   ("holds it somewhere"); `global` is the flag its install-wide parts ask
 //   for, and each section explains those control by control.
 //
@@ -62,9 +62,14 @@ const SECTIONS = [
   // administrators' to change. The relay they send through stays on
   // Notifications, in the Installation group.
   { group: "Agency", key: "alerts", label: "Alerts", requires: "configureApp", global: "configureAppGlobal" },
-  // RH: cross-kind. Still a global administrator's to use (`composeAdmin`); it
-  // says so in place of its list for anyone else.
-  { group: "Agency", key: "recyclebin", label: "Recycle Bin", requires: "configureApp", global: "composeAdmin" },
+  // 2.5.0 C7 (C1, CF-5): an agency's administrator exports their agencies'
+  // audit rows. A global administrator has the whole trail in Audit &
+  // Compliance, so this one is not listed for them (`unless`).
+  { group: "Agency", key: "auditexport", label: "Audit Export", requires: "configureApp", global: "configureAppGlobal", unless: "configureAppGlobal" },
+  // RH: cross-kind. Since 2.5.0 (C3, SO-2) anyone who composes somewhere lists,
+  // restores and purges the deleted definitions of the agencies they compose
+  // on; the server keeps the list to those.
+  { group: "Agency", key: "recyclebin", label: "Recycle Bin", requires: "compose", global: "composeAdmin" },
 ] as const;
 
 type SectionKey = (typeof SECTIONS)[number]["key"];
@@ -84,7 +89,7 @@ export function Settings() {
     return <InlineLoading style={{ padding: 16 }} />;
   }
 
-  const visible = SECTIONS.filter((s) => caps[s.requires as CapKey]);
+  const visible = SECTIONS.filter((s) => caps[s.requires as CapKey] && !("unless" in s && caps[s.unless]));
   if (visible.length === 0) {
     return (
       <div style={{ padding: 24, color: c.textSec, fontSize: c.fontBody }}>
@@ -177,8 +182,9 @@ export function Settings() {
           {section === "users" && <UsersAccessSection />}
           {section === "serviceaccounts" && <ServiceAccountsSection canGrantEverywhere={isGlobal} />}
           {section === "audit" && <AuditComplianceSection canWrite={isGlobal} />}
+          {section === "auditexport" && <AuditExportSection />}
           {section === "localrunner" && <LocalRunnerSection canWrite={isGlobal} />}
-          {section === "recyclebin" && <RecycleBinSection canWrite={isGlobal} />}
+          {section === "recyclebin" && <RecycleBinSection />}
         </div>
       </div>
     </div>

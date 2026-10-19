@@ -32,7 +32,7 @@ vi.mock("../../api/client", async (importOriginal) => {
   };
 });
 
-import { AuditComplianceSection } from "./AuditCompliance";
+import { AuditComplianceSection, AuditExportSection } from "./AuditCompliance";
 
 beforeEach(() => {
   puts.length = 0;
@@ -118,26 +118,17 @@ describe("Data Retention card", () => {
 // windows (the GET is open to every session) and finds both writes disabled with
 // the reason (FX-7), instead of a Save that 403s.
 describe("Audit & Compliance — global-administrator gate (GC)", () => {
-  const WHY = "Only a global administrator (a role on every agency) can change this.";
-
-  it("shows the windows read-only and disables Save and Export, with the reason, for a non-global administrator", async () => {
-    const { container } = render(<AuditComplianceSection canWrite={false} />);
+  // 2.5.0 C7 (C1, CF-5): an agency's administrator exports their agencies'
+  // rows from the Agency group's Audit Export; the retention windows are not
+  // shown to them (an installation setting). Sign-in events are not offered.
+  it("gives an agency's administrator the export alone, live, without sign-in events", async () => {
+    const { container } = render(<AuditExportSection />);
     const q = within(container);
-    const runs = (await waitFor(() => q.getByLabelText("Run History"))) as HTMLInputElement;
-    // The stored value is still shown — read-only is not hidden.
-    expect(runs.value).toBe("30");
-    expect(runs).toHaveProperty("disabled", false); // the input's own flag; the fieldset is what disables it
-    expect(runs.closest("fieldset")!.disabled).toBe(true);
-
-    const save = q.getByRole("button", { name: "Save Changes" }) as HTMLButtonElement;
-    expect(save.disabled).toBe(true);
-    expect(save.title).toBe(WHY);
+    expect(q.queryByLabelText("Run History")).toBeNull();
+    expect(q.queryByText("Auth Events")).toBeNull();
+    expect(q.getByText(/the agencies you administer/)).toBeTruthy();
     const exp = q.getByRole("button", { name: "Export Audit Trail" }) as HTMLButtonElement;
-    expect(exp.disabled).toBe(true);
-    expect(exp.title).toBe(WHY);
-
-    fireEvent.click(save);
-    expect(puts.length).toBe(0);
+    expect(exp.disabled).toBe(false);
   });
 
   it("leaves both enabled, with no reason, for a global administrator", async () => {

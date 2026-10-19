@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
-import { COMPOSE_ADMIN_ONLY, globalOnly } from "../api/globalAdmin";
 import { useGet, rows, paged, useClientPager, useColumnWidths, useInlineAnnotation, useInlineTags, useTableSort, useToast } from "../hooks";
 import { AnnotationBanner, AnnotationSection, CriticalChip, annotationOf, type Annotation } from "../components/Annotation";
 import { c } from "../theme";
@@ -194,7 +193,6 @@ export function Jobs() {
   // a body that names another agency's references), so the server lists and
   // restores it only for a compose ADMINISTRATOR. A departmental composer keeps
   // the row's History button, disabled with the reason.
-  const [composeAdmin, setComposeAdmin] = useState(false);
   // capsCanRun is the FLAT union — "may trigger somewhere" — and is only a
   // fallback (RB-3). Per-row truth is j.canRun, computed server-side against that
   // row's scope (RB-24); consuming it is what keeps the button from drifting away
@@ -205,7 +203,6 @@ export function Jobs() {
       setCanCompose(caps.compose);
       setCanPublish(caps.publishSchedule);
       setCapsCanRun(caps.triggerJobs);
-      setComposeAdmin(!!caps.composeAdmin);
     });
   }, []);
 
@@ -715,8 +712,6 @@ export function Jobs() {
                     <Btn
                       small
                       onClick={() => setHistoryFor(j.name ?? "")}
-                      disabled={!composeAdmin}
-                      title={globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY) || undefined}
                     >
                       History
                     </Btn>
