@@ -317,5 +317,3 @@ func TestApplyReportsAStartThatFailed(t *testing.T) {
 		t.Fatal("Apply answered nil although Start could not create the local runner")
 	}
 }
-
-func runStatusOf(t *testing.T, pool *sql.DB, id string) string { return runStatus(t, pool, id) }
