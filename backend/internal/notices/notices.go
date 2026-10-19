@@ -76,6 +76,13 @@ const (
 	// resolved there when only one process is left, or by the reaper when the
 	// runner goes quiet. Subject: the runner's id. Filed under its owner.
 	KindRunnerIdentityShared = "runner_identity_shared"
+	// KindAssignmentUpdate — a definition assigned to an agency by commit has
+	// changed in its origin's repository since (2.5.0 C10.3, question 93).
+	// Written by the gitlab package's update check, after each sync and on
+	// the Notices page; it names the files, and those the agency has changed
+	// in its own copy. Subject: "<target agency>:<origin uid>". Filed under
+	// the target agency.
+	KindAssignmentUpdate = "assignment_update_available"
 	// (`prune_deferred`, GR-17's, went with borrowing before 2.4.0 was
 	// released: §0a, IN-8; migration 1370 removes its rows.)
 )

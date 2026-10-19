@@ -86,7 +86,7 @@ func TestAWorkflowsAssignmentCarriesWhatItRuns(t *testing.T) {
 		t.Errorf("recorded kind %q", k)
 	}
 	for q, want := range map[string]string{
-		`SELECT COUNT(*) FROM workflows WHERE owner_agency = 'ag-fin' AND repo_id = 'repo-fin' AND name IN ('release', 'notify')`: "2",
+		`SELECT COUNT(*) FROM workflows WHERE owner_agency = 'ag-fin' AND repo_id = 'repo-fin' AND name IN ('release', 'notify')`:   "2",
 		`SELECT COUNT(*) FROM jobs WHERE owner_agency = 'ag-fin' AND repo_id = 'repo-fin' AND name IN ('build', 'nightly', 'ping')`: "3",
 	} {
 		if n := grString(t, f.global.db, q); n != want {

@@ -4528,6 +4528,15 @@ export interface paths {
          *     files before 2.6.0; the agency's sync refuses a schedule naming one it
          *     lacks, and the job with it, until it has one).
          *
+         *     Assigning a definition the agency was given before is an UPDATE (C10.3):
+         *     it replaces only the files the last assignment wrote whose origin has
+         *     changed since (`replaced`), leaves the rest (`unchanged`), and refuses,
+         *     naming them, files the agency has changed in its copy since (422
+         *     `changed_by_agency`; nothing is pushed). 409 `up_to_date` when the
+         *     origin has not changed. The record is the new one. When the origin
+         *     changes, `GET /notices` holds `assignment_update_available` for the
+         *     agency.
+         *
          *     The agency in the path, not the one the request works in, owns the copy:
          *     the one create that `X-Cronomicon-Agency` does not place. The change-log
          *     row is the agency's. A sync of its repository is started; the job
@@ -7572,6 +7581,14 @@ export interface components {
              *       it did, is Global's, and can be narrowed and never widened; the
              *       detail gives the order that settles it. Subject: the runner's id.
              *       Filed under Global.
+             *     - `assignment_update_available` — a job or workflow assigned to an
+             *       agency by commit has changed in its origin's repository since
+             *       (v2.5.0). The detail names the changed files and those the agency
+             *       has changed in its own copy (an update is refused for them).
+             *       Subject: `<agency id>:<origin uid>`. Filed under the agency given
+             *       the copy. It clears when the copy is updated (a global
+             *       administrator assigns it again), the origin goes back, or the
+             *       agency removes its copy.
              *     - `runner_identity_shared` — two agent processes poll on one
              *       runner's identity: its identity file was copied (a VM cloned or
              *       a snapshot taken after enrolment, two containers on one volume,
@@ -8773,7 +8790,7 @@ export interface components {
                 /** @enum {string} */
                 role: "definition" | "job" | "workflow" | "script" | "schedule";
                 /** @enum {string} */
-                action: "added" | "usesOwn";
+                action: "added" | "usesOwn" | "replaced" | "unchanged";
                 /** @description usesOwn: the agency's file is not the origin's. */
                 differs?: boolean;
             }[];

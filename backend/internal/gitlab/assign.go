@@ -58,8 +58,10 @@ type AssignRequest struct {
 type AssignedFile struct {
 	Path string `json:"path"`
 	Role string `json:"role"` // definition, job, workflow, script, schedule
-	// Action: "added", or "usesOwn" for a dependency the target has by name,
-	// which was not written (Differs: its content is not the origin's).
+	// Action: "added"; "usesOwn" for a dependency the target has by name,
+	// which was not written (Differs: its content is not the origin's); and
+	// for an update (C10.3), "replaced" for a file of the last assignment that
+	// the origin changed, "unchanged" for one it did not (not written).
 	Action  string `json:"action"`
 	Differs bool   `json:"differs,omitempty"`
 }
@@ -133,7 +135,14 @@ type planned struct {
 	role       string
 	originPath string
 	originHash string
+	unchanged  bool // an update's file whose origin is as it was copied: not written
+	// For an unchanged file, the hash the record keeps: what was committed
+	// then, which is what the agency's repository holds.
+	keptHash string
 }
+
+// recordedFile is a file the last assignment wrote.
+type recordedFile struct{ originHash, committedHash string }
 
 // defRow is a job or workflow row of a repository.
 type defRow struct{ uid, name, source, owner, repo, path string }
@@ -153,6 +162,14 @@ type assignState struct {
 
 	res  *AssignResult
 	plan []planned
+
+	// An update (C10.3, question 91): the last assignment of this definition
+	// to this agency, and the files it wrote (target path → committed hash).
+	// Those are this assignment's to replace; a file of them the agency has
+	// changed since refuses it.
+	prevID          string
+	recorded        map[string]recordedFile
+	changedByAgency []string
 
 	jobsSeen, wfsSeen map[string]bool
 	scopesChecked     map[string]bool
@@ -218,13 +235,18 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 	}
 	_ = q.QueryRowContext(ctx, `SELECT COALESCE(last_sha, '') FROM git_repos WHERE id = ?`, st.targetRepo).Scan(&st.targetSHA)
 	st.res.OriginCommit = st.originSHA
+	if err := st.loadPrevious(top); err != nil {
+		return nil, err
+	}
 
 	// The definition itself: its name is the target agency's to give, or it
-	// is refused.
-	if n, err := st.count(`SELECT COUNT(*) FROM `+table+` WHERE owner_agency = ? AND name = ? AND deleted_at IS NULL`, req.TargetAgency, top.name); err != nil {
-		return nil, err
-	} else if n > 0 {
-		return nil, refuseTaken([]string{top.path}, "%s already has a %s named %s", st.targetName, req.Kind, top.name)
+	// is refused. An update's own copy is not "taken".
+	if _, ours := st.recorded[top.path]; !ours {
+		if n, err := st.count(`SELECT COUNT(*) FROM `+table+` WHERE owner_agency = ? AND name = ? AND deleted_at IS NULL`, req.TargetAgency, top.name); err != nil {
+			return nil, err
+		} else if n > 0 {
+			return nil, refuseTaken([]string{top.path}, "%s already has a %s named %s", st.targetName, req.Kind, top.name)
+		}
 	}
 	if req.Kind == "job" {
 		err = st.addJob(top, "definition")
@@ -234,6 +256,14 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 	if err != nil {
 		return nil, err
 	}
+	if len(st.changedByAgency) > 0 {
+		sort.Strings(st.changedByAgency)
+		e := refuse(http.StatusUnprocessableEntity, "changed_by_agency",
+			"%s has changed its copy of %s since the last assignment: an update does not overwrite an agency's change (revert it, or remove the file, and assign again)",
+			st.targetName, strings.Join(st.changedByAgency, ", "))
+		e.Paths = st.changedByAgency
+		return nil, e
+	}
 	if err := st.validate(); err != nil {
 		return nil, err
 	}
@@ -241,13 +271,22 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 		return nil, err
 	}
 
+	var writes []FileWrite
+	for _, p := range st.plan {
+		if !p.unchanged {
+			writes = append(writes, p.write)
+		}
+	}
+	if len(writes) == 0 {
+		return nil, refuse(http.StatusConflict, "up_to_date", "%s's copy of the %s %s is as the origin is now: there is nothing to update", st.targetName, req.Kind, top.name)
+	}
 	msg := strings.TrimSpace(req.CommitMessage)
 	if msg == "" {
-		msg = fmt.Sprintf("cronomicon: assign %s %s from %s", req.Kind, top.name, originName)
-	}
-	writes := make([]FileWrite, len(st.plan))
-	for i, p := range st.plan {
-		writes[i] = p.write
+		verb := "assign"
+		if st.prevID != "" {
+			verb = "update"
+		}
+		msg = fmt.Sprintf("cronomicon: %s %s %s from %s", verb, req.Kind, top.name, originName)
 	}
 	commit, err := st.targetSvc.CommitFiles(ctx, writes, msg)
 	var takenErr *PathsTakenError
@@ -309,15 +348,63 @@ func (st *assignState) origin(p string) []string {
 	return append(o, "path", p, "commit", st.originSHA)
 }
 
-// add plans a file, once.
+// add plans a file, once. A file the last assignment wrote (an update) is
+// replaced when the agency has not changed it, and refused when it has.
 func (st *assignState) add(f CommitFile, role string, content []byte) {
 	for _, p := range st.plan {
 		if p.write.Path == f.Path {
 			return
 		}
 	}
-	st.plan = append(st.plan, planned{FileWrite{Path: f.Path, Content: content, Executable: f.Executable}, role, f.Path, fileHash(f.Content)})
-	st.res.Files = append(st.res.Files, AssignedFile{Path: f.Path, Role: role, Action: "added"})
+	p := planned{write: FileWrite{Path: f.Path, Content: content, Executable: f.Executable}, role: role, originPath: f.Path, originHash: fileHash(f.Content)}
+	action := "added"
+	if rec, ours := st.recorded[f.Path]; ours {
+		// Judged by the ORIGIN's bytes: the stamp names the origin's commit,
+		// which moves with any change to its repository, so the file written
+		// would differ even when the origin's file has not.
+		if theirs, err := ReadCommitTree(st.targetSvc.cloneDir, st.targetSHA, f.Path); err == nil && len(theirs) == 1 {
+			switch {
+			case p.originHash == rec.originHash:
+				p.unchanged, p.keptHash, action = true, rec.committedHash, "unchanged"
+			case fileHash(theirs[0].Content) != rec.committedHash:
+				st.changedByAgency = append(st.changedByAgency, f.Path)
+			default:
+				p.write.Replace, action = true, "replaced"
+			}
+		}
+		// Gone from the agency's repository: written again, as new.
+	}
+	st.plan = append(st.plan, p)
+	st.res.Files = append(st.res.Files, AssignedFile{Path: f.Path, Role: role, Action: action})
+}
+
+// loadPrevious finds the last assignment of this definition to this agency,
+// which makes this one an update.
+func (st *assignState) loadPrevious(top defRow) error {
+	st.recorded = map[string]recordedFile{}
+	err := st.r.db.QueryRowContext(st.ctx, `
+		SELECT id FROM assignments WHERE target_agency = ? AND origin_uid = ? AND kind = ?
+		 ORDER BY created_at DESC, rowid DESC LIMIT 1`, st.req.TargetAgency, top.uid, st.req.Kind).Scan(&st.prevID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	rows, err := st.r.db.QueryContext(st.ctx, `SELECT target_path, origin_hash, committed_hash FROM assignment_files WHERE assignment_id = ?`, st.prevID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p string
+		var rec recordedFile
+		if err := rows.Scan(&p, &rec.originHash, &rec.committedHash); err != nil {
+			return err
+		}
+		st.recorded[p] = rec
+	}
+	return rows.Err()
 }
 
 // stamped plans a YAML document with its origin stamp (and the scope).
@@ -428,7 +515,7 @@ func (st *assignState) addScript(ref string) error {
 	var theirs, theirPath string
 	err := q.QueryRowContext(st.ctx, `SELECT COALESCE(content_hash, ''), COALESCE(source_path, '') FROM scripts WHERE repo_id = ? AND name = ?`,
 		st.targetRepo, ref).Scan(&theirs, &theirPath)
-	if err == nil {
+	if _, ours := st.recorded[theirPath]; err == nil && !ours {
 		for _, f := range st.res.Files {
 			if f.Path == theirPath && f.Role == "script" {
 				return nil
@@ -437,7 +524,7 @@ func (st *assignState) addScript(ref string) error {
 		st.res.Files = append(st.res.Files, AssignedFile{Path: theirPath, Role: "script", Action: "usesOwn", Differs: theirs != hash})
 		return nil
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	for _, p := range st.plan {
@@ -505,7 +592,7 @@ func (st *assignState) addSchedules(refs []string, entries []ScheduleEntry) erro
 		err := q.QueryRowContext(st.ctx, `
 			SELECT COALESCE(content_hash, ''), COALESCE(source_path, '') FROM schedules
 			 WHERE repo_id = ? AND name = ? AND source = 'git' AND deleted_at IS NULL`, st.targetRepo, ref).Scan(&theirs, &theirPath)
-		if err == nil {
+		if _, ours := st.recorded[theirPath]; err == nil && !ours {
 			seen := false
 			for _, f := range st.res.Files {
 				seen = seen || f.Path == theirPath && f.Role == "schedule"
@@ -515,7 +602,7 @@ func (st *assignState) addSchedules(refs []string, entries []ScheduleEntry) erro
 			}
 			continue
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		files, err := st.read(src)
@@ -613,6 +700,9 @@ func (st *assignState) depWorkflow(wf, name string) error {
 // origin's is added.
 func (st *assignState) dependency(table, role string, row defRow, add func() error) error {
 	own, err := st.r.defRowWhere(st.ctx, table, `repo_id = ? AND name = ? AND source = 'git'`, st.targetRepo, row.name)
+	if _, ours := st.recorded[own.path]; err == nil && ours {
+		return add() // the last assignment's copy: an update replaces it
+	}
 	if err == nil {
 		files, rerr := st.read(row.path)
 		if rerr != nil {
@@ -624,7 +714,8 @@ func (st *assignState) dependency(table, role string, row defRow, add func() err
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if n, err := st.count(`SELECT COUNT(*) FROM `+table+` WHERE owner_agency = ? AND name = ? AND deleted_at IS NULL`, st.req.TargetAgency, row.name); err != nil {
+	if n, err := st.count(`SELECT COUNT(*) FROM `+table+` WHERE owner_agency = ? AND name = ? AND deleted_at IS NULL
+	                         AND NOT (source = 'git' AND repo_id = ?)`, st.req.TargetAgency, row.name, st.targetRepo); err != nil {
 		return err
 	} else if n > 0 {
 		return refuseTaken([]string{row.path}, "%s has a %s named %s that is not a file of its repository: the copy's steps would not run it", st.targetName, role, row.name)
@@ -714,6 +805,13 @@ func (st *assignState) record(top defRow) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if st.prevID != "" {
+		// An update's record replaces the last one: the files it did not write
+		// again are no longer followed.
+		if _, err := tx.ExecContext(st.ctx, `DELETE FROM assignments WHERE id = ?`, st.prevID); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.ExecContext(st.ctx, `
 		INSERT INTO assignments (id, kind, origin_agency, origin_repo, origin_uid, origin_name, origin_path, origin_commit,
 		                         target_agency, target_repo, target_path, target_scope, commit_sha, created_by, created_at)
@@ -724,10 +822,14 @@ func (st *assignState) record(top defRow) error {
 		return err
 	}
 	for _, p := range st.plan {
+		committed := fileHash(p.write.Content)
+		if p.unchanged {
+			committed = p.keptHash
+		}
 		if _, err := tx.ExecContext(st.ctx, `
 			INSERT INTO assignment_files (assignment_id, target_path, origin_path, role, origin_hash, committed_hash)
 			VALUES (?, ?, ?, ?, ?, ?)`,
-			st.res.AssignmentID, p.write.Path, p.originPath, p.role, p.originHash, fileHash(p.write.Content)); err != nil {
+			st.res.AssignmentID, p.write.Path, p.originPath, p.role, p.originHash, committed); err != nil {
 			return err
 		}
 	}

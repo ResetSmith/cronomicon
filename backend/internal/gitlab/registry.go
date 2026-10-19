@@ -204,9 +204,14 @@ func (r *Registry) restart(repoID string, atStart bool) error {
 	svc.Cfg = r.cfg
 	svc.gate = r.gate
 	svc.ctx, svc.cancel = context.WithCancel(base)
-	if hook != nil {
-		svc.SetOnSyncComplete(hook)
-	}
+	// After a sync that committed: the scheduler's reload, then the
+	// assignments' update check (C10.3), which a sync of either side can change.
+	svc.SetOnSyncComplete(func(ctx context.Context, generation string) {
+		if hook != nil {
+			hook(ctx, generation)
+		}
+		r.checkAssignmentsAfterSync(ctx)
+	})
 
 	r.mu.Lock()
 	if r.closed {

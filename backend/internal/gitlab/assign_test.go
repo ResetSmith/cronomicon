@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	gogit "github.com/go-git/go-git/v5"
+
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"gopkg.in/yaml.v3"
 )
@@ -35,6 +37,9 @@ type assignFixture struct {
 	branch   string
 	jobUID   string
 	finScope string
+	// Global's working repository, to change the origin after an assignment.
+	globalRepo *gogit.Repository
+	globalWork string
 }
 
 func newAssignFixture(t *testing.T, globalFiles, finFiles map[string]string) *assignFixture {
@@ -79,7 +84,14 @@ func newAssignFixture(t *testing.T, globalFiles, finFiles map[string]string) *as
 
 	reg := NewRegistry(a.db, slog.New(slog.NewTextHandler(io.Discard, nil)), &config.Config{})
 	reg.services["global"], reg.services["repo-fin"] = a, fin
-	f := &assignFixture{t: t, reg: reg, global: a, fin: fin, finBare: bare, branch: a.Cfg.GitLabWriteBranch, finScope: "hosts-of-repo-fin"}
+	reg.cloneDir = func(id string) string {
+		if id == "repo-fin" {
+			return fin.cloneDir
+		}
+		return a.cloneDir
+	}
+	f := &assignFixture{t: t, reg: reg, global: a, fin: fin, finBare: bare, branch: a.Cfg.GitLabWriteBranch, finScope: "hosts-of-repo-fin",
+		globalRepo: repoA, globalWork: remoteA}
 	f.jobUID = grString(t, a.db, `SELECT uid FROM jobs WHERE name = 'nightly' AND repo_id = 'global'`)
 	if f.jobUID == "" {
 		t.Fatal("Global's job nightly was not synced")

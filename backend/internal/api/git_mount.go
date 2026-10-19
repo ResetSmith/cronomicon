@@ -33,6 +33,8 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 		reg.SetOnSyncComplete(s.scheduleReload)
 	}
 	s.git = reg
+	// The assignments' update check (C10.3) when the Notices page is opened.
+	s.noticeRefresh.Extra = append(s.noticeRefresh.Extra, reg.CheckAssignmentUpdates)
 	h := gitlab.NewRegistryHandlers(reg)
 
 	// Start every repository's service, each with a first sync so the cache

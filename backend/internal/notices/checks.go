@@ -74,6 +74,9 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 // that run and share its result.
 type Refresher struct {
 	Interval time.Duration
+	// Extra are checks of other packages, run after these (the assignments'
+	// update check, which reads repositories this package cannot).
+	Extra []func(context.Context) error
 
 	mu   sync.Mutex
 	last time.Time
@@ -92,6 +95,11 @@ func (r *Refresher) Refresh(ctx context.Context, database *sql.DB) error {
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	r.err = RunChecks(runCtx, database)
+	for _, extra := range r.Extra {
+		if err := extra(runCtx); err != nil && r.err == nil {
+			r.err = err
+		}
+	}
 	r.last = time.Now()
 	return r.err
 }

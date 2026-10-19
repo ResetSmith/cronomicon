@@ -31,6 +31,9 @@ type FileWrite struct {
 	Path       string // repository-relative, slash-separated
 	Content    []byte
 	Executable bool // committed with the executable bit, as it was in the origin
+	// Replace: the file may already be there, and is overwritten (an update of
+	// an assignment's own file, C10.3). Never through a link.
+	Replace bool
 }
 
 // PathsTakenError is a CommitFiles refused because files are already at some
@@ -62,8 +65,9 @@ func validateCommitPath(p string) error {
 }
 
 // CommitFiles writes files as one commit on the branch this repository syncs
-// and pushes it. Every path must be free: a file already there refuses the
-// whole commit (*PathsTakenError), with nothing written. The clone must be at
+// and pushes it. Every path must be free unless its file is marked Replace: a
+// file already there refuses the whole commit (*PathsTakenError), with nothing
+// written. The clone must be at
 // the branch's head on the remote (*PreconditionError with Unsynced, and the
 // caller starts a sync, as a publish does).
 func (s *Service) CommitFiles(ctx context.Context, files []FileWrite, msg string) (*PublishResult, error) {
@@ -119,7 +123,7 @@ func (s *Service) CommitFiles(ctx context.Context, files []FileWrite, msg string
 	abs := make([]string, len(files))
 	for i, f := range files {
 		a, exists, perr := publishPath(s.cloneDir, f.Path)
-		if perr != nil || exists {
+		if perr != nil || exists && !f.Replace {
 			taken = append(taken, f.Path)
 			continue
 		}
@@ -136,6 +140,8 @@ func (s *Service) CommitFiles(ctx context.Context, files []FileWrite, msg string
 	}
 	written := 0
 	undo := func(why error) error {
+		// A new file is removed; a replaced one is tracked, and the hard reset
+		// below brings it back.
 		for _, a := range abs[:written] {
 			_ = os.Remove(a)
 		}
