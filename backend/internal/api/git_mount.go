@@ -33,6 +33,8 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 		reg.SetOnSyncComplete(s.scheduleReload)
 	}
 	s.git = reg
+	// The assignments' update check (C10.3) when the Notices page is opened.
+	s.noticeRefresh.Extra = append(s.noticeRefresh.Extra, reg.CheckAssignmentUpdates)
 	h := gitlab.NewRegistryHandlers(reg)
 
 	// Start every repository's service, each with a first sync so the cache
@@ -81,12 +83,10 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/schedule-pushes",
 		s.auth.RequireSession(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// GR-26: the publishes to Global's repository, and to the
-				// repositories of the agencies the caller is of.
-				cond, args := "", []any(nil)
-				if id, ok := auth.IdentityFrom(r.Context()); ok {
-					cond, args = readableRepoSQL(id, "repo_id")
-				}
+				// The publishes to the repositories of the agencies the caller
+				// reads (CF-1; Global's only to everywhere-readers since 2.5.0
+				// C2, question 77).
+				cond, args := agencyReadFilter(r, agencyid.Owner("(SELECT g.agency_id FROM git_repos g WHERE g.id = COALESCE(repo_id, 'global'))"))
 				// 2.4.4: the agency the request works in, by the repository's.
 				if frag, fargs := agencyctx.Narrow(r, agencyid.Owner("(SELECT g.agency_id FROM git_repos g WHERE g.id = COALESCE(repo_id, 'global'))")); frag != "" {
 					cond += frag

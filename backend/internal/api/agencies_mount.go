@@ -48,6 +48,16 @@ func (s *Server) mountAgencies(mux *http.ServeMux) {
 	// agency's own administrators, who need to know where they may write.
 	mux.Handle("GET /api/v1/agencies/{agencyId}/vault-prefixes", s.auth.RequireSession(http.HandlerFunc(s.handleListVaultPrefixes)))
 	mux.Handle("PUT /api/v1/agencies/{agencyId}/vault-prefixes", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleSetVaultPrefixes)))
+	// GA-1 (2.5.0 C5): the directory groups an agency's grants may name. Set by
+	// a global administrator; read by the agency's own administrators of access
+	// (question 82), whose grant form offers them (GA-3).
+	mux.Handle("GET /api/v1/agencies/{agencyId}/groups", s.auth.RequireSession(http.HandlerFunc(s.handleListAgencyGroups)))
+	mux.Handle("PUT /api/v1/agencies/{agencyId}/groups", s.requireGlobal(auth.PermManageRoles)(http.HandlerFunc(s.handleSetAgencyGroups)))
+	// 2.5.0 C10.1 (IN-12): a job given to the agency by one commit into its repository.
+	mux.Handle("POST /api/v1/agencies/{agencyId}/assign", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleAssign)))
+	// QT-1 (2.5.0 C6): an agency's own concurrency cap, a global administrator's,
+	// as the agency catalog is. Read on the agency's row (maxConcurrent).
+	mux.Handle("PUT /api/v1/agencies/{agencyId}/concurrency", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleSetAgencyConcurrency)))
 	// Runner ↔ agency membership matrix (M2). Reads session-gated so the Runners
 	// view can render membership; writes ConfigureApp + CSRF (operator-assigned).
 	mux.Handle("GET /api/v1/runner-agencies", s.auth.RequireSession(http.HandlerFunc(s.handleListRunnerAgencies)))
@@ -115,12 +125,29 @@ func (s *Server) handleAgencyMatrix(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
+	// The rows of what the caller reads (2.5.0 C2, CF-1: every agency's
+	// scopes, keys and runners were listed by name to everyone). A row read
+	// keeps its whole agency list (C0: filter rows, never trim a row's
+	// agencies); the agency columns are names, which are not confidential.
+	rows := make([]settings.MatrixRow, 0, len(m.Rows))
+	for _, row := range m.Rows {
+		if readsAnyAgency(r, row.AgencyIDs) {
+			rows = append(rows, row)
+		}
+	}
+	m.Rows = rows
 	httpx.JSON(w, http.StatusOK, m)
 }
 
 // handleAgencyDetail serves one agency's contents plus the two numbers that decide
 // whether anything will actually run in it (T4.2/T4.3).
 func (s *Server) handleAgencyDetail(w http.ResponseWriter, r *http.Request) {
+	// An agency's contents are its own people's and everywhere-readers'
+	// (2.5.0 C2, CF-1); to anyone else, as if it were not there (question 72).
+	if !readsAgency(r, r.PathValue("agencyId")) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+		return
+	}
 	d, err := settings.BuildAgencyDetail(r.Context(), s.db, r.PathValue("agencyId"))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -139,7 +166,15 @@ func (s *Server) handleListAgencyMembership(w http.ResponseWriter, r *http.Reque
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, list)
+	// The entities the caller reads (2.5.0 C2, CF-1), each with its whole
+	// agency list.
+	kept := make([]settings.AgencyMembership, 0, len(list))
+	for _, m := range list {
+		if readsAnyAgency(r, m.AgencyIDs) {
+			kept = append(kept, m)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, kept)
 }
 
 // membershipAuthzFor maps a membership kind to the permission and join table its
@@ -374,7 +409,7 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	for _, m := range repaired {
-		s.auditRepair(r.Context(), id.Email, string(kind)+" "+m.ID, agencySet(m.AgencyIDs), rep)
+		s.auditRepair(r.Context(), s.memberAgency(r.Context(), string(kind), m.ID), id.Email, string(kind)+" "+m.ID, agencySet(m.AgencyIDs), rep)
 	}
 	// Scope membership decides what an agency grant reaches. Since LR-78 that is
 	// resolved per request from the grant snapshot, which the setter itself
@@ -415,7 +450,9 @@ func (s *Server) handleEnvVarShadows(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]settings.ShadowFinding, 0, len(all))
 	for _, f := range all {
-		if auth.ScopeReadableIn(id, f.OwnerAgency, f.Scope) {
+		// Whose it is too (2.5.0 C2): the scope filter let an agency-wide
+		// finding of any agency through.
+		if auth.ScopeReadableIn(id, f.OwnerAgency, f.Scope) && readsAgency(r, f.OwnerAgency) {
 			out = append(out, f)
 		}
 	}
@@ -431,12 +468,17 @@ func (s *Server) handleEnvVarShadows(w http.ResponseWriter, r *http.Request) {
 		}
 		rows.Close()
 	}
+	// Shown to a reader of one of its owners (2.5.0 C2, CF-1): a key's
+	// ambiguity, or one with no scope, had been shown to everyone.
 	ambiguityReadable := func(f settings.AmbiguityFinding) bool {
-		if f.Kind == "key" || f.Scope == "" || id.Unrestricted() {
+		if id.Unrestricted() {
 			return true
 		}
 		for _, owner := range f.Owners {
-			if auth.ScopeReadableIn(id, agencyIDs[owner], f.Scope) {
+			if !readsAgency(r, agencyIDs[owner]) {
+				continue
+			}
+			if f.Kind == "key" || f.Scope == "" || auth.ScopeReadableIn(id, agencyIDs[owner], f.Scope) {
 				return true
 			}
 		}
@@ -466,7 +508,15 @@ func (s *Server) handleListRunnerAgencies(w http.ResponseWriter, r *http.Request
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, list)
+	// The runners the caller reads (2.5.0 C2, CF-1), each with its whole
+	// agency list.
+	kept := make([]settings.RunnerAgencies, 0, len(list))
+	for _, m := range list {
+		if readsAnyAgency(r, m.AgencyIDs) {
+			kept = append(kept, m)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, kept)
 }
 
 // handleSetRunnerAgencies replaces the agency membership of each posted runner
@@ -550,7 +600,7 @@ func (s *Server) handleSetRunnerAgencies(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	for _, m := range repaired {
-		s.auditRepair(r.Context(), id.Email, "runner "+m.RunnerID+" placement", agencySet(m.AgencyIDs), rep)
+		s.auditRepair(r.Context(), s.memberAgency(r.Context(), "runner", m.RunnerID), id.Email, "runner "+m.RunnerID+" placement", agencySet(m.AgencyIDs), rep)
 	}
 	list, err := settings.ListRunnerAgencies(r.Context(), s.db)
 	if err != nil {
@@ -567,6 +617,15 @@ func (s *Server) handleListAgencies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := auth.IdentityFrom(r.Context())
+	// Names are every session's (CF-1: not confidential, and every view
+	// resolves ids by them); an agency's contents are its people's (2.5.0 C2,
+	// question 69): for one the caller does not read, its id, name and builtin
+	// flag only.
+	for i, a := range list {
+		if !id.ReadsAgency(a.ID) {
+			list[i] = settings.Agency{ID: a.ID, Name: a.Name, Builtin: a.Builtin}
+		}
+	}
 	rows, err := withRowFlags(list, func(a settings.Agency) (rowFlags, error) { return agencyFlags(id, a.ID), nil })
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -842,7 +901,7 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isRepair {
-		s.auditRepair(r.Context(), id.Email, "scope "+sid, agencySet([]string{target}), inp.repairInput)
+		s.auditRepair(r.Context(), s.memberAgency(r.Context(), "scope", sid), id.Email, "scope "+sid, agencySet([]string{target}), inp.repairInput)
 	}
 	httpx.JSON(w, http.StatusOK, sc)
 }
@@ -990,10 +1049,10 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 	// setter told the grant snapshot (LR-78). No session is signed out.
 	if repairing {
 		for _, m := range delta.Added {
-			s.auditRepair(r.Context(), id.Email, m.Kind+" "+m.ID, "added to agency "+agencyID, body.repairInput)
+			s.auditRepair(r.Context(), s.memberAgency(r.Context(), m.Kind, m.ID), id.Email, m.Kind+" "+m.ID, "added to agency "+agencyID, body.repairInput)
 		}
 		for _, m := range delta.Removed {
-			s.auditRepair(r.Context(), id.Email, m.Kind+" "+m.ID, "removed from agency "+agencyID, body.repairInput)
+			s.auditRepair(r.Context(), s.memberAgency(r.Context(), m.Kind, m.ID), id.Email, m.Kind+" "+m.ID, "removed from agency "+agencyID, body.repairInput)
 		}
 	}
 
@@ -1152,6 +1211,112 @@ func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail500(w, s.log, "update_failed", err)
 	default:
 		httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes})
+	}
+}
+
+type agencyGroupsJSON struct {
+	AgencyID string   `json:"agencyId"`
+	Groups   []string `json:"groups"`
+}
+
+func (s *Server) handleListAgencyGroups(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	agencyID := r.PathValue("agencyId")
+	// Read by whoever writes the agency's grants (manageRoles there) and by a
+	// global administrator (question 82): the grant form offers the list.
+	if !id.GlobalAdmin(auth.PermManageRoles) && !id.CanAgency(auth.PermManageRoles, agencyID) {
+		s.denyEntityAgency(w, r, id, auth.PermManageRoles, agencyID,
+			"you do not administer access for this agency, so its group list is not yours to read")
+		return
+	}
+	ag, err := settings.GetAgency(r.Context(), s.db, agencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if ag == nil {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+		return
+	}
+	groups, err := settings.ListAgencyGroups(r.Context(), s.db, agencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, agencyGroupsJSON{AgencyID: agencyID, Groups: groups})
+}
+
+func (s *Server) handleSetAgencyGroups(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	agencyID := r.PathValue("agencyId")
+	var body struct {
+		Groups *[]string `json:"groups"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return
+	}
+	// This route REPLACES the list, so a body without the field must not read
+	// as "no groups" and clear it (as for the Vault prefixes).
+	if body.Groups == nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
+			"groups is required: send the whole list, or [] to remove every group")
+		return
+	}
+	groups, err := settings.SetAgencyGroups(r.Context(), s.db, agencyID, *body.Groups, id.Email)
+	switch {
+	case errors.Is(err, settings.ErrUnknownAgency):
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+	case errors.Is(err, settings.ErrGlobalHasNoGroups):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "builtin_agency", err.Error())
+	case err != nil:
+		httpx.Fail500(w, s.log, "update_failed", err)
+	default:
+		httpx.JSON(w, http.StatusOK, agencyGroupsJSON{AgencyID: agencyID, Groups: groups})
+	}
+}
+
+func (s *Server) handleSetAgencyConcurrency(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return
+	}
+	// null removes the cap, so a body without the field must not read as null.
+	raw, present := body["maxConcurrent"]
+	if !present {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
+			"maxConcurrent is required: a number of runs, or null for no cap of the agency's own")
+		return
+	}
+	var maxConcurrent *int
+	if err := json.Unmarshal(raw, &maxConcurrent); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "maxConcurrent must be a whole number of runs, or null")
+		return
+	}
+	a, err := settings.SetAgencyConcurrency(r.Context(), s.db, r.PathValue("agencyId"), maxConcurrent, id.Email)
+	switch {
+	case errors.Is(err, settings.ErrUnknownAgency):
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+	case errors.Is(err, settings.ErrValidation):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+	case err != nil:
+		httpx.Fail500(w, s.log, "update_failed", err)
+	default:
+		httpx.JSON(w, http.StatusOK, a)
 	}
 }
 

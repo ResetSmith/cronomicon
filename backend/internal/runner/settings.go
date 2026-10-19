@@ -154,7 +154,7 @@ func (s *Service) HandleUpdateRunnerSettings(w http.ResponseWriter, r *http.Requ
 	}
 
 	if idn, ok := auth.IdentityFrom(r.Context()); ok {
-		_ = settings.WriteChangeLog(r.Context(), s.db, idn.Email, "Runners", "settings updated",
+		_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "runners", "owner_agency", runnerID), idn.Email, "Runners", "settings updated",
 			name, fmt.Sprintf("version %d", newVersion))
 	}
 

@@ -130,8 +130,14 @@ func TestThe230SectionSaysWhatTheUpgradeWillFind(t *testing.T) {
 	if s := by[""]; strings.Join(s.Agencies, ",") != "Global" || s.Jobs != 1 {
 		t.Errorf("the jobs with no scope = %+v, want Global's", s)
 	}
-	if got := strings.Join(rep.Placed(), ","); got != "Finance,Global,Tax" {
-		t.Errorf("agencies the local runner will serve = %s, want Finance, Global and Tax", got)
+	// Since 2.4.0 the local runner serves Global alone; the agencies whose shell
+	// jobs ran from the server need agents of their own (the 2.3.0 pass that
+	// placed it in them was retired in 2.5.0).
+	if got := strings.Join(rep.Placed(), ","); got != "Global" {
+		t.Errorf("agencies the local runner will serve = %s, want Global", got)
+	}
+	if got := strings.Join(rep.NeedAgents(), ","); got != "Finance,Tax" {
+		t.Errorf("agencies that need agents of their own = %s, want Finance and Tax", got)
 	}
 
 	// Only a shell job the SERVER ran: an agent already read requires on every
@@ -182,9 +188,9 @@ func TestThe230SectionSaysWhatTheUpgradeWillFind(t *testing.T) {
 			t.Errorf("the report does not say %q:\n%s", want, on)
 		}
 	}
-	if !strings.Contains(on, "It will serve: Finance, Global, Tax") ||
-		!strings.Contains(on, "may now be taken by the SERVER") {
-		t.Errorf("with the SSH executor on, the report must say where the local runner is placed and what it may take:\n%s", on)
+	if !strings.Contains(on, "It will serve: Global.") ||
+		!strings.Contains(on, "The shell jobs of Finance, Tax ran from the server") {
+		t.Errorf("with the SSH executor on, the report must say the local runner serves Global and which agencies need agents:\n%s", on)
 	}
 	if strings.Contains(off, "It will serve") || strings.Contains(off, "may now be taken by the SERVER") ||
 		!strings.Contains(off, "the local runner starts off") {

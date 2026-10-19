@@ -12,8 +12,10 @@ import (
 // those who reach every agency (2.4.0 Phase R6; GR-26). An agency's repository
 // may be private: its scripts and their bodies, its Git schedules, its Git
 // workflows and its past publishes are not another agency's to see, in a list
-// or one at a time. Global's are every session's, as they were. A definition
-// built in the app is not filtered here (who reads those is 2.5.0's).
+// or one at a time. Since 2.5.0 C2 a definition built in the app is judged by
+// its owner too (it was read by everyone), and Global's are read only by
+// those who reach every agency (the owner's answer to question 77; they were
+// every session's).
 func TestWhatAnAgencysRepositorySuppliesIsReadByItsAgency(t *testing.T) {
 	h, pool := repoGateServer(t)
 	exec := mustExec(t, pool)
@@ -60,13 +62,19 @@ func TestWhatAnAgencysRepositorySuppliesIsReadByItsAgency(t *testing.T) {
 		}
 	}
 
-	// ── Who is of FIN, or reaches every agency: everything. ──────────────────
+	// ── Who is of FIN, or reaches every agency: FIN's. ───────────────────────
+	everywhere := map[string]bool{gAllViewer: true, gRoot: true}
 	for _, who := range []string{gFinViewer, gFinOperator, gFinAdmin, gAllViewer, gRoot} {
 		_, scripts := get(who, "/api/v1/scripts")
 		has(who+" listing scripts", scripts, true, "fin-only.sh")
 		has(who+" listing scripts", scripts, true, `"repoId":"`+fin+`"`)
-		has(who+" listing scripts", scripts, true, `"repoId":"global"`)
-		has(who+" listing scripts", scripts, true, `"totalItems":3`)
+		// Global's: only theirs who reach every agency (question 77).
+		has(who+" listing scripts", scripts, everywhere[who], `"repoId":"global"`)
+		if everywhere[who] {
+			has(who+" listing scripts", scripts, true, `"totalItems":3`)
+		} else {
+			has(who+" listing scripts", scripts, true, `"totalItems":2`)
+		}
 		if code, body := get(who, "/api/v1/scripts/fin-only.sh?repo="+fin); code != http.StatusOK || !strings.Contains(body, "FIN-SECRET-BODY") {
 			t.Errorf("%s reading FIN's script = %d %s, want it with its body", who, code, body)
 		}
@@ -77,28 +85,34 @@ func TestWhatAnAgencysRepositorySuppliesIsReadByItsAgency(t *testing.T) {
 		if _, body := get(who, "/api/v1/scripts/shared.sh?repo="+fin); !strings.Contains(body, "FIN-TWIN-BODY") {
 			t.Errorf("%s reading FIN's shared.sh: %s", who, body)
 		}
-		if _, body := get(who, "/api/v1/scripts/shared.sh"); !strings.Contains(body, "GLOBAL-BODY") || strings.Contains(body, "FIN-TWIN") {
-			t.Errorf("%s reading shared.sh with no repository named, which is Global's: %s", who, body)
+		if code, body := get(who, "/api/v1/scripts/shared.sh"); everywhere[who] != (code == http.StatusOK) ||
+			strings.Contains(body, "FIN-TWIN") || (everywhere[who] && !strings.Contains(body, "GLOBAL-BODY")) {
+			t.Errorf("%s reading shared.sh with no repository named, which is Global's = %d %s", who, code, body)
 		}
 		_, scheds := get(who, "/api/v1/schedule-defs")
 		has(who+" listing schedules", scheds, true, "fin-nightly")
+		has(who+" listing schedules", scheds, true, "app-sched") // FIN's, built in the app
+		has(who+" listing schedules", scheds, everywhere[who], "global-nightly")
 		_, flows := get(who, "/api/v1/workflows")
 		has(who+" listing workflows", flows, true, "fin-flow")
+		has(who+" listing workflows", flows, true, "app-flow")
+		has(who+" listing workflows", flows, everywhere[who], "g-flow")
 		if code, body := get(who, fmt.Sprintf("/api/v1/workflows/%d", finFlow)); code != http.StatusOK ||
 			!strings.Contains(body, `"repoId":"`+fin+`"`) || !strings.Contains(body, `"ownerAgency":"ag:FIN"`) {
 			t.Errorf("%s reading FIN's workflow = %d %s, want it with its repository and its agency", who, code, body)
 		}
 		_, pushes := get(who, "/api/v1/schedule-pushes")
 		has(who+" listing past publishes", pushes, true, "fin-secret-file")
+		has(who+" listing past publishes", pushes, everywhere[who], "global-file")
 	}
 
-	// ── Another agency's people: Global's, and nothing of FIN's repository. ──
+	// ── Another agency's people: nothing of FIN's, nor of Global's. ──────────
 	for _, who := range []string{gTaxAdmin} {
 		_, scripts := get(who, "/api/v1/scripts")
 		has(who+" listing scripts", scripts, false, "fin-only.sh")
 		has(who+" listing scripts", scripts, false, fin)
-		has(who+" listing scripts", scripts, true, "shared.sh")
-		has(who+" listing scripts", scripts, true, `"totalItems":1`)
+		has(who+" listing scripts", scripts, false, "shared.sh")
+		has(who+" listing scripts", scripts, true, `"totalItems":0`)
 		_, named := get(who, "/api/v1/scripts?repo="+fin)
 		has(who+" listing FIN's scripts by naming the repository", named, true, `"totalItems":0`)
 		for _, path := range []string{
@@ -114,11 +128,11 @@ func TestWhatAnAgencysRepositorySuppliesIsReadByItsAgency(t *testing.T) {
 				t.Errorf("%s: %s answers %d and the same of a repository that is not there %d", who, path, code, gone)
 			}
 		}
-		if code, body := get(who, "/api/v1/scripts/shared.sh"); code != http.StatusOK || !strings.Contains(body, "GLOBAL-BODY") {
-			t.Errorf("%s reading Global's shared.sh = %d %s, want it", who, code, body)
+		if code, body := get(who, "/api/v1/scripts/shared.sh"); code != http.StatusNotFound || strings.Contains(body, "BODY") {
+			t.Errorf("%s reading Global's shared.sh = %d %s, want 404 (question 77)", who, code, body)
 		}
-		if code, body := get(who, "/api/v1/script-content/shared.sh"); code != http.StatusOK || !strings.Contains(body, "GLOBAL-BODY") {
-			t.Errorf("%s reading Global's shared.sh's content = %d %s, want it", who, code, body)
+		if code, body := get(who, "/api/v1/script-content/shared.sh"); code != http.StatusNotFound || strings.Contains(body, "BODY") {
+			t.Errorf("%s reading Global's shared.sh's content = %d %s, want 404 (question 77)", who, code, body)
 		}
 		// FIN's script's name, with no repository named, is Global's question,
 		// and Global's has none of that name.
@@ -128,25 +142,25 @@ func TestWhatAnAgencysRepositorySuppliesIsReadByItsAgency(t *testing.T) {
 
 		_, scheds := get(who, "/api/v1/schedule-defs")
 		has(who+" listing schedules", scheds, false, "fin-nightly")
-		has(who+" listing schedules", scheds, true, "global-nightly")
-		has(who+" listing schedules", scheds, true, "app-sched") // built in the app: 2.5.0's
-		has(who+" listing schedules", scheds, true, `"totalItems":2`)
+		has(who+" listing schedules", scheds, false, "global-nightly")
+		has(who+" listing schedules", scheds, false, "app-sched") // FIN's, built in the app (C2)
+		has(who+" listing schedules", scheds, true, `"totalItems":0`)
 
 		_, flows := get(who, "/api/v1/workflows")
 		has(who+" listing workflows", flows, false, "fin-flow")
-		has(who+" listing workflows", flows, true, "g-flow")
-		has(who+" listing workflows", flows, true, "app-flow")
-		has(who+" listing workflows", flows, true, `"totalItems":2`)
+		has(who+" listing workflows", flows, false, "g-flow")
+		has(who+" listing workflows", flows, false, "app-flow") // FIN's, built in the app (C2)
+		has(who+" listing workflows", flows, true, `"totalItems":0`)
 		if code, body := get(who, fmt.Sprintf("/api/v1/workflows/%d", finFlow)); code != http.StatusNotFound {
 			t.Errorf("%s reading FIN's workflow = %d %s, want 404", who, code, body)
 		}
-		if code, _ := get(who, fmt.Sprintf("/api/v1/workflows/%d", gFlow)); code != http.StatusOK {
-			t.Errorf("%s reading Global's workflow = %d, want 200", who, code)
+		if code, _ := get(who, fmt.Sprintf("/api/v1/workflows/%d", gFlow)); code != http.StatusNotFound {
+			t.Errorf("%s reading Global's workflow = %d, want 404 (question 77)", who, code)
 		}
 
 		_, pushes := get(who, "/api/v1/schedule-pushes")
 		has(who+" listing past publishes", pushes, false, "fin-secret-file")
-		has(who+" listing past publishes", pushes, true, "global-file")
+		has(who+" listing past publishes", pushes, false, "global-file")
 		_, named = get(who, "/api/v1/schedule-pushes?repo="+fin)
 		has(who+" listing FIN's publishes by naming the repository", named, false, "fin-secret-file")
 	}

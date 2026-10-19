@@ -172,6 +172,36 @@ func TestMissedDetectorFirstPassAnchorsSilently(t *testing.T) {
 // With the cursor already behind, a per-minute schedule that produced no runs
 // is reported — once per expected fire, with a durable row stamped at the time
 // the fire was expected rather than at detection.
+// Present defect 69 (C0; question 65): a missed-run alert names its job by uid.
+// It named the job by name only, and the dispatcher resolves a name to a uid
+// only when one job anywhere holds it, so with two agencies' jobs of one name
+// a rule pinned to one of them by uid stayed silent for its missed runs.
+func TestMissedRunAlertCarriesTheJobsUID(t *testing.T) {
+	pool := mustPool(t)
+	s := New(pool, quietLog(), nil)
+	alerts := &captureAlerts{}
+	s.SetNotifier(alerts)
+	seedJobRow(t, pool, "nightly", 1)
+	seedSchedule(t, pool, "job", "nightly", "default", "* * * * *", 0)
+	var uid string
+	if err := pool.QueryRow(`SELECT uid FROM jobs WHERE name = 'nightly'`).Scan(&uid); err != nil || uid == "" {
+		t.Fatalf("the job's uid: %q %v", uid, err)
+	}
+	back := time.Now().UTC().Add(-20 * time.Minute).Format(time.RFC3339)
+	if _, err := pool.Exec(`INSERT INTO settings(key,value) VALUES(?,?)`, settingsKeyMissedCursor, back); err != nil {
+		t.Fatalf("seed cursor: %v", err)
+	}
+	s.ScanMissedRuns(context.Background())
+	if len(alerts.events) == 0 {
+		t.Fatal("no missed run was raised")
+	}
+	for _, ev := range alerts.events {
+		if ev.JobUID != uid {
+			t.Errorf("a missed-run alert names its job by uid %q, want %q", ev.JobUID, uid)
+		}
+	}
+}
+
 func TestMissedDetectorReportsSilentMisses(t *testing.T) {
 	pool := mustPool(t)
 	s := New(pool, quietLog(), nil)

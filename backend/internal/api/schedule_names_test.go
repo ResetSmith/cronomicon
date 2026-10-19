@@ -41,8 +41,14 @@ func TestI2_TwoAgenciesEachHaveTheirOwnScheduleOfOneName(t *testing.T) {
 	if c, _ := code(gRoot, http.MethodGet, "/api/v1/schedule-defs/nightly?source=cronomicon&agencyId=ag:NONE", ""); c != http.StatusNotFound {
 		t.Errorf("reading nightly in an agency that has none = %d, want 404", c)
 	}
-	if c, b := code(gFinAdmin, http.MethodPut, "/api/v1/schedule-defs/nightly", `{"name":"nightly","cron":"0 3 * * *"}`); c != http.StatusConflict || !strings.Contains(b, "ambiguous_schedule") {
-		t.Errorf("editing nightly by the name alone = %d %s, want 409 ambiguous_schedule", c, b)
+	if c, b := code(gRoot, http.MethodPut, "/api/v1/schedule-defs/nightly", `{"name":"nightly","cron":"0 3 * * *"}`); c != http.StatusConflict || !strings.Contains(b, "ambiguous_schedule") {
+		t.Errorf("editing nightly by the name alone, as one who reads both = %d %s, want 409 ambiguous_schedule", c, b)
+	}
+	// To one who reads one of them the name is that one (2.5.0 C2, question 72:
+	// another agency's schedule of the name is not counted, so "ambiguous" no
+	// longer says that it exists).
+	if c, b := code(gFinAdmin, http.MethodGet, "/api/v1/schedule-defs/nightly?source=cronomicon", ""); c != http.StatusOK || !strings.Contains(b, `"ownerAgency":"ag:FIN"`) {
+		t.Errorf("FIN reading nightly by the name alone = %d %s, want FIN's", c, b)
 	}
 
 	// A job binds its own agency's; an edit of FIN's reaches FIN's job only.

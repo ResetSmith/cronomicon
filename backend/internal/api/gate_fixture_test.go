@@ -106,6 +106,12 @@ func gateServerWith(t *testing.T, adjust func(*config.Config)) (http.Handler, *s
 		}
 		exec(`INSERT INTO access_grants (id, ad_group, role, agency_id, all_scopes, created_at)
 		      VALUES (?,?,?,?,?,'2026-01-01T00:00:00Z')`, "g:"+group, group, role, ag, all)
+		// 2.5.0 C5: each agency grant's group is on its agency's list, so these
+		// grants are as they were before the lists existed (no notice, and
+		// editable by their delegates).
+		if ag != nil {
+			exec(`INSERT INTO agency_groups (agency_id, ad_group, created_at) VALUES (?,?,'2026-01-01T00:00:00Z')`, ag, group)
+		}
 	}
 	grant(gRoot, "admin", "")
 	grant(gFinAdmin, "admin", "FIN")

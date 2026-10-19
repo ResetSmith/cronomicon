@@ -171,7 +171,9 @@ func CloneScope(ctx context.Context, database *sql.DB, srcID, name, targetAgency
 	if err := tx.Commit(); err != nil {
 		return nil, counts, err
 	}
-	audit(ctx, database, actor, "Scopes", "created", name, "cloned from the scope "+srcID)
+	// The copy's agency's row, naming where it came from (D1).
+	audit(ctx, database, ownerOrGlobalAgency(targetAgency), actor, "Scopes", "created", name,
+		"cloned from the scope "+srcID+" of "+RowAgency(ctx, database, "scopes", "owner_agency", srcID))
 	sc, err := GetScope(ctx, database, id)
 	return sc, counts, err
 }

@@ -24,8 +24,8 @@ func TestI1_ACalendarIsItsAgencys(t *testing.T) {
 	if c := code(gFinAdmin, http.MethodPost, "/api/v1/calendars", `{"name":"fin-holidays","ownerAgency":"ag:FIN","days":[{"day":"2026-12-25"}]}`); c != http.StatusCreated {
 		t.Fatalf("FIN creating its calendar = %d, want 201", c)
 	}
-	if c := code(gTaxAdmin, http.MethodPut, "/api/v1/calendars/fin-holidays/days", `{"days":[]}`); c != http.StatusForbidden {
-		t.Errorf("TAX replacing FIN's calendar's days = %d, want 403", c)
+	if c := code(gTaxAdmin, http.MethodPut, "/api/v1/calendars/fin-holidays/days", `{"days":[]}`); c != http.StatusNotFound {
+		t.Errorf("TAX replacing FIN's calendar's days = %d, want 404 (question 72: not TAX's to read)", c)
 	}
 	if c := code(gFinAdmin, http.MethodPost, "/api/v1/calendars", `{"name":"for-global"}`); c != http.StatusForbidden {
 		t.Errorf("FIN creating Global's calendar = %d, want 403", c)

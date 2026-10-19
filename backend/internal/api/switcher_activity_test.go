@@ -51,21 +51,30 @@ func TestSwitcherAnAgencysOwnSyncsAndChangesAreInItsActivity(t *testing.T) {
 	if b := feed("ag:FIN"); !strings.Contains(b, "S0_ACT_FIN") {
 		t.Errorf("FIN's Activity does not show the change made in it")
 	}
-	// Made with no agency named (a script), it names none: Global's, as before.
+	// Made with no agency named (a script), it is still its object's: FIN's
+	// variable is FIN's (2.5.0 C1, question 74; 2.4.4 recorded the request's
+	// agency, and so Global's). Its change log row says so too.
 	if r := gateReq(t, h, http.MethodPost, "/api/v1/env-vars", gFinAdmin, `{"key":"S0_ACT_NONE","value":"v","scope":"fin-hosts"}`); r.Code != http.StatusCreated {
 		t.Fatalf("create with no agency named: %d %s", r.Code, r.Body)
 	}
 	if err := pool.QueryRow(`SELECT agency_id FROM activity WHERE kind = 'config' AND summary LIKE '%S0_ACT_NONE%' ORDER BY id DESC LIMIT 1`).Scan(&agency); err != nil {
 		t.Fatalf("its Activity row: %v", err)
 	}
-	if agency != nil {
-		t.Errorf("a change made with no agency named is recorded as %q's", *agency)
+	if agency == nil || *agency != "ag:FIN" {
+		t.Errorf("a change to FIN's variable made with no agency named is recorded as %v's, want ag:FIN", agency)
+	}
+	if err := pool.QueryRow(`SELECT agency_id FROM change_log WHERE target = 'S0_ACT_NONE' ORDER BY rowid DESC LIMIT 1`).Scan(&agency); err != nil {
+		t.Fatalf("its change log row: %v", err)
+	}
+	if agency == nil || *agency != "ag:FIN" {
+		t.Errorf("its change log row is recorded as %v's, want ag:FIN", agency)
 	}
 }
 
 // A change to the installation (Settings → Installation, requireGlobal) is
-// Global's, whichever agency the administrator is viewing: neither its
-// Activity row nor its change log entry names the agency.
+// Global's, whichever agency the administrator is viewing: its rows are
+// Global's (2.5.0 C1: named, where 2.4.4 left them empty), and its change log
+// entry names no "acting in".
 func TestSwitcherAnInstallationChangeIsGlobalsWhereverItIsMade(t *testing.T) {
 	h, pool := gateServer(t)
 	seedSwitcher(t, pool)
@@ -79,14 +88,18 @@ func TestSwitcherAnInstallationChangeIsGlobalsWhereverItIsMade(t *testing.T) {
 	if r := gateReqWithHeader(t, h, http.MethodPut, "/api/v1/settings/general", gRoot, cur.Body.String(), agencyctx.Header, "ag:FIN"); r.Code != http.StatusOK {
 		t.Fatalf("save the general settings while viewing FIN: %d %s", r.Code, r.Body)
 	}
-	var logs, logsNamed, acts, actsNamed int
-	_ = pool.QueryRow(`SELECT COUNT(*), COUNT(acting_agency) FROM change_log WHERE rowid > ?`, lastLog).Scan(&logs, &logsNamed)
-	_ = pool.QueryRow(`SELECT COUNT(*), COUNT(agency_id) FROM activity WHERE id > ?`, lastAct).Scan(&acts, &actsNamed)
-	if logs+acts == 0 {
-		t.Fatalf("saving the general settings recorded nothing to check")
+	var logs, logsActing, logsGlobal, acts, actsGlobal int
+	_ = pool.QueryRow(`SELECT COUNT(*), COUNT(acting_agency), COUNT(CASE WHEN agency_id = 'global' THEN 1 END)
+	                     FROM change_log WHERE rowid > ?`, lastLog).Scan(&logs, &logsActing, &logsGlobal)
+	_ = pool.QueryRow(`SELECT COUNT(*), COUNT(CASE WHEN agency_id = 'global' THEN 1 END) FROM activity WHERE id > ?`, lastAct).Scan(&acts, &actsGlobal)
+	if logs == 0 || acts == 0 {
+		t.Fatalf("saving the general settings recorded %d change log and %d Activity rows; want one of each", logs, acts)
 	}
-	if logsNamed != 0 || actsNamed != 0 {
-		t.Errorf("an installation change made while viewing FIN names an agency: %d of %d change log rows, %d of %d Activity rows",
-			logsNamed, logs, actsNamed, acts)
+	if logsActing != 0 {
+		t.Errorf("an installation change made while viewing FIN says it was acting in it: %d of %d change log rows", logsActing, logs)
+	}
+	if logsGlobal != logs || actsGlobal != acts {
+		t.Errorf("an installation change made while viewing FIN is not Global's: %d of %d change log rows, %d of %d Activity rows",
+			logsGlobal, logs, actsGlobal, acts)
 	}
 }

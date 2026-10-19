@@ -240,20 +240,36 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, acto
 
 	// 4. Write the file into the working tree.
 	absPath := filepath.Join(s.cloneDir, req.FilePath)
-	if err := os.MkdirAll(filepath.Dir(absPath), 0o750); err != nil {
-		return nil, fmt.Errorf("mkdir: %w", err)
-	}
-	if err := os.WriteFile(absPath, []byte(req.Content), 0o640); err != nil {
-		return nil, fmt.Errorf("write file: %w", err)
-	}
-
-	// 5. Stage and commit.
+	_, statErr := os.Lstat(absPath)
+	existed := statErr == nil
 	wt, err := repo.Worktree()
 	if err != nil {
 		return nil, fmt.Errorf("worktree: %w", err)
 	}
+	// A failure from here to the commit puts the clone back as the publish
+	// found it (2.5.0 C7.5, question 100): a file it added is removed, and the
+	// hard reset to the clone's commit restores one it replaced. Until then
+	// only a failed push was taken back, and a failure staging or committing
+	// left the written file in the clone until the next sync.
+	undo := func(why error) error {
+		if !existed {
+			_ = os.Remove(absPath)
+		}
+		if uerr := takeBackCommit(repo, wt, cloneRef); uerr != nil {
+			s.logError("publish: could not put the clone back; the next sync resets it", "repo_id", s.repo(), "err", uerr)
+		}
+		return why
+	}
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o750); err != nil {
+		return nil, fmt.Errorf("mkdir: %w", err)
+	}
+	if err := os.WriteFile(absPath, []byte(req.Content), 0o640); err != nil {
+		return nil, undo(fmt.Errorf("write file: %w", err))
+	}
+
+	// 5. Stage and commit.
 	if _, err := wt.Add(req.FilePath); err != nil {
-		return nil, fmt.Errorf("git add: %w", err)
+		return nil, undo(fmt.Errorf("git add: %w", err))
 	}
 
 	msg := req.CommitMessage
@@ -270,7 +286,7 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, acto
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("git commit: %w", err)
+		return nil, undo(fmt.Errorf("git commit: %w", err))
 	}
 
 	// 6. Push to GitLab, explicitly targeting the configured branch. Not

@@ -214,10 +214,12 @@ func TestRowLevelFilterDoesNotAudit(t *testing.T) {
 	}
 	// Sanity: the filter must actually have dropped something, or this test would
 	// pass for the wrong reason (nothing to audit ⇒ no rows regardless).
-	if !seen["EV_PROD"] || !seen["EV_GLOBAL"] {
-		t.Fatalf("in-scope/global vars missing — fixture wrong: %v", seen)
+	if !seen["EV_PROD"] {
+		t.Fatalf("in-scope var missing — fixture wrong: %v", seen)
 	}
-	if seen["EV_STAGING"] {
+	// Global's agency-wide variable is only theirs who reach every agency
+	// (2.5.0 C2, question 77): another row the filter drops, also unaudited.
+	if seen["EV_STAGING"] || seen["EV_GLOBAL"] {
 		t.Fatalf("out-of-scope var leaked — the filter under test did not run: %v", seen)
 	}
 

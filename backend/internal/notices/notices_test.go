@@ -3,6 +3,7 @@ package notices_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -274,6 +275,25 @@ func TestRefresherRunsAtMostOncePerInterval(t *testing.T) {
 	}
 	if got := openOf(t, pool, notices.KindOrphaned); len(got) != 1 {
 		t.Fatalf("orphaned after a refresh past the interval = %v, want the runner", got)
+	}
+}
+
+// The checks of other packages (the assignments' update check, 2.5.0 C10.3)
+// run with the inbox's own, once per interval, and their failure is reported.
+func TestRefresherRunsTheExtraChecks(t *testing.T) {
+	pool := open(t)
+	ran := 0
+	r := &notices.Refresher{Interval: time.Hour, Extra: []func(context.Context) error{
+		func(context.Context) error { ran++; return nil },
+		func(context.Context) error { return errors.New("the extra check failed") },
+	}}
+	err := r.Refresh(context.Background(), pool)
+	if ran != 1 || err == nil || !strings.Contains(err.Error(), "the extra check failed") {
+		t.Fatalf("ran %d, err %v", ran, err)
+	}
+	_ = r.Refresh(context.Background(), pool)
+	if ran != 1 {
+		t.Errorf("an extra check ran again inside the interval")
 	}
 }
 

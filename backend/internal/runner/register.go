@@ -260,7 +260,7 @@ func (s *Service) HandleSetSecretInjection(w http.ResponseWriter, r *http.Reques
 		if req.Allow {
 			detail = "secret injection enabled"
 		}
-		_ = settings.WriteChangeLog(r.Context(), s.db, idn.Email, "Runners", "updated", name, detail)
+		_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "runners", "owner_agency", runnerID), idn.Email, "Runners", "updated", name, detail)
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"id": runnerID, "allowSecretInjection": req.Allow})
 }
@@ -375,14 +375,31 @@ func (s *Service) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2.4.4: the agency the request works in (agencyctx). A runner is its
-	// owner's (LR-58); one with no owner row is Global's.
-	out = agencyctx.Keep(r, out, func(rr runnerResponse) string {
-		if rr.OwnerAgency == nil {
-			return ""
+	// Whose each runner is (2.5.0 C2, CF-1: every agency's runners, inventory
+	// and toolchains, were listed to everyone), then the agency the request
+	// works in (2.4.4). A runner is its owner's (LR-58); one with no owner row
+	// is Global's.
+	ownerOf := func(rr runnerResponse) string {
+		if rr.OwnerAgency == nil || rr.OwnerAgency.ID == "" {
+			return agencyid.Global
 		}
 		return rr.OwnerAgency.ID
-	})
+	}
+	// Listed to a reader of its owner, or of an agency it serves (a legacy
+	// placement serves several, and its host keys are each one's to review,
+	// LR-63).
+	reader, _ := auth.IdentityFrom(r.Context())
+	readable := out[:0]
+	for _, rr := range out {
+		ok := reader.ReadsAgency(ownerOf(rr))
+		for _, a := range rr.Agencies {
+			ok = ok || reader.ReadsAgency(a.ID)
+		}
+		if ok {
+			readable = append(readable, rr)
+		}
+	}
+	out = agencyctx.Keep(r, readable, ownerOf)
 
 	// DR-7 (c), re-keyed by MA-32: offer to re-point the scope bindings a
 	// previous enrolment under the same name still holds, for the scopes of each
@@ -703,6 +720,7 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 	// AA-4 rule drain/keyscan/resync already follow. In the transaction, so a
 	// deregistration without its audit row cannot exist.
 	if err := auditlog.WriteActivity(r.Context(), tx, auditlog.ActivityParams{
+		AgencyID:   runnerAgency(r.Context(), tx, runnerID), // read before the DELETE below
 		At:         ts,
 		Kind:       "config",
 		Actor:      sessionActor(r),
@@ -727,6 +745,9 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db commit error")
 		return
 	}
+	// Its processes went with the row (C6a): nothing is left to share the
+	// identity, and nothing would ever poll to resolve the notice.
+	s.clearIdentityShared(r.Context(), runnerID)
 
 	// Drop the drift flap-guard entry — ids are never reused, so keeping it
 	// would only leak an entry per deregistered runner for the process lifetime.
@@ -808,7 +829,7 @@ func (s *Service) HandleTestRunner(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_ = settings.WriteChangeLog(r.Context(), s.db, idn.Email, "Runners", "tested", name, resultStatus)
+	_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "runners", "owner_agency", runnerID), idn.Email, "Runners", "tested", name, resultStatus)
 
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"status":    resultStatus,

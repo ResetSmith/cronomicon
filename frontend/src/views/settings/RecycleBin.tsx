@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, csrfHeader } from "../../api/client";
 import { c } from "../../theme";
-import { COMPOSE_ADMIN_ONLY } from "../../api/globalAdmin";
 import { Btn, Card, errMsg, fmtDateTime, tdStyle, thStyle } from "./ui";
 
 // Recycle Bin (RH-F, the prod-features plan §4).
@@ -32,23 +31,12 @@ function daysUntil(iso?: string | null): string {
   return days === 1 ? "tomorrow" : `in ${days} days`;
 }
 
-// GC (v2.2.2) — the bin is cross-agency (it holds every department's deleted
-// definitions), so its list, restore and purge all need `composeAdmin`: compose
-// AND configureApp on one all-agencies grant. GET /recycle-bin itself is refused
-// without it, so an administrator of one agency must not fetch and then read
-// "forbidden" — the section says who can use it instead, and the list (with its
-// hooks) mounts only when the read will be answered.
-export function RecycleBinSection({ canWrite }: { canWrite: boolean }) {
-  if (!canWrite) {
-    return (
-      <Card title="Recycle Bin">
-        <div role="note" style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-          {COMPOSE_ADMIN_ONLY} The bin holds every agency's deleted definitions, so it is not listed for an
-          administrator of one.
-        </div>
-      </Card>
-    );
-  }
+// Since 2.5.0 (C3, SO-2) the bin is compose on the definition's agency: GET
+// /recycle-bin lists the deleted definitions of the agencies the caller
+// composes on (every agency's for a global composer), and restore and purge
+// ask the same of each one. Until then it was `composeAdmin`'s (GC, v2.2.2)
+// and said so in place of its list.
+export function RecycleBinSection() {
   return <RecycleBinList />;
 }
 

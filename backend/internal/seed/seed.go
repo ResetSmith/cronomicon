@@ -192,6 +192,11 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		exec(`INSERT INTO access_grants (id, ad_group, role, agency_id, all_scopes, created_by, created_at, last_modified_by, last_modified_at)
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			db.NewID(), g.group, g.role, agency, all, dev, ago(20*day), dev, ago(20*day))
+		// 2.5.0 C5 (GA-1): an agency grant's group is on that agency's list.
+		if g.agency != "" {
+			exec(`INSERT OR IGNORE INTO agency_groups (agency_id, ad_group, created_by, created_at) VALUES (?, ?, ?, ?)`,
+				g.agency, g.group, dev, ago(20*day))
+		}
 	}
 
 	// ── Recent logins (A3.2 Honest View) ───────────────────────────────────────
@@ -448,6 +453,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		// Dashboard's "last 24h" panels and the History timeline render.
 		audit("INSERT INTO activity", func() error {
 			return auditlog.WriteActivity(ctx, tx, auditlog.ActivityParams{
+				AgencyID:     agencyid.Global, // the demo's history is Global's
 				At:           ago(a.age),
 				Kind:         a.kind,
 				Outcome:      a.outcome,
@@ -483,7 +489,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	}
 	for _, c := range changes {
 		audit("INSERT INTO change_log", func() error {
-			return auditlog.WriteChangeLogAt(ctx, tx, ago(c.age),
+			return auditlog.WriteChangeLogAt(ctx, tx, ago(c.age), agencyid.Global, // the demo's history is Global's
 				c.actor, c.category, c.action, c.target, c.details)
 		})
 	}
@@ -763,8 +769,13 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	}
 
 	// ── Singleton configs + global settings ────────────────────────────────────
-	exec(`INSERT INTO notification_config (id, smtp_host, smtp_port, smtp_from, apprise_targets, last_modified_by, last_modified_at)
-	      VALUES (1, 'smtp.corp.example', 587, 'cronomicon@corp.example', '[{"label":"On-call","service":"email","url":"mailto://oncall@corp.example","enabled":true}]', ?, ?)`, dev, ago(9*day))
+	exec(`INSERT INTO notification_config (id, smtp_host, smtp_port, smtp_from, last_modified_by, last_modified_at)
+	      VALUES (1, 'smtp.corp.example', 587, 'cronomicon@corp.example', ?, ?)`, dev, ago(9*day))
+	// Global's push target (1540), named by every rule above, as the upgrade
+	// names every target from every rule.
+	exec(`INSERT INTO alert_targets (id, owner_agency, label, service, url, enabled, position, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('demo-oncall', 'global', 'On-call', 'email', 'mailto://oncall@corp.example', 1, 0, ?, ?, ?, ?)`, dev, ago(9*day), dev, ago(9*day))
+	exec(`INSERT INTO alert_rule_targets (rule_id, target_id) SELECT id, 'demo-oncall' FROM alert_config`)
 	// The connection of Global's repository. The URL is left EMPTY on purpose:
 	// the demo data is not in a repository, and a URL here would send the sync
 	// service off to clone a host that does not exist. (The four columns this

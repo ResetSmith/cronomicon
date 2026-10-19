@@ -477,18 +477,25 @@ func shellScopes(ctx context.Context, db *sql.DB) ([]ShellScope, error) {
 	return out, nil
 }
 
-// Placed are the agencies the local runner serves after the upgrade when the
-// SSH executor was on: Global, which it serves from the moment its row exists,
-// and those of every unbound scope whose shell jobs ran from the server, where
-// the upgrade pass places it.
-func (r Report230) Placed() []string {
-	seen := map[string]bool{"Global": true}
+// Placed are the agencies the local runner serves after the upgrade: Global
+// alone. Since 2.4.0 the local runner is Global's and serves no other agency
+// (§0a, IN-3); until then the 2.3.0 upgrade pass placed it in every agency
+// whose shell jobs had run from the server, and that pass was retired in 2.5.0.
+func (r Report230) Placed() []string { return []string{"Global"} }
+
+// NeedAgents are the agencies other than Global whose shell jobs ran from the
+// server: after the upgrade the local runner does not serve them, so their runs
+// wait for a runner of their own.
+func (r Report230) NeedAgents() []string {
+	seen := map[string]bool{}
 	for _, s := range r.ShellScopes {
 		if !s.FromServer {
 			continue
 		}
 		for _, a := range s.Agencies {
-			seen[a] = true
+			if a != "Global" {
+				seen[a] = true
+			}
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -618,8 +625,13 @@ func (r Report230) Write(w io.Writer, sshExecutor *bool) {
 		p("  and is turned on under Settings → Local runner by a global administrator.")
 	}
 	if sshExecutor == nil || *sshExecutor {
-		p("  It will serve: %s — Global, which it serves from the start,", strings.Join(r.Placed(), ", "))
-		p("  and the agencies whose shell jobs ran from the server.")
+		p("  It will serve: %s. The local runner is Global's and serves no other agency", strings.Join(r.Placed(), ", "))
+		p("  (from 2.4.0).")
+		if need := r.NeedAgents(); len(need) > 0 {
+			p("  The shell jobs of %s ran from the server: after the upgrade they wait", strings.Join(need, ", "))
+			p("  for a runner of their own agency. Enrol an agent for each before upgrading, or")
+			p("  their runs queue.")
+		}
 	}
 	var toAgent, toServer []ShellScope
 	placed := map[string]bool{}

@@ -79,6 +79,7 @@ func TestRunsListBuildsOneRedactorPerScope(t *testing.T) {
 	req = req.WithContext(auth.WithIdentity(req.Context(), auth.Identity{
 		Roles:         []string{"admin"},
 		AllowedScopes: []string{auth.AllScopes},
+		Grants:        []auth.RoleGrant{{Role: "admin", Scopes: []string{auth.AllScopes}}},
 	}))
 	w := httptest.NewRecorder()
 	s.listRuns(w, req)

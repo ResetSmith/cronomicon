@@ -280,7 +280,7 @@ func (s *Server) handleDismissNotices(w http.ResponseWriter, r *http.Request) {
 		}
 		if changed {
 			dismissed++
-			_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Notices", "Dismissed", n.Kind+" "+n.Subject, n.Detail)
+			_ = workflow.InsertChangeLog(r.Context(), s.db, agencyOrGlobal(n.AgencyID), id.Email, "Notices", "Dismissed", n.Kind+" "+n.Subject, n.Detail)
 		}
 	}
 	if len(pinIDs) > 0 {

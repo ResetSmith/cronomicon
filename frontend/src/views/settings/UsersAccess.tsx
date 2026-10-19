@@ -38,15 +38,16 @@ const PERMISSION_LABELS: { key: keyof RolePermissions; label: string; hint: stri
   { key: "publishSchedule", label: "Publish to the repository", hint: "Publish job and schedule definitions to their agency's repository." },
   { key: "configureApp", label: "Configure application", hint: "Settings, integrations, scopes, runners and SSH configuration." },
   { key: "manageRoles", label: "Manage roles & access", hint: "This screen: roles and access grants." },
-  // AF-2. The hint states BOTH halves of the rule, because the permission is
-  // narrower than its name suggests: it is agency-bound, and it stops at the
-  // shared objects (schedules, calendars, the recycle bin) that stay admin-only.
+  // AF-2. The hint states BOTH halves of the rule: it is agency-bound, and
+  // Global's definitions are a global administrator's. Since 2.4.x reusable
+  // schedules and calendars, and since 2.5.0 (SO-2) the recycle bin and a
+  // definition's revisions, are compose on their own agency, not admin-only.
   {
     key: "compose",
     label: "Create jobs & workflows",
     hint:
-      "Author jobs and workflows within the agencies this role is granted. Global (All) definitions, " +
-      "reusable schedules, calendars and the recycle bin stay admin-only.",
+      "Author jobs, workflows, reusable schedules and calendars within the agencies this role is granted, " +
+      "and restore their deleted definitions from the Recycle Bin. Global's definitions are a global administrator's.",
   },
 ];
 
@@ -349,10 +350,26 @@ function AccessGrantsCard() {
   // manageRoles. `unrestricted` is permission-blind — a viewer on all scopes who
   // delegates for one agency read as unrestricted and was offered an option the
   // server now refuses.
-  const [canGrantEverywhere, setCanGrantEverywhere] = useState(false);
+  // null until capabilities are read, so neither form is shown as the wrong one.
+  const [canGrantEverywhere, setCanGrantEverywhere] = useState<boolean | null>(null);
   useEffect(() => {
     fetchCapabilities().then((caps) => setCanGrantEverywhere(!!caps.manageRolesGlobal));
   }, []);
+  // GA-3 (2.5.0 C5) — an agency's grants name a group a global administrator
+  // listed for it, and a delegate grants only to those (GA-1), so for one the
+  // group is picked from the agency's list rather than typed. A global
+  // administrator is not bound, and types it; the form says when the group is
+  // not listed, since such a grant is listed in Notices (question 84).
+  const delegate = canGrantEverywhere === false;
+  const listQ = useGet<{ groups?: string[] }>(
+    () =>
+      where && where !== "*"
+        ? api.GET("/agencies/{agencyId}/groups", { params: { path: { agencyId: where } } })
+        : Promise.resolve({ data: null }),
+    [where],
+  );
+  const listed = !where || where === "*" || listQ.loading || listQ.error ? null : (listQ.data?.groups ?? []);
+  const whereName = grantable.find((a) => a.id === where)?.name ?? where;
 
   // RF-18 — find/filter/sort. Search matches the group AND the where, because
   // "who can touch Tax?" and "what does SG-Ops hold?" are the two questions this
@@ -414,11 +431,38 @@ function AccessGrantsCard() {
       </div>
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", padding: 16, borderBottom: `1px solid ${c.border}`, flexWrap: "wrap" }}>
-        <input value={adGroup} onChange={(e) => setAdGroup(e.target.value)} placeholder="SG-Cronomicon-Tax" style={{ ...inputStyle(), flex: 1, minWidth: 200 }} />
+        {delegate ? (
+          <select
+            aria-label="AD group"
+            value={adGroup}
+            onChange={(e) => setAdGroup(e.target.value)}
+            disabled={!listed || listed.length === 0}
+            style={{ ...inputStyle(), flex: 1, minWidth: 200, cursor: "pointer" }}
+          >
+            <option value="">
+              {!where ? "Pick where first…" : listQ.loading ? "Loading groups…" : listed && listed.length > 0 ? "AD group…" : "No groups listed"}
+            </option>
+            {(listed ?? []).map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input value={adGroup} onChange={(e) => setAdGroup(e.target.value)} placeholder="SG-Cronomicon-Tax" style={{ ...inputStyle(), flex: 1, minWidth: 200 }} />
+        )}
         <select value={role} onChange={(e) => setRole(e.target.value)} style={{ ...inputStyle(), width: 150, cursor: "pointer" }}>
           {roles.map((r) => <option key={r.name} value={r.name ?? ""}>{r.name}</option>)}
         </select>
-        <select value={where} onChange={(e) => setWhere(e.target.value)} style={{ ...inputStyle(), width: 190, cursor: "pointer" }}>
+        <select
+          value={where}
+          onChange={(e) => {
+            setWhere(e.target.value);
+            // A group picked from one agency's list is not another's.
+            if (delegate) setAdGroup("");
+          }}
+          style={{ ...inputStyle(), width: 190, cursor: "pointer" }}
+        >
           <option value="">Where…</option>
           {/* AF-3 — "everywhere" is not a departmental administrator's to give,
               so it is not offered to one (the server refuses it either way). The
@@ -431,6 +475,17 @@ function AccessGrantsCard() {
         </select>
         <Btn primary onClick={add} disabled={busy || !adGroup.trim() || !role || !where}>+ Add</Btn>
       </div>
+      {where && where !== "*" && (() => {
+        const note = (text: string, color: string = c.textSec) => (
+          <div style={{ padding: "8px 16px", borderBottom: `1px solid ${c.border}`, fontSize: c.fontXs, color }}>{text}</div>
+        );
+        if (delegate && listQ.error) return note(`${whereName}'s groups could not be read: ${listQ.error}`, c.danger);
+        if (delegate && listed && listed.length === 0)
+          return note(`No groups are listed for ${whereName}. A global administrator lists the groups an agency's grants may name (Scopes → Agencies).`, c.warning);
+        if (!delegate && listed && adGroup.trim() && !listed.includes(adGroup.trim()))
+          return note(`${adGroup.trim()} is not on ${whereName}'s group list (matched exactly). The grant works, and is listed in Notices until the group is listed (Scopes → Agencies).`, c.warning);
+        return null;
+      })()}
 
       {err && <div style={{ padding: 16 }}><AlertBanner type="danger">{err}</AlertBanner></div>}
 

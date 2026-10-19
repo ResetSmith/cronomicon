@@ -171,8 +171,10 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		if !scheduleOwnerReadable(id, hasID, sr) {
 			continue
 		}
-		// 2.4.4: the agency the request works in, on top of what may be read.
-		if !agencyctx.In(r, sr.ownerAgency) {
+		// Whose the entry is (2.5.0 C2, CF-1: a workflow's entries, and a
+		// no-scope job's, plaintext env and all, passed the scope filter for
+		// everyone), then the agency the request works in (2.4.4).
+		if !readsAgency(r, sr.ownerAgency) || !agencyctx.In(r, sr.ownerAgency) {
 			continue
 		}
 		readable = append(readable, sr)
@@ -383,8 +385,10 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		if !scheduleOwnerReadable(id, hasID, sr) {
 			continue
 		}
-		// 2.4.4: the agency the request works in, on top of what may be read.
-		if !agencyctx.In(r, sr.ownerAgency) {
+		// Whose the entry is (2.5.0 C2, CF-1: a workflow's entries, and a
+		// no-scope job's, plaintext env and all, passed the scope filter for
+		// everyone), then the agency the request works in (2.4.4).
+		if !readsAgency(r, sr.ownerAgency) || !agencyctx.In(r, sr.ownerAgency) {
 			continue
 		}
 		key := defKey{sr.source, sr.kind, sr.owner}
@@ -446,7 +450,7 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 	// pending id, so the UI can offer Cancel) and interleaved by instant.
 	// 'missed' rows ride a separate key: they are not upcoming, but silently
 	// hiding them would defeat the point of keeping them.
-	adhoc, missed := s.pendingRunItems(ctx, id, hasID, now, end, func(owner string) bool { return agencyctx.In(r, owner) })
+	adhoc, missed := s.pendingRunItems(ctx, id, hasID, now, end, func(owner string) bool { return readsAgency(r, owner) && agencyctx.In(r, owner) })
 	if len(adhoc) > 0 {
 		items = append(items, adhoc...)
 		sort.Slice(items, func(i, j int) bool {

@@ -15,6 +15,8 @@ import { MemoryRouter } from "react-router-dom";
 let composeOn = true;
 // GC (v2.2.2) — revision history is a compose ADMINISTRATOR's (see the last block).
 let composeAdminOn = false;
+// 2.5.0 C7.3 — giving a Git job to an agency is a global administrator's.
+let globalAdminOn = false;
 // What DELETE /jobs/{jobId} answers with. 409 is the server's git-source guard.
 let deleteStatus = 200;
 const deletes: { path: string; jobId: unknown }[] = [];
@@ -69,6 +71,7 @@ vi.mock("../api/client", async (importOriginal) => {
       configureApp: false,
       manageEnvVars: false,
       publishSchedule: true,
+      configureAppGlobal: globalAdminOn,
     })),
   };
 });
@@ -78,6 +81,7 @@ import { Jobs } from "./Jobs";
 beforeEach(() => {
   composeOn = true;
   composeAdminOn = false;
+  globalAdminOn = false;
   deleteStatus = 200;
   deletes.length = 0;
 });
@@ -208,25 +212,41 @@ describe("Jobs — expanded-row Delete", () => {
 // departmental composer, who used to open the dialog and read "could not load
 // history". They keep the row's History button — they do compose — disabled
 // with the reason (FX-7). Edit and Delete are per-scope compose and unaffected.
-describe("Jobs — row History needs a compose administrator (GC)", () => {
-  const WHY = /only a global administrator \(a role on every agency\) can change them\./;
+// 2.5.0 C7 (C3, SO-2): History is compose on the definition's agency, which the
+// server decides, as for Edit and Delete: the button is live for any composer.
+describe("Jobs — row History for a composer (SO-2)", () => {
   const history = (q: ReturnType<typeof within>) => q.getByRole("button", { name: "History" }) as HTMLButtonElement;
 
-  it("disables History with the reason for a departmental composer, and leaves Delete live", async () => {
-    const q = await renderJobs();
-    expandRow(q, "cronomicon-job");
-    await waitFor(() => expect(history(q)).toBeTruthy());
-    expect(history(q).disabled).toBe(true);
-    expect(history(q).title).toMatch(WHY);
-    expect((deleteBtn(q) as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it("enables History for a compose administrator", async () => {
-    composeAdminOn = true;
+  it("leaves History live for a departmental composer", async () => {
     const q = await renderJobs();
     expandRow(q, "cronomicon-job");
     await waitFor(() => expect(history(q)).toBeTruthy());
     expect(history(q).disabled).toBe(false);
     expect(history(q).title).toBe("");
+    expect((deleteBtn(q) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+// 2.5.0 C7.3 (IN-12, question 98): "Give to an agency…" on a Git job, for a
+// global administrator only; a job built in the app is not a file to commit.
+describe("Jobs — give a Git job to an agency (C7.3)", () => {
+  const give = (q: ReturnType<typeof within>) => q.queryByRole("button", { name: "Give to an agency…" });
+
+  it("offers it on a Git job to a global administrator, and not on a job built in the app", async () => {
+    globalAdminOn = true;
+    const q = await renderJobs();
+    expandRow(q, "git-job");
+    await waitFor(() => expect(give(q)).toBeTruthy());
+    expandRow(q, "git-job");
+    expandRow(q, "cronomicon-job");
+    await waitFor(() => expect(q.getByRole("button", { name: "History" })).toBeTruthy());
+    expect(give(q)).toBeNull();
+  });
+
+  it("does not offer it to anyone else", async () => {
+    const q = await renderJobs();
+    expandRow(q, "git-job");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(give(q)).toBeNull();
   });
 });

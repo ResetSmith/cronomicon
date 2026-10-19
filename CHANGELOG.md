@@ -13,6 +13,177 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.5.0] - 2026-10-19
+
+Confidential reads, and agencies that stand on their own: an agency's rows are
+read by its own people and by those whose access reaches every agency, and
+nobody else; its alerts, its recycle bin, the groups its grants may name and
+its concurrency are its own; a global administrator hands a job or workflow to
+an agency as one commit into its repository, and is told when the original
+changes. A copied runner identity file is detected. The first published release
+since 2.2.3: the upgrade below reads every step from 2.2.3 as one. Seven
+migrations in this release (1520 to 1580, schema v1580); runner protocol 14 is
+unchanged.
+
+### Upgrading from 2.2.3 (or any release since)
+
+Production and every published image go from 2.2.3 to 2.5.0 in one step. What
+each release in between did is in its own entry below; what has to be done, in
+order, is here. An installation with no data has nothing to do but upgrade the
+agents with the server.
+
+1. **Before you stop the old server, let queued runs finish, or cancel them.**
+   A run still queued for the in-app SSH executor of 2.2.x is claimed by
+   nothing from 2.5.0 on: the 2.3.0 pass that moved such runs to the local
+   runner is retired in this release (below). The same goes for a run pinned
+   to a runner tag (2.3.0): bind the scope after the upgrade, or let it finish
+   first.
+2. **Take a backup**, then run the report with the new binary against the
+   existing database: `cronomicon preflight` (read-only). It covers what 2.3.0
+   changes on first start; there is no 2.4.0 or 2.5.0 section, as their
+   conversions are reported in the Notices inbox instead.
+3. **Upgrade every agent with the server** (**Copy upgrade command** on a
+   runner's row). Protocol 14 is the floor. Drain the agents first or run the
+   command when nothing is running: the agents being replaced are older than
+   2.3.2 and end their runs when they are stopped. An installed agent's unit
+   needs `KillMode=mixed` (the upgrade command adds it; a unit you wrote needs
+   the line). Several agencies' agents on one machine: give each unit a limit
+   (2.3.1). **An agent that served several agencies before 2.3.0** (a legacy
+   placement, Global's) takes only Global's runs from 2.4.0: enrol an agent
+   for each other agency it served, or hand it over (Runners), before you
+   upgrade, or that agency's runs wait.
+4. **Read the Notices inbox.** Every conversion that needs a person is listed
+   there, by agency: what was shared before 2.4.0 stays Global's and stops
+   where it reached another agency (`workflow_spans_agencies`,
+   `reaction_other_agency`, `global_job_on_agency_scope`, `global_script_job`,
+   `global_schedule_bound`, `global_credential_bound`, `global_host_record`,
+   `global_calendar_scope`, `local_runner_served`, `agency_no_repository`);
+   the pins 2.3.0 could not convert (banner on Scopes); and, new in 2.5.0,
+   `grant_group_unlisted` for every grant an agency's administrators made
+   (below).
+5. **List each agency's directory groups** (Scopes → Agencies, an agency's
+   panel, **Edit groups**). The lists start empty, so an agency's
+   administrators cannot grant access to any group until a global
+   administrator lists it; the grants already made keep working.
+6. **Give each agency its repository** if it has none (Settings →
+   Repositories): every agency syncs its own, and the single GitLab connection
+   of 2.2.x became Global's (its webhook is on unless it was configured off).
+   The connection's token must be able to push.
+
+**What reads differently after the upgrade.** People of one agency no longer
+see Global's rows (its jobs, runs, scopes, runners, notices and the rest),
+nor its activity; only a global administrator and a viewer of every agency do.
+A request that names an object the caller may not read is answered 404. An
+existing alert rule is Global's, and so is every existing push target; each
+rule pushes where it pushed before. The audit export's rows and stream lines
+gain an `agency` column (last), after 2.4.4's `actingAgency`.
+
+### Added
+
+- **Settings → Alerts**, per agency: an agency's alert rules and push targets,
+  changed by its administrators. A rule matches only its own agency's runs (a
+  Global rule matches every agency's), names its own agency's job, and pushes
+  to the targets it names, picked on the rule; a push no longer goes to every
+  target. A target's URL is read only by its agency's administrators. The
+  relay's default recipients are added to Global rules' mail only.
+- **Each agency's group list**: a global administrator lists the directory
+  groups an agency's grants may name (matched exactly); an agency's
+  administrator of access grants only to those. A grant that names a group no
+  longer listed keeps working and is listed in Notices.
+- **A concurrency cap per agency** (Scopes → Agencies, an agency's panel),
+  Global's included, beside the installation's.
+- **Give to an agency…** on a Git job or workflow, for a global administrator:
+  one commit into the agency's repository carries the definition and what it
+  needs that the agency does not have (a job's script and schedules; a
+  workflow's jobs, their scripts, its sub-workflows), each copied job on a
+  scope of the agency's own, each YAML file stamped with `metadata.origin`.
+  What the agency already has by name is used. The answer lists the bindings
+  to make again and what the agency lacks; a calendar it lacks refuses the
+  assignment (calendars are not files until 2.6.0). Giving it again takes an
+  update, which replaces only what changed and never an agency's own change.
+- **`assignment_update_available`** in Notices, under the agency given a
+  copy, when the original changes.
+- **`runner_identity_shared`** in Notices: two agent processes on one identity
+  file (a cloned VM, a snapshot taken after enrolment, two containers on one
+  volume). While both poll, one copy's start no longer fails the other's
+  runs; a crashed agent's runs are closed about a minute after it is
+  restarted, once the old process is seen to be gone. A copy that was paused
+  still loses its runs.
+- **Audit Export** for an agency's administrators (Settings, Agency group):
+  the rows of the agencies they administer, without sign-in events.
+- An agency's panel on Scopes → Agencies shows its repository, the grants
+  that name it and its alerts, each with the way to the page that edits it.
+- **`ghcr.io/resetsmith/cronomicon-validate`**, published with every release:
+  `cronomicon validate` with a shell, for the CI template
+  (`deploy/ci-validate-template.yml` names it).
+
+### Changed
+
+- **The reading rule** (CF-1): an agency's rows are its own people's and those
+  whose access reaches every agency; Global's are the latter's only. Every
+  list, the Activity and change logs included, applies it; a single object
+  the caller may not read answers 404. Each activity and change-log row is
+  its object's agency's.
+- **The recycle bin and a definition's revisions** are compose on the
+  definition's agency: anyone who composes uses them for their agencies
+  (Settings → Recycle Bin, the History buttons).
+- **A waiting run holds up only its own agency** at the installation's cap;
+  running runs count against everyone. The cap is also asked when a run is
+  claimed, so an agent that comes back takes its backlog a slot at a time.
+- **Settings → Notifications is the relay alone.** Global's push targets are
+  shown there read-only and edited under Alerts working in Global, by id,
+  which keeps the rules that name them; `/settings/notifications` no longer
+  carries targets (a `targets` key sent is ignored).
+- A publish that fails before its push leaves the server's clone as it found
+  it (until now only a failed push was taken back).
+- **Terraform is no longer officially supported** (since 2026-10-09), and the
+  manuals and guides stop describing it. A `terraform` job still syncs and
+  runs as before, and the fat runner image still carries it.
+
+### Removed
+
+- `GET`/`PUT /settings/gitlab` and `POST /settings/gitlab/webhook-secret/rotate`
+  (Global's repository before a repository was a row): use
+  `/agencies/global/git-repo` and its `webhook-secret/rotate`.
+- The run request's `executor` field, ignored since 2.3.0; a body that still
+  sends it is accepted and the key is not read.
+- The 2.3.0 local-runner upgrade pass (see Upgrading, step 1).
+
+### Fixed
+
+- A missed-run alert carries its job's identity, so a rule pinned to one
+  agency's job of a name common to several sends for it.
+- A copy of a runner's identity file started beside the original no longer
+  closes the original's live runs as *runner lost*.
+- Waiting runs of one agency no longer stop every other agency's fires at the
+  installation's cap.
+- A publish that failed while staging or committing left its file in the
+  server's clone until the next sync.
+
+### For developers
+
+- `api.routeClasses` classifies every GET route (`TestEveryGetRouteIsClassified`
+  fails on one it does not know); the write-route table every write. A list
+  adds `agencyReadFilter` to its own filter; an unreadable single object is
+  `notReadable` (404).
+- `auditlog.WriteChangeLog` and `settings.audit` take the object's agency;
+  `WriteActivity` works it out from the row's run, workflow run, job or
+  workflow.
+- `internal/runcap` is the one place the cap is decided (`AtProduction`,
+  `ClaimSQL`).
+- `gitlab.CommitFiles` (several new or replaced files in one commit),
+  `gitlab.ReadCommitTree`, `gitlab.Registry.Assign` and
+  `CheckAssignmentUpdates`; `notices.Refresher.Extra` runs checks of other
+  packages.
+- Poll parameter `process=` (a value per agent process), additive within
+  protocol 14.
+- New routes: `/alert-targets` (CRUD), `/agencies/{agencyId}/groups`,
+  `PUT /agencies/{agencyId}/concurrency`, `POST /agencies/{agencyId}/assign`.
+- Migrations: 1520 (audit rows' agency), 1530 `alert_config.owner_agency`,
+  1540 `alert_targets` and `alert_rule_targets`, 1550 `agency_groups`, 1560
+  `agencies.max_concurrent`, 1570 `runner_processes`, 1580 `assignments` and
+  `assignment_files`.
+
 ## [2.4.4] - 2026-10-16
 
 The agency switcher and the Operations overview (the 2.5.0 plan's C9, brought

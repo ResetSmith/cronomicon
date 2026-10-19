@@ -179,13 +179,13 @@ func TestSwitcherBadgesCountWhatEachAgencyHasWaiting(t *testing.T) {
 		}
 		return out
 	}
-	// Two agencies' administrator: each agency's notice and failure; Global's
-	// notice is not theirs to act on.
-	if got := badges(gFinAdmin + "," + gTaxAdmin); len(got) != 3 || got["ag:FIN"] != [2]int{1, 1} || got["ag:TAX"] != [2]int{1, 1} || got["global"] != [2]int{0, 0} {
+	// Two agencies' administrator: each agency's notice and failure; Global is
+	// not one of their choices (2.5.0 C2, question 77).
+	if got := badges(gFinAdmin + "," + gTaxAdmin); len(got) != 2 || got["ag:FIN"] != [2]int{1, 1} || got["ag:TAX"] != [2]int{1, 1} {
 		t.Errorf("fin+tax admin's badges: %v", got)
 	}
-	// One agency's: its own, and Global's (nothing to act on).
-	if got := badges(gFinAdmin); len(got) != 2 || got["ag:FIN"] != [2]int{1, 1} {
+	// One agency's: its own.
+	if got := badges(gFinAdmin); len(got) != 1 || got["ag:FIN"] != [2]int{1, 1} {
 		t.Errorf("fin-admin's badges: %v", got)
 	}
 	// A viewer of everything: every agency's failures, no notices to act on.

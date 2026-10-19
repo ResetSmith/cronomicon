@@ -129,6 +129,12 @@ func (s *Server) runAnalytics(w http.ResponseWriter, r *http.Request) {
 		where += scopeFrag
 		args = append(args, scopeArgs...)
 	}
+	// Whose the run is (2.5.0 C2, CF-1): another agency's no-scope runs were
+	// folded into the totals and the failure-reason clusters.
+	if frag, fargs := agencyReadFilter(r, runOwnerSQL); frag != "" {
+		where += frag
+		args = append(args, fargs...)
+	}
 	// 2.4.4: the agency the request works in, on top of what may be read.
 	if frag, fargs := agencyctx.Narrow(r, runOwnerSQL); frag != "" {
 		where += frag

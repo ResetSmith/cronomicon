@@ -98,6 +98,21 @@ describe("Notices (LR-85)", () => {
     expect(screen.getAllByRole("button", { name: /^Dismiss: / })).toHaveLength(3);
   });
 
+  // 2.5.0 C6a: a copied identity file, under the runner's owner, with the
+  // remedy the server writes and the way to the Runners view.
+  it("names a copied identity file and keeps the remedy the server gives", async () => {
+    NOTICES = [
+      notice("n-copy", "runner_identity_shared", "ag-fin", "Finance",
+        "Runner copied (id r1) is being polled by 2 agent processes at once (seen from 10.0.0.4, 10.0.0.5): ... delete its identity file (identity.json in its state directory), and enrol it ..."),
+    ];
+    open();
+    const section = within(await screen.findByRole("region", { name: "Notices for Finance" }));
+    expect(section.getByText("Two agent processes share one runner's identity")).toBeTruthy();
+    expect(section.getByText(/seen from 10\.0\.0\.4, 10\.0\.0\.5/)).toBeTruthy();
+    expect(section.getByText(/delete its identity file/)).toBeTruthy();
+    expect((section.getByRole("link", { name: "Open Runners" }) as HTMLAnchorElement).getAttribute("href")).toBe("/runners");
+  });
+
   it("says so when nothing needs attention", async () => {
     NOTICES = [];
     open();

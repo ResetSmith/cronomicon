@@ -31,8 +31,10 @@ func unboundRefServer(t *testing.T) (http.Handler, *sql.DB) {
 	}
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-fin','Finance','2026-01-01T00:00:00Z')`)
 	// An UNSCOPED job — the shape that produces an unbound run.
-	exec(`INSERT INTO jobs (name, source, run_type, concurrency_policy, synced_at)
-	      VALUES ('unscoped-job','git','bash','Allow','t')`)
+	// Finance's job with no scope: it runs against Finance's scopes (2.5.0 C2,
+	// question 78: a job with no scope is still one agency's).
+	exec(`INSERT INTO jobs (name, source, run_type, concurrency_policy, synced_at, owner_agency)
+	      VALUES ('unscoped-job','git','bash','Allow','t','ag-fin')`)
 	// One department-owned secret and one global one, so the test can tell the
 	// precise rule from a blunt "has bindings ⇒ refuse".
 	exec(`INSERT INTO secrets(id,key,source,owner_agency,created_at)

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../../api/client";
+import { allReadable, api } from "../../api/client";
 import { GLOBAL_AGENCY } from "../../api/access";
 import { globalOnly } from "../../api/globalAdmin";
 import { useGet, rows, useTableSort } from "../../hooks";
@@ -31,6 +31,8 @@ interface AgencyRow {
   name: string;
   description?: string | null;
   onlineRunnerCount?: number; // M4 coverage — 0 means jobs bound here will wait
+  // 2.5.0 C6 (QT-1): the agency's own concurrency cap; null is none.
+  maxConcurrent?: number | null;
   createdBy?: string;
   lastModifiedAt?: string;
   // R8 — what the caller may do with this row, from the server.
@@ -68,10 +70,13 @@ const SORT_COLS: SortColumn<AgencyRow>[] = [
 export function AgenciesTab({
   canEdit,
   globalAdmin,
+  rolesAdmin = false,
 }: {
   canEdit: boolean;
   /** A global administrator for configureApp: the catalog, Vault paths, and a repair of what an agency holds. */
   globalAdmin: boolean;
+  /** A global administrator for manageRoles: an agency's group list (2.5.0 C5, GA-1). */
+  rolesAdmin?: boolean;
 }) {
   const globalWhy = globalOnly(globalAdmin);
   const rowWhy = (a: AgencyRow, flag: boolean | undefined): string =>
@@ -177,6 +182,14 @@ export function AgenciesTab({
           )}
         </div>
       )}
+      {/* 2.5.0 C7.4 (question 97): the one view whose counts span agencies.
+          A global administrator reads them all; anyone else reads what their
+          grants reach (CF-1), and the counts are of that. */}
+      {filtered.length > 0 && !globalAdmin && (
+        <div role="note" style={{ fontSize: c.fontXs, color: c.textSec, marginBottom: 8 }}>
+          The counts and lists here are of what you may read: an agency you hold no grant on shows less than it has.
+        </div>
+      )}
       {filtered.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody }}>
           <thead>
@@ -254,7 +267,7 @@ export function AgenciesTab({
                       <td style={{ borderBottom: "none" }} />
                       <td colSpan={5} style={{ padding: "2px 16px 16px", borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
                         <RefreshScope>
-                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} onMembersChanged={() => setDep((n) => n + 1)} />
+                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} rolesAdmin={rolesAdmin} maxConcurrent={a.maxConcurrent ?? null} onMembersChanged={() => setDep((n) => n + 1)} />
                         </RefreshScope>
                       </td>
                     </tr>
@@ -430,9 +443,13 @@ function AgencyFormModal({
 // touches only this agency's rows, so two admins editing two different
 // departments cannot race on the same entity — the lost-update hazard a
 // read-modify-write through the entity-centric setters would reintroduce.
-function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }: {
+function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false, maxConcurrent = null, onMembersChanged }: {
   agencyId: string;
   canEdit: boolean;
+  /** The agency's own concurrency cap, from its row (2.5.0 C6); null is none. */
+  maxConcurrent?: number | null;
+  /** A global administrator for manageRoles lists the agency's groups (GA-1). */
+  rolesAdmin?: boolean;
   /** A global administrator assigns an agency its Vault paths (LR-80). Moving a
    *  scope is no longer theirs alone: since v2.3.0 it follows the same rule as
    *  a secret or a key (authority over both agencies), which the server checks. */
@@ -720,7 +737,105 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }:
         />
       )}
       {agencyId !== GLOBAL_AGENCY && <VaultPathsEditor agencyId={agencyId} globalAdmin={globalAdmin} />}
+      {agencyId !== GLOBAL_AGENCY && <GroupsEditor agencyId={agencyId} rolesAdmin={rolesAdmin} />}
+      <ConcurrencyEditor agencyId={agencyId} value={maxConcurrent} globalAdmin={globalAdmin} onSaved={onMembersChanged} />
+      <AgencyElsewhere agencyId={agencyId} />
     </DetailPanel>
+  );
+}
+
+// AgencyElsewhere — what the agency has that is edited on another page (2.5.0
+// C7.4, question 96): its repository, the grants that name it, its alerts.
+// Read-only here, each with the way to the page that edits it, working in this
+// agency; no second editor. A read the caller may not make says so.
+function AgencyElsewhere({ agencyId }: { agencyId: string }) {
+  type Repo = { url?: string; branch?: string; lastStatus?: string; lastSyncedAt?: string };
+  type Grant = { adGroup?: string; role?: string; agencyId?: string };
+  type Owned = { ownerAgency?: string };
+  const repoQ = useGet<Repo>(() => api.GET("/agencies/{agencyId}/git-repo", { params: { path: { agencyId } } }), [agencyId]);
+  const grantsQ = useGet<unknown>(() => api.GET("/access-grants"), []);
+  const rulesQ = useGet<unknown>(() => api.GET("/alerts", { headers: allReadable }), []);
+  const targetsQ = useGet<unknown>(() => api.GET("/alert-targets", { headers: allReadable }), []);
+  const there = (tab: string) => `/settings?tab=${tab}&agency=${encodeURIComponent(agencyId)}`;
+  const notYours = <span style={{ color: c.textMuted }}>not yours to read</span>;
+
+  const grants = rows<Grant>(grantsQ.data).filter((g) => g.agencyId === agencyId);
+  const rules = rows<Owned>(rulesQ.data).filter((r) => r.ownerAgency === agencyId).length;
+  const targets = rows<Owned>(targetsQ.data).filter((t) => t.ownerAgency === agencyId).length;
+  const repo = repoQ.data;
+
+  const line = (label: string, body: React.ReactNode, tab: string, linkLabel: string) => (
+    <div style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: c.fontSm, marginBottom: 4 }}>
+      <span style={{ minWidth: 86, color: c.textSec }}>{label}</span>
+      <span style={{ flex: 1, minWidth: 0 }}>{body}</span>
+      <Link to={there(tab)} style={{ color: c.primary, fontSize: c.fontXs, whiteSpace: "nowrap" }}>
+        {linkLabel}
+      </Link>
+    </div>
+  );
+
+  return (
+    <div style={{ borderTop: `1px solid ${c.borderLight}`, paddingTop: 10 }}>
+      <div style={{ fontSize: c.fontXs, fontFamily: c.sansCond, fontWeight: 700, color: c.textMuted, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 6 }}>
+        Repository, access and alerts
+      </div>
+      {line(
+        "Repository",
+        repoQ.loading ? (
+          <InlineLoading />
+        ) : repoQ.error ? (
+          notYours
+        ) : repo?.url ? (
+          <>
+            <code style={{ fontFamily: c.mono, fontSize: c.fontXs }}>{repo.url}</code>
+            {repo.branch && <span style={{ color: c.textSec }}> · {repo.branch}</span>}
+            <span style={{ color: repo.lastStatus && repo.lastStatus !== "success" ? c.warning : c.textSec }}>
+              {" "}· {repo.lastSyncedAt ? `last sync ${repo.lastStatus ?? ""} ${fmtDate(repo.lastSyncedAt)}` : "not synced yet"}
+            </span>
+          </>
+        ) : (
+          <span style={{ color: c.warning }}>none connected</span>
+        ),
+        "repositories",
+        "Repositories →",
+      )}
+      {line(
+        "Access",
+        grantsQ.loading ? (
+          <InlineLoading />
+        ) : grantsQ.error ? (
+          notYours
+        ) : grants.length === 0 ? (
+          <span style={{ color: c.textSec }}>no grant names this agency</span>
+        ) : (
+          <span>
+            {grants.length} {grants.length === 1 ? "grant" : "grants"}:{" "}
+            {grants.map((g, i) => (
+              <span key={i}>
+                {i > 0 && ", "}
+                <strong>{g.adGroup}</strong> <span style={{ color: c.textSec }}>({g.role})</span>
+              </span>
+            ))}
+          </span>
+        ),
+        "users",
+        "Users & Access →",
+      )}
+      {line(
+        "Alerts",
+        rulesQ.loading || targetsQ.loading ? (
+          <InlineLoading />
+        ) : rulesQ.error && targetsQ.error ? (
+          notYours
+        ) : (
+          <span>
+            {rules} alert {rules === 1 ? "rule" : "rules"}, {targets} push {targets === 1 ? "target" : "targets"}
+          </span>
+        ),
+        "alerts",
+        "Alerts →",
+      )}
+    </div>
   );
 }
 
@@ -832,6 +947,218 @@ function VaultPathsEditor({ agencyId, globalAdmin }: { agencyId: string; globalA
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <Btn small primary onClick={save} disabled={busy}>
               {busy ? "Saving…" : "Save Vault paths"}
+            </Btn>
+            <Btn small onClick={() => setDraft(null)} disabled={busy}>
+              Cancel
+            </Btn>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// GroupsEditor — the directory groups one agency's grants may name (2.5.0 C5,
+// GA-1). An agency's administrators of access (its delegates) grant only to
+// these, picked from a list in Users & Access (GA-3); the app cannot look
+// groups up, so a global administrator types them here. A group is matched
+// exactly, as login matches a grant's (question 85). Global has no list: no
+// grant names it.
+//
+// Read by a global administrator and by the agency's delegates (question 82);
+// edited by a global administrator only. For anyone else the read is refused
+// and nothing is shown, as for the Vault paths.
+function GroupsEditor({ agencyId, rolesAdmin }: { agencyId: string; rolesAdmin: boolean }) {
+  const [dep, setDep] = useState(0);
+  const q = useGet<{ groups?: string[] }>(
+    () => api.GET("/agencies/{agencyId}/groups", { params: { path: { agencyId } } }),
+    [agencyId, dep],
+  );
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const groups = q.data?.groups ?? [];
+  useEffect(() => {
+    setDraft(null);
+    setErr(null);
+  }, [agencyId]);
+  if (q.loading) return <InlineLoading what="groups" />;
+  if (q.error) return null;
+  const why = globalOnly(rolesAdmin, "Only a global administrator (a role on every agency) can list the groups an agency's grants may name.");
+
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    const next = (draft ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const { error } = await api.PUT("/agencies/{agencyId}/groups", {
+      params: { path: { agencyId }, header: csrfHeader },
+      body: { groups: next },
+    });
+    setBusy(false);
+    if (error) {
+      setErr(errMsg(error));
+      return;
+    }
+    setDraft(null);
+    setDep((n) => n + 1);
+  };
+
+  return (
+    <div style={{ borderTop: `1px solid ${c.borderLight}`, paddingTop: 10 }}>
+      <div style={{ fontSize: c.fontXs, fontFamily: c.sansCond, fontWeight: 700, color: c.textMuted, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 6 }}>
+        Groups ({groups.length})
+      </div>
+      {draft === null ? (
+        <>
+          {groups.length === 0 ? (
+            <div style={{ fontSize: c.fontSm, color: c.textSec }}>
+              None listed. This agency's administrators cannot grant access to any group; the grants it already has keep
+              working, and are listed in Notices until their groups are listed here.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+              {groups.map((g) => (
+                <code key={g} style={{ fontFamily: c.mono, fontSize: c.fontXs, padding: "2px 8px", borderRadius: c.radiusChip, background: c.panel2, border: `1px solid ${c.border}`, color: c.text }}>
+                  {g}
+                </code>
+              ))}
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+            <Btn small onClick={() => setDraft(groups.join("\n"))} disabled={!!why} title={why || undefined}>
+              Edit groups
+            </Btn>
+            <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+              {why || "The agency's administrators may grant access to these groups, and to no other."}
+            </span>
+          </div>
+        </>
+      ) : (
+        <>
+          <label style={{ ...labelStyle(), display: "block" }}>
+            One directory group per line
+            <textarea
+              aria-label="Directory groups, one per line"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              rows={Math.max(3, draft.split("\n").length + 1)}
+              spellCheck={false}
+              placeholder={"SG-Cronomicon-Tax\nSG-Cronomicon-Tax-Operators"}
+              style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm, marginTop: 4, resize: "vertical" }}
+            />
+          </label>
+          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4, lineHeight: 1.5 }}>
+            Type each group exactly as the directory sends it: a group is matched exactly, case included, as it is at login.
+            Saving replaces the list. Taking a group off does not remove the grants that name it: they keep working and are
+            listed in Notices.
+          </div>
+          {err && (
+            <div role="alert" style={{ fontSize: c.fontSm, color: c.danger, marginTop: 6 }}>
+              {err}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <Btn small primary onClick={save} disabled={busy}>
+              {busy ? "Saving…" : "Save groups"}
+            </Btn>
+            <Btn small onClick={() => setDraft(null)} disabled={busy}>
+              Cancel
+            </Btn>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ConcurrencyEditor — the agency's own concurrency cap (2.5.0 C6, QT-1).
+//
+// The installation has one cap (Settings → General). An agency may also have
+// its own: where one of its runs is produced its runs waiting and running are
+// counted against it, and at the claim its running runs. A global
+// administrator sets it, for Global as for any agency; anyone else sees it,
+// with the reason they cannot change it.
+function ConcurrencyEditor({ agencyId, value, globalAdmin, onSaved }: {
+  agencyId: string;
+  value: number | null;
+  globalAdmin: boolean;
+  onSaved?: () => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    setDraft(null);
+    setErr(null);
+  }, [agencyId]);
+  const why = globalOnly(globalAdmin, "Only a global administrator (a role on every agency) can set an agency's concurrency cap.");
+
+  const save = async () => {
+    const text = (draft ?? "").trim();
+    const n = text === "" ? null : Number(text);
+    if (n !== null && (!Number.isInteger(n) || n < 1)) {
+      setErr("A cap is a whole number of runs, 1 or more; leave it empty for none.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    const { error } = await api.PUT("/agencies/{agencyId}/concurrency", {
+      params: { path: { agencyId }, header: csrfHeader },
+      body: { maxConcurrent: n },
+    });
+    setBusy(false);
+    if (error) {
+      setErr(errMsg(error));
+      return;
+    }
+    setDraft(null);
+    onSaved?.();
+  };
+
+  return (
+    <div style={{ borderTop: `1px solid ${c.borderLight}`, paddingTop: 10 }}>
+      <div style={{ fontSize: c.fontXs, fontFamily: c.sansCond, fontWeight: 700, color: c.textMuted, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 6 }}>
+        Concurrency cap
+      </div>
+      {draft === null ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: c.fontSm, color: c.text }}>
+            {value == null ? "None of its own: the installation's cap alone." : `${value} ${value === 1 ? "run" : "runs"} at a time`}
+          </span>
+          <Btn small onClick={() => setDraft(value == null ? "" : String(value))} disabled={!!why} title={why || undefined}>
+            Edit cap
+          </Btn>
+          {why && <span style={{ fontSize: c.fontXs, color: c.textMuted }}>{why}</span>}
+        </div>
+      ) : (
+        <>
+          <label style={{ ...labelStyle(), display: "block" }}>
+            Runs at a time (empty for none)
+            <input
+              aria-label="Concurrency cap"
+              inputMode="numeric"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="none"
+              style={{ ...inputStyle(), width: 120, marginTop: 4, display: "block" }}
+            />
+          </label>
+          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4, lineHeight: 1.5 }}>
+            While this many of the agency's runs are waiting or running, a new one is refused (a scheduled fire is
+            skipped), and a waiting run starts only while fewer than this many are running. The installation's cap still
+            applies. Lowering it stops nothing that is running.
+          </div>
+          {err && (
+            <div role="alert" style={{ fontSize: c.fontSm, color: c.danger, marginTop: 6 }}>
+              {err}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <Btn small primary onClick={save} disabled={busy}>
+              {busy ? "Saving…" : "Save cap"}
             </Btn>
             <Btn small onClick={() => setDraft(null)} disabled={busy}>
               Cancel

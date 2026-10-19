@@ -69,6 +69,7 @@ func (s *Service) HandleDrain(w http.ResponseWriter, r *http.Request) {
 
 	// Audit entry, stamped with the same ts as the state change above.
 	_ = auditlog.WriteActivity(r.Context(), s.db, auditlog.ActivityParams{
+		AgencyID:   runnerAgency(r.Context(), s.db, runnerID),
 		At:         ts,
 		Kind:       "config",
 		Actor:      sessionActor(r),

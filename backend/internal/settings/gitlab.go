@@ -338,7 +338,10 @@ func UpdateGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Co
 	}
 
 	secrets.RedactionSourceChanged() // AM-4b
-	_ = WriteChangeLog(ctx, database, actor, "Settings", "updated", "GitLab Connection", "")
+	// The repository's agency's row, naming the repository (D8): the same row
+	// is written for an agency's repository and Global's.
+	_ = WriteChangeLog(ctx, database, RowAgency(ctx, database, "git_repos", "agency_id", repoID), actor,
+		"Settings", "updated", "GitLab Connection", "repository "+repoID)
 	return GetGitlabConfig(ctx, database, appCfg, repoID)
 }
 
@@ -518,7 +521,8 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 	}
 
 	secrets.RedactionSourceChanged() // AM-4b
-	_ = WriteChangeLog(ctx, database, actor, "Settings", "rotated", "GitLab Webhook Secret", "")
+	_ = WriteChangeLog(ctx, database, RowAgency(ctx, database, "git_repos", "agency_id", repoID), actor,
+		"Settings", "rotated", "GitLab Webhook Secret", "repository "+repoID)
 	return newSecret, gitlabUpdated, overlapUntil, nil
 }
 

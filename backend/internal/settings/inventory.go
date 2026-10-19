@@ -327,7 +327,7 @@ func PutScopeInventory(ctx context.Context, database *sql.DB, id, raw, format, a
 	if err := tx.Commit(); err != nil {
 		return nil, nil, err
 	}
-	audit(ctx, database, actor, "Scopes", "inventory updated", name, "")
+	audit(ctx, database, RowAgency(ctx, database, "scopes", "owner_agency", id), actor, "Scopes", "inventory updated", name, "")
 	doc, err := GetScopeInventory(ctx, database, id)
 	return doc, nil, err
 }
@@ -437,7 +437,7 @@ func ImportScopeHosts(ctx context.Context, database *sql.DB, id string, hosts []
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	audit(ctx, database, actor, "SSH Hosts", "imported from inventory", name,
+	audit(ctx, database, RowAgency(ctx, database, "scopes", "owner_agency", id), actor, "SSH Hosts", "imported from inventory", name,
 		fmt.Sprintf("%d created, %d updated, %d skipped", res.Created, res.Updated, len(res.Skipped)))
 	return res, nil
 }

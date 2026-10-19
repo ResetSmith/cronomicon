@@ -52,6 +52,10 @@ func seedSwitcher(t *testing.T, pool *sql.DB) {
 	        ('run-end', 'x', 'success', 's0-tax-job',     's0-tax-act',     'r-tax',  ?, ?),
 	        ('run-end', 'x', 'success', 's0-glob-job',    's0-glob-act',    'r-glob', ?, ?),
 	        ('run-end', 'x', 'success', 's0-fin-noscope', 's0-fin0-act',    'r-fin0', ?, ?)`, now, now, now, now, now, now, now, now)
+	// Their agency, as the writer works it out from the run (2.5.0 C1); these
+	// rows are inserted here directly.
+	exec(`UPDATE activity SET agency_id = (SELECT ru.owner_agency FROM runs ru WHERE ru.id = activity.trace_id)
+	       WHERE summary LIKE 's0-%' AND agency_id IS NULL`)
 
 	exec(`INSERT INTO workflows (uid, name, source, owner_agency, steps, created_at) VALUES
 	        ('w-fin',  's0-fin-flow',  'cronomicon', 'ag:FIN', '[]', ?),
@@ -195,39 +199,40 @@ var switcherPeople = []struct{ name, groups string }{
 // is refused. Pinned in 2.4.4 S0 so that S1 can show the switcher narrows it
 // and never widens it.
 //
-// Several rows here are read gaps the survey of 2026-10-16 found, kept as they
-// are (2.5.0's confidential reads, CF-2; plan-2.4.4 §7): workflows, workflow
-// runs, schedule definitions, scopes, runners, agency-wide secrets and
-// variables, SSH keys, hosts, bastions and calendars list every agency's rows
-// to everyone; FIN's job with no scope, and its run, are listed to TAX; any
-// agency's administrator lists every agency's grants.
+// 2.4.4 pinned here the read gaps its survey found (every agency's workflows,
+// workflow runs, schedule definitions, scopes, runners, agency-wide secrets and
+// variables, SSH keys, hosts, bastions and calendars listed to everyone; FIN's
+// job with no scope, and its run, to TAX; every agency's grants to any agency's
+// administrator). 2.5.0 C1 and C2 closed them: each list now answers by CF-1,
+// an agency's rows to its own people and Global's only to those who reach
+// every agency (question 77).
 var switcherToday = map[string][6]string{
-	"/api/v1/jobs?pageSize=200":               {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/runs?pageSize=200":               {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/jobs?pageSize=200&noscope=1":     {"YYY", "YYY", "Y.Y", "YYY", "YYY", "Y.Y"},
-	"/api/v1/runs?pageSize=200&noscope=1":     {"YYY", "YYY", "Y.Y", "YYY", "YYY", "Y.Y"},
-	"/api/v1/workflow-runs?pageSize=200":      {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/workflows?pageSize=200":          {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/schedule-defs?pageSize=200":      {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/scopes":                          {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/runners":                         {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/env-secrets":                     {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/env-vars":                        {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/env-secrets?scoped=1":            {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/env-vars?scoped=1":               {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/ssh/credentials":                 {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/ssh/hosts":                       {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/ssh/bastions":                    {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/calendars":                       {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/jobs?pageSize=200":               {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/runs?pageSize=200":               {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/jobs?pageSize=200&noscope=1":     {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/runs?pageSize=200&noscope=1":     {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/workflow-runs?pageSize=200":      {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/workflows?pageSize=200":          {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/schedule-defs?pageSize=200":      {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/scopes":                          {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/runners":                         {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/env-secrets":                     {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/env-vars":                        {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/env-secrets?scoped=1":            {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/env-vars?scoped=1":               {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/ssh/credentials":                 {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/ssh/hosts":                       {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/ssh/bastions":                    {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/calendars":                       {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 	"/api/v1/notices":                         {"YYY", "...", "Y..", ".Y.", "YY.", "..."},
-	"/api/v1/git-repo-names":                  {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
+	"/api/v1/git-repo-names":                  {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 	"/api/v1/git-repos":                       {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
-	"/api/v1/scripts?pageSize=200":            {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/access-grants":                   {"YYY", "403", "YYY", "YYY", "YYY", "403"},
+	"/api/v1/scripts?pageSize=200":            {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/access-grants":                   {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
 	"/api/v1/service-accounts":                {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
-	"/api/v1/schedule-pushes":                 {"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"},
-	"/api/v1/activity?pageSize=200":           {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
-	"/api/v1/activity?pageSize=200&noscope=1": {"YYY", "YYY", "YYY", "YYY", "YYY", "YYY"},
+	"/api/v1/schedule-pushes":                 {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/activity?pageSize=200":           {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/activity?pageSize=200&noscope=1": {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 }
 
 // switcherSees asks one list as one person and answers as switcherToday does.
@@ -278,7 +283,7 @@ func TestSwitcherListsWithNoAgencyNamedAnswerAsBefore(t *testing.T) {
 // switcherReads is which of FIN, TAX and Global each kind of person may read
 // (auth.Identity.ReadsAgency), in switcherPeople's order: naming an agency
 // they may not read narrows every list to nothing.
-var switcherReads = [6]string{"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"}
+var switcherReads = [6]string{"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."} // Global: everywhere-readers only (C2, question 77)
 
 // Naming an agency (2.4.4 S1) narrows each list to that agency's rows of what
 // the person could see before, and never widens it: FIN's view of a list is

@@ -446,14 +446,17 @@ func (e *Engine) recordRefusedChild(ctx context.Context, parentTraceID, nodeID, 
 		INSERT INTO workflow_runs
 			(id, workflow_name, workflow_source, status, queued_reason, triggered_by, trigger_kind,
 			 parent_workflow_run_id, parent_node_id, workflow_depth,
-			 started_at, completed_at, created_at, workflow_uid)
+			 started_at, completed_at, created_at, workflow_uid, agency_id)
 		VALUES (?, ?, ?, 'skipped', ?, ?, 'workflow', ?, ?, ?, ?, ?, ?,
 			-- A child that was refused was not resolved to a row: the name's uid
 			-- when one workflow holds it, and none when two do (present defect 34).
-			(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?))`,
+			(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?),
+			-- Its parent's agency (C1, CF-6): it may be another agency's on
+			-- purpose, and is recorded by name only (present defect 58).
+			(SELECT p.agency_id FROM workflow_runs p WHERE p.id = ?))`,
 		nodeIDOrNew(nodeID), childName, source, reason, actor,
 		nullStr(parentTraceID), nullStr(nodeID), depth, now, now, now,
-		lookup, source); err != nil {
+		lookup, source, nullStr(parentTraceID)); err != nil {
 		e.log.Error("workflow: record refused sub-workflow", "child", childName, "err", err)
 	}
 }

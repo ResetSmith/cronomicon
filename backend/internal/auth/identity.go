@@ -309,15 +309,17 @@ func (i Identity) CanAgency(perm, agencyID string) bool {
 }
 
 // ReadsAgency reports whether the actor may READ what belongs to an agency
-// (2.4.0, GR-26): the rows an agency's repository supplies, its sync history
-// and problems. Global's are every session's. An agency's are its own people's:
-// anyone who holds a grant on that agency, whatever the role, and anyone whose
-// grant reaches every agency (a global administrator, and a viewer of
-// everything, who reads every scope already). An empty agency id is no agency,
-// and nobody reads it.
+// (2.4.0, GR-26; CF-1): an agency's are its own people's, anyone who holds a
+// grant on that agency, whatever the role, and theirs whose grant reaches every
+// agency (a global administrator, and a viewer of everything, the operations
+// team). Global is an agency like the others (IN-3): since 2.5.0 C2 its rows
+// are only the latter's, no longer every session's (the owner's answer to
+// question 77; GR-26 said otherwise). An empty agency id is no agency, and
+// nobody reads it.
 func (i Identity) ReadsAgency(agencyID string) bool {
 	if agencyID == agencyid.Global {
-		return true
+		everywhere, _ := i.AgenciesRead()
+		return everywhere
 	}
 	if agencyID == "" {
 		return false
@@ -333,8 +335,8 @@ func (i Identity) ReadsAgency(agencyID string) bool {
 // AgenciesRead is ReadsAgency as a list, for a query that filters rows:
 // everywhere is true when one of the actor's grants reaches every agency, and
 // then the list is not needed; otherwise agencies is the ids of the agencies
-// the actor holds a grant on, sorted. Global's rows are every session's and
-// are not in the list.
+// the actor holds a grant on, sorted. Global is never in the list: its rows
+// are only theirs whose grant reaches every agency (2.5.0 C2, question 77).
 func (i Identity) AgenciesRead() (everywhere bool, agencies []string) {
 	seen := map[string]bool{}
 	for _, g := range i.RoleGrants() {

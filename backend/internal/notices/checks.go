@@ -56,6 +56,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindLeftoverExecutorKey, checkLeftoverExecutorKey},
 		{KindProjectJobNoCheckoutAgent, checkProjectJobs},
 		{KindJobScriptGone, checkJobScriptGone},
+		{KindGrantGroupUnlisted, checkGrantGroupUnlisted},
 	} {
 		if err := c.run(ctx, database); err != nil {
 			errs = append(errs, c.name+": "+err.Error())
@@ -73,6 +74,9 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 // that run and share its result.
 type Refresher struct {
 	Interval time.Duration
+	// Extra are checks of other packages, run after these (the assignments'
+	// update check, which reads repositories this package cannot).
+	Extra []func(context.Context) error
 
 	mu   sync.Mutex
 	last time.Time
@@ -91,6 +95,11 @@ func (r *Refresher) Refresh(ctx context.Context, database *sql.DB) error {
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	r.err = RunChecks(runCtx, database)
+	for _, extra := range r.Extra {
+		if err := extra(runCtx); err != nil && r.err == nil {
+			r.err = err
+		}
+	}
 	r.last = time.Now()
 	return r.err
 }
@@ -447,9 +456,12 @@ func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
 			found = append(found, Finding{
 				AgencyID: agencyid.Global,
 				Subject:  k.kind + ":" + id,
+				// Since 2.4.0 (§0a, IN-6) a Global row serves Global's runs only, so
+				// "make it Global's" is not a way to share it: a secret several
+				// agencies need is shared through a common Vault prefix.
 				Detail: fmt.Sprintf("The %s %s belongs to %s and reads the Vault path %s, which %s. It still works; "+
-					"it cannot be edited or moved until that is settled. Assign %s a Vault path prefix that covers it, "+
-					"or make the %s Global's if every agency is meant to use it.",
+					"it cannot be edited or moved until that is settled. Assign %s a Vault path prefix that covers it. "+
+					"A %s several agencies need is shared through a prefix assigned to each, every agency keeping its own record.",
 					k.noun, name, ownerName, path, why, ownerName, k.noun),
 			})
 		}

@@ -51,10 +51,10 @@ func TestSwitcherWhereEachKindOfPersonStarts(t *testing.T) {
 		// with Global for the lists.
 		{"all-viewer", gAllViewer, "overview,global,ag:FIN,ag:TAX", "overview", "global", true},
 		// One agency's people: their agency, and Global to read (SW-5).
-		{"fin-admin", gFinAdmin, "global,ag:FIN", "ag:FIN", "ag:FIN", false},
-		{"fin-viewer", gFinViewer, "global,ag:FIN", "ag:FIN", "ag:FIN", false},
+		{"fin-admin", gFinAdmin, "ag:FIN", "ag:FIN", "ag:FIN", false},
+		{"fin-viewer", gFinViewer, "ag:FIN", "ag:FIN", "ag:FIN", false},
 		// Two agencies' people: the first by name (SW-2).
-		{"fin+tax admin", gFinAdmin + "," + gTaxAdmin, "global,ag:FIN,ag:TAX", "ag:FIN", "ag:FIN", false},
+		{"fin+tax admin", gFinAdmin + "," + gTaxAdmin, "ag:FIN,ag:TAX", "ag:FIN", "ag:FIN", false},
 		// Nobody's: Global only (SW-7).
 		{"no grant", "nobody-group", "global", "global", "global", false},
 	} {
@@ -73,7 +73,7 @@ func TestSwitcherTheFirstAgencyByNameIgnoresCase(t *testing.T) {
 	h, pool := gateServer(t)
 	mustExec(t, pool)(`UPDATE agencies SET name = 'alpha-tax' WHERE id = 'ag:TAX'`)
 	got := readContext(t, h, gFinAdmin+","+gTaxAdmin)
-	if got.EffectiveDefault != "ag:TAX" || got.ids() != "global,ag:TAX,ag:FIN" {
+	if got.EffectiveDefault != "ag:TAX" || got.ids() != "ag:TAX,ag:FIN" {
 		t.Errorf("with TAX named alpha-tax: starts %s, choices %s; want ag:TAX, global,ag:TAX,ag:FIN", got.EffectiveDefault, got.ids())
 	}
 }

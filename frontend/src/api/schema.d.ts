@@ -1512,6 +1512,12 @@ export interface paths {
          * Export audit data (S5)
          * @description Honours date-range, event-type filters and CSV/JSON format exactly as
          *     surfaced in Settings → Audit & Compliance (S5).
+         *
+         *     Who may export what (2.5.0 C1, CF-5): a global administrator exports
+         *     every row, the authentication trail included; an agency's
+         *     administrator (`configureApp` on it) exports the rows of the agencies
+         *     they administer and no authentication events. Every row names the
+         *     agency it is of (`agency`, the last CSV column).
          */
         get: operations["exportAudit"];
         put?: never;
@@ -3609,62 +3615,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/settings/gitlab": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get GitLab connection config (PAT masked)
-         * @deprecated
-         * @description Deprecated in 2.4.0, kept for one minor release. It addresses Global's repository only: use `GET /agencies/{agencyId}/git-repo`, where the id `global` is Global's.
-         */
-        get: operations["getGitlabConfig"];
-        /**
-         * Update GitLab connection config
-         * @deprecated
-         * @description Deprecated in 2.4.0, kept for one minor release. It addresses Global's repository only: use `PUT /agencies/{agencyId}/git-repo`, where the id `global` is Global's. Omit `pat` to keep the stored token; the masked value a read returns in `pat` is taken the same way when it is sent back. The connection is applied when it is saved, with no restart of the server: the repository's sync service is rebuilt from it and syncs at once. The environment variables `CRONOMICON_GITLAB_BASE_URL` and `CRONOMICON_GITLAB_TOKEN`, when set, override the stored URL and token of this repository (§11.2).
-         */
-        put: operations["updateGitlabConfig"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/settings/gitlab/webhook-secret/rotate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Rotate the GitLab webhook secret (S15)
-         * @deprecated
-         * @description Deprecated in 2.4.0, kept for one minor release. It addresses Global's
-         *     repository only: use
-         *     `POST /agencies/{agencyId}/git-repo/webhook-secret/rotate`, where the id
-         *     `global` is Global's.
-         *
-         *     Two-step rotation per S15 — writes the new secret to Cronomicon and (if
-         *     updateGitlab=true) updates the webhook config in GitLab via API. Both
-         *     old and new secrets are accepted for an overlap window (>= 5 min). If
-         *     GitLab cannot be updated automatically, the response notes manual
-         *     reconfiguration is required. CSRF required.
-         */
-        post: operations["rotateWebhookSecret"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/settings/vault": {
         parameters: {
             query?: never;
@@ -3712,7 +3662,7 @@ export interface paths {
         put?: never;
         /**
          * Send a test notification over every configured transport
-         * @description Delivers a fixed test message using the **stored** SMTP and Apprise configuration (K-5, v0.52.25). Takes no body on purpose — every recipient, gateway and target comes from settings, so this cannot be used to mail an arbitrary address. A successful leg stamps that transport's `lastSent` exactly as a real alert does.
+         * @description Delivers a fixed test message using the **stored** SMTP and Apprise configuration (K-5, v0.52.25), to Global's push targets (2.5.0 C4). Takes no body on purpose — every recipient, gateway and target comes from settings, so this cannot be used to mail an arbitrary address. A successful leg stamps that transport's `lastSent` exactly as a real alert does.
          *
          *     Returns **200 whenever the attempt was made**, with per-transport outcomes in the body: a refused SMTP connection is a true answer to "can this reach anyone?", not a server error. Audited, because it delivers to real inboxes.
          */
@@ -3828,10 +3778,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List alert rules (DB-backed per A1.2) */
+        /**
+         * List alert rules (DB-backed per A1.2)
+         * @description The rules the caller reads (2.5.0 C4, AL-1; CF-1): an agency's to its own people, Global's to everywhere-readers only, every rule to an everywhere-reader. Until 2.5.0 every rule was every session's.
+         */
         get: operations["listAlertRules"];
         put?: never;
-        /** Create an alert rule */
+        /**
+         * Create an alert rule
+         * @description AL-3 (2.5.0 C4): `configureApp` on the agency the rule is created in — `ownerAgency`, else the one agency the caller administers (or the one the switcher names); Global's for a global administrator who names none. 403 for an agency the caller does not administer; 422 `unknown_job` when an agency's rule names a job its agency does not have. Until 2.5.0 a global administrator's alone.
+         */
         post: operations["createAlertRule"];
         delete?: never;
         options?: never;
@@ -3847,11 +3803,65 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Update an alert rule */
+        /**
+         * Update an alert rule
+         * @description AL-3 (2.5.0 C4): `configureApp` on the rule's agency; 404 to a caller who does not read the rule. The rule keeps its agency (`ownerAgency` is ignored); 422 `unknown_job` as on create.
+         */
         put: operations["updateAlertRule"];
         post?: never;
-        /** Delete an alert rule */
+        /**
+         * Delete an alert rule
+         * @description AL-3 (2.5.0 C4): `configureApp` on the rule's agency; 404 to a caller who does not read the rule.
+         */
         delete: operations["deleteAlertRule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alert-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List push targets
+         * @description The push targets the caller reads (2.5.0 C4, AL-2; CF-1): an agency's to its own people, Global's to everywhere-readers. A target's `url` is returned only to a caller holding `configureApp` on its agency (question 81); others see `urlSet`.
+         */
+        get: operations["listAlertTargets"];
+        put?: never;
+        /**
+         * Create a push target
+         * @description AL-3: `configureApp` on the agency the target is created in, chosen as for an alert rule. 422 `url_required` without a URL.
+         */
+        post: operations["createAlertTarget"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alert-targets/{targetId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update a push target
+         * @description AL-3: `configureApp` on the target's agency; 404 to a caller who does not read it. The target keeps its agency and the rules that name it.
+         */
+        put: operations["updateAlertTarget"];
+        post?: never;
+        /**
+         * Delete a push target
+         * @description AL-3: `configureApp` on the target's agency; 404 to a caller who does not read it. The rules that named it stop naming it.
+         */
+        delete: operations["deleteAlertTarget"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4398,6 +4408,137 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agencies/{agencyId}/concurrency": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set an agency's own concurrency cap (v2.5.0)
+         * @description A global administrator's (`configureApp` on every agency), as the agency
+         *     catalog is (QT-1). `maxConcurrent` is a positive number of runs, or null
+         *     for none; the field is required, so a body without it does not clear
+         *     the cap. Global may have one. Lowering a cap below what is running stops
+         *     nothing: the runs finish, and the agency's next run waits for a slot.
+         *     CSRF required.
+         */
+        put: operations["setAgencyConcurrency"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give a job or a workflow to an agency by one commit into its repository (v2.5.0)
+         * @description A global administrator's (`configureApp` on every agency; 2.5.0 C10,
+         *     IN-12). The job or workflow (`uid`) is a file of another agency's
+         *     repository, Global's or an agency's; one built in the app is refused
+         *     (422 `not_in_git`). One commit into the path agency's repository carries
+         *     its file and what it needs, as they are at the commit its repository
+         *     last synced, on the branch the agency syncs (fetched first, pushed
+         *     without force): a job's script and the reusable schedules it names; a
+         *     workflow's schedules, every job its steps run (in every kind of step)
+         *     with theirs, and every sub-workflow, followed through. A step that runs
+         *     a job built in the app is refused (`not_in_git`). Each copied job names a
+         *     scope the agency owns alone (422 `unknown_scope` otherwise): `scopes`
+         *     by the scope the job runs on in the origin (`""` for none), else
+         *     `scope`; with neither, 422 `scope_required` names the job. Every YAML
+         *     file carries `metadata.origin` (agency, repository, path, commit).
+         *
+         *     A script, schedule, job or sub-workflow the agency's repository has by
+         *     name is its own and is used, not added (`files[].action: usesOwn`,
+         *     `differs` when its content is not the origin's); one the agency has only
+         *     in the app refuses, as the copy's steps would not run it. The
+         *     definition's own name taken in the agency, or a file at a path the
+         *     commit would add, refuses the whole assignment (422 `name_taken`,
+         *     `paths`), and nothing is pushed. Secrets, variables and keys are the agency's own:
+         *     `bindings` lists the job's (and its script's) bindings, which the copy
+         *     does not have, and `lacks` what it names that the agency does not have.
+         *     A calendar the copy's schedules skip or keep to that the agency lacks
+         *     refuses the assignment (422 `calendar_missing`, `calendars`; question
+         *     94): calendars are not files before 2.6.0, and the agency's sync would
+         *     refuse the schedule naming it, and the definition with it. Create the
+         *     calendars in the agency and assign again.
+         *
+         *     Assigning a definition the agency was given before is an UPDATE (C10.3):
+         *     it replaces only the files the last assignment wrote whose origin has
+         *     changed since, and a job's copy on another scope than the one now
+         *     picked (question 95) (`replaced`), leaves the rest (`unchanged`), and
+         *     refuses,
+         *     naming them, files the agency has changed in its copy since (422
+         *     `changed_by_agency`; nothing is pushed). 409 `up_to_date` when the
+         *     origin has not changed. The record is the new one. When the origin
+         *     changes, `GET /notices` holds `assignment_update_available` for the
+         *     agency.
+         *
+         *     The agency in the path, not the one the request works in, owns the copy:
+         *     the one create that `X-Cronomicon-Agency` does not place. The change-log
+         *     row is the agency's. A sync of its repository is started; the job
+         *     appears when it finishes. 409 `target_unsynced` when the agency's branch
+         *     has commits the server has not synced (a sync is started; assign again),
+         *     409 `origin_unsynced`, 409 `branch_protected` (as a publish answers it). CSRF required.
+         */
+        post: operations["assignToAgency"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The directory groups an agency's grants may name (v2.5.0)
+         * @description A global administrator lists the groups each agency's grants may name
+         *     (2.5.0 C5, GA-1): an agency's administrator of access (a delegate)
+         *     grants only to these, and the grant form offers them (GA-3). The app
+         *     cannot look groups up, so they are typed. None means the agency's
+         *     delegates can grant to no group. Global has no list: no grant names it.
+         *
+         *     Readable by a global administrator and by whoever holds `manageRoles`
+         *     on the agency (question 82); 403 for anyone else.
+         */
+        get: operations["getAgencyGroups"];
+        /**
+         * Set the directory groups an agency's grants may name (v2.5.0)
+         * @description Replaces the list. A global administrator's (`manageRoles` on every
+         *     agency). Each group is trimmed and otherwise kept as typed: it is
+         *     matched exactly, as login matches a grant's group (question 85). An
+         *     empty entry is dropped and a repeat is one group. Global is refused
+         *     (422 `builtin_agency`).
+         *
+         *     Taking a group off the list does not touch the grants that name it
+         *     (GA-2): they keep working, cannot be changed by a delegate until the
+         *     group is listed again, and are listed in `GET /notices` as
+         *     `grant_group_unlisted`. CSRF required.
+         */
+        put: operations["setAgencyGroups"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agencies/{agencyId}/members": {
         parameters: {
             query?: never;
@@ -4764,7 +4905,9 @@ export interface paths {
          * What would break if the departmental-RBAC switches were flipped (RB-4)
          * @description A read-only report of who loses what — and which data must be curated
          *     first — if the departmental-RBAC predicates were switched on right now
-         *     (the rbac-update plan RB-4). Requires `manageRoles`.
+         *     (the rbac-update plan RB-4). A global administrator's (`manageRoles` on
+         *     every agency, 2.5.0 C2): it names every agency's unscoped jobs and
+         *     schedules.
          *
          *     Both switches are now LIVE and the two-axis model's tables are gone
          *     (RB-19, v0.57.8), so the four conversion sections this report originally
@@ -4831,6 +4974,11 @@ export interface paths {
          * @description Signs out every other session (SU-5). A duplicate `(adGroup, role, where)`
          *     is a 409 — grants are deduplicated by a unique index, so the same authority
          *     cannot be expressed twice.
+         *
+         *     An agency's administrator (a delegate: `manageRoles` there, not
+         *     everywhere) grants only to a group on the agency's list (2.5.0 C5,
+         *     GA-1; `GET /agencies/{agencyId}/groups`), matched exactly: 403
+         *     `group_not_listed` otherwise. A global administrator is not bound.
          */
         post: operations["createAccessGrant"];
         delete?: never;
@@ -4847,10 +4995,21 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Update an access grant (ManageRoles) */
+        /**
+         * Update an access grant (ManageRoles)
+         * @description A delegate's edit is held to the agency's group list on both sides
+         *     (2.5.0 C5): the grant as it stands and as it becomes must name a listed
+         *     group, or 403 `group_not_listed`. A grant naming an unlisted group keeps
+         *     working and is its delegates' to delete, not to change (GA-2). A global
+         *     administrator is not bound.
+         */
         put: operations["updateAccessGrant"];
         post?: never;
-        /** Delete an access grant (ManageRoles) */
+        /**
+         * Delete an access grant (ManageRoles)
+         * @description Not held to the agency's group list (2.5.0 C5, GA-2): a delegate may
+         *     delete a grant of their agency that names an unlisted group.
+         */
         delete: operations["deleteAccessGrant"];
         options?: never;
         head?: never;
@@ -4867,6 +5026,10 @@ export interface paths {
         /**
          * List recent logins (Honest View, A3.2)
          * @description Users appear only after their first successful OIDC round-trip; lastSeen reflects last successful auth. No directory enumeration in v1.
+         *
+         *     A `manageRoles` holder's (2.5.0 C2): a global administrator reads every row; an
+         *     agency's administrator the people whose grants name an agency they administer,
+         *     with only those grants and no AD groups; anyone else 403.
          */
         get: operations["listRecentLogins"];
         put?: never;
@@ -7366,6 +7529,23 @@ export interface components {
              *       it did, is Global's, and can be narrowed and never widened; the
              *       detail gives the order that settles it. Subject: the runner's id.
              *       Filed under Global.
+             *     - `assignment_update_available` — a job or workflow assigned to an
+             *       agency by commit has changed in its origin's repository since
+             *       (v2.5.0). The detail names the changed files and those the agency
+             *       has changed in its own copy (an update is refused for them).
+             *       Subject: `<agency id>:<origin uid>`. Filed under the agency given
+             *       the copy. It clears when the copy is updated (a global
+             *       administrator assigns it again), the origin goes back, or the
+             *       agency removes its copy.
+             *     - `runner_identity_shared` — two agent processes poll on one
+             *       runner's identity: its identity file was copied (a VM cloned or
+             *       a snapshot taken after enrolment, two containers on one volume,
+             *       a backup restored beside it) (v2.5.0). They take each other's
+             *       Stops, drains, settings and host-key deliveries; while both
+             *       poll, a copy's start does not close the other's runs. The detail
+             *       says how to make the copy a runner of its own. Subject: the
+             *       runner's id. Filed under its owner. It clears when only one
+             *       process has polled for the offline window.
              *     - `runner_name_shared` — two or more agents that one agency owns
              *       are registered under the same name and are both polling
              *       (v2.3.2). They run correctly (a runner is identified by its id),
@@ -7507,6 +7687,14 @@ export interface components {
              *       when a script of that name is there for the job again (the next
              *       sync joins it), when the job is saved on another script, or when
              *       the job is removed.
+             *     - `grant_group_unlisted` — an access grant of an agency names a
+             *       directory group that is not on the agency's group list (v2.5.0,
+             *       GA-2). The lists started empty, so on the upgrade every agency
+             *       grant is one; later, a global administrator's grant to a group
+             *       not listed is one too. The grant works as before; the agency's
+             *       administrators may delete it but not change it. Subject: the
+             *       grant's id. Filed under the grant's agency. It clears when the
+             *       group is listed or the grant is deleted.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.
@@ -7975,6 +8163,8 @@ export interface components {
             description?: string | null;
             /** @description Number of online runners assigned to this agency (M4 coverage view). 0 means jobs bound here will wait — no runner can claim them. */
             readonly onlineRunnerCount?: number;
+            /** @description The agency's own concurrency cap (v2.5.0, QT-1); null is none. Where one of its runs is produced, its runs waiting and running are counted against it; at the claim, its running runs. The installation's cap binds as well. Set with PUT /agencies/{agencyId}/concurrency. */
+            readonly maxConcurrent?: number | null;
             /** @description True for **Global** (id `global`), the one agency every installation has (v2.3.0, LR-21). It cannot be renamed or deleted (422 `builtin_agency`), no other agency may be called Global in any letter case (422 `name_reserved`), and no access grant or service account may name it: it belongs to the global administrators, and the way to be one is an all-scopes grant. */
             readonly builtin?: boolean;
         } & components["schemas"]["AuditFields"];
@@ -8528,6 +8718,45 @@ export interface components {
             agencyId: string;
             /** @description Normalised, sorted. Empty means the agency can name no Vault path. */
             prefixes: string[];
+        };
+        /** @description The directory groups one agency's grants may name (v2.5.0, GA-1). */
+        AgencyGroups: {
+            agencyId: string;
+            /** @description Sorted, matched exactly. Empty means the agency's delegates can grant to no group. */
+            groups: string[];
+        };
+        /** @description What an assignment committed (v2.5.0, IN-12). */
+        Assignment: {
+            assignmentId: string;
+            /** @description The commit on the agency's branch. */
+            commitSha: string;
+            branch: string;
+            /** @description The commit of the origin's repository the files were read at. */
+            originCommit: string;
+            files: {
+                path: string;
+                /** @enum {string} */
+                role: "definition" | "job" | "workflow" | "script" | "schedule";
+                /** @enum {string} */
+                action: "added" | "usesOwn" | "replaced" | "unchanged";
+                /** @description usesOwn: the agency's file is not the origin's. */
+                differs?: boolean;
+            }[];
+            /** @description What the job names that the agency does not have. */
+            lacks: {
+                /** @enum {string} */
+                kind: "secret" | "variable" | "key" | "reactionUpstream" | "targetHost";
+                name: string;
+            }[];
+            /** @description The origin job's and script's bindings, which the copy does not have. */
+            bindings: {
+                /** @enum {string} */
+                kind: "secret" | "var" | "key";
+                name: string;
+                as?: string;
+            }[];
+            /** @description The agency's sync was started; the job appears when it finishes. */
+            syncStarted: boolean;
         };
         /** @description What the caller may do with this row (v2.4.0 R8), worked out by the same check the row's write route makes, so a screen offers exactly what the server allows. Present on the rows of the scope, secret, variable, SSH key, host record, bastion and agency lists. */
         RowFlags: {
@@ -9100,16 +9329,10 @@ export interface components {
         NotificationConfig: {
             /** @enum {string} */
             provider?: "apprise" | "smtp";
+            /** @description The Apprise gateway, the installation's relay. The service URLs it delivers to are each agency's push targets, Global's included: `/alert-targets` (2.5.0 C4). Until 2.5.0 C7 this block carried Global's as `targets` and saved them as a list matched by URL (question 99); a `targets` key sent now is ignored. */
             apprise?: {
                 enabled?: boolean;
                 apiUrl?: string;
-                targets?: {
-                    readonly id?: number;
-                    label?: string;
-                    service?: string;
-                    url?: string;
-                    enabled?: boolean;
-                }[];
             };
             smtp?: {
                 host?: string;
@@ -9121,6 +9344,7 @@ export interface components {
                 readonly passwordSet?: boolean;
                 fromAddress?: string;
                 fromName?: string;
+                /** @description Added to a Global rule's mail (2.5.0 C4, question 80); an agency's rule mails its own recipients only. */
                 recipients?: string[];
             };
             /** @description When each transport last delivered, and whether it worked (K-2, v0.52.24). An absent entry means the transport has never sent — a different fact from a failed send. This replaced the per- destination `lastFiredAt`, which was stamped on every enabled destination of a matching type and so could only ever mean "something sent over this transport". */
@@ -9344,6 +9568,31 @@ export interface components {
             owner?: string | null;
             /** @default true */
             enabled: boolean;
+            /** @description The agency the rule is one of (2.5.0 C4, AL-1): it matches only runs, SLA breaches and missed fires of that agency (`all` is all of that agency's), and `jobName` resolves among that agency's jobs. Global's (`global`) match every agency's, as every rule did before 2.5.0; existing rules became Global's. Read on create only; a rule keeps its agency. Deleting an agency is refused while it owns a rule. */
+            ownerAgency?: string;
+            /** @description The push targets an `apprise` channel sends to (2.5.0 C4, AL-2): targets of the rule's own agency only (question 79; 422 `unknown_target` otherwise). Absent on an edit, the rule keeps its targets; absent on create, it names none. Rules that existed before 2.5.0 name every target that existed then. */
+            targetIds?: string[];
+        };
+        AlertTarget: {
+            readonly id?: string;
+            label?: string;
+            service?: string;
+            enabled?: boolean;
+            /** @description The agency the target is one of; set at create. */
+            readonly ownerAgency?: string;
+            /** @description Returned only to a caller holding `configureApp` on the target's agency (question 81): it is often the credential. */
+            url?: string;
+            readonly urlSet?: boolean;
+        } & components["schemas"]["AuditFields"];
+        /** @description A push target (2.5.0 C4, AL-2): an Apprise service URL that one agency's rules name. The Apprise gateway stays the installation's. */
+        AlertTargetInput: {
+            label?: string;
+            service?: string;
+            url: string;
+            /** @default true */
+            enabled: boolean;
+            /** @description Whose a new target is, chosen as for an alert rule; ignored on an edit. */
+            ownerAgency?: string;
         };
         /** @description Per-transport outcomes from a test send (K-5). */
         NotificationTestReport: {
@@ -9881,6 +10130,8 @@ export interface components {
         secretId: string;
         runnerId: string;
         alertId: string;
+        /** @description A push target's id (2.5.0 C4). */
+        targetId: string;
         hostId: string;
         bastionId: string;
         credentialId: string;
@@ -10284,17 +10535,6 @@ export interface operations {
                      *     content is the operator's responsibility.
                      */
                     ansibleLimit?: string;
-                    /**
-                     * @deprecated
-                     * @description **Ignored since v2.3.0**, and kept in the contract for one more
-                     *     minor so that a caller which sends it does not break (LR-50).
-                     *     There is one executor: every run is written for the runner
-                     *     executor, and which runner takes it — an agent, or the server
-                     *     itself as the local runner — is decided when it is claimed, by
-                     *     agency, scope binding and capability. Nothing on a run or a job
-                     *     chooses. The field is not checked; leave it out.
-                     */
-                    executor?: string;
                     /** @description QP — claim priority for this run only. Higher is claimed first; ties break oldest-first. There is deliberately no job-spec default: a standing priority is how one job starves another permanently rather than merely going first today. */
                     priority?: number;
                     /**
@@ -10476,7 +10716,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description Concurrency cap reached (globalSettings.maxConcurrent; see S16 — per-job cap TBD). */
+            /** @description Concurrency cap reached (`concurrency_cap`). Since 2.5.0 C6: the installation's cap (globalSettings.maxConcurrent) counts the runs running in every agency and the runs waiting in this run's agency ("global concurrency cap reached"); an agency's own cap (Agency.maxConcurrent) counts its runs waiting and running ("<agency>'s concurrency cap reached"). A run that is produced still waits at the claim for a slot under both caps. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10490,8 +10730,10 @@ export interface operations {
              *     `ansible_only` — `ansibleLimit`, or one of the advanced ansible
              *     options, was given for a run type that is not ansible.
              *     (`invalid_executor` and `scope_requires_runner`, returned until
-             *     v2.3.0, are retired: there is no executor to ask for, and the
-             *     `executor` field of this body is ignored, whatever it holds.)
+             *     v2.3.0, are retired: there is no executor to ask for. The body's
+             *     `executor` field, ignored since v2.3.0, left the contract in
+             *     v2.5.0; a body that still sends it is accepted and the key is not
+             *     read.)
              *     `scope_membership` / `group_membership` — a
              *     targetHosts/targetGroups entry that is not a member of the effective scope's
              *     inventory (F2/M3). `prompt_required` (JR-Q5) — the job is
@@ -14808,7 +15050,12 @@ export interface operations {
                  *     it still shows as running on this runner (failure, runner_lost):
                  *     the runs of the process before it, which was killed, crashed or
                  *     lost power and will never report on them. Absent ⇒ nothing is
-                 *     closed; an agent older than 2.3.2 never sends it.
+                 *     closed; an agent older than 2.3.2 never sends it. When the poll
+                 *     also names its `process` and another process was seen on the
+                 *     runner within the hold window (about 45 s), nothing is closed yet
+                 *     (2.5.0): the runs started before this poll are closed once every
+                 *     older process has stayed silent for the window, and never if one
+                 *     polls again (a copy of the identity file).
                  */
                 started?: "1";
                 /**
@@ -14821,6 +15068,15 @@ export interface operations {
                  *     agent holds.
                  */
                 claim?: "0";
+                /**
+                 * @description A random value the agent process draws when it starts and sends on
+                 *     every poll (2.5.0). The identity file names the runner, not the
+                 *     process; an older process that polls after a newer one started is a
+                 *     copy of it, and raises `runner_identity_shared`. Absent (an agent
+                 *     older than 2.5.0, or a longer value) ⇒ nothing is detected and
+                 *     `started` closes at once.
+                 */
+                process?: string;
             };
             header?: never;
             path: {
@@ -16153,107 +16409,6 @@ export interface operations {
             422: components["responses"]["Validation"];
         };
     };
-    getGitlabConfig: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Config; pat is always masked on read. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GitlabConfig"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-        };
-    };
-    updateGitlabConfig: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
-                "X-CSRF-Token": components["parameters"]["csrf"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GitlabConfig"];
-            };
-        };
-        responses: {
-            /** @description Updated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GitlabConfig"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            422: components["responses"]["Validation"];
-        };
-    };
-    rotateWebhookSecret: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
-                "X-CSRF-Token": components["parameters"]["csrf"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": {
-                    /** @default true */
-                    updateGitlab?: boolean;
-                    /** @default 5 */
-                    overlapMinutes?: number;
-                };
-            };
-        };
-        responses: {
-            /** @description Rotated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @description New secret. Shown once. */
-                        secret?: string;
-                        gitlabUpdated?: boolean;
-                        /** Format: date-time */
-                        overlapUntil?: string;
-                    };
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            /** @description GitLab unreachable; secret not rotated. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
     getVaultConfig: {
         parameters: {
             query?: never;
@@ -16686,6 +16841,118 @@ export interface operations {
             };
             path: {
                 alertId: components["parameters"]["alertId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAlertTargets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Push targets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertTarget"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createAlertTarget: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertTargetInput"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertTarget"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    updateAlertTarget: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                /** @description A push target's id (2.5.0 C4). */
+                targetId: components["parameters"]["targetId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertTargetInput"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertTarget"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    deleteAlertTarget: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                /** @description A push target's id (2.5.0 C4). */
+                targetId: components["parameters"]["targetId"];
             };
             cookie?: never;
         };
@@ -17643,6 +17910,153 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgencyVaultPrefixes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    setAgencyConcurrency: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    maxConcurrent: number | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The agency as stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agency"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    assignToAgency: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    kind: "job" | "workflow";
+                    /** @description The job or workflow to assign. */
+                    uid: string;
+                    /** @description The agency's scope a copied job names, unless scopes names one for it. */
+                    scope?: string;
+                    /** @description The agency's scope for the copied jobs that run on each origin scope (key "" for a job with none). */
+                    scopes?: {
+                        [key: string]: string;
+                    };
+                    commitMessage?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Committed. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Assignment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    getAgencyGroups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The agency's groups, sorted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgencyGroups"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setAgencyGroups: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @example [
+                     *       "SG-Cronomicon-Tax",
+                     *       "SG-Cronomicon-Tax-Operators"
+                     *     ]
+                     */
+                    groups: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description The stored list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgencyGroups"];
                 };
             };
             401: components["responses"]["Unauthorized"];

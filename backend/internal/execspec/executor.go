@@ -16,14 +16,10 @@ import (
 // itself as the local runner — is decided when it is claimed, by agency, scope
 // binding and capability. Nothing on a run or a job chooses.
 //
-// The two values remain because history does: `runs.executor` on a row from
-// before 2.3.0 says which engine ran it, and the 2.3.0 upgrade pass reads what
-// jobs used to say (settings.shellServing22, a frozen copy of the old
-// precedence, kept only there).
-const (
-	ExecutorSSH    = "ssh"
-	ExecutorRunner = "runner"
-)
+// `runs.executor` on a row from before 2.3.0 still says "ssh" (the engine that
+// ran it); nothing writes it. The constant for it, and the 2.3.0 upgrade pass
+// that read what jobs used to say, were retired in 2.5.0 (question 60).
+const ExecutorRunner = "runner"
 
 // ScopeIsBound reports whether a scope (by name) is bound to at least one
 // runner. An empty name, or one with no scopes row, is not.

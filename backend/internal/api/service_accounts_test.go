@@ -261,8 +261,11 @@ func TestServiceTokenScopeIsEnforced(t *testing.T) {
 
 	resp := triggerAs(t, ts, token, "/api/v1/trigger/jobs/finance-close")
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("status = %d, want 403 — an empty agency grant is zero access, never unrestricted", resp.StatusCode)
+	// The job is Global's, which the account does not read: absent to it (2.5.0
+	// C2, questions 72 and 78). Refused either way: an empty agency grant is zero
+	// access, never unrestricted.
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 — an empty agency grant is zero access, never unrestricted", resp.StatusCode)
 	}
 }
 

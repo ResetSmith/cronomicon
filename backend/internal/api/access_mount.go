@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/settings"
@@ -44,7 +46,9 @@ func (s *Server) mountAccess(mux *http.ServeMux) {
 	// Ship and read this BEFORE v0.56.4 (RB-2/RB-26) and again before v0.56.5
 	// (RB-15): those two releases narrow real users' access, and this is what
 	// turns that from a discovery into a decision. Mirrors GET /agency-preflight.
-	mux.Handle("GET /api/v1/rbac-preflight", s.requirePerm("manageRoles", permManageRoles)(http.HandlerFunc(s.handleRbacPreflight)))
+	// A global administrator's (2.5.0 C2): the report is the installation's, and
+	// named every agency's unscoped jobs and schedules to any manageRoles holder.
+	mux.Handle("GET /api/v1/rbac-preflight", s.requireGlobal(auth.PermManageRoles)(http.HandlerFunc(s.handleRbacPreflight)))
 }
 
 // handleRbacPreflight serves the RB-4 report: who loses what, and which data must
@@ -249,7 +253,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "create_failed", err)
 		return
 	}
-	_ = settings.WriteChangeLog(r.Context(), s.db, id.Email, "Roles", "created", name, grantSummaryPerms(in.Permissions))
+	_ = settings.WriteChangeLog(auditlog.WithActingAgency(r.Context(), ""), s.db, agencyid.Global, id.Email, "Roles", "created", name, grantSummaryPerms(in.Permissions))
 	// LR-79: no sign-out. A role's permissions are read from the registry on
 	// every request, and the snapshot is told in case a grant names this role.
 	auth.GrantsChanged()
@@ -296,7 +300,7 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "update_failed", err)
 		return
 	}
-	_ = settings.WriteChangeLog(r.Context(), s.db, id.Email, "Roles", "updated", name, grantSummaryPerms(in.Permissions))
+	_ = settings.WriteChangeLog(auditlog.WithActingAgency(r.Context(), ""), s.db, agencyid.Global, id.Email, "Roles", "updated", name, grantSummaryPerms(in.Permissions))
 	auth.GrantsChanged()
 	role, _ := auth.LookupRole(name)
 	httpx.JSON(w, http.StatusOK, role)
@@ -358,7 +362,7 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	_ = settings.WriteChangeLog(r.Context(), s.db, id.Email, "Roles", "deleted", name, "")
+	_ = settings.WriteChangeLog(auditlog.WithActingAgency(r.Context(), ""), s.db, agencyid.Global, id.Email, "Roles", "deleted", name, "")
 	auth.GrantsChanged()
 	w.WriteHeader(http.StatusNoContent)
 }

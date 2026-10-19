@@ -81,52 +81,6 @@ func (s *Server) requireCompose(next http.Handler) http.Handler {
 	return s.requirePerm(auth.PermCompose, func(p rolePermissions) bool { return p.Compose })(next)
 }
 
-// requireComposeAdmin keeps the ORIGINAL admin-only gate for the authoring surfaces
-// AF-2 deliberately did not widen: schedule-defs, calendars, reactions, and the
-// revisions/recycle-bin. Every one of them acts on an object with NO scope of its
-// own — a reusable schedule template, a global working calendar, a reaction that
-// attaches to a definition by name, a bin spanning every definition — so
-// "agency-bound" has no meaning for them yet, and handing them to a departmental
-// composer would be a cross-agency escalation, not a delegation: retiming another
-// department's schedule, editing a shared calendar, attaching a reaction that
-// TRIGGERS someone else's job, or restoring/purging anything from anyone's bin.
-//
-// Widening any of these is its own decision with its own agency model to design
-// first.
-//
-// GC-4 (v2.2.2): the gate is PERMISSIONS on an UNRESTRICTED grant, not a role
-// name. It was RequireRole("admin"), which asked whether ANY of the caller's
-// grants named the built-in role — so an `admin` of one agency reached every one
-// of these install-wide surfaces, while a custom role holding every permission
-// on every scope reached none. Neither was the "unrestricted admin" the
-// paragraph above describes.
-//
-// It asks for compose AND configureApp on ONE unrestricted grant, not compose
-// alone. These surfaces are authoring, but what they author is installation
-// state: a `global` calendar freezes every agency's fires, a purge is
-// irreversible, a reusable schedule retimes everyone who references it. Compose
-// alone would have handed all of that to any custom all-agency role that can
-// author jobs — a widening no one decided on. The pair is what the built-in
-// admin holds and what "administrator of the installation" means in permission
-// terms; loosening it per surface is a later, deliberate change.
-func (s *Server) requireComposeAdmin(next http.Handler) http.Handler {
-	return s.requirePerm(auth.PermCompose, func(p rolePermissions) bool { return p.Compose })(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id, ok := auth.IdentityFrom(r.Context())
-			if !ok {
-				httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-				return
-			}
-			if !isComposeAdmin(id) {
-				s.denyEntityAgency(w, r, id, auth.PermCompose, auth.AllScopes,
-					"reusable schedules, calendars, reactions, revisions and the recycle bin are shared by "+
-						"every agency — only an administrator holding compose and configureApp on every agency may change them")
-				return
-			}
-			next.ServeHTTP(w, r)
-		}))
-}
-
 // isComposeAdmin reports whether ONE of the caller's grants is unrestricted and
 // carries both compose and configureApp — the same-grant rule (RB): the two
 // permissions may not come from different grants.
@@ -497,7 +451,7 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	s.auditDefinitionDelete(r.Context(), id.Email, "job", "Jobs", existing.Name, existing.Scope)
+	s.auditDefinitionDelete(r.Context(), s.jobAgency(r.Context(), existing.UID), id.Email, "job", "Jobs", existing.Name, existing.Scope)
 	s.forceScheduleReload(r.Context())
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1015,9 +969,9 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	if !isCreate {
 		auditAction = "Updated"
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Jobs", auditAction, in.Name, "Cronomicon job "+strings.ToLower(auditAction))
+	_ = workflow.InsertChangeLog(r.Context(), s.db, s.jobAgency(r.Context(), uid), actor, "Jobs", auditAction, in.Name, "Cronomicon job "+strings.ToLower(auditAction))
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Jobs", Action: auditAction, Target: in.Name,
+		Kind: "config", Actor: actor, Category: "Jobs", Action: auditAction, Target: in.Name, JobUID: uid,
 	})
 	s.forceScheduleReload(r.Context())
 
@@ -1181,14 +1135,15 @@ func (s *Server) fetchJobByUID(r *http.Request, uid string) *jobRow {
 // recorded: it is about to be destroyed by this very delete, and SQLite reuses
 // and reassigns rowids, so a stored one would eventually point at an unrelated
 // row. The name is the stable handle every other table already keys on.
-func (s *Server) auditDefinitionDelete(ctx context.Context, actor, entityKind, category, name string, scope *string) {
+func (s *Server) auditDefinitionDelete(ctx context.Context, agency, actor, entityKind, category, name string, scope *string) {
 	summary := "Deleted " + name
 	// change_log keeps its original details text rather than the summary: with
 	// action="Deleted" and target=<name> already on the row, repeating them in
 	// details adds nothing, while "Cronomicon <kind> deleted" records the one thing
 	// the other columns don't — that this was an in-app definition, not a git one.
-	_ = workflow.InsertChangeLog(ctx, s.db, actor, category, "Deleted", name, "Cronomicon "+entityKind+" deleted")
+	_ = workflow.InsertChangeLog(ctx, s.db, agency, actor, category, "Deleted", name, "Cronomicon "+entityKind+" deleted")
 	p := workflow.ActivityParams{
+		AgencyID: agency, // the definition's (C1): a name may be several agencies'
 		Kind:     "config",
 		Outcome:  "success",
 		Actor:    actor,

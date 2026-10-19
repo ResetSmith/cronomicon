@@ -127,12 +127,11 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 		args = append(args, fargs...)
 	}
 
-	// GR-26: a schedule of an agency's repository is that agency's people's to
-	// read, and theirs who reach every agency. (A schedule built in the app
-	// records no repository and is not filtered here: who reads those is
-	// 2.5.0's.) Both statements below read the table as `sc`.
-	if id, ok := auth.IdentityFrom(r.Context()); ok {
-		frag, fargs := readableRepoSQL(id, "sc.repo_id")
+	// A schedule is its agency's people's to read, and theirs who reach every
+	// agency (CF-1, 2.5.0 C2): by its owner, so one built in the app is judged
+	// too (it had been read by everyone). Both statements below read the table
+	// as `sc`.
+	if frag, fargs := agencyReadFilter(r, agencyid.ColumnOwnerSQL("sc", "owner_agency")); frag != "" {
 		where += frag
 		args = append(args, fargs...)
 	}
@@ -215,7 +214,8 @@ func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 	drows, err := s.db.QueryContext(r.Context(),
 		`SELECT owner_kind, owner_name, ds.owner_uid,
 		        -- the owner's agency (a job's since 1400; until I2 its scope's)
-		        (SELECT a.name FROM agencies a WHERE a.id = `+agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind")+`)
+		        (SELECT a.name FROM agencies a WHERE a.id = `+agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind")+`),
+		        `+agencyid.Owner(agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind"))+`
 		   FROM definition_schedules ds
 		  WHERE schedule_uid = ?
 		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
@@ -225,19 +225,26 @@ func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 		                     AND w2.source=ds.owner_source AND w2.name=ds.owner_name
 		                     AND w2.deleted_at IS NOT NULL)
 		  ORDER BY owner_kind, owner_name`, sd.UID)
+	// CF-7 (2.5.0 C2): only the definitions the caller reads are named;
+	// usedByCount counts them all.
+	total := 0
 	if err == nil {
 		defer drows.Close()
 		for drows.Next() {
-			var kind, owner string
+			var kind, owner, ownerAgency string
 			var uid, agencies sql.NullString
-			if drows.Scan(&kind, &owner, &uid, &agencies) == nil {
+			if drows.Scan(&kind, &owner, &uid, &agencies, &ownerAgency) == nil {
+				total++
+				if !readsAgency(r, ownerAgency) {
+					continue
+				}
 				sd.UsedBy = append(sd.UsedBy, scheduleUsedBy{
 					Name: owner, Kind: kind, UID: uid.String, Agencies: splitAgencies(agencies),
 				})
 			}
 		}
 	}
-	sd.UsedByCount = len(sd.UsedBy)
+	sd.UsedByCount = total
 
 	httpx.JSON(w, http.StatusOK, sd)
 }
@@ -269,9 +276,9 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Schedules", "Updated", name, "Schedule tags updated")
+	_ = workflow.InsertChangeLog(r.Context(), s.db, ref.owner, actor, "Schedules", "Updated", name, "Schedule tags updated")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Schedules", Action: "Updated", Target: name,
+		AgencyID: ref.owner, Kind: "config", Actor: actor, Category: "Schedules", Action: "Updated", Target: name,
 	})
 
 	// Re-read the updated schedule with its usedBy reverse index — same shape as
@@ -286,7 +293,8 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 	}
 	sd.UsedBy = []scheduleUsedBy{}
 	drows, derr := s.db.QueryContext(r.Context(),
-		`SELECT owner_kind, owner_name FROM definition_schedules ds
+		`SELECT owner_kind, owner_name, `+agencyid.Owner(agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind"))+`
+		   FROM definition_schedules ds
 		  WHERE schedule_uid = ?
 		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
 		                     AND j2.source=ds.owner_source AND j2.name=ds.owner_name
@@ -295,16 +303,20 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 		                     AND w2.source=ds.owner_source AND w2.name=ds.owner_name
 		                     AND w2.deleted_at IS NOT NULL)
 		  ORDER BY owner_kind, owner_name`, sd.UID)
+	total := 0 // CF-7: named if read, counted either way
 	if derr == nil {
 		defer drows.Close()
 		for drows.Next() {
-			var kind, owner string
-			if drows.Scan(&kind, &owner) == nil {
-				sd.UsedBy = append(sd.UsedBy, scheduleUsedBy{Name: owner, Kind: kind})
+			var kind, owner, ownerAgency string
+			if drows.Scan(&kind, &owner, &ownerAgency) == nil {
+				total++
+				if readsAgency(r, ownerAgency) {
+					sd.UsedBy = append(sd.UsedBy, scheduleUsedBy{Name: owner, Kind: kind})
+				}
 			}
 		}
 	}
-	sd.UsedByCount = len(sd.UsedBy)
+	sd.UsedByCount = total
 
 	httpx.JSON(w, http.StatusOK, sd)
 }

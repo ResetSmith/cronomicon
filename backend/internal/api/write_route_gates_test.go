@@ -31,7 +31,8 @@ const (
 	// predicate in the handler).
 	clsGlobal gateClass = "global"
 	// clsComposeAdmin — compose AND configureApp on one unrestricted grant
-	// (requireComposeAdmin): the shared authoring surfaces with no owner.
+	// (requireComposeAdmin, removed in 2.5.0 C3): the shared authoring surfaces
+	// with no owner. None is left: each has an owner since §0a and SO-2.
 	clsComposeAdmin gateClass = "composeAdmin"
 	// clsObject — a permission checked against the object's own agency or
 	// scope. The note names the check.
@@ -76,6 +77,9 @@ var writeRouteGates = map[string]routeGate{
 	"POST /api/v1/scopes/{scopeId}/clone":                             {clsObject, "requireBothSides: configureApp on the scope's agency and on the agency the clone is for; not the rule for a move"},
 	"PUT /api/v1/scopes/{scopeId}/agency":                             {clsObject, "requireMove: a scope is moved to another agency by a global administrator only (2.4.0; LR-7's two sides until then); naming where it is already takes configureApp on that agency"},
 	"PUT /api/v1/agencies/{agencyId}/vault-prefixes":                  {clsGlobal, "which part of the installation's one Vault an agency may point at (LR-80)"},
+	"PUT /api/v1/agencies/{agencyId}/groups":                          {clsGlobal, "which directory groups an agency's delegates may grant to (GA-1)"},
+	"POST /api/v1/agencies/{agencyId}/assign":                         {clsGlobal, "a definition given to an agency by one commit into its repository (IN-12)"},
+	"PUT /api/v1/agencies/{agencyId}/concurrency":                     {clsGlobal, "an agency's own concurrency cap (QT-1)"},
 	"PUT /api/v1/agencies/{agencyId}/members":                         {clsObject, "per member: requireMove on both sides for an add, the permission on this agency for a removal; a SCOPE is added by a global administrator only (2.4.0); a runner by its OWNER either way (requireRunnerOwner)"},
 	"PUT /api/v1/runner-agencies":                                     {clsObject, "per runner: requireRunnerOwner, and each agency named; the writer's invariant decides what may be written (MA-11)"},
 	"PUT /api/v1/":                                                    {clsObject, "the four {kind}-agencies setters: requireMove, the kind's permission on the row's agency and on the one named (one agency per row, LR-7/LR-54); a scope named into another agency by a global administrator only (2.4.0)"},
@@ -115,9 +119,9 @@ var writeRouteGates = map[string]routeGate{
 	"DELETE /api/v1/pending-runs/{id}":                                {clsVerb, "a run verb on every scope the pending run would touch (GC-11)"},
 	"PUT /api/v1/reactions/{ownerKind}/{ownerName}":                   {clsObject, "compose on the owner definition's agency (question 61; its upstream is its own agency's)"},
 	"DELETE /api/v1/reactions/{ownerKind}/{ownerName}/{name}":         {clsObject, "compose on the owner definition's agency (question 61)"},
-	"POST /api/v1/definitions/{kind}/{name}/revisions/{no}/restore":   {clsComposeAdmin, "revisions span every agency's definitions"},
-	"POST /api/v1/recycle-bin/{kind}/{name}/restore":                  {clsComposeAdmin, "the bin spans every agency's definitions"},
-	"DELETE /api/v1/recycle-bin/{kind}/{name}":                        {clsComposeAdmin, "a purge is irreversible and spans every agency"},
+	"POST /api/v1/definitions/{kind}/{name}/revisions/{no}/restore":   {clsObject, "compose on the definition's agency; the name among the caller's (SO-2, 2.5.0 C3)"},
+	"POST /api/v1/recycle-bin/{kind}/{name}/restore":                  {clsObject, "compose on the binned definition's agency; the name among the caller's (SO-2, 2.5.0 C3)"},
+	"DELETE /api/v1/recycle-bin/{kind}/{name}":                        {clsObject, "compose on the binned definition's agency, purged by its uid (SO-2, 2.5.0 C3)"},
 	"PUT /api/v1/runner-tags/{runnerId}":                              {clsObject, "requireRunnerAgency"},
 	"POST /api/v1/runners/register":                                   {clsAgent, "a single-use registration token"},
 	"POST /api/v1/runners/registration-tokens":                        {clsObject, "configureApp on the agency the token enrols an agent for (LR-61); Global's is a global administrator's"},
@@ -175,9 +179,12 @@ var writeRouteGates = map[string]routeGate{
 	"PATCH /api/v1/scopes/{scopeId}":                                  {clsObject, "requireScopeAgency"},
 	"DELETE /api/v1/scopes/{scopeId}":                                 {clsObject, "requireScopeAgency"},
 	"PUT /api/v1/scope-tags/{scopeId}":                                {clsObject, "requireScopeAgency"},
-	"POST /api/v1/alerts":                                             {clsGlobal, "alert rules have no owner and can match every agency's runs"},
-	"PUT /api/v1/alerts/{alertId}":                                    {clsGlobal, "alert rules have no owner"},
-	"DELETE /api/v1/alerts/{alertId}":                                 {clsGlobal, "alert rules have no owner"},
+	"POST /api/v1/alert-targets":                                      {clsObject, "AL-3: requireRecordOwnerChoice — the agency administered, Global for a global admin"},
+	"PUT /api/v1/alert-targets/{targetId}":                            {clsObject, "AL-3: configureApp on the target's agency (alertTargetFor)"},
+	"DELETE /api/v1/alert-targets/{targetId}":                         {clsObject, "AL-3: configureApp on the target's agency (alertTargetFor)"},
+	"POST /api/v1/alerts":                                             {clsObject, "AL-3: requireRecordOwnerChoice — the agency administered, Global for a global admin"},
+	"PUT /api/v1/alerts/{alertId}":                                    {clsObject, "AL-3: configureApp on the rule's agency (alertRuleFor)"},
+	"DELETE /api/v1/alerts/{alertId}":                                 {clsObject, "AL-3: configureApp on the rule's agency (alertRuleFor)"},
 	"POST /api/v1/ssh/hosts":                                          {clsObject, "requireRecordOwnerChoice: born in an agency its author administers, Global for a global administrator (LR-69); its key must be that owner's or Global's"},
 	"PUT /api/v1/ssh/hosts/{hostId}":                                  {clsObject, "requireHostOwner (the scope's agency for an imported record, the owner for a hand-written one); a new owner or key is checked in the handler"},
 	"DELETE /api/v1/ssh/hosts/{hostId}":                               {clsObject, "requireHostOwner"},
@@ -194,8 +201,6 @@ var writeRouteGates = map[string]routeGate{
 	"PUT /api/v1/settings/notifications":                              {clsGlobal, "install-wide setting"},
 	"POST /api/v1/settings/notifications/test":                        {clsGlobal, "sends over the installation's transports"},
 	"PUT /api/v1/settings/audit-compliance":                           {clsGlobal, "install-wide setting"},
-	"PUT /api/v1/settings/gitlab":                                     {clsGlobal, "install-wide setting"},
-	"POST /api/v1/settings/gitlab/webhook-secret/rotate":              {clsGlobal, "install-wide setting"},
 	"PUT /api/v1/settings/vault":                                      {clsGlobal, "install-wide setting"},
 	"PUT /api/v1/settings/log-storage":                                {clsGlobal, "install-wide setting"},
 	"POST /api/v1/settings/log-storage/sync":                          {clsGlobal, "install-wide setting"},

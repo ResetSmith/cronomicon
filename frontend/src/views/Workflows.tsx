@@ -1,7 +1,8 @@
 import { Fragment, Suspense, lazy, useEffect, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
-import { COMPOSE_ADMIN_ONLY, globalOnly } from "../api/globalAdmin";
+import { WorkflowAssignDialog } from "./AssignDialog";
+import type { components } from "../api/schema";
 import { useLiveGet, rows, useClientPager, useColumnWidths, useInlineAnnotation, useInlineTags, useTableSort, useToast } from "../hooks";
 import { AnnotationSection, CriticalChip, annotationOf, type Annotation } from "../components/Annotation";
 import { useGet } from "../hooks";
@@ -222,15 +223,17 @@ export function Workflows() {
   // remains a UX affordance rather than a boundary).
   const [canCompose, setCanCompose] = useState(false);
   const [canRun, setCanRun] = useState(false);
+  // 2.5.0 C7.3 (IN-12): a global administrator gives a Git workflow to an agency.
+  const [globalAdmin, setGlobalAdmin] = useState(false);
+  const [assignFor, setAssignFor] = useState<Workflow | null>(null);
   // GC (v2.2.2) — revision history is listed and restored only for a compose
   // ADMINISTRATOR (see the same note in Jobs.tsx); a departmental composer keeps
   // the row's History button, disabled with the reason.
-  const [composeAdmin, setComposeAdmin] = useState(false);
   useEffect(() => {
     fetchCapabilities().then((caps) => {
       setCanCompose(!!caps.compose);
       setCanRun(!!caps.triggerJobs);
-      setComposeAdmin(!!caps.composeAdmin);
+      setGlobalAdmin(!!caps.configureAppGlobal);
     });
   }, []);
 
@@ -643,6 +646,11 @@ export function Workflows() {
                       {w.disabled ? "Resume" : "Pause"}
                     </Btn>
                   )}
+                  {/* 2.5.0 C7.3 — a Git workflow given to another agency with
+                      what it runs; the same action takes an update. */}
+                  {globalAdmin && w.source === "git" && (
+                    <Btn small onClick={() => setAssignFor(w)}>Give to an agency…</Btn>
+                  )}
                   {/* Delete was previously editor-only; it is now also a row action
                       here, behind the same confirm and the same cronomicon-only gate
                       as Edit. Destructive last, dangerQuiet — Runners' order. */}
@@ -651,8 +659,6 @@ export function Workflows() {
                     <Btn
                       small
                       onClick={() => setHistoryFor(w.name ?? "")}
-                      disabled={!composeAdmin}
-                      title={globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY) || undefined}
                     >
                       History
                     </Btn>
@@ -853,6 +859,13 @@ export function Workflows() {
         </Modal>
       )}
 
+      {assignFor && (
+        <WorkflowAssignDialog
+          wf={assignFor as components["schemas"]["Workflow"]}
+          workflows={items as components["schemas"]["Workflow"][]}
+          onClose={() => setAssignFor(null)}
+        />
+      )}
       {historyFor && (
         <RevisionHistory
           kind="workflow"

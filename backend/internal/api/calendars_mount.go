@@ -86,7 +86,9 @@ func (s *Server) calendarRef(w http.ResponseWriter, r *http.Request) (owner, nam
 			httpx.Fail500(w, s.log, "db_error", err)
 			return "", "", false
 		}
-		if n == 0 {
+		// Of an agency the caller reads (2.5.0 C2, CF-1); else as absent
+		// (question 72).
+		if n == 0 || !readsAgency(r, a) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "calendar not found")
 			return "", "", false
 		}
@@ -101,7 +103,10 @@ func (s *Server) calendarRef(w http.ResponseWriter, r *http.Request) (owner, nam
 	var owners []string
 	for rows.Next() {
 		var o string
-		if rows.Scan(&o) == nil {
+		// Only the agencies the caller reads (2.5.0 C2): another agency's
+		// calendar of the name is neither found nor counted, so "ambiguous" no
+		// longer says that another agency has one (question 72).
+		if rows.Scan(&o) == nil && readsAgency(r, o) {
 			owners = append(owners, o)
 		}
 	}
@@ -221,8 +226,8 @@ func (s *Server) listCalendars(w http.ResponseWriter, r *http.Request) {
 	items := make([]calendarRow, 0, len(rows))
 	caller, _ := auth.IdentityFrom(r.Context())
 	for _, c := range rows {
-		// 2.4.4: the agency the request works in.
-		if !agencyctx.In(r, c.OwnerAgency) {
+		// Whose it is (2.5.0 C2, CF-1), then the agency the request works in.
+		if !readsAgency(r, c.OwnerAgency) || !agencyctx.In(r, c.OwnerAgency) {
 			continue
 		}
 		c.UsedBy = bindings[calKey(c.OwnerAgency, c.Name)]
@@ -346,7 +351,7 @@ func (s *Server) createCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	s.auditCalendar(r, id.Email, "Created", in.Name, "Calendar created with "+strconv.Itoa(len(days))+" day(s)")
+	s.auditCalendar(r, in.OwnerAgency, id.Email, "Created", in.Name, "Calendar created with "+strconv.Itoa(len(days))+" day(s)")
 	s.writeCalendar(w, r, in.OwnerAgency, in.Name, http.StatusCreated)
 }
 
@@ -384,7 +389,7 @@ func (s *Server) updateCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	s.auditCalendar(r, id.Email, "Updated", name, "Calendar updated")
+	s.auditCalendar(r, owner, id.Email, "Updated", name, "Calendar updated")
 	s.writeCalendar(w, r, owner, name, http.StatusOK)
 }
 
@@ -433,7 +438,7 @@ func (s *Server) replaceCalendarDays(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	s.auditCalendar(r, id.Email, "Updated", name, "Calendar days replaced ("+strconv.Itoa(len(days))+" day(s))")
+	s.auditCalendar(r, owner, id.Email, "Updated", name, "Calendar days replaced ("+strconv.Itoa(len(days))+" day(s))")
 	s.writeCalendar(w, r, owner, name, http.StatusOK)
 }
 
@@ -479,7 +484,7 @@ func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	s.auditCalendar(r, id.Email, "Deleted", name, "Calendar deleted")
+	s.auditCalendar(r, owner, id.Email, "Deleted", name, "Calendar deleted")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -774,9 +779,9 @@ func (s *Server) writeCalendar(w http.ResponseWriter, r *http.Request, owner, na
 	httpx.JSON(w, status, rows[0])
 }
 
-func (s *Server) auditCalendar(r *http.Request, actor, action, target, summary string) {
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Calendars", action, target, summary)
+func (s *Server) auditCalendar(r *http.Request, agency, actor, action, target, summary string) {
+	_ = workflow.InsertChangeLog(r.Context(), s.db, agency, actor, "Calendars", action, target, summary)
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Calendars", Action: action, Target: target, Summary: summary,
+		AgencyID: agency, Kind: "config", Actor: actor, Category: "Calendars", Action: action, Target: target, Summary: summary,
 	})
 }

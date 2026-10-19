@@ -20,7 +20,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/envref"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/notify"
-	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/sshexec"
@@ -77,7 +76,9 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		}
 		// 2.4.4: and of the agency the request works in (agencyctx).
 		list, err := sec.List(r.Context(), func(agency, scope string) bool {
-			return auth.ScopeReadableIn(id, agency, scope) && agencyctx.In(r, agency)
+			// Whose it is too (2.5.0 C2): the scope filter lets an
+			// agency-wide secret of any agency through.
+			return auth.ScopeReadableIn(id, agency, scope) && readsAgency(r, agency) && agencyctx.In(r, agency)
 		})
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
@@ -194,7 +195,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				return
 			}
 		}
-		s.mountWriteChangeLog(r, "Secrets", "created", inp.Key, id.Email)
+		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "created", inp.Key, id.Email)
 		httpx.JSON(w, http.StatusCreated, sc)
 	})))
 	mux.Handle("PUT /api/v1/env-secrets/{secretId}", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +284,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
-		s.mountWriteChangeLog(r, "Secrets", "updated", inp.Key, id.Email)
+		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "updated", inp.Key, id.Email)
 		httpx.JSON(w, http.StatusOK, sc)
 	})))
 	mux.Handle("DELETE /api/v1/env-secrets/{secretId}", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -302,6 +303,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
 			return
 		}
+		secretAgency := settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid) // read while the row is there
 		found, err := sec.Delete(r.Context(), sid)
 		if err != nil {
 			httpx.Fail500(w, s.log, "delete_failed", err)
@@ -311,7 +313,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
-		s.mountWriteChangeLog(r, "Secrets", "deleted", sid, id.Email)
+		s.mountWriteChangeLog(r, secretAgency, "Secrets", "deleted", sid, id.Email)
 		w.WriteHeader(http.StatusNoContent)
 	})))
 	mux.Handle("POST /api/v1/env-secrets/{secretId}/reveal", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -352,7 +354,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// S1 / PP-B4b: the reveal MUST be audited. Write the change_log row BEFORE
 		// returning the plaintext and fail closed (500, no value) if the audit
 		// write errors — never hand back a secret with no audit trail.
-		if auditErr := settings.WriteChangeLog(r.Context(), s.db, id.Email, "Secrets", "revealed", sc.Key, ""); auditErr != nil {
+		if auditErr := settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid), id.Email, "Secrets", "revealed", sc.Key, ""); auditErr != nil {
 			s.log.Error("secret reveal audit write failed — withholding value", "key", sc.Key, "error", auditErr)
 			httpx.Fail(w, http.StatusInternalServerError, "audit_failed", "could not record the reveal; value withheld")
 			return
@@ -410,7 +412,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
-		s.mountWriteChangeLog(r, "Secrets", "migrated-to-vault", sc.Key, id.Email)
+		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "migrated-to-vault", sc.Key, id.Email)
 		httpx.JSON(w, http.StatusOK, sc)
 	})))
 	// Tags (migration 470): operator-authored, SQLite-only labels on a secret —
@@ -437,9 +439,17 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 
 	// ── Alerts (writes: ConfigureApp, PP-B1) ────────────────────────────────────
 	mux.Handle("GET /api/v1/alerts", s.auth.RequireSession(http.HandlerFunc(s.handleListAlerts)))
-	mux.Handle("POST /api/v1/alerts", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleCreateAlert)))
-	mux.Handle("PUT /api/v1/alerts/{alertId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateAlert)))
-	mux.Handle("DELETE /api/v1/alerts/{alertId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleDeleteAlert)))
+	// AL-3 (2.5.0 C4): configureApp on the rule's agency (a global
+	// administrator's for Global's), checked in the handlers; they were a
+	// global administrator's while rules had no owner.
+	mux.Handle("POST /api/v1/alerts", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCreateAlert)))
+	mux.Handle("PUT /api/v1/alerts/{alertId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateAlert)))
+	mux.Handle("DELETE /api/v1/alerts/{alertId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDeleteAlert)))
+	// Push targets (2.5.0 C4, AL-2): rows with an owner, gated as the rules are.
+	mux.Handle("GET /api/v1/alert-targets", s.auth.RequireSession(http.HandlerFunc(s.handleListAlertTargets)))
+	mux.Handle("POST /api/v1/alert-targets", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCreateAlertTarget)))
+	mux.Handle("PUT /api/v1/alert-targets/{targetId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateAlertTarget)))
+	mux.Handle("DELETE /api/v1/alert-targets/{targetId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDeleteAlertTarget)))
 
 	// ── SSH Hosts (writes + test: ConfigureApp, PP-B1) ──────────────────────────
 	mux.Handle("GET /api/v1/ssh/hosts", s.auth.RequireSession(http.HandlerFunc(s.handleListSshHosts)))
@@ -468,11 +478,11 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		if list == nil {
 			list = []sshkeys.Credential{}
 		}
-		// 2.4.4: the agency the request works in. A key names its owner.
-		if _, named := agencyctx.From(r); named {
-			agencyIDs := s.agencyIDsByName(r.Context())
-			list = agencyctx.Keep(r, list, func(c sshkeys.Credential) string { return agencyIDs[c.OwnerAgency] })
-		}
+		// Whose each key is (2.5.0 C2, CF-1; every agency's were listed to
+		// everyone), then the agency the request works in (2.4.4). A key
+		// names its owner.
+		keyAgencies := s.agencyIDsByName(r.Context())
+		list = keepReadable(r, list, func(c sshkeys.Credential) string { return keyAgencies[c.OwnerAgency] })
 		if tagFilter := tagutil.ParseQuery(r.URL.Query()); !tagFilter.Empty() {
 			kept := make([]sshkeys.Credential, 0, len(list))
 			for _, c := range list {
@@ -559,7 +569,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				return
 			}
 		}
-		s.mountWriteChangeLog(r, "SSH Keys", "created", c.Label, id.Email)
+		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", "created", c.Label, id.Email)
 		httpx.JSON(w, http.StatusCreated, c)
 	})))
 	mux.Handle("GET /api/v1/ssh/credentials/{credentialId}", s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -568,7 +578,9 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		if c == nil {
+		// Whose it is (2.5.0 C2, CF-1: any key, Vault path and all, was every
+		// session's); as absent to anyone else (question 72).
+		if c == nil || !readsAgency(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", r.PathValue("credentialId"))) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
@@ -628,7 +640,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
-		s.mountWriteChangeLog(r, "SSH Keys", "updated", c.Label, id.Email)
+		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", "updated", c.Label, id.Email)
 		httpx.JSON(w, http.StatusOK, c)
 	})))
 	mux.Handle("DELETE /api/v1/ssh/credentials/{credentialId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -648,6 +660,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		}
 		cid := r.PathValue("credentialId")
 		force := r.URL.Query().Get("force") == "true"
+		keyAgency := settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", cid) // read while the row is there
 		found, err := keys.Delete(r.Context(), cid, force)
 		if err != nil {
 			if errors.Is(err, sshkeys.ErrCredentialInUse) {
@@ -667,7 +680,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
-		s.mountWriteChangeLog(r, "SSH Keys", "deleted", cid, id.Email)
+		s.mountWriteChangeLog(r, keyAgency, "SSH Keys", "deleted", cid, id.Email)
 		w.WriteHeader(http.StatusNoContent)
 	})))
 	mux.Handle("GET /api/v1/ssh/credentials/{credentialId}/usage", s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -677,7 +690,8 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		if c == nil {
+		// Whose it is (2.5.0 C2): its usage names hosts and bastions.
+		if c == nil || !readsAgency(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", cid)) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
@@ -706,27 +720,30 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/settings/notifications/test", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleTestNotification)))
 	mux.Handle("GET /api/v1/settings/audit-compliance", s.auth.RequireSession(http.HandlerFunc(s.handleGetAuditCompliance)))
 	mux.Handle("PUT /api/v1/settings/audit-compliance", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateAuditCompliance)))
-	mux.Handle("GET /api/v1/settings/gitlab", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleGetGitlabSettings)))
-	mux.Handle("PUT /api/v1/settings/gitlab", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateGitlabSettings)))
-	mux.Handle("POST /api/v1/settings/gitlab/webhook-secret/rotate", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleRotateGitlabWebhookSecret)))
+	// /settings/gitlab* (Global's repository before a repository was a row) were
+	// removed in 2.5.0 (question 60): /agencies/global/git-repo is the same.
 	mux.Handle("GET /api/v1/settings/vault", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleGetVaultSettings)))
 	mux.Handle("PUT /api/v1/settings/vault", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateVaultSettings)))
-	mux.Handle("GET /api/v1/settings/log-storage", s.auth.RequireSession(http.HandlerFunc(s.handleGetLogStorageSettings)))
+	// A global administrator's (2.5.0 C2, question 71: the S3 endpoint, bucket
+	// and access key id were every session's; only Installation settings read it).
+	mux.Handle("GET /api/v1/settings/log-storage", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleGetLogStorageSettings)))
 	mux.Handle("PUT /api/v1/settings/log-storage", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateLogStorageSettings)))
 	// SL-2 / SL-Q8: Sync now is configureApp, the same permission that set the
 	// bucket. 202 with the archive status; 409 while a tick runs; 422 on local.
 	mux.Handle("POST /api/v1/settings/log-storage/sync", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleLogStorageSyncNow)))
-	mux.Handle("GET /api/v1/settings/observability", s.auth.RequireSession(http.HandlerFunc(s.handleGetObservabilitySettings)))
+	mux.Handle("GET /api/v1/settings/observability", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleGetObservabilitySettings))) // question 71
 	mux.Handle("PUT /api/v1/settings/observability", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateObservabilitySettings)))
 
 	// ── Audit Export (ConfigureApp — full change/audit history, Q2/PP-B1) ────────
-	mux.Handle("GET /api/v1/audit/export", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleAuditExport)))
+	// 2.5.0 C1 (CF-5): an agency's administrator exports their agencies' rows; a
+	// global administrator everything, authentication events included.
+	mux.Handle("GET /api/v1/audit/export", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleAuditExport)))
 }
 
 // mountWriteChangeLog writes a change_log row for mutations audited at the API layer
 // (secret reveals and vault migrations, which have no settings-package equivalent).
-func (s *Server) mountWriteChangeLog(r *http.Request, category, action, target, actor string) {
-	_ = settings.WriteChangeLog(r.Context(), s.db, actor, category, action, target, "")
+func (s *Server) mountWriteChangeLog(r *http.Request, agency, category, action, target, actor string) {
+	_ = settings.WriteChangeLog(r.Context(), s.db, agency, actor, category, action, target, "")
 }
 
 // loadSecretInScope loads a secret by id and enforces the actor's scope grants
@@ -948,8 +965,10 @@ func (s *Server) handleListEnvVars(w http.ResponseWriter, r *http.Request) {
 	agencyIDs := s.agencyIDsByName(r.Context()) // a row names its owner (I2: whose scope it is)
 	for _, ev := range list {
 		// 2.4.4: and in the agency the request works in (agencyctx).
+		// Whose it is too (2.5.0 C2): the scope filter let an agency-wide
+		// variable of any agency, its plaintext value with it, through.
 		if auth.ScopeReadableIn(id, agencyIDs[ev.OwnerAgency], scopeStrOf(ev.Scope)) && tagFilter.Match(ev.Tags) &&
-			agencyctx.In(r, agencyIDs[ev.OwnerAgency]) {
+			readsAgency(r, agencyIDs[ev.OwnerAgency]) && agencyctx.In(r, agencyIDs[ev.OwnerAgency]) {
 			filtered = append(filtered, ev)
 		}
 	}
@@ -1144,9 +1163,10 @@ func (s *Server) handleListScopes(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.Scope{}
 	}
-	// 2.4.4: the agency the request works in.
+	// Whose each scope is (2.5.0 C2, CF-1; every agency's, hosts and all,
+	// were listed to everyone), then the agency the request works in (2.4.4).
 	// A scope's owner is its one agency, Global's for one several share (1410).
-	list = agencyctx.Keep(r, list, func(sc settings.Scope) string {
+	list = keepReadable(r, list, func(sc settings.Scope) string {
 		if len(sc.Agencies) == 1 {
 			return sc.Agencies[0].ID
 		}
@@ -1266,7 +1286,9 @@ func (s *Server) handleGetScope(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	if sc == nil {
+	// Whose it is (2.5.0 C2, CF-1; it was every session's, hosts and all):
+	// as absent to anyone else (question 72).
+	if sc == nil || !readsAgency(r, settings.RowAgency(r.Context(), s.db, "scopes", "owner_agency", sid)) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
 		return
 	}
@@ -1470,10 +1492,206 @@ func (s *Server) handleListAlerts(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	if list == nil {
-		list = []settings.AlertRule{}
+	// Whose each rule is (2.5.0 C4, AL-1; CF-1): every rule, recipients and
+	// all, was every session's.
+	list = keepReadable(r, list, func(a settings.AlertRule) string { return a.OwnerAgency })
+	httpx.JSON(w, http.StatusOK, list)
+}
+
+// alertRuleFor is the rule the route names, if the caller may change it
+// (AL-3): 404 to one who may not read it (question 72), 403 to one who reads
+// it but holds no configureApp on its agency.
+func (s *Server) alertRuleFor(w http.ResponseWriter, r *http.Request, id auth.Identity) (*settings.AlertRule, bool) {
+	ar, err := settings.GetAlertRule(r.Context(), s.db, r.PathValue("alertId"))
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return nil, false
+	}
+	if ar == nil || !readsAgency(r, ar.OwnerAgency) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "alert rule not found")
+		return nil, false
+	}
+	if !id.CanAgency(auth.PermConfigureApp, agencyOrGlobal(ar.OwnerAgency)) {
+		httpx.Fail(w, http.StatusForbidden, "forbidden", "configureApp on the rule's agency is required")
+		return nil, false
+	}
+	return ar, true
+}
+
+// alertTargetsInAgency refuses a rule that names a push target not of its own
+// agency (2.5.0 C4, AL-2; question 79, IN-6): an agency's rule sends to its
+// agency's targets, a Global rule to Global's. One the caller cannot read is
+// refused the same way as one that does not exist.
+func (s *Server) alertTargetsInAgency(w http.ResponseWriter, r *http.Request, inp settings.AlertRuleInput, owner string) bool {
+	if len(inp.TargetIDs) == 0 {
+		return true
+	}
+	bad, err := settings.AlertTargetsOutsideAgency(r.Context(), s.db, inp.TargetIDs, owner)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if len(bad) > 0 {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_target",
+			"the rule's agency has no push target "+strings.Join(bad, ", ")+": a rule sends to its own agency's targets")
+		return false
+	}
+	return true
+}
+
+// alertTargetView is a push target as this caller may see it (question 81):
+// its URL is often the credential itself, and only one who may change the
+// target (configureApp on its agency) reads it; others see that one is set.
+func alertTargetView(id auth.Identity, t settings.AlertTarget) settings.AlertTarget {
+	if !id.CanAgency(auth.PermConfigureApp, agencyOrGlobal(t.OwnerAgency)) {
+		t.URL = ""
+	}
+	return t
+}
+
+func (s *Server) handleListAlertTargets(w http.ResponseWriter, r *http.Request) {
+	id, _ := auth.IdentityFrom(r.Context())
+	list, err := settings.ListAlertTargets(r.Context(), s.db)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	list = keepReadable(r, list, func(t settings.AlertTarget) string { return t.OwnerAgency })
+	for i := range list {
+		list[i] = alertTargetView(id, list[i])
 	}
 	httpx.JSON(w, http.StatusOK, list)
+}
+
+// alertTargetFor is the target the route names, if the caller may change it:
+// 404 to one who may not read it (question 72), 403 to one who reads it but
+// holds no configureApp on its agency (AL-3).
+func (s *Server) alertTargetFor(w http.ResponseWriter, r *http.Request, id auth.Identity) (*settings.AlertTarget, bool) {
+	t, err := settings.GetAlertTarget(r.Context(), s.db, r.PathValue("targetId"))
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return nil, false
+	}
+	if t == nil || !readsAgency(r, t.OwnerAgency) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "push target not found")
+		return nil, false
+	}
+	if !id.CanAgency(auth.PermConfigureApp, agencyOrGlobal(t.OwnerAgency)) {
+		httpx.Fail(w, http.StatusForbidden, "forbidden", "configureApp on the target's agency is required")
+		return nil, false
+	}
+	return t, true
+}
+
+func decodeAlertTargetInput(w http.ResponseWriter, r *http.Request) (*settings.AlertTargetInput, bool) {
+	var body struct {
+		Label       string `json:"label"`
+		Service     string `json:"service"`
+		URL         string `json:"url"`
+		Enabled     *bool  `json:"enabled"`
+		OwnerAgency string `json:"ownerAgency"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return nil, false
+	}
+	inp := &settings.AlertTargetInput{
+		Label: strings.TrimSpace(body.Label), Service: strings.TrimSpace(body.Service),
+		URL: strings.TrimSpace(body.URL), Enabled: body.Enabled == nil || *body.Enabled,
+		OwnerAgency: strings.TrimSpace(body.OwnerAgency),
+	}
+	if inp.URL == "" {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "url_required", "a push target needs its Apprise URL")
+		return nil, false
+	}
+	return inp, true
+}
+
+func (s *Server) handleCreateAlertTarget(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	inp, ok := decodeAlertTargetInput(w, r)
+	if !ok {
+		return
+	}
+	owner, ok := s.requireRecordOwnerChoice(w, r, id, inp.OwnerAgency, "push target")
+	if !ok {
+		return
+	}
+	inp.OwnerAgency = owner
+	t, err := settings.CreateAlertTarget(r.Context(), s.db, *inp, id.Email)
+	if err != nil {
+		httpx.Fail500(w, s.log, "create_failed", err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, alertTargetView(id, *t))
+}
+
+func (s *Server) handleUpdateAlertTarget(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	if _, ok := s.alertTargetFor(w, r, id); !ok {
+		return
+	}
+	inp, ok := decodeAlertTargetInput(w, r)
+	if !ok {
+		return
+	}
+	t, err := settings.UpdateAlertTarget(r.Context(), s.db, r.PathValue("targetId"), *inp, id.Email)
+	if err != nil {
+		httpx.Fail500(w, s.log, "update_failed", err)
+		return
+	}
+	if t == nil {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "push target not found")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, alertTargetView(id, *t))
+}
+
+func (s *Server) handleDeleteAlertTarget(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	if _, ok := s.alertTargetFor(w, r, id); !ok {
+		return
+	}
+	found, err := settings.DeleteAlertTarget(r.Context(), s.db, r.PathValue("targetId"), id.Email)
+	if err != nil {
+		httpx.Fail500(w, s.log, "delete_failed", err)
+		return
+	}
+	if !found {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "push target not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// alertJobInAgency refuses an agency's rule that names a job its agency does
+// not have (2.5.0 C4, AL-1): it could match nothing of its own.
+func (s *Server) alertJobInAgency(w http.ResponseWriter, r *http.Request, inp settings.AlertRuleInput, owner string) bool {
+	if owner == agencyid.Global || inp.JobName == nil || *inp.JobName == "" {
+		return true
+	}
+	ok, err := settings.AlertJobInAgency(r.Context(), s.db, *inp.JobName, owner)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if !ok {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_job", "the rule's agency has no job named "+*inp.JobName)
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleCreateAlert(w http.ResponseWriter, r *http.Request) {
@@ -1491,6 +1709,16 @@ func (s *Server) handleCreateAlert(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, code, msg)
 		return
 	}
+	// Whose: the agency the request works in, or one named that the caller
+	// administers; Global only for a global administrator (AL-1, AL-3).
+	owner, ok := s.requireRecordOwnerChoice(w, r, id, inp.OwnerAgency, "alert rule")
+	if !ok {
+		return
+	}
+	inp.OwnerAgency = owner
+	if !s.alertJobInAgency(w, r, *inp, owner) || !s.alertTargetsInAgency(w, r, *inp, owner) {
+		return
+	}
 	ar, err := settings.CreateAlertRule(r.Context(), s.db, *inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "create_failed", err)
@@ -1506,6 +1734,10 @@ func (s *Server) handleUpdateAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aid := r.PathValue("alertId")
+	cur, ok := s.alertRuleFor(w, r, id)
+	if !ok {
+		return
+	}
 	inp, err := decodeAlertRuleInput(r)
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
@@ -1513,6 +1745,10 @@ func (s *Server) handleUpdateAlert(w http.ResponseWriter, r *http.Request) {
 	}
 	if code, msg := validateAlertRuleInput(*inp); code != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, code, msg)
+		return
+	}
+	if !s.alertJobInAgency(w, r, *inp, agencyOrGlobal(cur.OwnerAgency)) ||
+		!s.alertTargetsInAgency(w, r, *inp, agencyOrGlobal(cur.OwnerAgency)) {
 		return
 	}
 	ar, err := settings.UpdateAlertRule(r.Context(), s.db, aid, *inp, id.Email)
@@ -1534,6 +1770,9 @@ func (s *Server) handleDeleteAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aid := r.PathValue("alertId")
+	if _, ok := s.alertRuleFor(w, r, id); !ok {
+		return
+	}
 	found, err := settings.DeleteAlertRule(r.Context(), s.db, aid, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "delete_failed", err)
@@ -1555,15 +1794,23 @@ func decodeAlertRuleInput(r *http.Request) (*settings.AlertRuleInput, error) {
 		Recipients *string  `json:"recipients"`
 		Owner      *string  `json:"owner"`
 		Enabled    bool     `json:"enabled"`
+		// OwnerAgency is whose a new rule is (C4); an edit keeps the rule's.
+		OwnerAgency string `json:"ownerAgency"`
+		// TargetIDs: absent keeps an edited rule's targets (AL-2).
+		TargetIDs *[]string `json:"targetIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		return nil, err
 	}
-	return &settings.AlertRuleInput{
+	inp := &settings.AlertRuleInput{
 		TargetMode: body.TargetMode, JobName: body.JobName,
 		Trigger: body.Trigger, Channels: body.Channels, Recipients: body.Recipients,
-		Owner: body.Owner, Enabled: body.Enabled,
-	}, nil
+		Owner: body.Owner, Enabled: body.Enabled, OwnerAgency: body.OwnerAgency,
+	}
+	if body.TargetIDs != nil {
+		inp.TargetIDs = append([]string{}, *body.TargetIDs...)
+	}
+	return inp, nil
 }
 
 // validateAlertRuleInput refuses a rule that could never fire (VF-15 / J-3).
@@ -1603,8 +1850,9 @@ func (s *Server) handleListSshHosts(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.SshHost{}
 	}
-	// 2.4.4: the agency the request works in.
-	list = agencyctx.Keep(r, list, func(h settings.SshHost) string { return h.OwnerAgency })
+	// Whose each record is (2.5.0 C2, CF-1), then the agency the request
+	// works in (2.4.4).
+	list = keepReadable(r, list, func(h settings.SshHost) string { return h.OwnerAgency })
 	id, _ := auth.IdentityFrom(r.Context())
 	rows, err := withRowFlags(list, func(h settings.SshHost) (rowFlags, error) { return s.hostRecordFlags(r.Context(), id, h.ID) })
 	if err != nil {
@@ -1670,7 +1918,7 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if repaired {
-		s.auditRepair(r.Context(), id.Email, "host record "+hid, "owner set to "+inp.OwnerAgency, rep)
+		s.auditRepair(r.Context(), settings.RowAgency(r.Context(), s.db, "ssh_hosts", "owner_agency", hid), id.Email, "host record "+hid, "owner set to "+inp.OwnerAgency, rep)
 	}
 	httpx.JSON(w, http.StatusOK, h)
 }
@@ -1905,10 +2153,10 @@ func (s *Server) handleTestSshHost(w http.ResponseWriter, r *http.Request) {
 		out.HostKeyFingerprint = h.HostKeyFingerprint
 		out.HostKeyType = h.HostKeyType
 	}
-	_ = settings.WriteChangeLog(r.Context(), s.db, idn.Email, "SSH Hosts", "tested", name, res.Status)
+	_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "ssh_hosts", "owner_agency", hid), idn.Email, "SSH Hosts", "tested", name, res.Status)
 	// Additive (V1.1-2): also record the test as a History/Executions run with the
 	// probe output as its Log Output. Best-effort — never fails the test request.
-	s.recordSSHTestRun(r.Context(), name, res, idn.Email)
+	s.recordSSHTestRun(r.Context(), settings.RowAgency(r.Context(), s.db, "ssh_hosts", "owner_agency", hid), name, res, idn.Email)
 	s.log.Info("ssh host connection test", "host", name, "status", res.Status, "latencyMs", res.LatencyMs)
 	httpx.JSON(w, http.StatusOK, out)
 }
@@ -1945,8 +2193,9 @@ func (s *Server) handleListBastions(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.SshBastion{}
 	}
-	// 2.4.4: the agency the request works in.
-	list = agencyctx.Keep(r, list, func(b settings.SshBastion) string { return b.OwnerAgency })
+	// Whose each bastion is (2.5.0 C2, CF-1), then the agency the request
+	// works in (2.4.4).
+	list = keepReadable(r, list, func(b settings.SshBastion) string { return b.OwnerAgency })
 	id, _ := auth.IdentityFrom(r.Context())
 	rows, err := withRowFlags(list, func(b settings.SshBastion) (rowFlags, error) { return s.bastionFlags(r.Context(), id, b.ID) })
 	if err != nil {
@@ -2036,7 +2285,7 @@ func (s *Server) handleUpdateBastion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if repaired {
-		s.auditRepair(r.Context(), id.Email, "bastion "+bid, "owner set to "+inp.OwnerAgency, rep)
+		s.auditRepair(r.Context(), settings.RowAgency(r.Context(), s.db, "bastions", "owner_agency", bid), id.Email, "bastion "+bid, "owner set to "+inp.OwnerAgency, rep)
 	}
 	httpx.JSON(w, http.StatusOK, b)
 }
@@ -2137,10 +2386,10 @@ func (s *Server) handleTestBastion(w http.ResponseWriter, r *http.Request) {
 		out.HostKeyFingerprint = b.HostKeyFingerprint
 		out.HostKeyType = b.HostKeyType
 	}
-	_ = settings.WriteChangeLog(r.Context(), s.db, idn.Email, "Bastions", "tested", name, res.Status)
+	_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "bastions", "owner_agency", bid), idn.Email, "Bastions", "tested", name, res.Status)
 	// Additive (V1.1-2): also record the test as a History/Executions run with the
 	// probe output as its Log Output. Best-effort — never fails the test request.
-	s.recordSSHTestRun(r.Context(), name, res, idn.Email)
+	s.recordSSHTestRun(r.Context(), settings.RowAgency(r.Context(), s.db, "bastions", "owner_agency", bid), name, res, idn.Email)
 	s.log.Info("ssh bastion connection test", "bastion", name, "status", res.Status, "latencyMs", res.LatencyMs)
 	httpx.JSON(w, http.StatusOK, out)
 }
@@ -2306,19 +2555,20 @@ func (s *Server) handleGetNotifications(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	// GC-14: an Apprise target URL IS its credential (a Slack webhook, a
-	// PagerDuty key), and this read is open to every session so the alert
-	// editor can list targets by label. Only the administrator who may write
-	// the config gets the URLs back; everyone else gets the labels.
+	// The gateway's address is the administrator's to read (GC-14). The push
+	// targets, whose URLs are their credentials, are no longer here (2.5.0 C7,
+	// question 99): /alert-targets serves them, by its own rule (question 81).
 	if nc != nil && nc.Apprise != nil && !isGlobal(r, auth.PermConfigureApp) {
 		masked := *nc.Apprise
 		masked.APIURL = ""
-		masked.Targets = make([]settings.AppriseTarget, len(nc.Apprise.Targets))
-		for i, t := range nc.Apprise.Targets {
-			t.URL = ""
-			masked.Targets[i] = t
-		}
 		nc.Apprise = &masked
+	}
+	// The relay's address, account and recipients likewise (2.5.0 C2, question
+	// 70: they were every session's); whether email is set up still shows.
+	if nc != nil && nc.SMTP != nil && !isGlobal(r, auth.PermConfigureApp) {
+		masked := *nc.SMTP
+		masked.Host, masked.Username, masked.Recipients = "", "", []string{}
+		nc.SMTP = &masked
 	}
 	httpx.JSON(w, http.StatusOK, nc)
 }
@@ -2410,7 +2660,7 @@ func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) 
 	if report.AnySent() {
 		outcome = "sent"
 	}
-	settings.Audit(r.Context(), s.db, id.Email, "Notifications", "test", outcome, detailForTest(report))
+	settings.Audit(r.Context(), s.db, agencyid.Global, id.Email, "Notifications", "test", outcome, detailForTest(report))
 	httpx.JSON(w, http.StatusOK, report)
 }
 
@@ -2461,63 +2711,9 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	// Streamed row-by-row (CC.10) so a full-table export stays flat on memory.
 	// Headers + 200 are already sent, so a mid-stream failure can only be logged;
 	// the truncated body signals it to the operator.
-	if err := settings.ExportAudit(r.Context(), s.db, w, from, to, eventTypes, format); err != nil {
+	if err := settings.ExportAudit(r.Context(), s.db, w, from, to, eventTypes, format, auditExportScope(r)); err != nil {
 		s.log.Error("audit export stream failed", "error", err)
 	}
-}
-
-func (s *Server) handleGetGitlabSettings(w http.ResponseWriter, r *http.Request) {
-	// The /settings/gitlab routes mean Global's repository (GR-9; an agency's
-	// own repository gets routes of its own in Phase R6).
-	cfg, err := settings.GetGitlabConfig(r.Context(), s.db, s.cfg, repoid.Global)
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, cfg)
-}
-
-func (s *Server) handleUpdateGitlabSettings(w http.ResponseWriter, r *http.Request) {
-	id, ok := auth.IdentityFrom(r.Context())
-	if !ok {
-		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-		return
-	}
-	var inp settings.GitlabConfig
-	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
-		return
-	}
-	// Tested before it is written, as PUT /agencies/global/git-repo is (IN-2;
-	// from the review of I3: this route, the one the Integrations screen
-	// uses for Global, was not).
-	if !s.requirePushableConnection(w, r, repoid.Global, true, inp) {
-		return
-	}
-	cfg, err := settings.UpdateGitlabConfig(r.Context(), s.db, s.cfg, repoid.Global, inp, id.Email)
-	if err != nil {
-		httpx.Fail500(w, s.log, "update_failed", err)
-		return
-	}
-	// The connection has been written: the repository's sync service is built
-	// again from it, and syncs (GR-11). Until 2.4.0 the service resolved the URL
-	// and the token once, at start-up, and this handler logged that the change
-	// would take effect at the next restart.
-	if s.git != nil {
-		if err := s.git.Restart(r.Context(), repoid.Global); err != nil {
-			s.log.Error("gitlab settings saved, but the sync service could not be restarted with them", "actor", id.Email, "error", err)
-		}
-	}
-	httpx.JSON(w, http.StatusOK, cfg)
-}
-
-func (s *Server) handleRotateGitlabWebhookSecret(w http.ResponseWriter, r *http.Request) {
-	id, ok := auth.IdentityFrom(r.Context())
-	if !ok {
-		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-		return
-	}
-	s.rotateWebhookSecret(w, r, repoid.Global, id.Email)
 }
 
 // rotateWebhookSecret rotates one repository's webhook secret and answers with

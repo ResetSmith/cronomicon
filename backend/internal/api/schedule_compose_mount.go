@@ -350,9 +350,9 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 	if isCreate {
 		auditAction, status = "Created", http.StatusCreated
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Schedules", auditAction, in.Name, "Cronomicon schedule "+strings.ToLower(auditAction))
+	_ = workflow.InsertChangeLog(r.Context(), s.db, owner, actor, "Schedules", auditAction, in.Name, "Cronomicon schedule "+strings.ToLower(auditAction))
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Schedules", Action: auditAction, Target: in.Name,
+		AgencyID: owner, Kind: "config", Actor: actor, Category: "Schedules", Action: auditAction, Target: in.Name,
 	})
 	// A bare create references no definition_schedules, so a reload is a cheap
 	// no-op — but harmless, and keeps the seam consistent with edit/delete (D8).
@@ -473,9 +473,10 @@ func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 		detail += " — detached " + strconv.Itoa(len(binned)) + " binding(s) held by recycle-binned " +
 			strings.Join(refs, ", ") + "; restore the schedule to recover them"
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, "Schedules", "Deleted", name, detail)
+	agency := s.definitionAgency(r.Context(), "schedule", schedUID) // the schedule's (C1)
+	_ = workflow.InsertChangeLog(r.Context(), s.db, agency, id.Email, "Schedules", "Deleted", name, detail)
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: id.Email, Category: "Schedules", Action: "Deleted", Target: name,
+		AgencyID: agency, Kind: "config", Actor: id.Email, Category: "Schedules", Action: "Deleted", Target: name,
 		Details: detail,
 	})
 	s.forceScheduleReload(r.Context())
@@ -518,7 +519,11 @@ func (s *Server) scheduleRef(w http.ResponseWriter, r *http.Request, source, git
 		var owner string
 		var uid sql.NullString
 		var isLive int
-		if rows.Scan(&owner, &uid, &isLive) == nil {
+		// Only the agencies the caller reads (2.5.0 C2, CF-1): another agency's
+		// schedule of the name is neither found nor counted (question 72: its
+		// detail, env and usedBy were every session's, and "ambiguous" said
+		// another agency had one).
+		if rows.Scan(&owner, &uid, &isLive) == nil && readsAgency(r, owner) {
 			ref := scheduleRefOf{owner: owner, name: name, uid: uid.String}
 			found = append(found, ref)
 			if isLive == 1 {

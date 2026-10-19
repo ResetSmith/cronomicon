@@ -2,6 +2,7 @@ package gitlab
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -34,6 +35,25 @@ const (
 	becameKeptAsWas    = "this job is as it was at the last sync and does not run, until its file names one of Global's scopes"
 )
 
+// scopeOwnedAlone reports whether agency owns the scope of that name and it is
+// in that agency alone (a scope in several agencies is not one agency's), and
+// whether the agency owns a scope of that name at all. It is what a sync asks
+// of a job's scope (confineJobs) and what an assignment asks before it commits
+// a job naming it (C10), so that one is never refused by the other.
+func scopeOwnedAlone(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, scope, agency string) (alone, exists bool, err error) {
+	var n, agencies, mine int
+	if err := q.QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM scopes WHERE name = ?1 AND owner_agency = ?2),
+		       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?1 AND sc.owner_agency = ?2),
+		       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+		         WHERE sc.name = ?1 AND sc.owner_agency = ?2 AND sa.agency_id = ?2)`, scope, agency).Scan(&n, &agencies, &mine); err != nil {
+		return false, false, err
+	}
+	return n == 1 && agencies == 1 && mine == 1, n > 0, nil
+}
+
 // confineJobs splits the jobs of the sync that is under way into the ones that
 // may be written and the ones that are refused, each refusal as its file's
 // error.
@@ -54,15 +74,11 @@ func (s *Service) confineJobs(ctx context.Context, jobs []JobYAML, parsed []inve
 		if v, done := owned[scope]; done {
 			return v, nil
 		}
-		var exists, agencies, mine int
-		if err := s.db.QueryRowContext(ctx, `
-			SELECT (SELECT COUNT(*) FROM scopes WHERE name = ?1 AND owner_agency = ?2),
-			       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?1 AND sc.owner_agency = ?2),
-			       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-			         WHERE sc.name = ?1 AND sc.owner_agency = ?2 AND sa.agency_id = ?2)`, scope, s.agency()).Scan(&exists, &agencies, &mine); err != nil {
+		alone, exists, err := scopeOwnedAlone(ctx, s.db, scope, s.agency())
+		if err != nil {
 			return false, err
 		}
-		v := (exists == 1 && agencies == 1 && mine == 1) || (exists == 0 && arriving[scope])
+		v := alone || (!exists && arriving[scope])
 		owned[scope] = v
 		return v, nil
 	}

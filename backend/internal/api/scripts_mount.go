@@ -309,8 +309,8 @@ func (s *Server) listScripts(w http.ResponseWriter, r *http.Request) {
 	// GR-26: the scripts of Global's repository, and of the repositories of the
 	// agencies the caller is of. The list had no filter: with a second
 	// repository it showed every agency's scripts to every session.
-	if id, ok := auth.IdentityFrom(r.Context()); ok {
-		frag, fargs := readableRepoSQL(id, "s.repo_id")
+	// By the script's repository's agency (CF-1, 2.5.0 C2).
+	if frag, fargs := agencyReadFilter(r, agencyid.ScriptOwnerSQL("s")); frag != "" {
 		where += frag
 		args = append(args, fargs...)
 	}
@@ -392,22 +392,31 @@ func (s *Server) getScript(w http.ResponseWriter, r *http.Request) {
 	// usedBy reverse index: every job that references THIS script, by its uid.
 	// By name it would also list the jobs of another repository's script of the
 	// same name.
+	//
+	// CF-7 (2.5.0 C2): only the jobs the caller reads are named; usedByCount
+	// counts them all, so the others are a number and not names.
 	sr.UsedBy = []string{}
 	sr.UsedByRefs = []scriptUsedByRef{}
+	total := 0
 	jrows, err := s.db.QueryContext(r.Context(),
 		`SELECT name, COALESCE(uid,''), source,
 		        (SELECT GROUP_CONCAT(a.name, '\x1f')
 		           FROM scope_agencies sa
 		           JOIN agencies a ON a.id = sa.agency_id
 		           JOIN scopes   sc ON sc.id = sa.scope_id
-		          WHERE sc.name = jobs.scope) AS agencies
+		          WHERE sc.name = jobs.scope) AS agencies,
+		        `+agencyid.JobOwnerSQL("jobs")+`
 		   FROM jobs WHERE script_uid = ? ORDER BY name`, uid)
 	if err == nil {
 		defer jrows.Close()
 		for jrows.Next() {
-			var jn, uid, src string
+			var jn, uid, src, owner string
 			var agencies sql.NullString
-			if jrows.Scan(&jn, &uid, &src, &agencies) == nil {
+			if jrows.Scan(&jn, &uid, &src, &agencies, &owner) == nil {
+				total++
+				if !readsAgency(r, owner) {
+					continue
+				}
 				sr.UsedBy = append(sr.UsedBy, jn)
 				sr.UsedByRefs = append(sr.UsedByRefs, scriptUsedByRef{
 					Name: jn, UID: uid, Source: src, Agencies: splitAgencies(agencies),
@@ -415,7 +424,7 @@ func (s *Server) getScript(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	sr.UsedByCount = len(sr.UsedBy)
+	sr.UsedByCount = total
 
 	httpx.JSON(w, http.StatusOK, sr)
 }
@@ -537,9 +546,10 @@ func (s *Server) updateScriptTags(w http.ResponseWriter, r *http.Request) {
 	if id, ok := auth.IdentityFrom(r.Context()); ok {
 		actor = id.Email
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Scripts", "Updated", name, "Script tags updated")
+	agency := s.ownerBy(r.Context(), `SELECT `+agencyid.ScriptOwnerSQL("sx")+` FROM scripts sx WHERE sx.uid = ?`, uid) // the script's repository's (C1)
+	_ = workflow.InsertChangeLog(r.Context(), s.db, agency, actor, "Scripts", "Updated", name, "Script tags updated")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Scripts", Action: "Updated", Target: name,
+		AgencyID: agency, Kind: "config", Actor: actor, Category: "Scripts", Action: "Updated", Target: name,
 	})
 
 	// Return the updated script (same shape as GET /scripts/{name}, with an

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 )
@@ -161,7 +162,7 @@ func UpdateObservabilityConfig(ctx context.Context, database *sql.DB, appCfg *co
 	}
 
 	secrets.RedactionSourceChanged() // AM-4b
-	_ = WriteChangeLog(ctx, database, actor, "Settings", "updated", "Observability Settings", "")
+	_ = WriteChangeLog(ctx, database, agencyid.Global, actor, "Settings", "updated", "Observability Settings", "")
 	return GetObservabilityConfig(ctx, database, appCfg)
 }
 

@@ -45,10 +45,14 @@ export function Scopes() {
   // with the reason.
   const [canConfig, setCanConfig] = useState(false);
   const [globalAdmin, setGlobalAdmin] = useState(false);
+  // 2.5.0 C5 (GA-1): an agency's group list is a global administrator's for
+  // manageRoles, the permission that writes grants.
+  const [rolesAdmin, setRolesAdmin] = useState(false);
   useEffect(() => {
     fetchCapabilities().then((caps) => {
       setCanConfig(caps.configureApp);
       setGlobalAdmin(!!caps.configureAppGlobal);
+      setRolesAdmin(!!caps.manageRolesGlobal);
     });
   }, []);
   // ScopesTab is a controlled child: it renders the rows we fetch and bumps the
@@ -68,7 +72,7 @@ export function Scopes() {
           question is actually asked: "what is in Tax?" is the Agencies tab (each
           row expands into an editable member list), and "which agencies hold this
           secret?" is an Agencies column on the entity's own catalog row. */}
-      {tab === 1 && <AgenciesTab canEdit={canConfig} globalAdmin={globalAdmin} />}
+      {tab === 1 && <AgenciesTab canEdit={canConfig} globalAdmin={globalAdmin} rolesAdmin={rolesAdmin} />}
     </div>
   );
 }

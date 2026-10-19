@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import type { ReactElement } from "react";
 
 // Phase K (VF-16) — the Alert Destinations section is gone, and the "last sent"
 // signal it carried has moved onto the transports that actually send.
@@ -17,16 +19,22 @@ let testReport: unknown = { results: [] };
 let postError: unknown = null;
 const posts: { path: string; body: unknown }[] = [];
 const gets: string[] = [];
+const getHeaders: Record<string, unknown>[] = [];
+let alertTargets: unknown[] = [];
+// The section links to Settings → Alerts, so it renders inside a router.
+const render = (ui: ReactElement) => rtlRender(<MemoryRouter>{ui}</MemoryRouter>);
 
 vi.mock("../../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/client")>();
   return {
     ...actual,
     api: {
-      GET: vi.fn(async (path: string) => {
+      GET: vi.fn(async (path: string, opts?: { headers?: Record<string, unknown> }) => {
         gets.push(path);
+        getHeaders.push(opts?.headers ?? {});
         if (path === "/settings/notifications") return { data: config };
         if (path === "/alerts") return { data: [] };
+        if (path === "/alert-targets") return { data: alertTargets };
         // A GET for a route this section no longer owns would be a leftover.
         return { data: [] };
       }),
@@ -60,6 +68,8 @@ const renderSection = async () => {
 beforeEach(() => {
   posts.length = 0;
   gets.length = 0;
+  getHeaders.length = 0;
+  alertTargets = [];
   testReport = { results: [] };
   postError = null;
 });
@@ -70,13 +80,59 @@ describe("Notifications — destinations removed (K-1)", () => {
     config = { provider: "apprise" };
     await renderSection();
     expect(screen.queryByText("Alert Destinations")).toBeNull();
-    // The two cards that remain, and nothing between them.
+    // The relay remains; the alert rules moved to Settings → Alerts (2.5.0 C4).
     expect(screen.getByText("Run Notifications")).toBeTruthy();
-    expect(screen.getByText("Alert Rules")).toBeTruthy();
     // The destination type picker's copy is the specific thing that lied
     // ("delivered to all active sessions") — it must be gone, not reworded.
     expect(screen.queryByText(/delivered to all active sessions/)).toBeNull();
     expect(screen.queryByText(/Add Destination/)).toBeNull();
+  });
+});
+
+// 2.5.0 C4.3 — the relay is the installation's; the alert rules and push targets
+// are one agency's, on Settings → Alerts.
+describe("Notifications — the relay alone (2.5.0 C4)", () => {
+  it("lists no alert rule and reads no agency's rules", async () => {
+    config = { provider: "apprise" };
+    await renderSection();
+    expect(screen.queryByText("Alert Rules")).toBeNull();
+    expect(gets).not.toContain("/alerts");
+  });
+
+  it("says the default recipients join Global rules' mail only (question 80)", async () => {
+    config = { provider: "smtp", smtp: {} };
+    await renderSection();
+    expect(screen.getByText(/Added to the mail of Global's alert rules only/)).toBeTruthy();
+  });
+
+  // 2.5.0 C7 (question 99): Global's targets are read-only here, read from
+  // /alert-targets with no agency named and kept to Global's; they are edited
+  // under Alerts while working in Global, which keeps the rules naming each.
+  it("lists Global's push targets read-only and points to Alerts in Global", async () => {
+    config = { provider: "apprise", apprise: { enabled: true } };
+    alertTargets = [
+      { id: "t1", label: "On-call", service: "email", url: "mailto://oncall", enabled: true, ownerAgency: "global" },
+      { id: "t2", label: "Finance chat", service: "slack", url: "slack://fin", enabled: true, ownerAgency: "ag-fin" },
+    ];
+    await renderSection();
+    await waitFor(() => expect(screen.getByText("On-call")).toBeTruthy());
+    expect(screen.queryByText("Finance chat")).toBeNull();
+    const at = gets.indexOf("/alert-targets");
+    expect(getHeaders[at]).toEqual({ "X-Cronomicon-Agency": "none" });
+    expect(screen.queryByPlaceholderText(/mailtos:/)).toBeNull();
+    expect(screen.queryByText("+ Add target")).toBeNull();
+    const link = screen.getByRole("link", { name: /Settings → Alerts, working in Global/ }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/settings?tab=alerts&agency=global");
+  });
+
+  it("sends no targets with a save", async () => {
+    config = { provider: "apprise", apprise: { enabled: true, apiUrl: "http://apprise:8000" } };
+    await renderSection();
+    const { api } = await import("../../api/client");
+    fireEvent.click(screen.getByText("Save Changes"));
+    await waitFor(() => expect((api.PUT as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(0));
+    const body = (api.PUT as unknown as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1].body as { apprise?: Record<string, unknown> };
+    expect(body.apprise && "targets" in body.apprise).toBe(false);
   });
 });
 
@@ -180,18 +236,17 @@ describe("Notifications — global-administrator gate on the transports (GC)", (
   const btn = (label: string) => screen.getByText(label).closest("button") as HTMLButtonElement;
 
   it("disables Send test and Save, with the reason, for a non-global administrator", async () => {
-    config = { provider: "apprise", apprise: { enabled: true, targets: [{ id: "t1", label: "ops", service: "slack", url: "", enabled: true }] } };
+    config = { provider: "apprise", apprise: { enabled: true, apiUrl: "http://apprise:8000" } };
     render(<NotificationsSection canWrite={false} />);
-    // The config still loads and shows — the target's label is on screen.
-    await waitFor(() => expect(screen.getByDisplayValue("ops")).toBeTruthy());
+    // The config still loads and shows — the gateway's address is on screen.
+    await waitFor(() => expect(screen.getByDisplayValue("http://apprise:8000")).toBeTruthy());
 
     expect(btn("Send test").disabled).toBe(true);
     expect(btn("Send test").title).toBe(WHY);
     expect(btn("Save Changes").disabled).toBe(true);
     expect(btn("Save Changes").title).toBe(WHY);
     // The form is inert rather than absent.
-    expect(screen.getByDisplayValue("ops").closest("fieldset")!.disabled).toBe(true);
-    expect(btn("+ Add target").disabled).toBe(true);
+    expect(screen.getByDisplayValue("http://apprise:8000").closest("fieldset")!.disabled).toBe(true);
 
     fireEvent.click(btn("Send test"));
     expect(posts.length).toBe(0);

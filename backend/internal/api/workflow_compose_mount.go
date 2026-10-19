@@ -251,7 +251,7 @@ func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	s.auditDefinitionDelete(r.Context(), id.Email, "workflow", "Workflows", existing.Name, nil)
+	s.auditDefinitionDelete(r.Context(), s.workflowAgency(r.Context(), existing.UID), id.Email, "workflow", "Workflows", existing.Name, nil)
 	s.forceScheduleReload(r.Context())
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -560,12 +560,12 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	if !isCreate {
 		auditAction = "Updated"
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Workflows", auditAction, in.Name, "Cronomicon workflow "+strings.ToLower(auditAction))
+	_ = workflow.InsertChangeLog(r.Context(), s.db, s.workflowAgency(r.Context(), uid), actor, "Workflows", auditAction, in.Name, "Cronomicon workflow "+strings.ToLower(auditAction))
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Workflows", Action: auditAction, Target: in.Name,
+		Kind: "config", Actor: actor, Category: "Workflows", Action: auditAction, Target: in.Name, WorkflowUID: uid,
 	})
 	if repaired {
-		s.auditRepair(r.Context(), actor, "workflow "+uid, "owner set to "+owner, rep)
+		s.auditRepair(r.Context(), s.workflowAgency(r.Context(), uid), actor, "workflow "+uid, "owner set to "+owner, rep)
 	}
 	s.forceScheduleReload(r.Context())
 

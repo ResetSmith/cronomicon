@@ -69,8 +69,8 @@ func TestJobBindingReadScopeEnforced(t *testing.T) {
 	if rec := reqAs(t, h, http.MethodGet, "/api/v1/job-reference-bindings/"+prodJob, "sec-viewers", ""); rec.Code != http.StatusOK {
 		t.Errorf("read in-scope job bindings = %d, want 200", rec.Code)
 	}
-	if rec := reqAs(t, h, http.MethodGet, "/api/v1/job-reference-bindings/"+stagingJob, "sec-viewers", ""); rec.Code != http.StatusForbidden {
-		t.Errorf("read out-of-scope job bindings = %d, want 403", rec.Code)
+	if rec := reqAs(t, h, http.MethodGet, "/api/v1/job-reference-bindings/"+stagingJob, "sec-viewers", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("read out-of-scope job bindings = %d, want 404 (question 72)", rec.Code)
 	}
 }
 

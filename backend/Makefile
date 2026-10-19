@@ -117,7 +117,7 @@ installer-check:
 # + build). Network-free: `make vuln` is separate on purpose — see above.
 verify: tidy vet installer-check test build
 
-# The three published images, built from the repository root with the build
+# The four published images, built from the repository root with the build
 # arguments the tag workflow passes (.github/workflows/publish-images.yml), and
 # each one run once to say its version. Nothing else builds a Dockerfile before
 # a release: the workflow runs on a tag and `verify` cannot (it must work with
@@ -125,34 +125,37 @@ verify: tidy vet installer-check test build
 # Run this before tagging a release that touches a Dockerfile, the agent or the
 # frontend. The tags are local (<image>:<version>-local); nothing is pushed.
 #
-#   make images                      # all three
-#   make images IMAGES=runner        # server | runner | runner-fat, space-separated
+#   make images                      # all four
+#   make images IMAGES=runner        # server | runner | runner-fat | validate, space-separated
 #   make images DOCKER="sudo docker"
 #
 # The fat image is the long one (it installs ansible and terraform).
 DOCKER    ?= docker
 IMAGE_TAG ?= $(VERSION)-local
-IMAGES    ?= server runner runner-fat
+IMAGES    ?= server runner runner-fat validate
 image_name_server     := cronomicon
 image_name_runner     := cronomicon-runner
 image_name_runner-fat := cronomicon-runner-fat
+image_name_validate   := cronomicon-validate
 image_file_server     := Dockerfile
 image_file_runner     := Dockerfile.runner
 image_file_runner-fat := Dockerfile.runner.fat
+image_file_validate   := Dockerfile
 
 images:
 	@for i in $(IMAGES); do \
 	  case "$$i" in \
-	    server)     name=$(image_name_server);     file=$(image_file_server) ;; \
-	    runner)     name=$(image_name_runner);     file=$(image_file_runner) ;; \
-	    runner-fat) name=$(image_name_runner-fat); file=$(image_file_runner-fat) ;; \
-	    *) echo "images: unknown image '$$i' (server, runner, runner-fat)" >&2; exit 2 ;; \
+	    server)     name=$(image_name_server);     file=$(image_file_server);     target=""; run="version" ;; \
+	    runner)     name=$(image_name_runner);     file=$(image_file_runner);     target=""; run="version" ;; \
+	    runner-fat) name=$(image_name_runner-fat); file=$(image_file_runner-fat); target=""; run="version" ;; \
+	    validate)   name=$(image_name_validate);   file=$(image_file_validate);   target="--target validate"; run="cronomicon version" ;; \
+	    *) echo "images: unknown image '$$i' (server, runner, runner-fat, validate)" >&2; exit 2 ;; \
 	  esac; \
-	  echo ">> building $$name:$(IMAGE_TAG) from backend/$$file"; \
-	  $(DOCKER) build -f "$$file" \
+	  echo ">> building $$name:$(IMAGE_TAG) from backend/$$file $$target"; \
+	  $(DOCKER) build -f "$$file" $$target \
 	    --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) \
 	    -t "$$name:$(IMAGE_TAG)" .. || exit 1; \
-	  said=$$($(DOCKER) run --rm "$$name:$(IMAGE_TAG)" version) || { echo "images: $$name:$(IMAGE_TAG) built but does not run" >&2; exit 1; }; \
+	  said=$$($(DOCKER) run --rm "$$name:$(IMAGE_TAG)" $$run) || { echo "images: $$name:$(IMAGE_TAG) built but does not run" >&2; exit 1; }; \
 	  echo ">> $$name:$(IMAGE_TAG) says: $$said"; \
 	done
 

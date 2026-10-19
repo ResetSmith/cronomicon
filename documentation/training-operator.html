@@ -650,7 +650,7 @@
         <p>An Automate Schedule job carries everything on one record: the command, the agent, the schedule,
             the parameters. Cronomicon splits those into four objects that snap together:</p>
         <ul>
-            <li><strong>Script</strong> — what runs (Bash, PowerShell, Python, Perl, Ansible, Terraform)</li>
+            <li><strong>Script</strong> — what runs (Bash, PowerShell, Python, Perl, Ansible)</li>
             <li><strong>Scope</strong> — where it is allowed to run</li>
             <li><strong>Schedule</strong> — when it runs</li>
             <li><strong>Env Vars</strong> — what it needs to know</li>
@@ -667,11 +667,11 @@
         <p>Cronomicon reaches a target over SSH. No agent to install on each target, no per-machine
             licence, and no "Unlicensed Agents" count to watch.</p>
         <p>What makes the connection is a <strong>runner</strong>, and there are two kinds. The
-            <strong>local runner</strong> is the Cronomicon server itself, running shell jobs. An
+            <strong>local runner</strong> is the Cronomicon server itself, running the Global agency's shell jobs. An
             <strong>agent</strong> is a small program your administrators install on a machine of their
             own — usually inside a network the server cannot reach — and one agent serves a whole
-            department's hosts, not one machine. Agents also run Ansible and Terraform and watch
-            directories for files, none of which the local runner does.</p>
+            department's hosts, not one machine. Agents also run Ansible and watch directories for files,
+            neither of which the local runner does.</p>
         <p>Nobody chooses which runner takes a run: not the job, not you. M4 shows where the Run dialog
             tells you who will.</p>
     </div>
@@ -749,8 +749,8 @@
         <div class="tr-body">
             <p>Nothing is installed on a target: a run is taken by a <strong>runner</strong>, which connects
                 to the targets over SSH. A runner is either the <strong>local runner</strong> — the
-                Cronomicon server itself, for shell jobs — or an <strong>agent</strong> enrolled inside a
-                network the server cannot reach directly. Agents also run Ansible and Terraform, and watch
+                Cronomicon server itself, for the Global agency's shell jobs — or an <strong>agent</strong>
+                enrolled inside a network the server cannot reach directly. Agents also run Ansible, and watch
                 directories for arriving files.</p>
             <p>The word "agent" survives, then, with a narrower meaning: a department has one or a few for
                 its network, not one on every machine.</p>
@@ -776,8 +776,8 @@
                 ever taken by a runner that serves its scope's agency — the separation is hard, not a
                 preference. What belongs to no department belongs to the <strong>Global</strong> agency,
                 and that includes a run of a job with no scope.</p>
-            <p>Mostly an administrator's concern. As an operator you will see agency names on jobs and
-                runners, and when a run waits, the reason often names one (M8).</p>
+            <p>Mostly an administrator's concern. As an operator you work in one agency at a time (M3
+                shows where you choose it), and when a run waits, the reason often names one (M8).</p>
         </div>
     </details>
 
@@ -877,8 +877,8 @@
     <details class="tr-map">
         <summary><span class="tr-from">Notification lists</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Notifications</span><span></span></summary>
         <div class="tr-body">
-            <p>Email as before, plus Slack and PagerDuty. Configured by an administrator; you will see the
-                results rather than the wiring.</p>
+            <p>Email as before, plus Slack and PagerDuty. Configured for each agency by its administrators
+                (Settings &rarr; Alerts); you will see the results rather than the wiring.</p>
         </div>
     </details>
 
@@ -935,7 +935,7 @@
 <div class="tr-buckets">
     <div class="tr-bucket">
         <h4>Script</h4>
-        <p><strong>What</strong> runs. A file in Git — Bash, PowerShell, Python, Perl, Ansible, Terraform.</p>
+        <p><strong>What</strong> runs. A file in Git — Bash, PowerShell, Python, Perl, Ansible.</p>
     </div>
     <div class="tr-bucket">
         <h4>Scope</h4>
@@ -1184,7 +1184,10 @@
     </div>
 </details>
 
-<p>Two things are not in that list. Your <strong>name</strong>, at the foot of the sidebar, opens a small
+<p>Three things are not in that list. Under the wordmark, the <strong>agency switcher</strong> says which
+    agency you are working in: every list, the Dashboard and the Notices count show that agency's alone, and
+    if you hold access in several agencies you move between them there, one at a time. Your
+    <strong>name</strong>, at the foot of the sidebar, opens a small
     menu: <strong>My access</strong> shows which agencies you hold which permissions in, and Sign out is
     there too. And the top bar carries a <strong>Notices</strong> button with a count — an inbox of
     conditions that need a person, such as an agency whose shell jobs have no runner to take them. It is
@@ -1256,9 +1259,9 @@
                 — a statement, not a control. Nobody picks the runner: not the job, not you. The run is
                 queued and the first runner that is allowed to take it does. Runs on tells you which
                 runners those are.</p>
-            <p><em>Any runner that serves this scope</em> is an ordinary shell job: an agent or the local
-                runner may take it, whichever asks first. <em>Any agent that serves this scope</em> is
-                Ansible or Terraform, which need an agent's own tools, or a run that binds an SSH key,
+            <p><em>Any runner that serves this scope</em> is an ordinary shell job: an agent may take it,
+                or on one of Global's scopes the local runner, whichever asks first. <em>Any agent that serves
+                this scope</em> is Ansible, which needs an agent's own tools, or a run that binds an SSH key,
                 which only an agent can deliver as a file. And <strong>runners named outright</strong>
                 mean an administrator has bound this scope to those runners, so no other runner takes its
                 runs.</p>
@@ -1315,12 +1318,12 @@
             <li>if an administrator has <strong>bound the scope to runners</strong>, it is one of
                 them;</li>
             <li>it <strong>can run the type</strong>: the local runner runs bash, perl, powershell and
-                python, and nothing else — Ansible and Terraform need an agent;</li>
+                python, and nothing else, and only Global's runs — Ansible needs an agent;</li>
             <li>it <strong>may receive what the run carries</strong>: an agent takes a run with bound
                 secrets only if an administrator has flagged it for secret injection, and a run that
                 binds an SSH key is never taken by the local runner.</li>
         </ul>
-        <p>One consequence to keep in mind. Where an agent and the local runner both serve an agency and
+        <p>One consequence to keep in mind. In Global, where an agent and the local runner both serve and
             the scope is not bound, a shell job may be taken by <em>either</em>, and not always the same
             one. If a job only works from one of them — it relies on a file on the agent's own disk, say —
             that is settled by an administrator binding the scope to the right runner. Nothing on the job,
@@ -1790,7 +1793,7 @@
     <div class="tr-body">
         <p>The same name as the Runner column. Nobody chose it — the first runner allowed to take the run
             did — so this field is the only place that tells you where a run's connections actually came
-            from. On a scope that both an agent and the local runner serve, two runs of one shell job can
+            from. On a Global scope that both an agent and the local runner serve, two runs of one shell job can
             show two different names here, and that is normal.</p>
         <p>It earns its place when a job fails only some of the time: line the failures up against this
             field before you look anywhere else.</p>
@@ -1893,20 +1896,20 @@
         <ul>
             <li><em>no runner is online</em> — nothing at all can take work. Escalate.</li>
             <li><em>no online runner can run ansible jobs</em> (or whichever type it names) — the type
-                needs a runner with the right tools, and none is up. For Ansible and Terraform that means
-                an agent.</li>
+                needs a runner with the right tools, and none is up. For Ansible that means an
+                agent.</li>
             <li><em>no online runner serves Finance</em> (or whichever agency it names) — that department's
                 runners are down, or it has none. Its administrators.</li>
             <li><em>this run belongs to Global (it has no scope, or its scope is Global's), and no online
-                    runner serves Global</em> — the job has no scope. Run it against a scope whose agency
-                has a runner — <strong>Target scope</strong>, under Targets in the Run dialog — or ask a
-                global administrator.</li>
+                    runner serves Global</em> — the job is Global's, and Global has no runner up. Ask a
+                global administrator. A job of Global's repository runs on Global's scopes only, so
+                pointing the run at another agency's scope is refused.</li>
             <li><em>scope Production is bound to …, and no bound runner is …</em> — the scope is confined to
                 named runners and none of them can take the run: offline, deregistered, or no longer in
                 the scope's agency. The sentence ends by saying which.</li>
             <li><em>the local runner would take this run and is not running — it is turned off, or
-                    forbidden on this host</em> — the server would take this run and is not running jobs, and no agent that could take it is online. A global administrator turns it on under Settings
-                &rarr; Local runner, or the department enrols an agent.</li>
+                    forbidden on this host</em> — the server would take this run and is not running jobs, and no agent that could take it is online. The local runner takes Global's runs only. A global administrator turns it on under Settings
+                &rarr; Local runner, or enrols an agent for Global.</li>
             <li><em>this job binds an SSH key, which the local runner cannot deliver, and no agent that
                     could take the run is online</em> — the run must go to an agent, and the agent is
                 down.</li>
@@ -2055,8 +2058,8 @@
     <details class="tr-opt" data-verdict="right">
         <summary>Send the reason and the trace ID to an administrator, and leave the run where it is</summary>
         <div class="tr-body">
-            <p>Correct. The reason has already done the diagnosis: the server would take this run and is not running jobs, and no agent that could take it is online. A global administrator can turn the
-                local runner on, or the department's administrators can enrol an agent. Either way the
+            <p>Correct. The reason has already done the diagnosis: the server would take this run and is not running jobs, and no agent that could take it is online. The local runner takes only Global's runs, so this is one of Global's jobs: a global administrator can turn the
+                local runner on, or enrol an agent for Global. Either way the
                 queued run is taken as soon as a runner is allowed to — you do not need to start it
                 again.</p>
             <p>If the work is no longer wanted by the time that happens, stop the queued run. Otherwise
@@ -2097,8 +2100,9 @@
 <details class="tr-reveal">
     <summary><strong>1. What does it run?</strong> &rarr; a Script</summary>
     <div class="tr-body">
-        <p>The command or script becomes a file in Git. Decide which repository and path, and which run type
-            it is — bash, PowerShell, Python, Perl, Ansible, Terraform.</p>
+        <p>The command or script becomes a file in Git, in the repository of the agency the job will belong
+            to — each agency has its own. Decide the path, and which run type it is — bash, PowerShell,
+            Python, Perl, Ansible.</p>
         <p>If the Automate Schedule job ran several commands in sequence, you have a choice: one script that
             does all of it, or several jobs composed into a workflow. Prefer the workflow when the steps can
             fail independently and you would want to see which one broke.</p>
@@ -2109,11 +2113,12 @@
     <summary><strong>2. Where does it run?</strong> &rarr; a Scope</summary>
     <div class="tr-body">
         <p>The agent or agent environment becomes a scope. Check whether a suitable scope already exists
-            before making another — scopes are shared, and a proliferation of near-identical ones is how
+            before making another — an agency's scopes are shared by its jobs, and a proliferation of near-identical ones is how
             targeting mistakes start.</p>
         <p>Two follow-ups. Which <strong>agency</strong> does the scope belong to? Every scope belongs to
-            exactly one, and that decides which runners may take its runs. And does the job need an
-            <strong>agent</strong> — which is true if it is Ansible or Terraform, watches for files, binds
+            exactly one, and that decides which runners may take its runs; it must be the job's own agency, as
+            a job in an agency's repository may name only that agency's scopes. And does the job need an
+            <strong>agent</strong> — which is true if it is Ansible, watches for files, binds
             an SSH key, or targets hosts the server cannot reach directly? If so, that agency's
             administrators enrol one.</p>
     </div>
@@ -2170,7 +2175,8 @@
 <details class="tr-reveal">
     <summary><strong>7. Who needs to know, and by when?</strong> &rarr; Notifications and an SLA deadline</summary>
     <div class="tr-body">
-        <p>Notification lists become notification routing. If the job had a monitor for running too long or
+        <p>Notification lists become alert rules, which your agency's administrators keep under Settings
+            &rarr; Alerts. If the job had a monitor for running too long or
             not starting on time, that becomes an <strong>overdue deadline</strong> — which alerts a person
             without killing the run. Only set a timeout if you genuinely want the run killed.</p>
         <p>While you are here, put the on-call contact in the job's notes. It costs nothing and it is the

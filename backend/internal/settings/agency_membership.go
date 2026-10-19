@@ -210,7 +210,19 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 	// T2.7 — membership is an ACCESS-CONTROL fact (it decides which runs can reach
 	// which secrets), so every change belongs in change_log alongside the agency CRUD
 	// it sits beside. The detail names the entities touched, never a value.
-	audit(ctx, database, actor, "Agencies", "membership-updated",
+	//
+	// Whose (C1, D2): the one agency every entity was given, else Global's,
+	// with the entities in the detail.
+	agency := agencyid.Global
+	for i, tgt := range targets {
+		if i == 0 {
+			agency = ownerOrGlobalAgency(tgt)
+		} else if ownerOrGlobalAgency(tgt) != agency {
+			agency = agencyid.Global
+			break
+		}
+	}
+	audit(ctx, database, agency, actor, "Agencies", "membership-updated",
 		t.label+" agencies", membershipAuditDetail(assignments))
 	return nil
 }
@@ -962,7 +974,7 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 	// the ids that moved, never a value. A no-op save writes no row — an audit
 	// trail of "nothing changed" entries buries the entries that matter.
 	if len(delta.Added)+len(delta.Removed) > 0 {
-		audit(ctx, database, actor, "Agencies", "membership-updated",
+		audit(ctx, database, agencyID, actor, "Agencies", "membership-updated",
 			"agency members: "+agencyID, agencyMembersAuditDetail(delta))
 	}
 	return delta, nil

@@ -32,6 +32,11 @@ type Agency struct {
 	// migration 1220). It cannot be renamed or deleted, and no access grant may
 	// name it: it belongs to the global administrators.
 	Builtin bool `json:"builtin"`
+	// MaxConcurrent is the agency's own concurrency cap (2.5.0 C6, QT-1): its
+	// runs, waiting and running, where one is produced, and its running runs
+	// at the claim (internal/runcap). nil is none; the installation's cap
+	// binds either way. Set by a global administrator (SetAgencyConcurrency).
+	MaxConcurrent *int `json:"maxConcurrent"`
 	// OnlineRunnerCount is the number of ONLINE runners assigned to this agency
 	// (agency-support.md M4 coverage view). 0 ⇒ jobs bound here will wait — no
 	// runner can claim them. Computed per list read; not stored.
@@ -103,7 +108,7 @@ var (
 // ListAgencies returns the agency catalog ordered by name.
 func ListAgencies(ctx context.Context, database *sql.DB) ([]Agency, error) {
 	rows, err := database.QueryContext(ctx,
-		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin
+		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin, max_concurrent
 		 FROM agencies ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list agencies: %w", err)
@@ -148,7 +153,7 @@ func ListAgencies(ctx context.Context, database *sql.DB) ([]Agency, error) {
 // GetAgency fetches one agency by id; returns (nil, nil) if not found.
 func GetAgency(ctx context.Context, database *sql.DB, id string) (*Agency, error) {
 	row := database.QueryRowContext(ctx,
-		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin
+		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin, max_concurrent
 		 FROM agencies WHERE id=?`, id)
 	a, err := scanAgency(row)
 	if err != nil {
@@ -163,8 +168,13 @@ func GetAgency(ctx context.Context, database *sql.DB, id string) (*Agency, error
 func scanAgency(rs interface{ Scan(...any) error }) (Agency, error) {
 	var a Agency
 	var desc, createdBy, lmBy, lmAt sql.NullString
-	if err := rs.Scan(&a.ID, &a.Name, &desc, &createdBy, &a.CreatedAt, &lmBy, &lmAt, &a.Builtin); err != nil {
+	var maxConc sql.NullInt64
+	if err := rs.Scan(&a.ID, &a.Name, &desc, &createdBy, &a.CreatedAt, &lmBy, &lmAt, &a.Builtin, &maxConc); err != nil {
 		return a, err
+	}
+	if maxConc.Valid {
+		n := int(maxConc.Int64)
+		a.MaxConcurrent = &n
 	}
 	if desc.Valid {
 		a.Description = &desc.String
@@ -198,7 +208,7 @@ func CreateAgency(ctx context.Context, database *sql.DB, inp AgencyInput, actor 
 	if err != nil {
 		return nil, fmt.Errorf("create agency: %w", err)
 	}
-	audit(ctx, database, actor, "Agencies", "created", name, "")
+	audit(ctx, database, agencyid.Global, actor, "Agencies", "created", name, "")
 	return GetAgency(ctx, database, id)
 }
 
@@ -248,7 +258,7 @@ func UpdateAgency(ctx context.Context, database *sql.DB, id string, inp AgencyIn
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("update agency: %w", err)
 	}
-	audit(ctx, database, actor, "Agencies", "updated", name, "")
+	audit(ctx, database, agencyid.Global, actor, "Agencies", "updated", name, "")
 	return GetAgency(ctx, database, id)
 }
 
@@ -422,6 +432,10 @@ type AgencyInUseError struct {
 	// agency that no longer existed.
 	Definitions int
 	Calendars   int
+	// AlertRules and AlertTargets are the alert rules and push targets the
+	// agency owns (2.5.0 C4, AL-1 and AL-2).
+	AlertRules   int
+	AlertTargets int
 	// Grants, ServiceAccounts and Tokens are what the delete would take with
 	// it silently: access grants and service accounts are ON DELETE CASCADE,
 	// and an unspent registration token would enrol an agent into an agency
@@ -468,6 +482,8 @@ func (e *AgencyInUseError) Blockers() []string {
 		"jobs, workflows and schedules built in the app (or not of its repository)",
 		"delete them, and purge them from the recycle bin; an agency's own definitions are not handed to another")
 	add(e.Calendars, "calendar built in the app", "calendars built in the app", "delete them")
+	add(e.AlertRules, "alert rule", "alert rules", "delete them")
+	add(e.AlertTargets, "push target", "push targets", "delete them")
 	add(e.Grants, "access grant", "access grants", "remove those grants first: deleting the agency would revoke them")
 	add(e.ServiceAccounts, "active service account", "active service accounts", "revoke those first")
 	add(e.Tokens, "unspent registration token", "unspent registration tokens",
@@ -641,6 +657,14 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 		`SELECT COUNT(*) FROM bastions WHERE owner_agency = ?`, id).Scan(&inUse.Bastions); err != nil {
 		return false, fmt.Errorf("delete agency: count bastions: %w", err)
 	}
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM alert_config WHERE owner_agency = ?`, id).Scan(&inUse.AlertRules); err != nil {
+		return false, fmt.Errorf("delete agency: count alert rules: %w", err)
+	}
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM alert_targets WHERE owner_agency = ?`, id).Scan(&inUse.AlertTargets); err != nil {
+		return false, fmt.Errorf("delete agency: count push targets: %w", err)
+	}
 	if repoID != "" && takeRepo == nil {
 		inUse.Repository = 1
 	}
@@ -656,7 +680,7 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 		return false, err
 	}
 	if runnerRefs > 0 || memberRefs > 0 || ownerRefs > 0 || inUse.records() > 0 || inUse.Repository > 0 ||
-		inUse.Definitions > 0 || inUse.Calendars > 0 || inUse.cascades() > 0 {
+		inUse.Definitions > 0 || inUse.Calendars > 0 || inUse.AlertRules > 0 || inUse.AlertTargets > 0 || inUse.cascades() > 0 {
 		return false, inUse
 	}
 	var removeRepo func(tx *sql.Tx) error
@@ -716,6 +740,8 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_repos WHERE agency_id = ?`, id).Scan(&inUse.Repository)
 			_ = countAgencyDefinitions(ctx, database, id, "", false, inUse)
 			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM runners WHERE owner_agency = ?`, id).Scan(&inUse.OwnedRunners)
+			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_config WHERE owner_agency = ?`, id).Scan(&inUse.AlertRules)
+			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_targets WHERE owner_agency = ?`, id).Scan(&inUse.AlertTargets)
 			return false, inUse
 		}
 		return false, fmt.Errorf("delete agency: %w", err)
@@ -723,7 +749,7 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 	committed = true
 	n, _ := res.RowsAffected()
 	if n > 0 {
-		audit(ctx, database, actor, "Agencies", "deleted", existing.Name, "")
+		audit(ctx, database, agencyid.Global, actor, "Agencies", "deleted", existing.Name, "")
 	}
 	return n > 0, nil
 }
@@ -798,6 +824,7 @@ func SetScopeAgency(ctx context.Context, database *sql.DB, scopeID string, agenc
 	//
 	// One transaction: the delete and the insert are a replacement, and a scope
 	// caught between them belongs to no agency — the state every reader refuses.
+	from := RowAgency(ctx, database, "scopes", "owner_agency", scopeID)
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("set scope agency: %w", err)
@@ -816,8 +843,9 @@ func SetScopeAgency(ctx context.Context, database *sql.DB, scopeID string, agenc
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("set scope agency: %w", err)
 	}
-	detail := fmt.Sprintf("%v", val)
-	audit(ctx, database, actor, "Scopes", "agency-set", sc.Scope, detail)
+	// The scope's agency after the move, naming the one it left (D1).
+	detail := fmt.Sprintf("%v (was %s)", val, from)
+	audit(ctx, database, RowAgency(ctx, database, "scopes", "owner_agency", scopeID), actor, "Scopes", "agency-set", sc.Scope, detail)
 	return GetScope(ctx, database, scopeID)
 }
 
@@ -958,8 +986,9 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 		if sameSet(before, after) {
 			continue
 		}
-		var name string
-		if err := tx.QueryRowContext(ctx, `SELECT name FROM runners WHERE id=?`, a.RunnerID).Scan(&name); err != nil {
+		var name, runnerOwner string
+		if err := tx.QueryRowContext(ctx, `SELECT name, `+agencyid.ColumnOwnerSQL("", "owner_agency")+` FROM runners WHERE id=?`,
+			a.RunnerID).Scan(&name, &runnerOwner); err != nil {
 			return err
 		}
 		summary := "agencies set: " + strings.Join(agencyNamesFor(ctx, tx, after), ", ")
@@ -973,6 +1002,7 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 		// isolation change, and one without its audit row must not exist. Target
 		// and RunnerName follow the drain/keyscan convention so ?runner= finds it.
 		if err := auditlog.WriteActivity(ctx, tx, auditlog.ActivityParams{
+			AgencyID:   runnerOwner, // the runner's (C1)
 			At:         ts,
 			Kind:       "config",
 			Outcome:    "success",
@@ -994,8 +1024,10 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 	// with details naming what moved. The generic activity row it used to pair
 	// with is gone: the per-runner rows above replace it, and the old one said
 	// only "membership-updated runner agencies" — invisible to ?runner=.
+	// Several runners, possibly several agencies': Global's, with the list (D2);
+	// each runner's own agency has its Activity row above.
 	if len(changed) > 0 {
-		_ = writeChangeLog(ctx, database, actor, "Agencies", "membership-updated", "runner agencies",
+		_ = writeChangeLog(ctx, database, agencyid.Global, actor, "Agencies", "membership-updated", "runner agencies",
 			strings.Join(changed, "; "))
 	}
 	return nil

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 )
 
 // AuditCompliance maps the openapi AuditComplianceSettings schema: the A4
@@ -250,7 +252,7 @@ func UpdateAuditCompliance(ctx context.Context, db *sql.DB, inp AuditCompliance,
 		auditComplianceKey, string(b), actor, now); err != nil {
 		return nil, err
 	}
-	_ = WriteChangeLog(ctx, db, actor, "Settings", "updated", "Audit & Compliance", "")
+	_ = WriteChangeLog(ctx, db, agencyid.Global, actor, "Settings", "updated", "Audit & Compliance", "")
 	out := inp
 	return &out, nil
 }

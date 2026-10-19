@@ -139,7 +139,7 @@ func (s *Server) cancelPendingRun(w http.ResponseWriter, r *http.Request) {
 	if kind == "workflow" {
 		category = "Workflows"
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, category, "Cancelled", name,
+	_ = workflow.InsertChangeLog(r.Context(), s.db, agencyOrGlobal(ownerAgency), id.Email, category, "Cancelled", name,
 		"Scheduled ad-hoc run for "+runAt+" cancelled")
 	w.WriteHeader(http.StatusNoContent)
 }

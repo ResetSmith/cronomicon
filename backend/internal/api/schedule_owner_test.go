@@ -49,11 +49,11 @@ func TestI1_AScheduleIsItsOwnersToWrite(t *testing.T) {
 	if c := code(gTaxAdmin, http.MethodPost, "/api/v1/schedule-defs", `{"name":"fin-nightly","cron":"0 2 * * *","ownerAgency":"ag:TAX"}`); c != http.StatusCreated {
 		t.Errorf("TAX creating its own schedule of the name FIN's holds = %d, want 201", c)
 	}
-	if c := code(gTaxAdmin, http.MethodPut, "/api/v1/schedule-defs/fin-nightly?agencyId=ag:FIN", `{"name":"fin-nightly","cron":"0 3 * * *"}`); c != http.StatusForbidden {
-		t.Errorf("TAX editing FIN's schedule = %d, want 403", c)
+	if c := code(gTaxAdmin, http.MethodPut, "/api/v1/schedule-defs/fin-nightly?agencyId=ag:FIN", `{"name":"fin-nightly","cron":"0 3 * * *"}`); c != http.StatusNotFound {
+		t.Errorf("TAX editing FIN's schedule = %d, want 404 (question 72: not TAX's to read)", c)
 	}
-	if c := code(gTaxAdmin, http.MethodDelete, "/api/v1/schedule-defs/fin-nightly?agencyId=ag:FIN", ""); c != http.StatusForbidden {
-		t.Errorf("TAX deleting FIN's schedule = %d, want 403", c)
+	if c := code(gTaxAdmin, http.MethodDelete, "/api/v1/schedule-defs/fin-nightly?agencyId=ag:FIN", ""); c != http.StatusNotFound {
+		t.Errorf("TAX deleting FIN's schedule = %d, want 404 (question 72: not TAX's to read)", c)
 	}
 	if c := code(gTaxAdmin, http.MethodDelete, "/api/v1/schedule-defs/fin-nightly?agencyId=ag:TAX", ""); c != http.StatusNoContent {
 		t.Errorf("TAX deleting its own schedule = %d, want 204", c)

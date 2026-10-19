@@ -258,6 +258,9 @@ type pollState struct {
 	// because a run the agent is handed and cannot start has no owner: the
 	// server shows it as running, and nothing here will ever report on it.
 	noClaim bool
+	// process: this process's own value (runnerproto.PollParamProcess), the
+	// same on every poll it makes. Empty sends nothing.
+	process string
 }
 
 // Poll performs GET /api/v1/runners/{id}/poll. The server holds the request
@@ -266,8 +269,8 @@ type pollState struct {
 // settingsVersion is the managed-settings version the agent has APPLIED; it
 // ALWAYS rides (even 0), which is how the server knows the agent is
 // settings-capable (Phase 4) and can safely send it settings.
-// st says where this process is in its life (pollState); both of its flags are
-// query params that a server older than 2.3.2 ignores.
+// st says where this process is in its life, and which process it is
+// (pollState); each field is a query param that an older server ignores.
 // Returns:
 //   - (resp, nil)         on 200 with a body (may carry an assignment/control)
 //   - (nil, errNoWork)    on 204 No Content
@@ -283,6 +286,9 @@ func (c *Client) Poll(ctx context.Context, id Identity, configDigest string, set
 	}
 	if st.noClaim {
 		q.Set(runnerproto.PollParamClaim, "0")
+	}
+	if st.process != "" {
+		q.Set(runnerproto.PollParamProcess, st.process)
 	}
 	// Always present (even "0") so the server can tell a Phase-4 agent from an
 	// older one and only then include managed settings in the response.

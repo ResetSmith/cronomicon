@@ -1,30 +1,25 @@
 import { Fragment, useEffect, useState } from "react";
-import { api } from "../../api/client";
+import { Link } from "react-router-dom";
+import { allReadable, api } from "../../api/client";
 import type { components } from "../../api/schema";
-import { useGet, rows, useTableSort } from "../../hooks";
-import { type SortColumn } from "../../utils/sort";
+import { useGet } from "../../hooks";
 import { c } from "../../theme";
 import { globalOnly } from "../../api/globalAdmin";
-import { Btn, Card, Chip, ReadOnlyFields, csrfHeader, errMsg, fmtDateTime, inputStyle, lblStyle, tdStyle, thStyle } from "./ui";
-import { ConfirmDialog, InlineLoading, Rule, SkeletonRows, SortableLabel, statusLabel } from "../../components/ui";
+import { Btn, Card, Chip, ReadOnlyFields, csrfHeader, errMsg, fmtDateTime, inputStyle, lblStyle } from "./ui";
+import { InlineLoading, Rule } from "../../components/ui";
 
 type NotificationConfig = components["schemas"]["NotificationConfig"];
-type AppriseTarget = NonNullable<NonNullable<NotificationConfig["apprise"]>["targets"]>[number];
-type AlertRule = components["schemas"]["AlertRule"];
-type AlertRuleInput = components["schemas"]["AlertRuleInput"];
-type AlertChannel = AlertRuleInput["channels"][number];
+type AlertTarget = components["schemas"]["AlertTarget"];
 type TestReport = components["schemas"]["NotificationTestReport"];
 
 // `canWrite` — global administrator for configureApp (GC, v2.2.2). Saving the
-// transports, sending a test (it delivers to real people over the stored
-// config) and creating, editing or deleting an alert rule are all install-wide.
-// Both reads stay open to every session, so an administrator of one agency sees
-// the cards with their writes disabled and the reason on each.
+// transports and sending a test (it delivers to real people over the stored
+// config) are install-wide. The alert rules, which were here too, are one
+// agency's since 2.5.0 C4 and live on Settings → Alerts.
 export function NotificationsSection({ canWrite }: { canWrite: boolean }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <RunNotificationsCard canWrite={canWrite} />
-      <AlertRulesCard canWrite={canWrite} />
     </div>
   );
 }
@@ -125,8 +120,6 @@ function RunNotificationsCard({ canWrite }: { canWrite: boolean }) {
     setForm((f) => (f ? { ...f, smtp: { ...f.smtp, ...p } } : f));
   const patchApprise = (p: Partial<NonNullable<NotificationConfig["apprise"]>>) =>
     setForm((f) => (f ? { ...f, apprise: { ...f.apprise, ...p } } : f));
-  const setTargets = (fn: (ts: AppriseTarget[]) => AppriseTarget[]) =>
-    setForm((f) => (f ? { ...f, apprise: { ...f.apprise, targets: fn(f.apprise?.targets ?? []) } } : f));
 
   // K-5 — send a test over every configured transport and show what happened.
   // The report is per-transport rather than one verdict, because "skipped: no
@@ -259,65 +252,7 @@ function RunNotificationsCard({ canWrite }: { canWrite: boolean }) {
                 </label>
               </div>
 
-              <div style={lblStyle()}>Targets</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {/* A hairline plus leading, not a box per target (B-1/VU-5): these
-                    rows sit inside a bordered Card and carry bordered inputs, so an
-                    individual frame was the third level of nesting and grouped
-                    nothing the spacing does not already group. */}
-                {(form.apprise?.targets ?? []).map((t, i) => (
-                  <Fragment key={t.id ?? i}>
-                    {i > 0 && <Rule />}
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        padding: "2px 0",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={t.enabled ?? false}
-                        onChange={() => setTargets((ts) => ts.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x)))}
-                        style={{ cursor: "pointer", accentColor: c.primary }}
-                      />
-                      <input
-                        value={t.label ?? ""}
-                        placeholder="Label"
-                        onChange={(e) => setTargets((ts) => ts.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
-                        style={{ ...inputStyle(), width: 130 }}
-                      />
-                      <input
-                        value={t.service ?? ""}
-                        placeholder="service"
-                        onChange={(e) => setTargets((ts) => ts.map((x, j) => (j === i ? { ...x, service: e.target.value } : x)))}
-                        style={{ ...inputStyle(), width: 90 }}
-                      />
-                      <input
-                        value={t.url ?? ""}
-                        placeholder="mailtos://user:pass@smtp.host/?to=team@co.com"
-                        onChange={(e) => setTargets((ts) => ts.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)))}
-                        style={{ ...inputStyle(), flex: 1, fontFamily: c.mono, fontSize: c.fontXs }}
-                      />
-                      <Btn onClick={() => setTargets((ts) => ts.filter((_, j) => j !== i))} disabled={!canWrite}>Remove</Btn>
-                    </div>
-                  </Fragment>
-                ))}
-                {(form.apprise?.targets ?? []).length === 0 && (
-                  <div style={{ color: c.textSec, fontSize: c.fontSm }}>
-                    No targets yet. Choose <strong>+ Add target</strong> below to send notifications somewhere.
-                  </div>
-                )}
-                <div>
-                  <Btn onClick={() => setTargets((ts) => [...ts, { label: "", service: "email", url: "", enabled: true }])} disabled={!canWrite}>
-                    + Add target
-                  </Btn>
-                </div>
-                <div style={{ fontSize: c.fontXs, color: c.textSec }}>
-                  Drop in any Apprise URL DSN — changes apply when you hit Save Changes.
-                </div>
-              </div>
+              <GlobalTargets />
             </>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -383,7 +318,10 @@ function RunNotificationsCard({ canWrite }: { canWrite: boolean }) {
                   placeholder="ops-team@company.com, ops-lead@company.com"
                   style={{ ...inputStyle(), width: "100%" }}
                 />
-                <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>Comma-separated. Run notifications CC every address here.</div>
+                {/* Question 80 (2.5.0 C4): an agency's rule mails its own recipients only. */}
+                <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
+                  Comma-separated. Added to the mail of Global's alert rules only; an agency's rules mail their own recipients.
+                </div>
               </div>
             </div>
           )}
@@ -393,508 +331,45 @@ function RunNotificationsCard({ canWrite }: { canWrite: boolean }) {
   );
 }
 
-// ── Alert rules — GET/POST /alerts, PUT/DELETE /alerts/{alertId} ──
-//
-// J-2 (VF-15) — this form used to collect five things the dispatcher never read:
-// `tag` targeting, the `n-failures-window` trigger with its count/window pair,
-// `notifyTriggerer`, and three of its four channels. They are gone. What remains
-// is exactly what notify.go acts on — see the J-6 guard, which fails the build
-// if the two ever diverge again.
-interface RuleForm {
-  targetMode: "job" | "all";
-  jobName: string;
-  trigger: AlertRuleInput["trigger"];
-  channels: AlertChannel[];
-  recipients: string;
-  enabled: boolean;
-}
-
-const EMPTY_RULE: RuleForm = {
-  targetMode: "job",
-  jobName: "",
-  trigger: "failure",
-  channels: ["email"],
-  recipients: "",
-  enabled: true,
-};
-
-// What the dropdown OFFERS. `triggerMatches` honours every run status plus
-// `any`, and the spec now says so, but widening what an operator can create is a
-// capability decision that VF-Q3 deliberately left alone.
-//
-// SL added the two non-run-outcome triggers, and they ARE offered: an alert the
-// dispatcher honours but the UI cannot reach is the second half of the VF-15
-// defect the enum-conformance test exists to catch.
-// FX-D4 adds `skipped`. It was already accepted by the API and listed in the
-// spec, and until FX-D4 nothing could ever emit one — so offering it here before
-// would have been the FIRST half of the VF-15 defect (a rule that can be created
-// and can never fire) exactly as omitting it now is the second.
-const OFFERED_TRIGGERS = ["failure", "success", "skipped", "sla-breach", "missed-run"] as const;
-const TRIGGER_LABELS: Record<string, string> = {
-  failure: "Job fails",
-  success: "Job succeeds",
-  skipped: "Run suppressed (calendar, pause, or concurrency)",
-  "sla-breach": "Job runs late (past its deadline)",
-  "missed-run": "Scheduled run never happened",
-};
-// G-1 (A-19) — a rule's trigger is matched against the run STATUS
-// (notify.go's triggerMatches), so a STORED trigger can be any status word, and
-// the seeded `warning` rule is real and does fire. The offered set is narrower,
-// so the table used to fall back to the raw value and print `warning` in a
-// column where every other surface in the app says Warn.
-const triggerLabel = (t: string): string =>
-  TRIGGER_LABELS[t] ?? (t.toLowerCase() === "any" ? "Any run" : `Job result: ${statusLabel(t)}`);
-
-const ALL_CHANNELS: AlertChannel[] = ["email", "apprise"];
-// Wire values must not reach the screen (G-1 / A-19). The three legacy entries
-// are here so an OLD rule's chips still read as words; they cannot be selected.
-const CHANNEL_LABELS: Record<string, string> = {
-  email: "Email",
-  apprise: "Apprise",
-  slack: "Slack",
-  webhook: "Webhook",
-  "in-app": "In-App",
-};
-const channelLabel = (ch: string): string => CHANNEL_LABELS[ch] ?? ch;
-// Channels the dispatcher has no branch for. A rule carrying only these sends
-// nothing, and always did — the row marks them rather than hiding them, so the
-// operator can see which rules need re-pointing at Email or Apprise.
-const INERT_CHANNELS = new Set(["slack", "webhook", "in-app"]);
-
-// J-4 (VF-15) — a stored value the form no longer offers is PRESERVED, not eaten.
-// `ruleToForm` used to assign r.trigger straight in; when that value matched no
-// <option> the select rendered as unset and Save rewrote it to `failure`. The
-// seeded `warning` rule is the live case, and it does fire, so that was silent
-// data loss. Legacy targetMode (`tag`/`scope`) collapses to `job` instead —
-// those rules matched no run either way, so nothing is lost by normalising them,
-// and unlike the trigger there is no value worth round-tripping.
-function ruleToForm(r: AlertRule): RuleForm {
-  return {
-    targetMode: r.targetMode === "all" ? "all" : "job",
-    jobName: r.jobName ?? "",
-    trigger: r.trigger,
-    // Inert channels are dropped on edit. Unlike the trigger there is nothing to
-    // preserve — they never dispatched — and the row (below) marks them as
-    // ignored before you open it, so this reads as the cleanup it is.
-    channels: (r.channels ?? []).filter((ch) => !INERT_CHANNELS.has(ch)),
-    recipients: r.recipients ?? "",
-    enabled: r.enabled ?? true,
-  };
-}
-
-function formToInput(f: RuleForm): AlertRuleInput {
-  return {
-    targetMode: f.targetMode,
-    jobName: f.targetMode === "job" ? f.jobName : null,
-    trigger: f.trigger,
-    channels: f.channels,
-    recipients: f.recipients,
-    enabled: f.enabled,
-  };
-}
-
-function targetLabel(r: AlertRule): string {
-  if (r.targetMode === "all") return "All jobs";
-  // `tag` and `scope` never matched a run (notify.go's targetMatches). Say so.
-  // (The tag list such rows once carried was dropped with migration 1140.)
-  if (r.targetMode !== "job") return `${r.targetMode} (unsupported target)`;
-  return r.jobName ?? "—";
-}
-
-function RuleFormFields(props: { form: RuleForm; onChange: (p: Partial<RuleForm>) => void; dropped?: string[] }) {
-  const { form, onChange, dropped = [] } = props;
+// Global's push targets (2.5.0 C7, question 99), read-only here. They are
+// /alert-targets' rows, edited by id under Settings → Alerts while working in
+// Global, which keeps the rules that name each one. Until C7 this card edited
+// them as a list matched by URL, so a changed URL was a new target that no
+// rule named. Read with no agency named (allReadable): a global administrator,
+// whose card this is, reads every agency's, and Global's are kept.
+function GlobalTargets() {
+  const q = useGet<AlertTarget[]>(() => api.GET("/alert-targets", { headers: allReadable }), []);
+  const list = (Array.isArray(q.data) ? q.data : []).filter((t) => t.ownerAgency === "global");
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div>
-        <div style={lblStyle()}>Target</div>
-        <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-          {(
-            [
-              { v: "job", l: "Specific Job" },
-              { v: "all", l: "All Jobs" },
-            ] as const
-          ).map((opt) => (
-            <Chip key={opt.v} label={opt.l} on={form.targetMode === opt.v} onClick={() => onChange({ targetMode: opt.v })} />
-          ))}
-        </div>
-        {form.targetMode === "job" && (
-          <input
-            value={form.jobName}
-            onChange={(e) => onChange({ jobName: e.target.value })}
-            placeholder="Job name"
-            style={{ ...inputStyle(), width: "100%" }}
-          />
+    <>
+      <div style={lblStyle()}>Global's targets</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {q.loading && <InlineLoading />}
+        {q.error && <div style={{ color: c.danger, fontSize: c.fontSm }}>Could not read Global's targets: {q.error}</div>}
+        {!q.loading && !q.error && list.length === 0 && (
+          <div style={{ color: c.textSec, fontSize: c.fontSm }}>Global has no push targets.</div>
         )}
-      </div>
-
-      <div>
-        <div style={lblStyle()}>When</div>
-        <select
-          value={form.trigger}
-          onChange={(e) => onChange({ trigger: e.target.value as RuleForm["trigger"] })}
-          style={{ ...inputStyle(), width: "100%", cursor: "pointer" }}
-        >
-          {OFFERED_TRIGGERS.map((t) => (
-            <option key={t} value={t}>
-              {TRIGGER_LABELS[t]}
-            </option>
-          ))}
-          {/* J-4 — an API-created or legacy trigger keeps its own option, so
-              saving this rule cannot silently rewrite it to `failure`. */}
-          {!OFFERED_TRIGGERS.includes(form.trigger as (typeof OFFERED_TRIGGERS)[number]) && (
-            <option value={form.trigger}>{triggerLabel(form.trigger)}</option>
-          )}
-        </select>
-      </div>
-
-      <div>
-        <div style={lblStyle()}>Channels</div>
-        {/* Opening a rule whose channels were all inert leaves this empty, and
-            Save then refuses with "Pick at least one channel" — correct, but
-            baffling unless we say what was dropped and why (VF-15 / J-4). */}
-        {dropped.length > 0 && (
-          <div style={{ fontSize: c.fontSm, color: c.warning, marginBottom: 8 }}>
-            {dropped.map(channelLabel).join(" and ")} {dropped.length > 1 ? "were" : "was"} removed in v0.52.23 — nothing
-            was ever delivered over {dropped.length > 1 ? "them" : "it"}. Pick <strong>Email</strong> or{" "}
-            <strong>Apprise</strong> (which reaches Slack, Discord and webhooks) to make this rule send.
-          </div>
-        )}
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {ALL_CHANNELS.map((ch) => (
-            <Chip
-              key={ch}
-              label={channelLabel(ch)}
-              on={form.channels.includes(ch)}
-              onClick={() =>
-                onChange({
-                  channels: form.channels.includes(ch) ? form.channels.filter((x) => x !== ch) : [...form.channels, ch],
-                })
-              }
-            />
-          ))}
+        {list.map((t, i) => (
+          <Fragment key={t.id ?? i}>
+            {i > 0 && <Rule />}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "2px 0", fontSize: c.fontSm }}>
+              <strong style={{ color: c.text, minWidth: 130 }}>{t.label || "(no label)"}</strong>
+              <span style={{ color: c.textSec, minWidth: 90 }}>{t.service || "—"}</span>
+              <span style={{ flex: 1, fontFamily: c.mono, fontSize: c.fontXs, color: c.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {t.url || (t.urlSet ? "set" : "—")}
+              </span>
+              <span style={{ color: t.enabled ? c.success : c.textSec, fontWeight: 600 }}>{t.enabled ? "enabled" : "off"}</span>
+            </div>
+          </Fragment>
+        ))}
+        <div style={{ fontSize: c.fontXs, color: c.textSec }}>
+          Global's alert rules push to these, and each agency keeps its own. They are added, changed and removed under{" "}
+          <Link to="/settings?tab=alerts&agency=global" style={{ color: c.primary }}>
+            Settings → Alerts, working in Global
+          </Link>, which keeps the rules
+          that name each one.
         </div>
       </div>
-
-      <div>
-        <div style={lblStyle()}>Recipients</div>
-        <input
-          value={form.recipients}
-          onChange={(e) => onChange({ recipients: e.target.value })}
-          placeholder="ops-team@company.com, #ops-alerts"
-          style={{ ...inputStyle(), width: "100%" }}
-        />
-        <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: c.fontSm, color: c.textSec }}>
-            <input
-              type="checkbox"
-              checked={form.enabled}
-              onChange={(e) => onChange({ enabled: e.target.checked })}
-              style={{ cursor: "pointer", accentColor: c.primary }}
-            />
-            Active
-          </label>
-        </div>
-      </div>
-    </div>
+    </>
   );
-}
-
-// TS-17 (the sorting-update plan) — the header row was a literal string array
-// keyed by index; a keyed column spec so a header can carry sort state.
-// Channels and Recipients are multi-value (unsortable); the last column is the
-// actions gutter.
-const RULE_HEADERS: { key: string; label: string; sortable: boolean }[] = [
-  { key: "target", label: "Target", sortable: true },
-  { key: "when", label: "When", sortable: true },
-  { key: "channels", label: "Channels", sortable: false },
-  { key: "recipients", label: "Recipients", sortable: false },
-  { key: "status", label: "Status", sortable: true },
-  { key: "actions", label: "", sortable: false },
-];
-
-// Status sorts by rank on the derived enabled/disabled state — disabled first
-// ascending (TS-Q5: the rule that sends nothing is the one needing attention).
-const RULE_STATUS_RANK: Record<string, number> = { disabled: 0, enabled: 1 };
-const RULE_SORT_COLS: SortColumn<AlertRule>[] = [
-  { key: "target", get: (r) => targetLabel(r), type: "text" },
-  { key: "when", get: (r) => triggerLabel(r.trigger), type: "text" },
-  { key: "status", get: (r) => (r.enabled ? "enabled" : "disabled"), type: "rank", rank: RULE_STATUS_RANK },
-];
-
-function AlertRulesCard({ canWrite }: { canWrite: boolean }) {
-  // GC (v2.2.2) — POST/PUT/DELETE /alerts need a global administrator; the list
-  // is open to every session. So the rules stay visible and Add/Edit — the only
-  // doors to Save and Delete — are disabled with the reason.
-  const why = globalOnly(canWrite);
-  const [bump, setBump] = useState(0);
-  const { data, error, loading } = useGet<unknown>(() => api.GET("/alerts"), [bump]);
-  const items = rows<AlertRule>(data);
-  const sort = useTableSort(items, RULE_SORT_COLS, { key: "target", dir: "asc" }, { tableId: "alert-rules" });
-
-  const [showAdd, setShowAdd] = useState(false);
-  const [addForm, setAddForm] = useState<RuleForm>({ ...EMPTY_RULE });
-  const [editId, setEditId] = useState<string | null>(null);
-  // FX-9 — the rule pending deletion. Deleting an alert rule was instant and
-  // irreversible: one click and the thing that tells you a job failed is gone,
-  // with nothing to say which rule went. The other destructive actions in the app
-  // (job/workflow/runner delete) all confirm; this one simply never did.
-  const [deleting, setDeleting] = useState<AlertRule | null>(null);
-  const [editForm, setEditForm] = useState<RuleForm>({ ...EMPTY_RULE });
-  const [busy, setBusy] = useState(false);
-  const [actionErr, setActionErr] = useState<string | null>(null);
-
-  function validate(f: RuleForm): string | null {
-    if (f.targetMode === "job" && !f.jobName.trim()) return "Pick a job name for the rule target.";
-    if (f.channels.length === 0) return "Pick at least one channel.";
-    return null;
-  }
-
-  async function create() {
-    const v = validate(addForm);
-    if (v) {
-      setActionErr(v);
-      return;
-    }
-    setBusy(true);
-    setActionErr(null);
-    const { error: e } = await api.POST("/alerts", { params: { header: csrfHeader }, body: formToInput(addForm) });
-    setBusy(false);
-    if (e) {
-      setActionErr(errMsg(e));
-    } else {
-      setShowAdd(false);
-      setAddForm({ ...EMPTY_RULE });
-      setBump((b) => b + 1);
-    }
-  }
-
-  async function update(id: string) {
-    const v = validate(editForm);
-    if (v) {
-      setActionErr(v);
-      return;
-    }
-    setBusy(true);
-    setActionErr(null);
-    const { error: e } = await api.PUT("/alerts/{alertId}", {
-      params: { path: { alertId: id }, header: csrfHeader },
-      body: formToInput(editForm),
-    });
-    setBusy(false);
-    if (e) {
-      setActionErr(errMsg(e));
-    } else {
-      setEditId(null);
-      setBump((b) => b + 1);
-    }
-  }
-
-  async function remove(id: string) {
-    setBusy(true);
-    setActionErr(null);
-    const { error: e } = await api.DELETE("/alerts/{alertId}", { params: { path: { alertId: id }, header: csrfHeader } });
-    setBusy(false);
-    if (e) setActionErr(errMsg(e));
-    else {
-      setEditId(null);
-      setBump((b) => b + 1);
-    }
-  }
-
-  return (
-    <Card
-      title="Alert Rules"
-      noPad
-      action={
-        <Btn
-          primary
-          disabled={!!why}
-          title={why || undefined}
-          onClick={() => {
-            setShowAdd((s) => !s);
-            setEditId(null);
-            setActionErr(null);
-          }}
-        >
-          {showAdd ? "Cancel" : "+ Add Alert Rule"}
-        </Btn>
-      }
-    >
-      {actionErr && <div style={{ color: c.danger, fontSize: c.fontSm, padding: "10px 16px" }}>Error: {actionErr}</div>}
-      {showAdd && (
-        <div style={{ padding: 16, borderBottom: `1px solid ${c.border}`, background: `${c.primary}0d` }}>
-          <RuleFormFields form={addForm} onChange={(p) => setAddForm((f) => ({ ...f, ...p }))} />
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-            <Btn primary onClick={create} disabled={busy}>
-              {busy ? "Saving…" : "Save Rule"}
-            </Btn>
-          </div>
-        </div>
-      )}
-      {loading && <div style={{ padding: 16 }}><SkeletonRows rows={5} /></div>}
-      {error && <div style={{ color: c.danger, padding: 16 }}>Error: {error}</div>}
-      {!loading && !error && items.length === 0 && (
-        <div style={{ color: c.textSec, padding: 16 }}>
-          No alert rules yet. Choose <strong>+ Add Alert Rule</strong> above to be told when a job fails.
-        </div>
-      )}
-      {!loading && !error && items.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm }}>
-          <thead>
-            <tr>
-              {RULE_HEADERS.map((h) => {
-                const active = h.sortable && sort.isActive(h.key);
-                return (
-                  <th
-                    key={h.key}
-                    onClick={h.sortable ? () => sort.toggle(h.key) : undefined}
-                    title={h.sortable ? `Sort by ${h.label}` : undefined}
-                    aria-sort={h.sortable ? sort.ariaSort(h.key) : undefined}
-                    style={{
-                      ...thStyle(),
-                      cursor: h.sortable ? "pointer" : undefined,
-                      color: h.sortable ? (active ? c.text : c.textSec) : undefined,
-                    }}
-                  >
-                    {h.sortable ? <SortableLabel label={h.label} active={active} dir={sort.sortDir} /> : h.label}
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {sort.sorted.map((r) => {
-              // FX-12 — keyed on the id itself. It used to compare `editId` (set
-              // from `r.id ?? null`) against `r.id ?? ""`, so a row with no id
-              // could never match: `null === ""` is false, and the button did
-              // nothing, forever. An alert rule always HAS an id — alert_config.id
-              // is the primary key, settings.AlertRule.ID is a non-pointer string
-              // so a null would fail the scan, and the spec marks it readOnly —
-              // which is why the guard was never exercised and never noticed. The
-              // typed id is optional all the same, so the impossible case is now
-              // handled by not offering an action that cannot work (the Phase B
-              // house rule: irrelevance hides).
-              const editing = r.id != null && editId === r.id;
-              return (
-                <FragmentRow key={r.id ?? targetLabel(r)}>
-                  <tr style={{ borderBottom: `1px solid ${c.border}`, background: editing ? `${c.primary}0d` : "transparent" }}>
-                    <td style={{ ...tdStyle(), fontWeight: 600 }}>{targetLabel(r)}</td>
-                    <td style={{ ...tdStyle(), color: c.textSec, fontSize: c.fontSm }}>
-                      {triggerLabel(r.trigger)}
-                    </td>
-                    <td style={tdStyle()}>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                        {(r.channels ?? []).map((ch) => {
-                          // A legacy channel the dispatcher has no branch for is
-                          // shown struck through rather than hidden — the rule
-                          // sends nothing over it and the operator needs to know
-                          // which rules to re-point (VF-15).
-                          const inert = INERT_CHANNELS.has(ch);
-                          return (
-                            <span
-                              key={ch}
-                              title={inert ? `${channelLabel(ch)} is not delivered — re-point this rule at Email or Apprise.` : undefined}
-                              style={{
-                                padding: "2px 8px",
-                                borderRadius: c.radiusChip,
-                                fontSize: c.fontXs,
-                                fontWeight: 600,
-                                background: inert ? "transparent" : `${c.primary}1a`,
-                                color: inert ? c.textSec : c.primary,
-                                border: inert ? `1px dashed ${c.border}` : undefined,
-                                textDecoration: inert ? "line-through" : undefined,
-                              }}
-                            >
-                              {channelLabel(ch)}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    </td>
-                    <td style={{ ...tdStyle(), fontSize: c.fontXs, color: c.textSec }}>
-                      {(r.recipients ?? "").split(",")[0]?.trim() || "—"}
-                    </td>
-                    <td style={tdStyle()}>
-                      <span style={{ color: r.enabled ? c.success : c.textSec, fontWeight: 600, fontSize: c.fontSm }}>
-                        {r.enabled ? "Active" : "Inactive"}
-                      </span>
-                    </td>
-                    <td style={tdStyle()}>
-                      {r.id != null && (
-                        <Btn
-                          disabled={!!why}
-                          title={why || undefined}
-                          onClick={() => {
-                            if (editing) {
-                              setEditId(null);
-                            } else {
-                              setEditId(r.id!);
-                              setEditForm(ruleToForm(r));
-                              setShowAdd(false);
-                              setActionErr(null);
-                            }
-                          }}
-                        >
-                          {editing ? "Close" : "Edit"}
-                        </Btn>
-                      )}
-                    </td>
-                  </tr>
-                  {editing && (
-                    <tr style={{ borderBottom: `1px solid ${c.border}` }}>
-                      <td colSpan={6} style={{ padding: 16, background: `${c.primary}0d` }}>
-                        <RuleFormFields
-                          form={editForm}
-                          onChange={(p) => setEditForm((f) => ({ ...f, ...p }))}
-                          dropped={(r.channels ?? []).filter((ch) => INERT_CHANNELS.has(ch))}
-                        />
-                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-                          <Btn danger onClick={() => setDeleting(r)} disabled={busy}>
-                            Delete
-                          </Btn>
-                          <Btn primary onClick={() => update(r.id!)} disabled={busy}>
-                            {busy ? "Saving…" : "Save"}
-                          </Btn>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </FragmentRow>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-      {deleting && (
-        <ConfirmDialog
-          title="Delete alert rule?"
-          message={
-            <>
-              <strong>{targetLabel(deleting)}</strong> — {triggerLabel(deleting.trigger)}, over{" "}
-              {(deleting.channels ?? []).map(channelLabel).join(" and ") || "no channel"}.
-              {deleting.enabled ? (
-                <> This rule is <strong>active</strong>: nothing will be sent for those runs once it is gone.</>
-              ) : (
-                <> This rule is inactive, so nothing is being sent for it today.</>
-              )}{" "}
-              Deleting is permanent — the rule has to be recreated by hand.
-            </>
-          }
-          confirmLabel="Delete rule"
-          busy={busy}
-          onCancel={() => setDeleting(null)}
-          onConfirm={() => {
-            const id = deleting.id;
-            setDeleting(null);
-            if (id != null) void remove(id);
-          }}
-        />
-      )}
-    </Card>
-  );
-}
-
-// Tiny helper so table rows + expanded editors can share a key without extra DOM.
-function FragmentRow(props: { children: React.ReactNode }) {
-  return <>{props.children}</>;
 }

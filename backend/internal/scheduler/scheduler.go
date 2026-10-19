@@ -35,12 +35,13 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/envmerge"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/notify"
+	"github.com/ResetSmith/cronomicon/internal/runcap"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 )
 
 const (
-	defaultMaxConcurrent = 5
-	settingsKeyMax       = "maxConcurrent"
+	// settingsKeyMax is the installation's cap's settings row (runcap.Max reads it).
+	settingsKeyMax = "maxConcurrent"
 	// reloadBackstopInterval is the low-frequency fallback reload cadence; the
 	// primary reload trigger is the onSyncComplete callback (ReloadIfChanged).
 	reloadBackstopInterval = 5 * time.Minute
@@ -606,16 +607,12 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 		return
 	}
 
-	// Check global concurrency cap from settings (default 5).
-	maxConcurrent := s.maxConcurrent(ctx)
-	active, err := s.activeRunCount(ctx)
-	if err != nil {
-		s.log.Error("scheduler: check active runs", "err", err)
-		return
-	}
-	if active >= maxConcurrent {
-		s.log.Info("scheduler: skip fire — global concurrency cap reached",
-			"job", jobName, "active", active, "cap", maxConcurrent)
+	// The concurrency cap (2.5.0 C6, internal/runcap): every agency's running
+	// runs and this job's agency's waiting ones against the installation's
+	// cap, and the agency's own runs against its cap when it has one.
+	if v := runcap.AtProduction(ctx, s.db, definitionAgency(ctx, s.db, jobUID, "job")); v.Reached {
+		s.log.Info("scheduler: skip fire — concurrency cap reached",
+			"job", jobName, "agencyCap", v.Agency, "cap", v.Cap)
 		// SL-A: same argument as the pause skip above. The cap is transient, so
 		// the episode rule re-records once a real run lands in between — a fleet
 		// at cap for an hour leaves one row, but two separate cap episodes on the
@@ -623,7 +620,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 		if err := s.recordSuppression(ctx, EnqueueParams{
 			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
 			ScheduleName: scheduleName, Executor: executor,
-		}, skipRecord{Reason: reasonConcurrencyCap, Mode: dedupeEpisodeReason}); err != nil {
+		}, skipRecord{Reason: capReason(v), Mode: dedupeEpisodeReason}); err != nil {
 			s.log.Error("scheduler: record capped skip", "job", jobName, "err", err)
 		}
 		return
@@ -966,19 +963,13 @@ func (s *Scheduler) fireWorkflow(uid, source, workflowName, scheduleName, envJSO
 		return
 	}
 
-	maxConcurrent := s.maxConcurrent(ctx)
-	active, err := s.activeRunCount(ctx)
-	if err != nil {
-		s.log.Error("scheduler: check active runs", "err", err)
-		return
-	}
-	if active >= maxConcurrent {
-		s.log.Info("scheduler: skip fire — global concurrency cap reached",
-			"workflow", workflowName, "active", active, "cap", maxConcurrent)
+	if v := runcap.AtProduction(ctx, s.db, definitionAgency(ctx, s.db, uid, "workflow")); v.Reached {
+		s.log.Info("scheduler: skip fire — concurrency cap reached",
+			"workflow", workflowName, "agencyCap", v.Agency, "cap", v.Cap)
 		// SL-A. CAL-32's header noted fireWorkflow "dropped even its
 		// concurrency-cap skips with a log line" — this is that gap closed.
 		if err := s.recordWorkflowSuppression(ctx, uid, source, workflowName, scheduleName,
-			skipRecord{Reason: reasonConcurrencyCap, Mode: dedupeEpisodeReason}); err != nil {
+			skipRecord{Reason: capReason(v), Mode: dedupeEpisodeReason}); err != nil {
 			s.log.Error("scheduler: record capped skip", "workflow", workflowName, "err", err)
 		}
 		return
@@ -1018,17 +1009,21 @@ func IsPausedUID(ctx context.Context, database *sql.DB, source, ownerKind, name,
 	return n > 0
 }
 
-// AtCapacity reports whether the fleet-wide concurrency cap is reached
-// (queued+running vs the operator's max). Exported for the same reason as
-// IsPaused: the cap is a fire-time gate with no claim-time backstop, so every
-// producer applies it or its runs escape the cap.
-func AtCapacity(ctx context.Context, database *sql.DB) bool {
-	var active int
-	if err := database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM runs WHERE status IN ('queued','running')`).Scan(&active); err != nil {
-		return false
+// AtCapacity reports whether the concurrency cap refuses a run of agency (an
+// id) now (2.5.0 C6, runcap.AtProduction). Exported for the same reason as
+// IsPaused: every producer applies it. Since 2.5.0 the claim asks too
+// (runcap.ClaimSQL), so a run that escaped a producer still waits for a slot.
+func AtCapacity(ctx context.Context, database *sql.DB, agency string) bool {
+	return runcap.AtProduction(ctx, database, agency).Reached
+}
+
+// capReason is a capped fire's recorded reason: the installation's cap in the
+// words it has always had, an agency's naming the agency.
+func capReason(v runcap.Verdict) string {
+	if v.Agency {
+		return fmt.Sprintf("Skipped: %s's concurrency cap was reached", v.AgencyName)
 	}
-	return active >= maxConcurrentDB(ctx, database)
+	return reasonConcurrencyCap
 }
 
 // EnqueueParams holds the fields for an enqueued run.
@@ -1657,30 +1652,8 @@ func (s *Scheduler) hasActiveRunForKey(ctx context.Context, concKey string) (boo
 	return hasActiveRunForKeyDB(ctx, s.db, concKey)
 }
 
-func (s *Scheduler) activeRunCount(ctx context.Context) (int, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM runs WHERE status IN ('queued','running')
-	`).Scan(&n)
-	return n, err
-}
-
-func (s *Scheduler) maxConcurrent(ctx context.Context) int {
-	return maxConcurrentDB(ctx, s.db)
-}
-
 func maxConcurrentDB(ctx context.Context, database *sql.DB) int {
-	var val sql.NullString
-	_ = database.QueryRowContext(ctx, `
-		SELECT value FROM settings WHERE key = ?
-	`, settingsKeyMax).Scan(&val)
-	if val.Valid && val.String != "" {
-		var n int
-		if _, err := fmt.Sscanf(val.String, "%d", &n); err == nil && n > 0 {
-			return n
-		}
-	}
-	return defaultMaxConcurrent
+	return runcap.Max(ctx, database)
 }
 
 // nullStr converts an empty string to sql.NullString (NULL in DB).

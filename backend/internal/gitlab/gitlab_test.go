@@ -402,7 +402,10 @@ CREATE TABLE IF NOT EXISTS activity (
     -- TestRecordPush to rediscover, so: any column added to the activity table
     -- must be added HERE too, or every activity write in this package starts
     -- failing silently and the symptom surfaces somewhere unrelated.
-    runner_name   TEXT
+    runner_name   TEXT,
+    -- 1510, stamped since 2.5.0 C1 on every row (it had been missing here, and
+    -- each write's agency UPDATE failed silently).
+    agency_id     TEXT
 );
 
 -- R2-1: the activity writer resolves a missing uid through the run the event
@@ -411,12 +414,14 @@ CREATE TABLE IF NOT EXISTS activity (
 -- this package — including pushes, which reference no run at all. They are here
 -- to be nameable, hence the two columns each path actually reads.
 CREATE TABLE IF NOT EXISTS runs (
-    id       TEXT PRIMARY KEY,
-    job_uid  TEXT
+    id           TEXT PRIMARY KEY,
+    job_uid      TEXT,
+    owner_agency TEXT -- 1480; the activity writer's agency reads it (C1)
 );
 CREATE TABLE IF NOT EXISTS workflow_runs (
     id           TEXT PRIMARY KEY,
-    workflow_uid TEXT
+    workflow_uid TEXT,
+    agency_id    TEXT -- 1520; the activity writer's agency reads it (C1)
 );
 
 -- AN-1 (migration 1060). Same hand-maintained-subset caveat as reactions above,

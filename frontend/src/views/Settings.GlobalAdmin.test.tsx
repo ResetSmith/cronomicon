@@ -73,7 +73,10 @@ afterEach(cleanup);
 // 2.4.0 R8 (question 47): GitLab Connection (Installation) is replaced by
 // Repositories (Agency), which an agency's administrator opens for their own.
 const INSTALLATION = ["General", "Notifications", "Vault", "Observability", "Log Storage", "Audit & Compliance", "Local runner"];
-const AGENCY = ["Users & Access", "Service Accounts", "Repositories", "SSH Targets", "Recycle Bin"];
+const AGENCY = ["Users & Access", "Service Accounts", "Repositories", "SSH Targets", "Alerts", "Recycle Bin"];
+// An administrator of one agency who does not compose: the audit export, and no
+// Recycle Bin (the bin is a composer's since 2.5.0, SO-2).
+const ONE_AGENCY = ["Users & Access", "Service Accounts", "Repositories", "SSH Targets", "Alerts", "Audit Export"];
 
 const open = async (at = "/settings") => {
   render(
@@ -94,7 +97,8 @@ describe("Settings — an administrator of one agency (LR-86)", () => {
 
   it("shows the Agency group and nothing of Installation", async () => {
     await open();
-    for (const label of AGENCY) expect(screen.getAllByText(label).length, label).toBeGreaterThan(0);
+    for (const label of ONE_AGENCY) expect(screen.getAllByText(label).length, label).toBeGreaterThan(0);
+    expect(rail()).not.toContain("Recycle Bin");
     for (const label of INSTALLATION) expect(rail(), label).not.toContain(label);
     expect(screen.queryByText("Installation")).toBeNull();
     // And none of the install-wide settings was read on the way in.
@@ -103,6 +107,15 @@ describe("Settings — an administrator of one agency (LR-86)", () => {
     for (const path of ["/settings/gitlab", "/settings/vault", "/settings/observability"]) {
       expect(gets, path).not.toContain(path);
     }
+  });
+
+  // 2.5.0 C7 (SO-2): a composer who administers nothing opens Settings for
+  // the Recycle Bin alone.
+  it("gives a composer who administers nothing the Recycle Bin alone", async () => {
+    caps = { compose: true };
+    await open();
+    await waitFor(() => expect(rail()).toContain("Recycle Bin"));
+    for (const label of [...INSTALLATION, ...ONE_AGENCY]) expect(rail(), label).not.toContain(label);
   });
 
   it("falls back to their first section when the address names one that is not theirs", async () => {

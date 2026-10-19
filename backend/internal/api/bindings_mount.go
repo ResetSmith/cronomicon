@@ -216,7 +216,9 @@ func (s *Server) getReferenceUsage(w http.ResponseWriter, r *http.Request) {
 	// One flat query joined to jobs for the owner's scope — never a nested iterator
 	// (pool deadlock, see db.maxOpenConns).
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT rb.ref_kind, rb.ref_name, rb.owner_kind, COALESCE(j.scope,''), COALESCE(`+agencyid.JobSQL("j")+`, '')
+		SELECT rb.ref_kind, rb.ref_name, rb.owner_kind, COALESCE(j.scope,''),
+		       COALESCE(CASE rb.owner_kind WHEN 'job' THEN `+agencyid.JobSQL("j")+`
+		                ELSE (SELECT `+agencyid.ScriptOwnerSQL("sx")+` FROM scripts sx WHERE sx.uid = rb.owner_uid) END, '')
 		FROM reference_bindings rb
 		LEFT JOIN jobs j
 		  ON rb.owner_kind = 'job' AND j.source = rb.owner_source AND j.name = rb.owner_name`)
@@ -237,6 +239,11 @@ func (s *Server) getReferenceUsage(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&refKind, &refName, &ownerKind, &jobScope, &jobOwner); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
+		}
+		// Whose the binding's owner is (2.5.0 C2, CF-1): a script's, and a
+		// no-scope job's, had been counted for everyone.
+		if !readsAgency(r, jobOwner) {
+			continue
 		}
 		if ownerKind == "job" && !auth.ScopeReadableIn(actor, jobOwner, jobScope) {
 			continue
@@ -280,9 +287,10 @@ func (s *Server) getReferenceUsage(w http.ResponseWriter, r *http.Request) {
 // a valid 200.
 func (s *Server) getRunReferences(w http.ResponseWriter, r *http.Request) {
 	traceID := r.PathValue("traceId")
-	var scope, runOwner string // runOwner: the agency the run's scope is looked for in (I2)
+	var scope, runOwner, owner string // runOwner: the agency the run's scope is looked for in (I2); owner: whose the run is (1480)
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT COALESCE(scope,''), `+agencyid.RunScopeOwnerSQL("agencies_json")+` FROM runs WHERE id = ?`, traceID).Scan(&scope, &runOwner)
+		`SELECT COALESCE(scope,''), `+agencyid.RunScopeOwnerSQL("agencies_json")+`, `+agencyid.ColumnOwnerSQL("runs", "owner_agency")+`
+		   FROM runs WHERE id = ?`, traceID).Scan(&scope, &runOwner, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 		return
@@ -291,10 +299,10 @@ func (s *Server) getRunReferences(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	// Scope guard, mirroring getRun (FR-H2): a restricted operator must not see the
-	// references of an out-of-scope run.
-	if id, ok := auth.IdentityFrom(r.Context()); ok && !auth.ScopeReadableIn(id, runOwner, scope) {
-		s.denyScope(w, r, scope, "scope access denied")
+	// Whose the run is, then its scope, mirroring getRun (FR-H2; 2.5.0 C2, CF-1):
+	// refused as absent (question 72).
+	if id, ok := auth.IdentityFrom(r.Context()); ok && (!id.ReadsAgency(owner) || !auth.ScopeReadableIn(id, runOwner, scope)) {
+		s.notReadable(w, r, scope, "run")
 		return
 	}
 
@@ -360,7 +368,12 @@ func (s *Server) writeBindings(w http.ResponseWriter, r *http.Request, owner run
 	// M7: record the RESULTING binding set (kinds + bare names, never values) so a
 	// stale full-replace that silently revokes/resurrects a binding is visible in the
 	// audit — not an empty "updated" row indistinguishable from a tag edit.
-	_ = settings.WriteChangeLog(r.Context(), s.db, actor, category, "updated", target, runref.AuditBindingSet(bs))
+	// The job's agency, or the script's repository's (C1).
+	agency := s.jobAgency(r.Context(), owner.UID)
+	if owner.Kind == "script" {
+		agency = s.ownerBy(r.Context(), `SELECT `+agencyid.ScriptOwnerSQL("sx")+` FROM scripts sx WHERE sx.uid = ?`, owner.UID)
+	}
+	_ = settings.WriteChangeLog(r.Context(), s.db, agency, actor, category, "updated", target, runref.AuditBindingSet(bs))
 	httpx.JSON(w, http.StatusOK, map[string]any{"bindings": bs})
 	return true
 }
@@ -375,9 +388,15 @@ func (s *Server) getJobBindings(w http.ResponseWriter, r *http.Request) {
 	// scope-restricted operator must not read those for an out-of-scope job. Mirror
 	// getRunReferences' guard (403 on out-of-scope). (Job DETAIL is now scope-gated
 	// too — getJob returns 404 out-of-scope, SU-2.)
-	if id, ok := auth.IdentityFrom(r.Context()); ok && jr.Scope != nil &&
-		!auth.ScopeReadableIn(id, jr.OwnerAgency, *jr.Scope) {
-		s.denyScope(w, r, *jr.Scope, "scope access denied")
+	// Whose the job is first (2.5.0 C2, CF-1: a no-scope job of another agency
+	// passed), then its scope; refused as absent (question 72).
+	if id, ok := auth.IdentityFrom(r.Context()); ok && (!id.ReadsAgency(agencyOrGlobal(jr.OwnerAgency)) ||
+		(jr.Scope != nil && !auth.ScopeReadableIn(id, jr.OwnerAgency, *jr.Scope))) {
+		scope := ""
+		if jr.Scope != nil {
+			scope = *jr.Scope
+		}
+		s.notReadable(w, r, scope, "job")
 		return
 	}
 	bs, err := runref.ListBindings(r.Context(), s.db, runref.Owner{Kind: "job", Source: jr.Source, Name: jr.Name, UID: jr.UID})

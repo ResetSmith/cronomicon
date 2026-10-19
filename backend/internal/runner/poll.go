@@ -17,6 +17,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/metrics"
+	"github.com/ResetSmith/cronomicon/internal/runcap"
 	"github.com/ResetSmith/cronomicon/internal/runnerproto"
 )
 
@@ -127,7 +128,16 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	// and an agent that is restarted, upgraded or crashes and comes back is
 	// never quiet that long. Before the claim below, so a run handed out by
 	// this very poll is not among them.
-	if r.URL.Query().Get(runnerproto.PollParamStarted) == "1" {
+	//
+	// Unless the identity is in use twice (2.5.0 C6a, processes.go): the poll
+	// names its process, and another process was seen on this runner within
+	// the hold window. Then this may be a copy's start beside a live process
+	// that holds those runs, and they are closed only once that process stays
+	// silent (a crash's case); never if it polls again (a copy's).
+	started := r.URL.Query().Get(runnerproto.PollParamStarted) == "1"
+	deferClose := s.noteProcess(r.Context(), runnerID, r.URL.Query().Get(runnerproto.PollParamProcess),
+		httpx.ClientIP(r, s.cfg.TrustedProxyNets()), started)
+	if started && !deferClose {
 		if n := s.failRunningRuns(r.Context(), runnerID); n > 0 {
 			if _, err := s.db.ExecContext(r.Context(),
 				`UPDATE runners SET load = 0 WHERE id = ?`, runnerID); err != nil {
@@ -417,6 +427,7 @@ func (s *Service) readmitRunner(ctx context.Context, runnerID string) bool {
 	_ = s.db.QueryRowContext(ctx,
 		`SELECT name FROM runners WHERE id = ?`, runnerID).Scan(&name)
 	_ = auditlog.WriteActivity(ctx, s.db, auditlog.ActivityParams{
+		AgencyID:   runnerAgency(ctx, s.db, runnerID),
 		At:         now(),
 		Kind:       "config",
 		Actor:      "runner:" + runnerID,
@@ -602,7 +613,7 @@ func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimReq
 	// transition it to running in a single UPDATE ... RETURNING (SQLite 3.35+).
 	// Placeholders in order: runner_id, runner_id (the name stamp), started-at
 	// ts, caps (run_type), caps (requires⊆), agency runnerID, binding runnerID,
-	// injectFlag, localFlag.
+	// injectFlag, localFlag, the installation's cap (runcap.ClaimSQL).
 	var (
 		traceID string
 		jobName string
@@ -716,6 +727,11 @@ func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimReq
 			  )
 			  -- LR-47: the local runner does not take a run that binds an SSH key
 			  AND (? = 0 OR NOT `+execspec.RunBindsKeySQL("runs")+`)
+			  -- 2.5.0 C6 (question 17): the concurrency cap at the claim. Every
+			  -- agency's running runs against the installation's cap, and the run's
+			  -- agency's against its own; waiting runs are not counted here, so an
+			  -- agent that comes back takes its backlog a slot at a time.
+			  `+runcap.ClaimSQL+`
 			-- QP: highest priority first, then oldest. The index
 			-- idx_runs_claimable is cut (status, executor, priority DESC,
 			-- created_at ASC) to match this mixed-direction sort exactly; a
@@ -727,6 +743,7 @@ func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimReq
 		)
 		RETURNING id, job_name, run_type, scope`,
 		runnerID, runnerID, ts, string(capsJSON), string(capsJSON), runnerID, runnerID, injectFlag, localFlag,
+		runcap.Max(ctx, database),
 	).Scan(&traceID, &jobName, &runType, &scope)
 
 	if errors.Is(err, sql.ErrNoRows) {

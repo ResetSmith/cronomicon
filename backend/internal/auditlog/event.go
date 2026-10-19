@@ -29,12 +29,14 @@ type Event struct {
 	// ActingAgency is the agency a global administrator was working in when
 	// they made a change (2.4.4): the change is "Actor, acting in ActingAgency".
 	ActingAgency string `json:"actingAgency,omitempty"`
-	Outcome      string `json:"outcome,omitempty"`
-	Category     string `json:"category,omitempty"`
-	Action       string `json:"action,omitempty"`
-	Target       string `json:"target,omitempty"`
-	Summary      string `json:"summary,omitempty"`
-	Details      string `json:"details,omitempty"`
+	// Agency is the agency the event is of: its object's (2.5.0 C1, CF-3).
+	Agency   string `json:"agency,omitempty"`
+	Outcome  string `json:"outcome,omitempty"`
+	Category string `json:"category,omitempty"`
+	Action   string `json:"action,omitempty"`
+	Target   string `json:"target,omitempty"`
+	Summary  string `json:"summary,omitempty"`
+	Details  string `json:"details,omitempty"`
 
 	// Execution context, present on activity rows.
 	JobName      string `json:"jobName,omitempty"`
@@ -120,6 +122,7 @@ func activityEvent(at string, p ActivityParams) (Event, bool) {
 		Source:       "activity",
 		Kind:         p.Kind,
 		Actor:        p.Actor,
+		Agency:       p.AgencyID,
 		Outcome:      p.Outcome,
 		Category:     p.Category,
 		Action:       p.Action,

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ProtocolVersion is the wire-protocol version this server/agent speaks.
@@ -161,16 +162,18 @@ import (
 //	      startup. An agent that silently dropped either op would leave a
 //	      replaced key trusted and every delivery unconfirmed, so this is a
 //	      real bump, not an additive field.
-//	      Additive within v14 (2.3.2): two poll query params, PollParamStarted
-//	      and PollParamClaim below. NOT gated, in both directions. An agent
-//	      that sends neither behaves as it did (its runs die with it when it is
-//	      stopped, and the server learns nothing). A server that reads neither
+//	      Additive within v14: three poll query params, PollParamStarted and
+//	      PollParamClaim (2.3.2) and PollParamProcess (2.5.0) below. NOT
+//	      gated, in both directions. An agent that sends none of them behaves
+//	      as it did (its runs die with it when it is stopped, and the server
+//	      learns nothing). A server that reads neither
 //	      is one an agent of this build never meets: the upgrade command moves
 //	      the agents after the server, and the agent drops an assignment it is
 //	      handed while stopping, as it always has.
 const ProtocolVersion = 14
 
-// Poll query params (2.3.2), beside configDigest and settingsVersion.
+// Poll query params (2.3.2, and process in 2.5.0), beside configDigest and
+// settingsVersion.
 const (
 	// PollParamStarted ("started=1") rides every poll of an agent process until
 	// one is answered. A process that has not been answered yet holds no run,
@@ -190,7 +193,22 @@ const (
 	// and compares it with nothing), so this param is the only thing that
 	// keeps a full agent from being handed a run it cannot start.
 	PollParamClaim = "claim"
+	// PollParamProcess ("process=<hex>", 2.5.0 C6a) is a random value the
+	// agent process draws when it starts and sends on every poll. The identity
+	// file names the runner, not the process: a cloned VM or two containers on
+	// one volume are one runner and two processes, and this is how the server
+	// tells them apart. An older process that polls after a newer one has
+	// started is a copy (a restarted process never polls again), and the
+	// server then raises runner_identity_shared and stops a copy's start from
+	// closing the other's runs. Additive within v14, like the two above: an
+	// agent that sends none is treated as 2.3.2 treated every agent.
+	PollParamProcess = "process"
 )
+
+// BusyHeartbeat is the longest an agent holding a run waits between the
+// answer to one poll and its next (2.3.2). The server adds its own hold to
+// it to know how long a live, busy process can go unseen (C6a).
+const BusyHeartbeat = 5 * time.Second
 
 // MinProtocolVersion is the oldest agent protocol this server accepts, checked
 // at registration and redeclare (426 protocol_too_old). It TRACKS

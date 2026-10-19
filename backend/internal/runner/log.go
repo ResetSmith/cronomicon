@@ -583,9 +583,11 @@ func (s *Service) HandleGetLog(w http.ResponseWriter, r *http.Request) {
 
 	// Verify the run exists and get its scope + log folder.
 	var scope, archivedAt sql.NullString
-	var entityCode, runOwner string // runOwner: the agency the run's scope is looked for in (I2)
+	var entityCode, runOwner, owner string // runOwner: the agency the run's scope is looked for in (I2); owner: whose the run is (1480)
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT scope, COALESCE(entity_code,''), log_archived_at, `+agencyid.RunScopeOwnerSQL("agencies_json")+` FROM runs WHERE id = ?`, traceID).Scan(&scope, &entityCode, &archivedAt, &runOwner)
+		`SELECT scope, COALESCE(entity_code,''), log_archived_at, `+agencyid.RunScopeOwnerSQL("agencies_json")+`,
+		        `+agencyid.ColumnOwnerSQL("runs", "owner_agency")+`
+		   FROM runs WHERE id = ?`, traceID).Scan(&scope, &entityCode, &archivedAt, &runOwner, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 		return
@@ -603,7 +605,9 @@ func (s *Service) HandleGetLog(w http.ResponseWriter, r *http.Request) {
 		if scope.Valid {
 			scStr = scope.String
 		}
-		if !auth.ScopeReadableIn(id, runOwner, scStr) {
+		// Whose the run is first (2.5.0 C2, CF-1): another agency's no-scope
+		// run, and Global's, passed the scope check, output and all.
+		if !id.ReadsAgency(owner) || !auth.ScopeReadableIn(id, runOwner, scStr) {
 			// LU-9: audited like every scope denial in internal/api. This one is
 			// worth more than most — it guards run OUTPUT, which carries whatever
 			// the job printed — so a walk across trace ids must be visible.
@@ -611,7 +615,8 @@ func (s *Service) HandleGetLog(w http.ResponseWriter, r *http.Request) {
 				s.authSvc.AuditDenied(r, id.Email, "insufficient_scope", scStr,
 					r.Method+" "+r.URL.Path+": scope access denied")
 			}
-			httpx.Fail(w, http.StatusForbidden, "forbidden", "scope access denied")
+			// As absent (question 72; it was 403, which confirmed the run).
+			httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 			return
 		}
 	}

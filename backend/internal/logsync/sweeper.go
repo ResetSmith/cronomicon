@@ -40,6 +40,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/logarchive"
@@ -687,7 +688,8 @@ func (s *Sweeper) finish(ctx context.Context, res *Result, actor string) {
 			details = res.Err.Error()
 		}
 		if err := auditlog.WriteActivity(ctx, db, auditlog.ActivityParams{
-			At: now.Format(time.RFC3339), Kind: "config", Outcome: outcome, Actor: actor,
+			AgencyID: agencyid.Global, // the installation's log archive
+			At:       now.Format(time.RFC3339), Kind: "config", Outcome: outcome, Actor: actor,
 			Target: "log-archive", Category: "Settings", Action: "sync", Summary: summary, Details: details,
 		}); err != nil {
 			s.o.Log.Warn("log archive: could not write activity row", "error", err)

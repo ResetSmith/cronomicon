@@ -468,7 +468,7 @@ func CreateScope(ctx context.Context, database *sql.DB, inp LocalScopeInput, act
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	audit(ctx, database, actor, "Scopes", "created", inp.Scope, "")
+	audit(ctx, database, ownerOrGlobalAgency(inp.OwnerAgency), actor, "Scopes", "created", inp.Scope, "")
 	return GetScope(ctx, database, id)
 }
 
@@ -629,7 +629,7 @@ func UpdateScope(ctx context.Context, database *sql.DB, id string, inp LocalScop
 	if err := tx.Commit(); err != nil {
 		return nil, nil, err
 	}
-	audit(ctx, database, actor, "Scopes", "updated", newName, "")
+	audit(ctx, database, RowAgency(ctx, database, "scopes", "owner_agency", id), actor, "Scopes", "updated", newName, "")
 	sc, err := GetScope(ctx, database, id)
 	return sc, broken, err
 }
@@ -670,13 +670,14 @@ func DeleteScope(ctx context.Context, database *sql.DB, id, actor string) (bool,
 		return false, busy
 	}
 
+	agency := RowAgency(ctx, database, "scopes", "owner_agency", id) // read while the row is there
 	res, err := database.ExecContext(ctx, `DELETE FROM scopes WHERE id=?`, id)
 	if err != nil {
 		return false, fmt.Errorf("delete scope: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 {
-		audit(ctx, database, actor, "Scopes", "deleted", existing.Scope, "")
+		audit(ctx, database, agency, actor, "Scopes", "deleted", existing.Scope, "")
 	}
 	return n > 0, nil
 }

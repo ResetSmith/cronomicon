@@ -28,7 +28,7 @@ func TestRecentLoginsResponseShape(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	s.RecentLogins(rec, httptest.NewRequest(http.MethodGet, "/api/v1/access/recent-logins", nil))
+	s.RecentLogins(rec, asRolesAdmin(httptest.NewRequest(http.MethodGet, "/api/v1/access/recent-logins", nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 	}
@@ -101,7 +101,7 @@ func TestRecentLoginsNoRoles(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	s.RecentLogins(rec, httptest.NewRequest(http.MethodGet, "/api/v1/access/recent-logins", nil))
+	s.RecentLogins(rec, asRolesAdmin(httptest.NewRequest(http.MethodGet, "/api/v1/access/recent-logins", nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 	}

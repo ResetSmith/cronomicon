@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
@@ -935,6 +936,13 @@ func (s *Scheduler) emitDepthCeilingActivity(ctx context.Context, ev srcEvent, r
 		p.WorkflowName = r.ownerName
 	} else {
 		p.JobName = r.ownerName
+	}
+	// The reacting definition's agency, named (D5): its TraceID is the UPSTREAM
+	// run. While a reaction across agencies does not fire (IN-8) the two agree;
+	// the name keeps the row right if they ever do not.
+	if err := s.db.QueryRowContext(ctx, `SELECT `+agencyid.Owner(agencyid.DefinitionSQL), r.ownerUID, r.ownerKind).
+		Scan(&p.AgencyID); err != nil {
+		p.AgencyID = agencyid.Global
 	}
 	if err := auditlog.WriteActivity(ctx, s.db, p); err != nil {
 		s.log.Error("reactor: emit depth-ceiling activity", "owner", r.ownerName, "reaction", r.name, "err", err)

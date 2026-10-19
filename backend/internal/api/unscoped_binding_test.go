@@ -33,7 +33,10 @@ func TestUnscopedJobRequiresBoundScope(t *testing.T) {
 	// the scope the operator does NOT hold needs adding.
 	seed(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('s-fin','finance','cronomicon','2026-01-01T00:00:00Z')`)
 	// The template: no scope of its own.
-	seed(`INSERT INTO jobs (name, source, run_type, scope, enabled) VALUES ('restart-service','git','bash',NULL,1)`)
+	// Tax's job with no scope of its own (a job is one agency's: LR-24, a
+	// department running Global's job against its own scope, was retired in
+	// 2.5.0 C2, question 78).
+	seed(`INSERT INTO jobs (name, source, run_type, scope, enabled, owner_agency) VALUES ('restart-service','git','bash',NULL,1,'ag:tax')`)
 
 	jobID := runPath(t, pool, "restart-service")
 	run := func(group, body string) int {
@@ -64,9 +67,10 @@ func TestUnscopedJobRequiresBoundScope(t *testing.T) {
 		t.Errorf("restricted actor binding a held scope = %d, want 202", code)
 	}
 	// Binding a scope they do NOT hold: denied. Otherwise the bind would be a
-	// formality anyone could satisfy with any string.
-	if code := run("sec-operators", `{"scope":"finance"}`); code != http.StatusForbidden {
-		t.Errorf("restricted actor binding an UNHELD scope = %d, want 403", code)
+	// formality anyone could satisfy with any string. Finance's scope is not of
+	// the job's agency either, which is refused first (2.5.0 C2, question 78).
+	if code := run("sec-operators", `{"scope":"finance"}`); code != http.StatusUnprocessableEntity {
+		t.Errorf("restricted actor binding another agency's scope = %d, want 422 scope_not_in_agency", code)
 	}
 	// An unrestricted actor still runs it unbound — the genuinely global case
 	// ("back up the Cronomicon DB") that §2.5 preserves.
@@ -86,7 +90,10 @@ func TestUnscopedJobBindRecordsScopeAndAgencies(t *testing.T) {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	seed(`INSERT INTO jobs (name, source, run_type, scope, enabled) VALUES ('restart-service','git','bash',NULL,1)`)
+	// Tax's job with no scope of its own (a job is one agency's: LR-24, a
+	// department running Global's job against its own scope, was retired in
+	// 2.5.0 C2, question 78).
+	seed(`INSERT INTO jobs (name, source, run_type, scope, enabled, owner_agency) VALUES ('restart-service','git','bash',NULL,1,'ag:tax')`)
 
 	if rec := reqAs(t, h, http.MethodPost, runPath(t, pool, "restart-service"), "sec-operators",
 		`{"scope":"tax"}`); rec.Code != http.StatusAccepted {
@@ -127,8 +134,8 @@ func TestDeclaredTargetHostValidatedAgainstBoundScope(t *testing.T) {
 	}
 	seed(`INSERT INTO scope_hosts (scope_id, host) VALUES ('sc:tax','tax-web-01')`)
 	// Unscoped, but pinned to a host that belongs to another department.
-	seed(`INSERT INTO jobs (name, source, run_type, scope, target_host, enabled)
-	      VALUES ('restart-service','git','bash',NULL,'finance-db-01',1)`)
+	seed(`INSERT INTO jobs (name, source, run_type, scope, target_host, enabled, owner_agency)
+	      VALUES ('restart-service','git','bash',NULL,'finance-db-01',1,'ag:tax')`)
 
 	rec := reqAs(t, h, http.MethodPost, runPath(t, pool, "restart-service"), "sec-operators", `{"scope":"tax"}`)
 	if rec.Code != http.StatusUnprocessableEntity {
@@ -228,7 +235,10 @@ func TestDeferredRunsAreGatedAndFreezeTheirScope(t *testing.T) {
 		}
 	}
 	// `tax` and its agency come from the fixture (restrict{"operator":"tax"}).
-	seed(`INSERT INTO jobs (name, source, run_type, scope, enabled) VALUES ('restart-service','git','bash',NULL,1)`)
+	// Tax's job with no scope of its own (a job is one agency's: LR-24, a
+	// department running Global's job against its own scope, was retired in
+	// 2.5.0 C2, question 78).
+	seed(`INSERT INTO jobs (name, source, run_type, scope, enabled, owner_agency) VALUES ('restart-service','git','bash',NULL,1,'ag:tax')`)
 	path := runPath(t, pool, "restart-service")
 
 	// Deferral does not bypass RB-26: a viewer cannot park what they cannot run.
