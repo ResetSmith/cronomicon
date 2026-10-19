@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
+import { useAgencyOptional } from "../agency";
+import { AssignDialog } from "./AssignDialog";
 import { useGet, rows, paged, useClientPager, useColumnWidths, useInlineAnnotation, useInlineTags, useTableSort, useToast } from "../hooks";
 import { AnnotationBanner, AnnotationSection, CriticalChip, annotationOf, type Annotation } from "../components/Annotation";
 import { c } from "../theme";
@@ -198,8 +200,13 @@ export function Jobs() {
   // row's scope (RB-24); consuming it is what keeps the button from drifting away
   // from the answer the API will actually give.
   const [capsCanRun, setCapsCanRun] = useState(false);
+  // 2.5.0 C7.3 (IN-12): a global administrator gives a Git job to an agency.
+  const [globalAdmin, setGlobalAdmin] = useState(false);
+  const [assignFor, setAssignFor] = useState<Job | null>(null);
+  const agencyInUse = useAgencyOptional()?.agency;
   useEffect(() => {
     fetchCapabilities().then((caps) => {
+      setGlobalAdmin(!!caps.configureAppGlobal);
       setCanCompose(caps.compose);
       setCanPublish(caps.publishSchedule);
       setCapsCanRun(caps.triggerJobs);
@@ -665,7 +672,7 @@ export function Jobs() {
                 onSaveAnnotation={(next) => inlineAnnotation.save(j, next)}
                 annotationErr={inlineAnnotation.errors[String(j.id)]}
                 canEdit={canCompose && j.source === "cronomicon"}
-                actions={(rowCanRun(j) || rowCanKill(j) || rowCanPause(j) || (canCompose && j.source === "cronomicon")) ? (
+                actions={(rowCanRun(j) || rowCanKill(j) || rowCanPause(j) || (canCompose && j.source === "cronomicon") || (globalAdmin && j.source === "git")) ? (
                 <>
                   {/* Run stays available while a run is active — overlapping runs are
                       legal under the Allow policy (the default), and Forbid/Queue jobs
@@ -690,6 +697,11 @@ export function Jobs() {
                         <Btn small style={{ minWidth: 72 }} disabled={busy} onClick={() => act(j, "pause")}>Pause</Btn>
                       )
                     ))}
+                  {/* 2.5.0 C7.3 — a Git job given to another agency by one commit
+                      into its repository; the same action takes an update. */}
+                  {globalAdmin && j.source === "git" && (
+                    <Btn small onClick={() => setAssignFor(j)}>Give to an agency…</Btn>
+                  )}
                   {/* Edit + Delete only for cronomicon rows the caller may compose (D6
                       hides them for git rows + non-admins). Delete was previously
                       editor-only (D4); it is now also a row action here, behind the
@@ -965,6 +977,16 @@ export function Jobs() {
         />
       )}
 
+      {assignFor && (
+        <AssignDialog
+          kind="job"
+          uid={assignFor.uid ?? ""}
+          name={assignFor.name ?? ""}
+          originAgency={assignFor.ownerAgency ?? agencyInUse}
+          originScopes={[assignFor.scope ?? ""]}
+          onClose={() => setAssignFor(null)}
+        />
+      )}
       {historyFor && (
         <RevisionHistory kind="job" name={historyFor} onClose={() => setHistoryFor(null)} onRestored={() => setBump((n) => n + 1)} />
       )}

@@ -15,6 +15,8 @@ import { MemoryRouter } from "react-router-dom";
 let composeOn = true;
 // GC (v2.2.2) — revision history is a compose ADMINISTRATOR's (see the last block).
 let composeAdminOn = false;
+// 2.5.0 C7.3 — giving a Git job to an agency is a global administrator's.
+let globalAdminOn = false;
 // What DELETE /jobs/{jobId} answers with. 409 is the server's git-source guard.
 let deleteStatus = 200;
 const deletes: { path: string; jobId: unknown }[] = [];
@@ -69,6 +71,7 @@ vi.mock("../api/client", async (importOriginal) => {
       configureApp: false,
       manageEnvVars: false,
       publishSchedule: true,
+      configureAppGlobal: globalAdminOn,
     })),
   };
 });
@@ -78,6 +81,7 @@ import { Jobs } from "./Jobs";
 beforeEach(() => {
   composeOn = true;
   composeAdminOn = false;
+  globalAdminOn = false;
   deleteStatus = 200;
   deletes.length = 0;
 });
@@ -220,5 +224,29 @@ describe("Jobs — row History for a composer (SO-2)", () => {
     expect(history(q).disabled).toBe(false);
     expect(history(q).title).toBe("");
     expect((deleteBtn(q) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+// 2.5.0 C7.3 (IN-12, question 98): "Give to an agency…" on a Git job, for a
+// global administrator only; a job built in the app is not a file to commit.
+describe("Jobs — give a Git job to an agency (C7.3)", () => {
+  const give = (q: ReturnType<typeof within>) => q.queryByRole("button", { name: "Give to an agency…" });
+
+  it("offers it on a Git job to a global administrator, and not on a job built in the app", async () => {
+    globalAdminOn = true;
+    const q = await renderJobs();
+    expandRow(q, "git-job");
+    await waitFor(() => expect(give(q)).toBeTruthy());
+    expandRow(q, "git-job");
+    expandRow(q, "cronomicon-job");
+    await waitFor(() => expect(q.getByRole("button", { name: "History" })).toBeTruthy());
+    expect(give(q)).toBeNull();
+  });
+
+  it("does not offer it to anyone else", async () => {
+    const q = await renderJobs();
+    expandRow(q, "git-job");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(give(q)).toBeNull();
   });
 });
