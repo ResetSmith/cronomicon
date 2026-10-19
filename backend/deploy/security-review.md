@@ -1,6 +1,6 @@
 # Security review
 
-Each control, how it's enforced, and how it's verified. "Automated" = a Go test
+As of 2.5.0. Each control, how it's enforced, and how it's verified. "Automated" = a Go test
 that fails `make test` if the control regresses. "Operator" = a check you run
 against your live deployment from outside the trust boundary; the probes are in
 the administrator manual, section 8.4 ("Health, persistence & verification").
@@ -12,7 +12,7 @@ the administrator manual, section 8.4 ("Health, persistence & verification").
 | D.1.3 | **Cookies** — CSRF cookie attrs; `CRONOMICON_COOKIE_SECURE=true` behind TLS; (OIDC mode) session cookie HttpOnly/Secure/SameSite | `auth.issueCSRF`, `session.go` codec; `CRONOMICON_COOKIE_SECURE` | **Automated:** session round-trip tests. **Operator:** inspect `Set-Cookie` on a live response. |
 | D.1.4 | **Secrets at rest** — stored-secret values + SMTP password envelope-encrypted (AES-256-GCM) under a KEK; KEK mounted, backed up separately from the DB | `secrets` envelope scheme; `CRONOMICON_KEK_FILE` | **Automated:** `secrets` round-trip + `TestEncryptDecryptStringRoundTrip`. **Operator:** confirm KEK not in image/repo/S3 backup bucket. |
 | D.1.5 | **Dev bypass off** — `/api/v1/auth/dev-login` not mounted unless `CRONOMICON_DEV_AUTH` | route mounted conditionally in `auth_mount.go` | **Automated:** `TestDevLoginMountedOnlyWhenEnabled`. **Operator:** `curl -s -o /dev/null -w '%{http_code}' https://<public-host>/api/v1/auth/dev-login` returns 404. |
-| D.1.6 | **Surface check** — only `/healthz`, `/readyz`, `/version`, `/metrics`, `/auth/providers` (+ OIDC `/login`,`/callback` in oidc mode; token-gated `/webhooks/gitlab`) are unauthenticated | per-route middleware in the mount files | **Automated:** `TestUnauthenticatedSurface`. |
+| D.1.6 | **Surface check** — only `/healthz`, `/readyz`, `/version`, `/metrics`, `/auth/providers` (+ OIDC `/login`,`/callback` in oidc mode; token-gated `/webhooks/gitlab` and, from 2.4.0, `/webhooks/gitlab/{repoId}`, each checked against its own repository's secret) are unauthenticated | per-route middleware in the mount files | **Automated:** `TestUnauthenticatedSurface`. |
 | D.1.7 | **`/metrics` not public** | your reverse proxy does not route `/metrics`; scrape it on the internal network only | **Operator:** manual §8.4 check 3 — `/metrics` through the public hostname returns 404. |
 | D.1.8 | **Bootstrap admin removed** — `CRONOMICON_BOOTSTRAP_ADMIN_GROUP` unset after seeding access grants | env; loud warning logged while active | **Operator:** confirm the var is unset and the warning no longer logs (the lockout recovery, `cronomicon grant-admin` or a temporary re-enable, is in the administrator manual, §8.7). |
 
@@ -143,14 +143,15 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   that **owns** the runner (`requireRunnerOwner`); a runner that is Global's —
   the local runner, a Global-owned agent, a legacy placement — is a global
   administrator's. There is one narrow exception (LR-63,
-  `requireRunnerOwnerOrHostKeyGuest`), for a runner that serves an agency
-  which does not own it: an administrator of that agency may queue a scan of
-  their own agency's scopes on it, see what that scan found, and approve the
-  **first** key for a host — never a key that replaces one, never a second key
-  type for a host that already has one, never typed hosts, a paste, a removal
-  or the ledger (403 `owner_required`). On the local runner the exception
-  stops at the scan: the server's trust in an address is one for every agency
-  whose runs it takes, so only a global administrator decides its keys.
+  `requireRunnerOwnerOrHostKeyGuest`), for a runner whose serve list names an
+  agency which does not own it: an administrator of that agency may queue a
+  scan of their own agency's scopes on it, see what that scan found, and
+  approve the **first** key for a host — never a key that replaces one, never
+  a second key type for a host that already has one, never typed hosts, a
+  paste, a removal or the ledger (403 `owner_required`). Since 2.4.0 only a
+  legacy placement can be such a runner: the local runner's serve list is
+  Global, its owner, alone (below), so the exception no longer reaches it and
+  only a global administrator scans with it or decides its keys.
   **Automated:** `TestG3_EveryRunnerRouteIsTheOwners`,
   `TestG3_TheHostKeyExceptionIsPerScope`,
   `TestG3_AHostKeyGuestAddsAKeyAndNeverReplacesOne`,
@@ -200,12 +201,14 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   again. **Automated:** `runner.TestClaimRuleMirrorsAgreeWithTheClaim`,
   `TestG3_BindingTakesTheScopeNotTheRunner`.
 
-  Residual: an unbound scope's shell jobs are taken by **whichever** eligible
-  runner asks first — the local runner or an agent, when both serve the
-  scope's agency — so a job that ran from the server before 2.3.0 may now run
-  on an agent, and the reverse (the upgrade raises `may_run_on_agent`,
-  `may_run_on_server` and `mixed_scope` notices for the scopes affected);
-  any administrator of a scope's agency may unbind it; and a
+  Residual: an unbound scope's jobs are taken by **whichever** eligible
+  runner of its agency asks first — for a Global scope's shell jobs, the local
+  runner or a Global agent (from 2.4.0 the local runner serves Global only, so
+  an agency's scope is taken by its own agents alone). The 2.3.0 upgrade pass
+  that recorded where each scope's shell jobs had run, and raised
+  `may_run_on_agent`, `may_run_on_server` and `mixed_scope` from it, is
+  retired in 2.5.0: an installation upgrading from 2.2.x gets no such notice.
+  Any administrator of a scope's agency may unbind it; and a
   binding governs a **scope**, not a host — a run on no scope, or on another
   scope, that reaches the same machine through its own host record is not
   confined by it.
@@ -229,10 +232,14 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   `TestRegistrationRefusesADeletedAgencyAndConsumesNothing`,
   `settings.TestNoWriterWidensOrEmptiesAnAgentsServeList`,
   `TestG3_MintingATokenTakesAuthorityOverItsAgency`, `TestG3_NobodyWidensAServeList`.
+  Since 2.4.0 the claim joins on the runner's **owner** as well as its serve
+  row, so every runner takes its owner's runs only.
   Residual: a runner that served several agencies before 2.3.0 is a **legacy
-  placement** — Global-owned, its serve list unchanged. It keeps claiming
-  those agencies' runs (`runner.TestALegacyPlacementStillClaimsItsAgenciesRuns`),
-  can be narrowed and never widened, is a global administrator's to manage,
+  placement** — Global-owned, its serve list unchanged. Since 2.4.0 it claims
+  Global's runs only, and the other agencies on its list wait for agents of
+  their own (`runner.TestALegacyPlacementClaimsOnlyItsOwnersRuns`); its list
+  still opens the host-key exception above to those agencies' administrators.
+  It can be narrowed and never widened, is a global administrator's to manage,
   and is listed by a `legacy_placement` notice until it is narrowed to one
   agency and handed to it, or replaced by agents each agency owns. And the
   bootstrap token is multi-use and never consumed: any holder can enrol an
@@ -248,9 +255,12 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   targets, and logs a warning saying so each time it starts; that is
   a larger blast radius than a server that only hands work to agents.
   `CRONOMICON_LOCAL_RUNNER=forbid` keeps it off whatever the setting says, and
-  any value other than `allow` or `forbid` refuses to start. It is the one
-  runner with a serve list — the agencies a global administrator names; Global
-  alone on a new installation — and it claims through the same statement as an agent,
+  any value other than `allow` or `forbid` refuses to start. Since 2.4.0 it
+  serves **Global only** (§0a, IN-3; migration `1380`): no write can give it
+  another agency (`settings.CheckRunnerPlacement`, 422
+  `local_runner_global_only`), and an agency it served before is listed by a
+  `local_runner_served` notice until an agent of its own serves it. It
+  claims through the same statement as an agent,
   under the same agency, binding, capability and requirement clauses, plus one
   of its own (`execspec.RunBindsKeySQL`): it **never takes a run that binds an
   SSH key**, declared on the job or script or added to the one run. A bound key
@@ -263,13 +273,14 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   runner; it is loaded under the run's agencies (GC-21 below). **Automated:**
   `TestLocalRunner_TheRowExistsAndTheSwitchIsAGlobalAdministrators`,
   `TestLocalRunner_TheHostCanForbidIt`,
-  `sshexec.TestTheLocalRunnerTakesAnAgencysRunOnlyOnceItServesThatAgency`,
+  `settings.TestTheLocalRunnerServesGlobalOnly`,
+  `sshexec.TestTheLocalRunnerTakesGlobalsRunsOnly`,
+  `db.TestMigrate1380LocalRunnerGlobalOnly`,
   `runner.TestClaimRuleMirrorsAgreeWithTheClaim`, `runref.TestKeyBindingsNeedAgent`,
   `api.TestRunOfKeyBoundJobWithNoAgentIsRefused`. Residuals: the local runner
-  resolves secret references on the server and loads the SSH keys of every
-  agency it serves into one process, so serving an agency from it is a decision
-  to trust the server host with that agency's targets (the upgrade raises an
-  `agency_placed` notice for each agency it made the local runner serve); and
+  resolves Global's secret references on the server and loads Global's SSH
+  keys into its process, so turning it on is a decision to trust the server
+  host with Global's targets (it no longer reaches any other agency's); and
   `forbid` is about running jobs — **Test connection** on an SSH target still
   dials from the server with the record's key.
 - **Server manages a runner's operational settings — but never its secrets.**
@@ -282,7 +293,12 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   it may clone is not a materially larger grant — and the credentials that make
   checkout dangerous (the deploy token, the vault password) remain **runner-local
   custody** (installed via the installer's file / stdin flags, below), never server-managed,
-  so a compromised server still cannot exfiltrate or inject secret bytes. The
+  so a compromised server still cannot exfiltrate or inject secret bytes. A
+  checkout run's manifest names the repository its run was pinned to at
+  enqueue (`runs.checkout_repo`; since 2.4.0 the job's own agency's
+  repository, and an agent serves only its own agency), and the agent refuses
+  a URL its allowlist does not hold exactly as written
+  (`agent.materializeCheckout`). The
   capability mask is subtract-only (it can only *narrow* a runner's claimed set,
   never widen it) and is enforced server-side at claim. Managed settings are
   excluded from the config digest, so they cannot be used to force a
@@ -343,14 +359,14 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   is Deregister, which revokes it immediately.
 - **Capability auto-detection broadens by default.** With `CRONOMICON_RUNNER_CAPABILITIES` unset, the agent claims the
   four shell run-types (`bash`, `perl`, `powershell`, `python`) whatever its
-  own host holds, and probes its PATH at startup only for the two toolchains it
-  runs locally (`ansible-playbook`, `terraform`). A shell job is executed on
+  own host holds, and probes its PATH at startup only for the toolchains it
+  runs locally (`ansible-playbook` among them). A shell job is executed on
   the TARGET, over SSH, with the target's interpreter, so the agent's host
   never bounded those types: what bounds them is the hosts the agent can reach
   and the keys it holds. (Before 2.3.0 the agent probed its own PATH for the
   shell interpreters too, which made a missing local `pwsh` look like a
   narrowing control; it never was one, and an agent that relied on it now
-  claims the type.) Installing ansible or terraform on a runner host still
+  claims the type.) Installing a local toolchain such as ansible on a runner host still
   silently widens what that runner will execute after its next restart
   (surfaced in the registry via the drift resync, but not gated on approval).
   This is deliberate: the declared set is still derived exclusively from the
@@ -431,10 +447,10 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   forwarding header. That is the intended fail-safe (record what we can prove, not
   what we were told), but it means an unset `CRONOMICON_TRUSTED_PROXIES` yields an
   auth trail with no client attribution rather than a wrong one.
-- **Git-sourced job/workflow names are entirely unvalidated.** The GitLab sync inserts the YAML's `metadata.name` **verbatim** —
+- **Git-sourced job/workflow names are entirely unvalidated.** Repository sync inserts the YAML's `metadata.name` **verbatim** —
   no regex, no allowlist, no length limit, not even a trim — so a definition
-  named `../../etc/cron.d/x` is reachable by anyone with merge rights on the
-  synced repo, and an empty name falls back to a value that resolves to `.`.
+  named `../../etc/cron.d/x` is reachable by anyone with merge rights on any
+  agency's synced repository (every agency has one since 2.4.0), and an empty name falls back to a value that resolves to `.`.
   Run-log folders are therefore named by an **opaque server-assigned code**
   (8 hex characters from the `entity_codes` registry, `_system` for runs owned
   by no definition) rather than by the entity itself, and both `runner.LogPath`
@@ -447,6 +463,16 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   API and into the UI as-is. Nothing above depends on that being fixed, but it
   deserves its own validation pass (a syntactic allowlist + length bound at the
   sync boundary, applied to both sources).
+- **The validation image is a CI tool, not a server** (2.5.0).
+  `ghcr.io/resetsmith/cronomicon-validate:<version>` (`backend/Dockerfile`,
+  `--target validate`) is Debian 12 with a shell, `curl`, CA certificates and
+  the `cronomicon` binary, so that `deploy/ci-validate-template.yml` can run
+  `cronomicon validate` in a CI job's shell; the distroless server image has
+  none. It is the same binary as the server's, but a CI job runs only
+  `validate` over its checkout: no database, KEK or server credential is in
+  the image. The template's optional merge-request comment needs a masked
+  `GITLAB_MR_TOKEN` with the `api` scope; that token is the CI project's to
+  hold and scope, not Cronomicon's.
 
 ## Output-marker secret leak guard
 
@@ -466,14 +492,17 @@ Accepted notes:
   (`getRun`, `getWorkflowRun`, `getJobBindings`) returns 403.** This asymmetry is
   deliberate: job/schedule detail follows the no-existence-oracle convention
   `putJobBindings` uses, while the run-path guards keep the plain 403.
-- **First-class schedule-defs (`GET /api/v1/schedule-defs`, the `schedules` table)
-  are intentionally NOT scope-filtered.** They are standalone git-authored catalog
-  entries with no owning scope — the same unscoped-by-design posture as the scripts
-  catalog. Only the per-owner `definition_schedules` projections (which carry a
-  scoped job owner's plaintext env) are filtered.
-- **`workflow_runs.scope` is filtered for consistency but is NULL for engine-created
-  rows** (the engine INSERT omits it), so the real restriction there is latent
-  until the column is populated; NULL (global) rows stay visible to everyone.
+- **Status changed in 2.4.0 and 2.5.0.** First-class schedule-defs
+  (`GET /api/v1/schedule-defs`, the `schedules` table) and the scripts catalog
+  were unscoped by design until then. A schedule, a calendar and a script are
+  now an agency's (2.4.0), and from 2.5.0 they, like every list, are read by
+  the reading rule (CF-1, "Install-wide and cross-agency gates" below), not by
+  scope.
+- **Workflow runs are read by their agency** (2.5.0, migration `1520`):
+  `workflow_runs.agency_id` is filled from the workflow by the trigger
+  `workflow_runs_agency_stamped` (a refused child takes its parent's), and the
+  list applies the reading rule. Until then `workflow_runs.scope` was NULL for
+  engine-created rows and those rows were visible to every session.
 
 ## Per-run log-ingest byte cap
 
@@ -609,7 +638,7 @@ dictionary. The process log is not (see the durable-log note above).
 | AM-1 | **Mask before trim** — the masker runs before the 4096-byte length bound on every audit writer, so a secret straddling the cut cannot survive as a prefix | `auditlog.WriteChangeLogAt` / `WriteActivity` / `WriteAuthEvent` | **Automated:** `auditlog.TestMaskRunsBeforeTrim`. |
 | AM-2 | **Every caller-supplied text column is masked** — `target` on all three writers and `reason` on auth events, not only `details`/`summary`; before the INSERT, so row, stream line and CSV export agree | same writers | **Automated:** `auditlog.TestRedactorMasksTheDatabaseRowAndNotOnlyTheStream` (eight columns). |
 | AM-3 | **One writer per audit table** — no raw `INSERT INTO activity/change_log/auth_events` outside `internal/auditlog` (including the break-glass `grant-admin` CLI) | source scan | **Automated:** `auditlog.TestAuditWriterConformance_OnlyThisPackageInserts`. |
-| AM-4 | **Process-wide redaction dictionary** — stored secrets + SSH credentials + the seven encrypted settings columns (ONE table, `secrets.EncryptedSettingsColumns`, shared with `rewrap-secrets`) + multi-line env_vars, every scope; rebuilt lazily after each source write, 5-minute TTL backstop, last-good kept on a failed rebuild, partial-with-error on undecryptable rows | `internal/redactdict`; `secrets.RedactionReport`; `secrets.RedactionSourceChanged` at every source write site | **Automated:** `redactdict.TestBuildUnionsEverySourceAndKeepsVariablesVisible`, `TestBuildReportsUndecryptableAsPartial`, `TestStoreLifecycle`, `TestStoreConcurrentReadersNeverBlockOnRebuild` (`-race`), `TestEveryRedactionSourceWriterNotifies`, `secrets.TestRedactionReportCoversEverySettingsColumn`. |
+| AM-4 | **Process-wide redaction dictionary** — stored secrets + SSH credentials + the eight encrypted settings entries (ONE table, `secrets.EncryptedSettingsColumns`, shared with `rewrap-secrets`; since 2.4.0 three of them — a repository's token, its webhook secret and its previous webhook secret — cover every row of `git_repos`, one per agency) + multi-line env_vars, every scope; rebuilt lazily after each source write, 5-minute TTL backstop, last-good kept on a failed rebuild, partial-with-error on undecryptable rows | `internal/redactdict`; `secrets.RedactionReport`; `secrets.RedactionSourceChanged` at every source write site | **Automated:** `redactdict.TestBuildUnionsEverySourceAndKeepsVariablesVisible`, `TestBuildReportsUndecryptableAsPartial`, `TestStoreLifecycle`, `TestStoreConcurrentReadersNeverBlockOnRebuild` (`-race`), `TestEveryRedactionSourceWriterNotifies`, `secrets.TestRedactionReportCoversEverySettingsColumn`. |
 | AM-5 | **Installed at boot, degraded builds audited** — `redactdict.Install` after migrate and before the first audit write; the healthy→degraded transition writes one `system / Audit / redactor-unavailable` row (+ WARN), recovery one `redactor-restored` row; unconditional, no knob | `cmd/cronomicon/main.go`; `redactdict.Install` | **Automated:** `redactdict.TestInstallMasksAuditRowsEndToEnd`, `TestInstallReportsAnOutageOnceAndItsRecoveryOnce`. |
 
 Accepted notes:
@@ -623,9 +652,9 @@ Accepted notes:
   the first successful or partial build is unmasked. `Install` runs before every
   boot-time writer, so in practice that window is the first `Get`, which blocks.
 - **Run logs and the audit stream mask the same settings columns.** Both
-  consumers read the one `secrets.EncryptedSettingsColumns` table, so the GitLab
-  webhook secret, S3 log-storage key, Vault role id and observability bearer
-  token are masked in both places.
+  consumers read the one `secrets.EncryptedSettingsColumns` table, so every
+  repository's token and webhook secrets, the S3 log-storage key, Vault role id
+  and observability bearer token are masked in both places.
 - **The process log is not masked** (deferred; see the durable-log note above).
 
 ## Install-wide and cross-agency gates
@@ -634,34 +663,50 @@ An administrator of one agency cannot change the installation or another
 agency (GC band, v2.2.2). Before it, most write routes asked only whether the
 caller held the permission on *some* agency. 2.3.0 keeps every gate below and
 changes what several of them ask, because the objects changed: **Global** is a
-real agency (what was "no agency" is Global's, and a row in Global is every
-agency's to use and a global administrator's to change), every scope, secret,
+real agency (what was "no agency" is Global's, and a row in Global was, until
+2.4.0, every agency's to use and a global administrator's to change), every scope, secret,
 variable, SSH key, host record, bastion and runner belongs to exactly one
 agency, and an agency administers more of its own (its host records and
 bastions, its Vault-backed secrets inside its own path prefixes, its agents).
-Rows marked 2.3.0 say what changed.
+
+**As of 2.5.0 agencies are independent** (§0a of the plan, built in 2.4.0 and
+2.5.0). Global is an agency like the others, not a library: nothing Global
+owns is another agency's to use, and nothing an agency runs depends on
+another agency or on Global. Every agency has its own repository; names are
+unique within an agency and every reference resolves within it; a move
+between agencies is a global administrator's repair; and an agency's rows are
+**read** by its own people and by those whose access reaches every agency,
+and by nobody else (CF-1). A global administrator owns the installation's
+settings and hands a definition to an agency as one commit into its
+repository. Rows marked 2.3.0, 2.4.0 or 2.5.0 say what changed.
 
 | # | Control | Enforced by | Verification |
 |---|---|---|---|
-| GC-1 | **Install-wide writes need a global administrator** — an unrestricted grant that itself carries the permission: every install-wide setting, the audit export, Git sync and scope resync, the agency catalog, alert rules and, from 2.3.0, an agency's Vault path prefixes, the local runner's setting and signing every session out. (Bastions and hand-written host records left this list in 2.3.0: they have an owner, GC-7) | `api.requireGlobal` (`Identity.GlobalAdmin(perm)`) | **Automated:** `TestInstallWideRoutesRefuseAnAdminOfOneAgency` probes every route the table classes as global |
+| GC-1 | **Install-wide writes need a global administrator** — an unrestricted grant that itself carries the permission: every install-wide setting, the agency catalog, role templates and, from 2.3.0, an agency's Vault path prefixes, the local runner's setting and signing every session out; from 2.4.0 the installation-wide freeze; from 2.5.0 an agency's group list (GA-1), its concurrency cap (QT-1) and giving a definition to an agency (IN-12, `POST /agencies/{agencyId}/assign`). (Bastions and hand-written host records left this list in 2.3.0: they have an owner, GC-7. **2.4.0:** Git sync and scope resync left it: each works on one repository, `configureApp` on its agency, Global's a global administrator's. **2.5.0:** alert rules left it (AL-3, below), and so did the audit export, now any `configureApp` holder's, filtered to the agencies they administer) | `api.requireGlobal` (`Identity.GlobalAdmin(perm)`) | **Automated:** `TestInstallWideRoutesRefuseAnAdminOfOneAgency` probes every route the table classes as global |
 | GC-3 | **"Unrestricted" is never checked without the permission** — a viewer on all scopes who administers one agency is not a global administrator | `requireRoleTemplateAdmin`, `requireGrantWritable`, script bindings, placement | **Automated:** `TestGC_UnrestrictedViewerWhoAdministersOneAgencyIsNotAGlobalAdmin`, `TestAViewerOfEveryScopeCanChangeNothing` |
-| GC-4 | **No route decides on a role's name** — the shared authoring surfaces (reusable schedules, calendars, reactions, revisions, recycle bin) need compose and configureApp on one unrestricted grant | `api.requireComposeAdmin` | **Automated:** `TestGC_SharedAuthoringNeedsComposeAndConfigureOnEveryAgency` |
+| GC-4 | **No route decides on a role's name.** **2.4.0 and 2.5.0:** there are no shared authoring surfaces any more. A reusable schedule and a calendar are compose on their owner agency (2.4.0); a definition's reactions compose on its agency (2.4.2); the recycle bin and a definition's revisions compose on the definition's agency, a name resolving among the definitions the caller composes on and a purge by uid (2.5.0, SO-2). Until then they needed compose and configureApp on one unrestricted grant (`requireComposeAdmin`, removed in 2.5.0) | the routes' owner gates (`writeRouteGates`) | **Automated:** `TestGC_SharedAuthoringNeedsComposeAndConfigureOnEveryAgency`, `TestC3_AnAgencyRestoresItsOwnBinnedJobAndSeesNoOther` |
 | GC-5 | **A service account is a grant** — mint and revoke obey own-agency, no-all-scopes and no-amplification; the list is filtered | `requireGrantWritable` in `createServiceAccount` / `revokeServiceAccount` | **Automated:** `TestGC_ServiceAccountsFollowTheDelegationRules` |
-| GC-6 | **A scope is administered by its own agency** — edit, inventory, delete, tags and runner binding; a new scope is born in its creator's agency; a scope in Global is a global administrator's; a runner replace needs every bound scope. **2.3.0:** a scope has one agency, and moving it is a two-sided act — `configureApp` on the agency it is in (on *every* one, for a scope still shared from before 2.3.0) and on the agency it is going to, with Global on either side taking a global administrator. Until 2.3.0 any move was a global administrator's. The same rule moves a secret, a variable and an SSH key, and the move carries the row's owner in the same transaction (409 `owner_conflict` on a name the target already owns) | `requireScopeAgency`, `requireMove`, `requireCreationAgencies`; `settings.SetAgencyMembership` | **Automated:** `TestGC_ScopesAreAdministeredByTheirOwnAgency`, `TestGC_ANewScopeLandsInItsCreatorsAgency`, `TestGC_ReplacingARunnerNeedsEveryBoundScope`, `TestGlobalAgency_OnlyAGlobalAdministratorMovesARowInOrOut`, `TestOneAgency_ASecretMovesWithItsOwner` |
-| GC-7 | **Host and bastion records have an owner** — a record imported for a scope follows that scope. **2.3.0:** a hand-written host record and a bastion belong to one agency (`owner_agency`, migration `1230`): its administrators change it, a global administrator changes Global's, and a new one is born in an agency its author administers. Until 2.3.0 both belonged to nobody, applied to every scope and were a global administrator's alone. A scope resolves only its own agency's records and Global's, and a host's `via` only its own agency's bastion or Global's | `requireHostOwner`, `requireBastionOwner`, `requireRecordOwnerChoice`; `execspec.HostRecordForScopeSQL`, `execspec.BastionByRef` | **Automated:** `TestGC_HostAndBastionRecords`, `execspec.TestAScopeResolvesItsOwnAgencysHostRecordsAndGlobalsOnly` |
+| GC-6 | **A scope is administered by its own agency** — edit, inventory, delete, tags and runner binding; a new scope is born in its creator's agency; a scope in Global is a global administrator's; a runner replace needs every bound scope. **2.3.0:** a scope has one agency, and moving it is a two-sided act — `configureApp` on the agency it is in (on *every* one, for a scope still shared from before 2.3.0) and on the agency it is going to, with Global on either side taking a global administrator. Until 2.3.0 any move was a global administrator's. The same rule moves a secret, a variable and an SSH key, and the move carries the row's owner in the same transaction (409 `owner_conflict` on a name the target already owns). **2.4.0:** there are no moves between agencies (IN-7). Any change of an object's agency, a workflow's included, is a global administrator's **repair**, with `repair: true` and a reason, audited; another agency gets an object by a copy (a scope by its clone, a definition by assignment). A scope of a repository is fixed to that repository's agency (409 `scope_agency_fixed`; for Global's repository from 2.4.3) | `requireScopeAgency`, `requireMove` / `requireRepair`, `requireCreationAgencies`; `settings.SetAgencyMembership` | **Automated:** `TestGC_ScopesAreAdministeredByTheirOwnAgency`, `TestGC_ANewScopeLandsInItsCreatorsAgency`, `TestGC_ReplacingARunnerNeedsEveryBoundScope`, `TestGlobalAgency_OnlyAGlobalAdministratorMovesARowInOrOut`, `TestOneAgency_ASecretMovesWithItsOwner`, `TestI4_AMoveIsAGlobalAdministratorsRepairWithAReason`, `TestI4_AWorkflowChangesAgencyOnlyByARepair`, `TestRV_AScopeOfGlobalsRepositoryIsClonedNotRepaired` |
+| GC-7 | **Host and bastion records have an owner** — a record imported for a scope follows that scope. **2.3.0:** a hand-written host record and a bastion belong to one agency (`owner_agency`, migration `1230`): its administrators change it, a global administrator changes Global's, and a new one is born in an agency its author administers. Until 2.3.0 both belonged to nobody, applied to every scope and were a global administrator's alone. **2.4.0:** a scope resolves only its own agency's records, and a host's `via` only its own agency's bastion; Global's are Global's runs' only (until then every agency's scopes and records fell back to Global's) | `requireHostOwner`, `requireBastionOwner`, `requireRecordOwnerChoice`; `execspec.HostRecordForScopeSQL`, `execspec.BastionByRef` | **Automated:** `TestGC_HostAndBastionRecords`, `execspec.TestAScopeResolvesItsOwnAgencysHostRecordsAndGlobalsOnly` |
 | GC-8 | **A Vault path is named only inside the owner agency's prefixes** — create, edit, migrate and move of a Vault-backed secret or SSH key; the gate asks the store's question (a secret: anything not exactly `stored`, or any path; a key: exactly `vault`, or any reference). **2.3.0:** in 2.2.2 every Vault path was a global administrator's to name. Now a row that is an agency's may name a path inside a prefix a global administrator assigned to that agency (`PUT /agencies/{agencyId}/vault-prefixes`), judged by whole path segments with no `..`, `.`, empty segment or character a URL could decode into one; an agency with no prefix can name none (422 `vault_path_not_allowed`); the rule binds a global administrator too; and the caller needs the permission on the row's *owner* agency, not on any agency a legacy shared row is in. A row that is Global's is still a global administrator's, any path | `requireVaultPath`, `internal/vaultpath`; `secretNamesVault`, `credentialNamesVault` | **Automated:** `TestGC_VaultPathsAreAGlobalAdministrators`, `TestGC_VaultGateCannotBeSidesteppedBySourceSpelling`, `TestGC_AVaultBackedSSHKeyIsAGlobalAdministrators`, `TestVaultPrefixes_AnAgencyNamesPathsInsideItsOwnAndNoOthers`, `TestVaultPrefixes_OnlyTheOwnerNamesASharedRowsPath`, `TestVaultPrefixes_AreJudgedAsWrittenAndReplacedOnlyOnPurpose`, `vaultpath.TestUnderMatchesWholeSegments`, `TestMalformedPathsAreRefusedNotRepaired`, `settings.TestNarrowingASharedVaultRowDoesNotGiveAwayAPathItsNewOwnerMayNotName` |
-| GC-9 | **Publish is authorized per file** — the scope in the incoming content, the scope of the file it replaces, and any Git job already using the name; schedule and workflow files, unscoped jobs and nameless jobs are a global publisher's | `Server.authorizePublish` | **Automated:** `TestGC_PublishIsCheckedPerFile`, `TestGC_PublishRefusesANamelessJob` |
-| GC-10 | **Workflow authorization follows sub-workflows** — compose, trigger, pause and cancel are checked against every job the tree runs, resolved by the function the engine itself uses | `workflow.Engine.JobScopes` / `SubWorkflowJobScopes` / `DescendantRunScopes` | **Automated:** `TestGC_WorkflowAuthorizationFollowsSubWorkflows`, `TestGC_AnotherAgencysSameNamedWorkflowIsNotAVeto`, `workflow.TestSubWorkflowJobScopesReWalksAtAShallowerDepth` |
+| GC-9 | **Publish is authorized per file** — the scope in the incoming content, the scope of the file it replaces, and any Git job already using the name; schedule and workflow files, unscoped jobs and nameless jobs are a global publisher's. **2.4.0:** a publish names a repository and is that repository's agency's (GR-24): an agency's takes `publishSchedule` on that agency, and for a job file the scope on both sides of the write; Global's repository is a global publisher's alone. A publish fetches first, never forces, and is refused when the branch has moved; a push refused for a protected branch is 409 `branch_protected`; one that fails before its push leaves the clone as it found it (2.5.0) | `Server.authorizePublish` | **Automated:** `TestGC_PublishIsCheckedPerFile`, `TestGC_PublishRefusesANamelessJob`, `TestAPublishNamesARepositoryAndIsGatedByItsAgency` |
+| GC-10 | **Workflow authorization follows sub-workflows** — compose, trigger, pause and cancel are checked against every job the tree runs, resolved by the function the engine itself uses. **2.4.0:** a workflow's steps are its own agency's (a save that would span agencies is refused for everyone), and a step resolves within that agency only (2.4.2) | `workflow.Engine.JobAgencyScopesAt` / `SubWorkflowJobAgencyScopesAt` / `DescendantRunAgencyScopes` | **Automated:** `TestGC_WorkflowAuthorizationFollowsSubWorkflows`, `TestGC_AnotherAgencysSameNamedWorkflowIsNotAVeto`, `workflow.TestSubWorkflowJobScopesReWalksAtAShallowerDepth` |
 | GC-11 | **Cancelling a pending run needs a run verb** on every scope it would touch | `cancelPendingRun` | **Automated:** `TestGC_CancellingAPendingRunNeedsARunVerb` |
 | GC-12 | **Tags and annotations need a readable row** | `requireJobVisible`, `requireWorkflowVisible` | **Automated:** `TestGC_TagsAndNotesNeedAReadableRow` |
-| GC-13 | **A reaction matches its upstream by identity**, not by a name another agency may share; the name is a fallback only while it is unambiguous | `Scheduler.deliverEvent` | **Automated:** `scheduler.TestReactionMatchesTheUpstreamByIdentityNotName`, `TestReactionNameFallbackNeedsAnUnambiguousName` |
+| GC-13 | **A reaction matches its upstream by identity**, not by a name another agency may share; the name is a fallback only while it is unambiguous. **2.4.0:** a reaction's upstream is its own agency's; a reaction to another agency's definition does not fire and is listed by `reaction_other_agency` | `Scheduler.deliverEvent` | **Automated:** `scheduler.TestReactionMatchesTheUpstreamByIdentityNotName`, `TestReactionNameFallbackNeedsAnUnambiguousName`, `scheduler.TestI1_AReactionToAnotherAgencysDefinitionDoesNotFire`, `api.TestI2_AReactionsUpstreamIsLookedForInItsOwnersAgency` |
 | GC-20 | **A notice is read and dismissed by the agency it is about** — a scope-binding notice by its own scope's administrator; **2.3.0:** every kind in the Notices inbox by `configureApp` on the notice's agency, with an install-wide notice filed under Global and so a global administrator's. A dismissal that mixes the caller's own notices with another agency's is refused whole | `handleDismissScopeBindingNotices`; `handleListNotices`, `handleDismissNotices` | **Automated:** `TestGC_DismissingANoticeNeedsItsScope`, `TestNotices_AreReadAndDismissedByTheirAgency` |
-| GC-14 | **Notification target URLs are returned only to a global administrator** | `handleGetNotifications` | **Automated:** `TestGC_NotificationTargetURLsAreMasked` |
-| GC-21 | **A host uses only a key its agency may use** (v2.2.3) — a host record may name only a key of its scope's agency or one that is Global's, and the local runner loads every key a run connects with, by id and by name, with the run's agency snapshot, as an agent's manifest does; one refusal for another agency's key and for a missing one. **2.3.0:** the rule covers hand-written host records and bastions too, against their owner agency, and binds a global administrator (a Global record may not name an agency's key); a record's own key — a bastion's, a host's under Test connection — is loaded under its owner, so no key is loaded unchecked any more. A record that already names a key its owner may not use is a `record_key_outside_owner` notice | `requireKeyUsableBy`, `sshexec.keyGuard` / `ownerKeyGuard` / `loadSignerChecked`, `runref.KeyIDUsable` | **Automated:** `TestGC_AHostRecordMayNotNameAnotherAgencysKey`, `TestGC_ARecordNamesOnlyAKeyItsOwnerMayUse`, `sshexec.TestKeyGuardChecksAKeyNamedByID`, `TestKeyGuardChecksAKeyNamedByName`, `TestHostKeyGuardFollowsTheRecordsScope`, `TestARunDoesNotConnectWithAnotherAgencysKey` |
+| GC-14 | **A push target's URL is read only by those who may change it** — **2.5.0:** a target is one agency's (`/alert-targets`), and its URL, which is its credential, is returned only to `configureApp` on that agency; the relay's settings (`/settings/notifications`) carry no targets at all, and the gateway's address stays a global administrator's. Until 2.5.0 every target was install-wide and its URL a global administrator's | `/alert-targets` handlers; `handleGetNotifications` | **Automated:** `TestGC_NotificationTargetURLsAreMasked`, `TestPushTargetsBelongToAnAgency` |
+| GC-21 | **A host uses only a key its agency may use** (v2.2.3) — a host record may name only a key of its scope's agency (until 2.4.0, or one that was Global's: since then a Global key is Global's records' and runs' only, `runref.ownerInRunSQL`), and the local runner loads every key a run connects with, by id and by name, with the run's agency snapshot, as an agent's manifest does; one refusal for another agency's key and for a missing one. **2.3.0:** the rule covers hand-written host records and bastions too, against their owner agency, and binds a global administrator (a Global record may not name an agency's key); a record's own key — a bastion's, a host's under Test connection — is loaded under its owner, so no key is loaded unchecked any more. A record that already names a key its owner may not use is a `record_key_outside_owner` notice | `requireKeyUsableBy`, `sshexec.keyGuard` / `ownerKeyGuard` / `loadSignerChecked`, `runref.KeyIDUsable` | **Automated:** `TestGC_AHostRecordMayNotNameAnotherAgencysKey`, `TestGC_ARecordNamesOnlyAKeyItsOwnerMayUse`, `sshexec.TestKeyGuardChecksAKeyNamedByID`, `TestKeyGuardChecksAKeyNamedByName`, `TestHostKeyGuardFollowsTheRecordsScope`, `TestARunDoesNotConnectWithAnotherAgencysKey` |
 | GC-22 | **A run's single target host must be in its scope** — v2.2.3 held only a restricted actor's per-run override to the scope's host list. **2.3.0:** the rule covers the host the job itself declares as well, for every caller, a global administrator included, and on every producer: the run fails that host when its targets are resolved, and a manual or token trigger gets the same answer early (422 `scope_membership`). A job with no scope, or one whose scope lists no hosts (they live in a runner's own inventory), has no membership to ask about; a job already authored against a host outside its scope is a `target_host_outside_scope` notice | `execspec.HostInScope`, in `execspec.ResolveTargets` and `runJobWithKind` | **Automated:** `TestGC_ARunsTargetHostMustBeInTheScope`, `execspec.TestAFixedTargetHostMustBeAMemberOfTheScope` |
 | GC-23 | **Reference bindings need the permission on the job's own scope** (v2.2.3), from one grant; an unscoped job's are a global administrator's | `putJobBindings` | **Automated:** `TestGC_ReferenceBindingsNeedThePermissionOnTheJobsScope` |
 | GC-24 | **Pausing or resuming a job with no scope needs the verb unbound** (v2.2.3) — a job with no scope is Global's, and `killJobs` on one agency is not authority over it; a job in a scope is unchanged | `requirePauseAuthority` | **Automated:** `TestGC_PausingAJobWithNoScopeNeedsTheVerbUnbound` |
 | GC-18 | **Every write route is classified** — a route that is not a GET cannot be registered without an entry saying who may call it | `writeRouteGates` | **Automated:** `TestEveryWriteRouteIsClassified` |
+| CF-1 | **The reading rule** (2.5.0) — an agency's rows are read by its own people and by those whose access reaches every agency (a global administrator, a viewer of every agency); Global's by the latter only. Every list adds it to its own filter, the Activity and change logs included (each row is its object's agency's, migration `1520`); a single object the caller may not read answers **404**, not 403; a schedule or calendar named by a reference resolves among readable agencies only. Until 2.5.0 Global's rows were every session's, and several lists answered every agency's rows to anyone signed in | `agencyReadFilter`, `notReadable` (`api/audit_agency.go`, `api/authz.go`) | **Automated:** `TestEveryGetRouteIsClassified` (fails on a GET route with no class), `TestC2_OneObjectOfAnotherAgencyReadsAsAbsent`, `TestC2_TheListsOutsideTheSwitcherPinAnswerByAgency`, `TestC2_TheSettledRoutesAnswerTheirClass` |
+| CF-5 | **The audit export is per agency** (2.5.0) — any `configureApp` holder may export, and gets the rows of the agencies they administer, without sign-in events; a global administrator's export holds every row. Rows and stream lines carry `agency` | `/audit/export` handler | **Automated:** `TestC1_AnAgencyAdministratorExportsTheirAgencysRows` |
+| AL-3 | **Alert rules and push targets are an agency's** (2.5.0, migrations `1530`, `1540`) — written with `configureApp` on their owner; an agency's rule matches only its own agency's runs and names only its own agency's job and targets (422 `unknown_job`, `unknown_target`); a Global rule matches every agency's; a push goes to the targets the matched rule names, no longer to every target; the relay's default recipients are on Global rules' mail only. Until 2.5.0 every rule was install-wide and a global administrator's | `requireRecordOwnerChoice`; `notify.Dispatcher.resolveEventAgency` | **Automated:** `TestAlertRulesBelongToAnAgency`, `TestPushTargetsBelongToAnAgency` |
+| GA-1 | **An agency's delegates grant only to listed groups** (2.5.0, migration `1550`) — a global administrator lists the directory groups each agency's grants may name (`PUT /agencies/{agencyId}/groups`); an agency's administrator of access grants only to a listed group, matched exactly (403 `group_not_listed`); a global administrator is not bound. The lists start empty. A grant made before, or naming a group since unlisted, keeps working, may be deleted but not changed by a delegate, and is listed by `grant_group_unlisted` | `requireGroupListed` | **Automated:** `TestADelegateGrantsOnlyToListedGroups`, `TestAnAgencysGroupList` |
+| IN-12 | **A definition reaches another agency only as a commit into its repository** (2.5.0) — a global administrator's `POST /agencies/{agencyId}/assign` writes the job or workflow and what it needs that the agency lacks as one commit (new files only, fetched first, no force, the clone put back on failure), each file stamped `metadata.origin`; the agency's sync and its own review then see it like any other change. Bindings, credentials and calendars it lacks are listed or refuse the assignment; nothing is created in the app | `gitlab.Registry.Assign`, `gitlab.CommitFiles` | **Automated:** `gitlab.TestAnAssignmentIsOneCommitCarryingTheWholeSet`, `TestAWorkflowsAssignmentCarriesWhatItRuns` |
+| — | **`/settings/gitlab` is gone** (2.5.0) — `GET`/`PUT /settings/gitlab` and `POST /settings/gitlab/webhook-secret/rotate`, which addressed Global's repository, are removed; Global's repository is `/agencies/global/git-repo` like every other agency's, under the same gate | `api/settings_mount.go` | **Automated:** `TestTheSettingsGitlabRoutesAreGone` |
 
 Accepted notes:
 
@@ -691,16 +736,33 @@ Accepted notes:
   `execspec.TestAScopeWithNoAgencyIsAnErrorNotGlobal`.
 - **Rows shared by several agencies before 2.3.0 stay shared until someone
   settles them.** One agency per row is a writer rule, not a constraint on old
-  data: such a row keeps working, moving it takes every agency it is in (or a
-  global administrator), and a `scope_several_agencies` notice lists the
-  scopes. Until then each of those agencies' grants reaches it.
-- **Shared objects still have no owner.** A reusable schedule, a calendar and
-  an alert rule can still affect every agency; the control is that only a
-  global administrator can write one.
+  data: such a row keeps its memberships, settling it is a global
+  administrator's repair (since 2.4.0), and a `scope_several_agencies` notice
+  lists the scopes. Since 2.4.0 a credential, a key and a record are usable by
+  their **owner's** runs only (`runref.ownerInRunSQL`), whatever memberships
+  they kept; what agencies shared before 2.4.0 stays Global's and is listed in
+  the Notices inbox for an administrator to copy into each agency that needs
+  it (IN-14), not migrated.
+- **No object is shared any more** (2.4.0 and 2.5.0). A schedule and a
+  calendar are their agency's, and so are an alert rule and a push target
+  (2.5.0). What still acts on every agency is a Global alert rule, which
+  matches every agency's runs, and the installation's settings (the freeze,
+  the concurrency ceiling, retention, sign-in, the relay); both are a global
+  administrator's to write.
 - **A sub-workflow is authorized as it resolves at that moment.** A child that
   is disabled when its parent is triggered and enabled before its step is
   reached runs on an authorization that did not see it.
-- **Reads are not covered here.** Activity, the change log, workflow
-  definitions, schedules and script bodies are readable by any session.
+- **Reads follow the reading rule** (CF-1, 2.5.0). Until 2.5.0 activity, the
+  change log, workflow definitions, schedules and script bodies were
+  readable by any session. What is still readable by any session is what the
+  route classification marks `any-session`: the caller's own context, the
+  agency catalog, role templates, and five installation settings (general,
+  the freeze, audit and compliance, the local runner, the relay) —
+  `TestEveryGetRouteIsClassified` holds the list.
+- **A global administrator's assignment is a commit into the agency's
+  repository, and the agency keeps the last word.** Giving a definition again
+  replaces only what changed at the origin and is refused where the agency
+  changed its copy (`changed_by_agency`); an update is announced to the
+  agency (`assignment_update_available`), never pushed unasked.
 - **A workflow has no token opt-in.** A service account can trigger any
   workflow its grant covers; only jobs have `requestable`.
