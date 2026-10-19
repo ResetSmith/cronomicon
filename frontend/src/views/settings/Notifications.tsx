@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
-import { api } from "../../api/client";
+import { Link } from "react-router-dom";
+import { allReadable, api } from "../../api/client";
 import type { components } from "../../api/schema";
 import { useGet } from "../../hooks";
 import { c } from "../../theme";
@@ -8,7 +9,7 @@ import { Btn, Card, Chip, ReadOnlyFields, csrfHeader, errMsg, fmtDateTime, input
 import { InlineLoading, Rule } from "../../components/ui";
 
 type NotificationConfig = components["schemas"]["NotificationConfig"];
-type AppriseTarget = NonNullable<NonNullable<NotificationConfig["apprise"]>["targets"]>[number];
+type AlertTarget = components["schemas"]["AlertTarget"];
 type TestReport = components["schemas"]["NotificationTestReport"];
 
 // `canWrite` — global administrator for configureApp (GC, v2.2.2). Saving the
@@ -119,8 +120,6 @@ function RunNotificationsCard({ canWrite }: { canWrite: boolean }) {
     setForm((f) => (f ? { ...f, smtp: { ...f.smtp, ...p } } : f));
   const patchApprise = (p: Partial<NonNullable<NotificationConfig["apprise"]>>) =>
     setForm((f) => (f ? { ...f, apprise: { ...f.apprise, ...p } } : f));
-  const setTargets = (fn: (ts: AppriseTarget[]) => AppriseTarget[]) =>
-    setForm((f) => (f ? { ...f, apprise: { ...f.apprise, targets: fn(f.apprise?.targets ?? []) } } : f));
 
   // K-5 — send a test over every configured transport and show what happened.
   // The report is per-transport rather than one verdict, because "skipped: no
@@ -253,75 +252,7 @@ function RunNotificationsCard({ canWrite }: { canWrite: boolean }) {
                 </label>
               </div>
 
-              <div style={lblStyle()}>Targets</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {/* A hairline plus leading, not a box per target (B-1/VU-5): these
-                    rows sit inside a bordered Card and carry bordered inputs, so an
-                    individual frame was the third level of nesting and grouped
-                    nothing the spacing does not already group. */}
-                {(form.apprise?.targets ?? []).map((t, i) => (
-                  <Fragment key={t.id ?? i}>
-                    {i > 0 && <Rule />}
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        padding: "2px 0",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={t.enabled ?? false}
-                        onChange={() => setTargets((ts) => ts.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x)))}
-                        style={{ cursor: "pointer", accentColor: c.primary }}
-                      />
-                      <input
-                        value={t.label ?? ""}
-                        placeholder="Label"
-                        onChange={(e) => setTargets((ts) => ts.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
-                        style={{ ...inputStyle(), width: 130 }}
-                      />
-                      <input
-                        value={t.service ?? ""}
-                        placeholder="service"
-                        onChange={(e) => setTargets((ts) => ts.map((x, j) => (j === i ? { ...x, service: e.target.value } : x)))}
-                        style={{ ...inputStyle(), width: 90 }}
-                      />
-                      <input
-                        value={t.url ?? ""}
-                        placeholder="mailtos://user:pass@smtp.host/?to=team@co.com"
-                        onChange={(e) => setTargets((ts) => ts.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)))}
-                        style={{ ...inputStyle(), flex: 1, fontFamily: c.mono, fontSize: c.fontXs }}
-                      />
-                      <Btn onClick={() => setTargets((ts) => ts.filter((_, j) => j !== i))} disabled={!canWrite}>Remove</Btn>
-                    </div>
-                  </Fragment>
-                ))}
-                {(form.apprise?.targets ?? []).length === 0 && (
-                  <div style={{ color: c.textSec, fontSize: c.fontSm }}>
-                    No targets yet. Choose <strong>+ Add target</strong> below to send notifications somewhere.
-                  </div>
-                )}
-                <div>
-                  <Btn onClick={() => setTargets((ts) => [...ts, { label: "", service: "email", url: "", enabled: true }])} disabled={!canWrite}>
-                    + Add target
-                  </Btn>
-                </div>
-                {/* 2.5.0 C4: these are Global's push targets (the save matches
-                    them by URL, keeping the rules that name them); each agency's
-                    are on Settings → Alerts. A changed URL matches nothing, so
-                    the save makes a new target and deletes the old one with its
-                    rules' links; Alerts edits a target by id and keeps them. */}
-                <div style={{ fontSize: c.fontXs, color: c.textSec }}>
-                  Drop in any Apprise URL DSN — changes apply when you hit Save Changes. These are Global's targets: Global's
-                  alert rules pick from them, and each agency keeps its own under Alerts.
-                </div>
-                <div style={{ fontSize: c.fontXs, color: c.warning }}>
-                  Changing a URL here makes a new target that no rule names; to change a URL and keep its rules, edit it
-                  under Alerts while working in Global.
-                </div>
-              </div>
+              <GlobalTargets />
             </>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -397,5 +328,46 @@ function RunNotificationsCard({ canWrite }: { canWrite: boolean }) {
         </ReadOnlyFields>
       )}
     </Card>
+  );
+}
+
+// Global's push targets (2.5.0 C7, question 99), read-only here. They are
+// /alert-targets' rows, edited by id under Settings → Alerts while working in
+// Global, which keeps the rules that name each one. Until C7 this card edited
+// them as a list matched by URL, so a changed URL was a new target that no
+// rule named. Read with no agency named (allReadable): a global administrator,
+// whose card this is, reads every agency's, and Global's are kept.
+function GlobalTargets() {
+  const q = useGet<AlertTarget[]>(() => api.GET("/alert-targets", { headers: allReadable }), []);
+  const list = (Array.isArray(q.data) ? q.data : []).filter((t) => t.ownerAgency === "global");
+  return (
+    <>
+      <div style={lblStyle()}>Global's targets</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {q.loading && <InlineLoading />}
+        {q.error && <div style={{ color: c.danger, fontSize: c.fontSm }}>Could not read Global's targets: {q.error}</div>}
+        {!q.loading && !q.error && list.length === 0 && (
+          <div style={{ color: c.textSec, fontSize: c.fontSm }}>Global has no push targets.</div>
+        )}
+        {list.map((t, i) => (
+          <Fragment key={t.id ?? i}>
+            {i > 0 && <Rule />}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "2px 0", fontSize: c.fontSm }}>
+              <strong style={{ color: c.text, minWidth: 130 }}>{t.label || "(no label)"}</strong>
+              <span style={{ color: c.textSec, minWidth: 90 }}>{t.service || "—"}</span>
+              <span style={{ flex: 1, fontFamily: c.mono, fontSize: c.fontXs, color: c.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {t.url || (t.urlSet ? "set" : "—")}
+              </span>
+              <span style={{ color: t.enabled ? c.success : c.textSec, fontWeight: 600 }}>{t.enabled ? "enabled" : "off"}</span>
+            </div>
+          </Fragment>
+        ))}
+        <div style={{ fontSize: c.fontXs, color: c.textSec }}>
+          Global's alert rules push to these, and each agency keeps its own. They are added, changed and removed under{" "}
+          <Link to="/settings?tab=alerts&agency=global">Settings → Alerts, working in Global</Link>, which keeps the rules
+          that name each one.
+        </div>
+      </div>
+    </>
   );
 }
