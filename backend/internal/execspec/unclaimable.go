@@ -160,8 +160,10 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 			return "this run carries no agency at all, so no runner can claim it (an internal error: " +
 				"every run belongs to Global or to its scope's agency)", nil
 		case len(names) == 1 && names[0] == agencyid.GlobalName:
+			// Since 2.4.0 (§0a) a Global job names Global's scopes only: binding it
+			// to an agency's scope is not a remedy, so the reason does not offer it.
 			return "this run belongs to Global (it has no scope, or its scope is Global's), and no online " +
-				"runner serves Global — bind a scope whose agency has a runner, or enrol a Global runner", nil
+				"runner serves Global — enrol a runner for Global, or turn on the local runner (it serves Global)", nil
 		}
 		return "no online runner serves " + strings.Join(names, ", "), nil
 	}

@@ -38,15 +38,16 @@ const PERMISSION_LABELS: { key: keyof RolePermissions; label: string; hint: stri
   { key: "publishSchedule", label: "Publish to the repository", hint: "Publish job and schedule definitions to their agency's repository." },
   { key: "configureApp", label: "Configure application", hint: "Settings, integrations, scopes, runners and SSH configuration." },
   { key: "manageRoles", label: "Manage roles & access", hint: "This screen: roles and access grants." },
-  // AF-2. The hint states BOTH halves of the rule, because the permission is
-  // narrower than its name suggests: it is agency-bound, and it stops at the
-  // shared objects (schedules, calendars, the recycle bin) that stay admin-only.
+  // AF-2. The hint states BOTH halves of the rule: it is agency-bound, and
+  // Global's definitions are a global administrator's. Since 2.4.x reusable
+  // schedules and calendars, and since 2.5.0 (SO-2) the recycle bin and a
+  // definition's revisions, are compose on their own agency, not admin-only.
   {
     key: "compose",
     label: "Create jobs & workflows",
     hint:
-      "Author jobs and workflows within the agencies this role is granted. Global (All) definitions, " +
-      "reusable schedules, calendars and the recycle bin stay admin-only.",
+      "Author jobs, workflows, reusable schedules and calendars within the agencies this role is granted, " +
+      "and restore their deleted definitions from the Recycle Bin. Global's definitions are a global administrator's.",
   },
 ];
 

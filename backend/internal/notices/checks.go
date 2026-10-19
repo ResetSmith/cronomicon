@@ -456,9 +456,12 @@ func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
 			found = append(found, Finding{
 				AgencyID: agencyid.Global,
 				Subject:  k.kind + ":" + id,
+				// Since 2.4.0 (§0a, IN-6) a Global row serves Global's runs only, so
+				// "make it Global's" is not a way to share it: a secret several
+				// agencies need is shared through a common Vault prefix.
 				Detail: fmt.Sprintf("The %s %s belongs to %s and reads the Vault path %s, which %s. It still works; "+
-					"it cannot be edited or moved until that is settled. Assign %s a Vault path prefix that covers it, "+
-					"or make the %s Global's if every agency is meant to use it.",
+					"it cannot be edited or moved until that is settled. Assign %s a Vault path prefix that covers it. "+
+					"A %s several agencies need is shared through a prefix assigned to each, every agency keeping its own record.",
 					k.noun, name, ownerName, path, why, ownerName, k.noun),
 			})
 		}

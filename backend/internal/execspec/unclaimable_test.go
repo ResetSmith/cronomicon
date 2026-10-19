@@ -129,10 +129,13 @@ func TestUnclaimableReasonExplainsTheUnboundTrap(t *testing.T) {
 	f.seedRun("run-unbound", "ansible", `[]`, "")
 	f.runner("r-dept", "online", `["ansible"]`, "a1", 1) // every runner is departmental
 
+	// Since 2.4.0 (§0a) such a run is Global's and only Global's runners take
+	// it; binding it to an agency's scope is refused (2.5.0 C2), so the remedy
+	// named is a runner for Global.
 	got := f.reason(t, "run-unbound")
-	if !strings.Contains(got, "no scope") || !strings.Contains(got, "bind a scope") {
+	if !strings.Contains(got, "no scope") || !strings.Contains(got, "enrol a runner for Global") {
 		t.Errorf("unbound run on a departmentalised fleet = %q, want it to explain that "+
-			"only an un-agencied runner can take it and name the remedy", got)
+			"it is Global's and name the remedy", got)
 	}
 }
 
