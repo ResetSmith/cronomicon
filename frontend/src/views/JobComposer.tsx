@@ -673,7 +673,7 @@ export function JobComposer() {
     // the server enforces the same rule for every other client.
     if (scope == null) {
       return setErr(
-        'Pick a scope — it decides which agencies can see this job. Choose "All agencies (global)" if it should be visible to everyone.',
+        'Pick a scope — it decides where this job runs. "All agencies (global)" means no scope: the job is then Global\'s, run on Global\'s runners.',
       );
     }
     setBusy(true);
@@ -922,10 +922,10 @@ export function JobComposer() {
           />
           {scope == null && (
             <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
-              Decides which agencies can see this job.{" "}
+              Decides where this job runs.{" "}
               {canComposeUnbound ? (
                 <>
-                  Pick <strong>All agencies (global)</strong> if everyone should.
+                  <strong>All agencies (global)</strong> means no scope: the job is then Global's, run on Global's runners.
                 </>
               ) : (
                 <>Pick one of the scopes your role is granted.</>

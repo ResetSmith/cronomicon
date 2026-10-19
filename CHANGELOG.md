@@ -48,7 +48,10 @@ agents with the server.
    2.3.2 and end their runs when they are stopped. An installed agent's unit
    needs `KillMode=mixed` (the upgrade command adds it; a unit you wrote needs
    the line). Several agencies' agents on one machine: give each unit a limit
-   (2.3.1).
+   (2.3.1). **An agent that served several agencies before 2.3.0** (a legacy
+   placement, Global's) takes only Global's runs from 2.4.0: enrol an agent
+   for each other agency it served, or hand it over (Runners), before you
+   upgrade, or that agency's runs wait.
 4. **Read the Notices inbox.** Every conversion that needs a person is listed
    there, by agency: what was shared before 2.4.0 stays Global's and stops
    where it reached another agency (`workflow_spans_agencies`,

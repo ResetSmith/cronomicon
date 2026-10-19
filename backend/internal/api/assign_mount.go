@@ -68,7 +68,7 @@ func (s *Server) handleAssign(w http.ResponseWriter, r *http.Request) {
 		httpx.JSON(w, refusal.Status, out)
 		return
 	case errors.As(err, &protected):
-		httpx.Fail(w, http.StatusConflict, "protected_branch", protected.Error())
+		httpx.Fail(w, http.StatusConflict, "branch_protected", protected.Error())
 		return
 	case err != nil:
 		httpx.Fail500(w, s.log, "assign_failed", err)
