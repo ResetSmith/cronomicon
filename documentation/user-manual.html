@@ -9654,7 +9654,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     crash/restart and
                     reconciled by the startup sweep or age reaper — shows a <em>plain</em> Failed badge with the reason,
                     <strong>not</strong> the amber Lost badge), <code>drain_timeout</code> (force-killed at drain
-                    deadline), <code>vault_unreachable</code>, <code>log_stream_lost</code>,
+                    deadline), <code>vault_unreachable</code>, <code>log_stream_lost</code>, <code>log_not_redactable</code>
+                    (the run's outcome is kept and the end of its output is not: it could not be redacted),
                     <code>cronomicon: job timed out</code>, and <code>unbound_references</code> (a scheduled run that
                     needed a department-owned credential but had no scope — see below). In a shell run's log, a host
                     that failed with <code>host_key_unverified</code> had no host key approved for the runner that took

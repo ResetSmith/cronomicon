@@ -2,13 +2,16 @@ package runner
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/db"
 )
 
@@ -164,6 +167,40 @@ func TestIngestFailsClosedOnUnresolvableSecret(t *testing.T) {
 	if status != "running" {
 		t.Errorf("run finalized despite fail-closed: %q", status)
 	}
+
+	// 2.5.0 C11, defect 83: a resolve that keeps failing does not hold the run
+	// `running` for good. Past unredactableGrace the final chunk ends it, with its
+	// outcome and none of its text.
+	defer func(g time.Duration) { unredactableGrace = g }(unredactableGrace)
+	unredactableGrace = 0
+	assertEndedWithoutText(t, svc, as, tok, traceID, secretVal, body)
+}
+
+// assertEndedWithoutText sends the final chunk body again and checks that the
+// run is ended from its envelope, with the note and none of the body's text.
+func assertEndedWithoutText(t *testing.T, svc *Service, as *auth.Service, tok, traceID, secretVal, body string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/"+traceID+"/log", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.SetPathValue("traceId", traceID)
+	rec := httptest.NewRecorder()
+	as.RequireRunner(http.HandlerFunc(svc.HandleIngestLog)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("final chunk of an unredactable run: got %d, want 204; body: %s", rec.Code, rec.Body.String())
+	}
+	var status, reason string
+	var exit sql.NullInt64
+	_ = svc.db.QueryRow(`SELECT status, COALESCE(queued_reason,''), exit_code FROM runs WHERE id=?`, traceID).Scan(&status, &reason, &exit)
+	if status != "success" || reason != reasonLogNotRedactable || !exit.Valid || exit.Int64 != 0 {
+		t.Errorf("the run ended %q (%q, exit %v); want success from its envelope, reason %s", status, reason, exit, reasonLogNotRedactable)
+	}
+	data, err := os.ReadFile(mustLogPath(t, svc, traceID))
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if strings.Contains(string(data), secretVal) || strings.Contains(string(data), "echo") || !strings.Contains(string(data), noteLogNotRedactable) {
+		t.Errorf("the log of an unredactable run is not the note alone:\n%s", data)
+	}
 }
 
 // TestIngestFailsClosedAfterBindingDeletedMidRun (M5): the verified bypass —
@@ -194,6 +231,7 @@ func TestIngestFailsClosedAfterBindingDeletedMidRun(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/"+traceID+"/log", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.SetPathValue("traceId", traceID)
+	req.Header.Set("X-Log-Partial", "1") // a mid-run chunk: refused, as before
 	rec := httptest.NewRecorder()
 	as.RequireRunner(http.HandlerFunc(svc.HandleIngestLog)).ServeHTTP(rec, req)
 
@@ -209,6 +247,11 @@ func TestIngestFailsClosedAfterBindingDeletedMidRun(t *testing.T) {
 	if status != "running" {
 		t.Errorf("run finalized despite fail-closed: %q", status)
 	}
+
+	// 2.5.0 C11, defect 83: the FINAL chunk ends the run at once, as this fault
+	// cannot clear (it answered 503 on every re-send, and the run stayed
+	// `running` for good): its outcome kept, none of its text.
+	assertEndedWithoutText(t, svc, as, tok, traceID, secretVal, body)
 }
 
 // TestIngestFailsClosedWhenBindingsUnenumerable (P1.5 review fix): if the ingest

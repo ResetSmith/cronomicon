@@ -787,16 +787,47 @@ func (a *Agent) executeRun(ctx context.Context, traceID string, liveLog bool) {
 // Bounded, so a server that never answers cannot hold a stopping agent. For a
 // run the server killed, it has already written the terminal state and answers
 // 409; the budget ends that quickly.
+//
+// When the budget runs out (a server restarting for longer than the budget's
+// back-off, an upgrade's migrations), the upload is NOT dropped (2.5.0 C11,
+// present defect 83): until then the agent forgot the run and nothing ever
+// closed it, as the server learns a run's end only from this upload. It is sent
+// again, backing off to once a minute (finalUploadBackoff), for as long as the
+// run's context lives. The run keeps its slot meanwhile, which is what the
+// server counts too; a first stop signal waits for it like a run in flight, and
+// a second (Abort), or the server closing the run, ends the retries.
 func (a *Agent) flushTerminal(ctx context.Context, traceID string, buf *logBuffer) {
-	flush, stop := context.WithTimeout(context.WithoutCancel(ctx), terminalFlushTimeout)
-	defer stop()
-	switch err := streamLogs(flush, a.client, a.id, traceID, buf, a.cfg.LogRetryBudget, false); {
-	case errors.Is(err, errRunClosed):
-		a.log.Info("the server had already closed this run; the rest of its log was not accepted", "trace_id", traceID)
-	case err != nil:
-		// Budget exhausted: the server will mark the run log_stream_lost (R2.3).
-		a.log.Error("log stream lost", "trace_id", traceID, "error", err)
+	send := func(budget int) error {
+		flush, stop := context.WithTimeout(context.WithoutCancel(ctx), terminalFlushTimeout)
+		defer stop()
+		return streamLogs(flush, a.client, a.id, traceID, buf, budget, false)
 	}
+	err := send(a.cfg.LogRetryBudget)
+	for n := 0; err != nil && !errors.Is(err, errRunClosed); n++ {
+		if n == 0 {
+			a.log.Warn("the end of this run did not reach the server; sending it again until it does "+
+				"(a second stop signal gives up)", "trace_id", traceID, "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			a.log.Error("log stream lost: the run was ended here before its end reached the server", "trace_id", traceID, "error", err)
+			return
+		case <-time.After(finalUploadBackoff(n)):
+		}
+		if err = send(1); err == nil {
+			a.log.Info("the end of this run reached the server", "trace_id", traceID, "resends", n+1)
+		}
+	}
+	if errors.Is(err, errRunClosed) {
+		a.log.Info("the server had already closed this run; the rest of its log was not accepted", "trace_id", traceID)
+	}
+}
+
+// finalUploadBackoff is the wait before the n-th re-send (from 0) of a run's
+// final upload once its first budget is spent (C11, defect 83): 5 s, doubling,
+// to a minute. A seam for tests.
+var finalUploadBackoff = func(n int) time.Duration {
+	return min(5*time.Second<<min(n, 4), time.Minute)
 }
 
 // errRunClosed: see streamLogs.

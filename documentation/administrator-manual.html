@@ -5256,6 +5256,17 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                         envelope finalizes the run <code>log_stream_lost</code>, and the output-secret-leak
                         fail-closed check finalizes even on a partial chunk. The UI's live tail reads the same
                         append-only file through <code>GET /runs/{traceId}/log?offset=</code>.</p>
+                    <p><strong>A run's end always arrives (2.5.0).</strong> The server learns that a run ended only
+                        from the agent's final upload. When that upload spends its retry budget (a server that is
+                        restarting, an upgrade's migrations), a 2.5.0 agent sends it again, backing off to once a
+                        minute, for as long as the run's process lives; the run keeps its slot meanwhile, and a first
+                        stop signal waits for it as for a run in flight (a second gives up). For a run that was given
+                        a secret and whose output can no longer be redacted (its binding deleted or its job pruned
+                        while it ran, or a resolve that keeps failing for ten minutes), the server ends the run from
+                        the final upload's envelope, with its outcome and exit code, stores none of that upload's
+                        text, writes one line saying so, and records the reason <code>log_not_redactable</code>. An
+                        agent older than 2.5.0 still gives up after its budget: a run it ended then reads as running
+                        until it is stopped (&sect;8.7, step 3).</p>
                 </div>
                 <div class="callout warn">
                     <div class="ct"><span class="em">🗝️</span> Secret &amp; key injection to an agent: gated,
@@ -9420,7 +9431,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     badge), <code>drain_timeout</code> (force-killed at the drain deadline),
                     <code>vault_unreachable</code>, <code>log_stream_lost</code> (a runner's final, non-partial log
                     upload arrived without a parseable trailing envelope; mid-run <code>X-Log-Partial: 1</code> chunks
-                    are exempt by design, &sect;7.5), <code>cronomicon: job timed out</code>.
+                    are exempt by design, &sect;7.5), <code>log_not_redactable</code> (a run given a secret whose
+                    output could no longer be redacted: the outcome is kept, the end of its output is not),
+                    <code>cronomicon: job timed out</code>.
                 </p>
                 <p><strong>Trigger kinds</strong> (<code>runs.trigger_kind</code> /
                     <code>workflow_runs.trigger_kind</code>): <code>manual</code> (a click),

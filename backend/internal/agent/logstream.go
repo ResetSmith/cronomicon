@@ -97,8 +97,8 @@ func makeEnvelope(exitCode int, start time.Time, endedAt time.Time, reason strin
 
 // streamLogs flushes the buffer to the server, retrying on connection loss
 // with X-Resume-Offset and honoring 409 persistedOffset, up to budget attempts.
-// Exhausting the budget returns an error and lets the run land log_stream_lost
-// server-side (R2.3).
+// Exhausting the budget returns an error; for a run's final upload the caller
+// sends it again (flushTerminal; 2.5.0 C11).
 //
 // partial=false is the terminal flush: the buffer must be sealed before calling
 // (the whole remaining stream incl. the trailing envelope goes in one logical

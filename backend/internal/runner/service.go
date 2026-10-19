@@ -84,6 +84,13 @@ type Service struct {
 	// local runner is running (startLocalScan).
 	localScanning atomic.Bool
 
+	// unredactableSince holds, per trace id, when a secret-bearing run's FINAL
+	// chunk was first refused because its redaction could not be built (a fault
+	// that may clear: a Vault outage, an unreadable binding). Past
+	// unredactableGrace the run is ended without that text (2.5.0 C11, defect
+	// 83). In memory only: a restart starts the wait again, which bounds it.
+	unredactableSince sync.Map // trace id → time.Time
+
 	// authSvc records authorization denials to the auth audit trail (LU-9). This
 	// package owns exactly one operator-facing authz decision — the scope gate on
 	// HandleGetLog — and it must land in the same table as internal/api's, or the
