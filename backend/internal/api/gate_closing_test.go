@@ -694,8 +694,12 @@ func seedWorkflowPair(t *testing.T, pool *sql.DB) (parentRowID string) {
 	exec := mustExec(t, pool)
 	exec(`INSERT INTO jobs (name,source,run_type,scope,enabled,created_at)
 	      VALUES ('tax-job','cronomicon','bash','tax-hosts',1,'2026-01-01T00:00:00Z')`)
+	exec(`UPDATE jobs SET uid = 'u-' || name WHERE uid IS NULL`) // these fixtures' jobs record none
+	// The steps pin their jobs by uid, as the editor saves them (R2F-2): since
+	// 2.5.0 C11 a name-only step of a workflow built in the app is looked up in
+	// its own agency only (defect 79), and these jobs are another agency's.
 	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
-	      VALUES ('tax-child','cronomicon','[{"type":"job","name":"tax-job"}]',1,'2026-01-01T00:00:00Z')`)
+	      VALUES ('tax-child','cronomicon',json_array(json_object('type','job','name','tax-job','jobUid',(SELECT uid FROM jobs WHERE name = 'tax-job'))),1,'2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
 	      VALUES ('parent','cronomicon','[{"type":"workflow","name":"go","workflow":"tax-child"}]',1,'2026-01-01T00:00:00Z')`)
 	return rowID(t, pool, `SELECT rowid FROM workflows WHERE name='parent'`)

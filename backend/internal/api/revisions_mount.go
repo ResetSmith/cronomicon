@@ -676,25 +676,19 @@ func (s *Server) purgeFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// purgeDefinition hard-deletes one binned definition. Shared by the manual
-// purge route and the retention reaper so the two cannot diverge on what
-// "permanently deleted" means.
-//
-// Returns false when nothing by that name is binned, which both callers treat
-// as "nothing to do" rather than an error.
-func (s *Server) purgeDefinition(ctx context.Context, kind, name string) (bool, error) {
-	return PurgeDefinition(ctx, s.db, s.logDirValue(ctx), kind, name)
-}
-
-// PurgeDefinition is the package-level form, exported so the retention reaper can
-// call it without a *Server.
+// PurgeDefinition hard-deletes one binned definition: the retention reaper's
+// purger, sharing purgeBinned with the manual purge route so the two cannot
+// diverge on what "permanently deleted" means. uid names the one binned
+// definition of the name (2.5.0 C11, defect 78; "" for a row that records
+// none). Returns false when nothing of that name is binned, which the reaper
+// treats as "nothing to do" rather than an error.
 //
 // The reaper starts before the API server is constructed, so a method value could
 // not be handed to it at wiring time; taking the pool and the log directory as
 // arguments removes the ordering constraint entirely. internal/db cannot import
 // internal/api (that is the cycle), so main injects this.
-func PurgeDefinition(ctx context.Context, database *sql.DB, logDir, kind, name string) (bool, error) {
-	return purgeBinned(ctx, database, logDir, kind, name, "")
+func PurgeDefinition(ctx context.Context, database *sql.DB, logDir, kind, name, uid string) (bool, error) {
+	return purgeBinned(ctx, database, logDir, kind, name, uid)
 }
 
 // purgeBinned is PurgeDefinition narrowed, when uid is set, to that binned

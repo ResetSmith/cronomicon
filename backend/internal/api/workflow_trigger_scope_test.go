@@ -61,10 +61,14 @@ func TestWorkflowTriggerScopeGuard(t *testing.T) {
 	// Two enabled cronomicon workflows: wf-a runs the ScopeA job, wf-b the ScopeB job.
 	// Both are agency-a's (1360), so the caller reads them and the scope guard
 	// is what answers (2.5.0 C11: another agency's workflow is absent).
+	exec(`UPDATE jobs SET uid = 'u-' || name WHERE uid IS NULL`) // these fixtures' jobs record none
+	// The steps pin their jobs by uid, as the editor saves them (R2F-2): since
+	// 2.5.0 C11 a name-only step of a workflow built in the app is looked up in
+	// its own agency only (defect 79), and these jobs are another agency's.
 	exec(`INSERT INTO workflows(name, source, description, steps, enabled, created_at, last_modified_at, owner_agency)
-	      VALUES('wf-a','cronomicon','', '[{"type":"job","name":"job-a"}]', 1, 't','t','ag-a')`)
+	      VALUES('wf-a','cronomicon','', json_array(json_object('type','job','name','job-a','jobUid',(SELECT uid FROM jobs WHERE name = 'job-a'))), 1, 't','t','ag-a')`)
 	exec(`INSERT INTO workflows(name, source, description, steps, enabled, created_at, last_modified_at, owner_agency)
-	      VALUES('wf-b','cronomicon','', '[{"type":"job","name":"job-b"}]', 1, 't','t','ag-a')`)
+	      VALUES('wf-b','cronomicon','', json_array(json_object('type','job','name','job-b','jobUid',(SELECT uid FROM jobs WHERE name = 'job-b'))), 1, 't','t','ag-a')`)
 	rowid := func(name string) string {
 		t.Helper()
 		var id int64

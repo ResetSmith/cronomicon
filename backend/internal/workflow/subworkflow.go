@@ -281,13 +281,14 @@ func (e *Engine) parentContext(ctx context.Context, parentTraceID string) (workf
 func (e *Engine) loadChildWorkflow(ctx context.Context, ref WorkflowRef, parentSource, home string) (source string, steps []Step, wfID int64, childHome string, ok bool) {
 	name := ref.Name
 	if ref.UID != "" {
-		var raw, src string
+		var raw, src, owner string
 		var rowid int64
 		var repo sql.NullString
 		var off bool
 		if err := e.db.QueryRowContext(ctx, `
-			SELECT rowid, steps, source, repo_id, enabled = 0 OR deleted_at IS NOT NULL FROM workflows WHERE uid = ?`,
-			ref.UID).Scan(&rowid, &raw, &src, &repo, &off); err != nil || off {
+			SELECT rowid, steps, source, repo_id, enabled = 0 OR deleted_at IS NOT NULL,
+			       COALESCE(NULLIF(owner_agency, ''), ?) FROM workflows WHERE uid = ?`,
+			agencyid.Global, ref.UID).Scan(&rowid, &raw, &src, &repo, &off, &owner); err != nil || off {
 			return "", nil, 0, "", false
 		}
 		parsed, perr := ParseSteps(raw)
@@ -300,6 +301,8 @@ func (e *Engine) loadChildWorkflow(ctx context.Context, ref WorkflowRef, parentS
 			if repo.Valid && repo.String != "" {
 				childHome = repo.String
 			}
+		} else {
+			childHome = AgencyHome(owner) // C11, defect 79 (Home)
 		}
 		return src, parsed, rowid, childHome, true
 	}
@@ -318,10 +321,11 @@ func (e *Engine) loadChildWorkflow(ctx context.Context, ref WorkflowRef, parentS
 			// IN-8; until then Global's next). One that may not run fails the
 			// step, as a step whose job is disabled does.
 			var off bool
+			cond, arg := homeRepoSQL(home)
 			err = e.db.QueryRowContext(ctx, `
 				SELECT rowid, steps, repo_id, enabled = 0 OR deleted_at IS NOT NULL FROM workflows
-				 WHERE name = ? AND source = 'git' AND COALESCE(repo_id, ?) = ?`,
-				name, repoid.Global, home).Scan(&rowid, &raw, &repo, &off)
+				 WHERE name = ? AND source = 'git' AND `+cond,
+				name, arg).Scan(&rowid, &raw, &repo, &off)
 			if err == nil && off {
 				return "", nil, 0, "", false
 			}
@@ -379,6 +383,13 @@ func (e *Engine) loadChildWorkflow(ctx context.Context, ref WorkflowRef, parentS
 			if repo.Valid && repo.String != "" {
 				childHome = repo.String
 			}
+		} else {
+			// A child built in the app is at home in its owner agency (Home;
+			// C11, defect 79).
+			owner := agencyid.Global
+			_ = e.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(owner_agency, ''), ?) FROM workflows WHERE rowid = ?`,
+				agencyid.Global, rowid).Scan(&owner)
+			childHome = AgencyHome(owner)
 		}
 		return src, parsed, rowid, childHome, true
 	}

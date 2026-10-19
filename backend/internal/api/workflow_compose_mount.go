@@ -150,7 +150,7 @@ func (s *Server) updateWorkflow(w http.ResponseWriter, r *http.Request) {
 	// AF-2 — the graph being REPLACED. writeComposedWorkflow checks the incoming
 	// one; both must pass, or a departmental composer could take over a workflow
 	// driving out-of-reach jobs simply by sending a graph of their own jobs.
-	if !s.requireComposeStepScopes(w, r, id, existing.Steps) {
+	if !s.requireComposeStepScopes(w, r, id, existing.Steps, workflow.New(s.db, s.log).Home(r.Context(), existing.ID)) {
 		return
 	}
 	if !s.requireJoblessWorkflowOwner(w, r, id, existing) {
@@ -204,7 +204,7 @@ func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// AF-2 — deleting is authoring: same per-job authority as editing the graph.
-	if !s.requireComposeStepScopes(w, r, id, existing.Steps) {
+	if !s.requireComposeStepScopes(w, r, id, existing.Steps, workflow.New(s.db, s.log).Home(r.Context(), existing.ID)) {
 		return
 	}
 	if !s.requireJoblessWorkflowOwner(w, r, id, existing) {
@@ -304,7 +304,12 @@ func unauthoredStepJobs(r *http.Request, s *Server, id auth.Identity, steps []wo
 // A job the graph names but that does not exist is left to the existence
 // validator, which has already run and produced a precise 422; skipping it here
 // avoids answering "does a job by this name exist in another agency?" with a 403.
-func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request, id auth.Identity, steps []workflow.Step) bool {
+//
+// home is where the graph's unpinned sub-workflows are looked up, as the engine
+// runs them (workflow.Engine.Home; 2.5.0 C11, defect 79): the existing
+// workflow's, for the graph being replaced; "" for the incoming graph, whose
+// sub-workflow steps the save has just pinned.
+func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request, id auth.Identity, steps []workflow.Step, home string) bool {
 	seenScope := map[string]bool{}
 	for _, ref := range workflow.CollectStepRefs(steps) {
 		if ref.Name == "" {
@@ -335,7 +340,7 @@ func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request
 	// jobs it will run. Composing a workflow that reaches another agency's jobs
 	// through a child is authoring over those jobs, and takes the same
 	// per-scope compose check. Composed workflows are cronomicon-source.
-	nested, err := workflow.New(s.db, s.log).SubWorkflowJobAgencyScopesAt(r.Context(), steps, "cronomicon", "")
+	nested, err := workflow.New(s.db, s.log).SubWorkflowJobAgencyScopesAt(r.Context(), steps, "cronomicon", home)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
@@ -391,7 +396,7 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	// graph names must be one this actor could author. updateWorkflow separately
 	// checks the graph being REPLACED, for the same both-sides reason job edits do.
 	actorID, _ := auth.IdentityFrom(r.Context())
-	if !s.requireComposeStepScopes(w, r, actorID, steps) {
+	if !s.requireComposeStepScopes(w, r, actorID, steps, "") {
 		return
 	}
 	// GR-7 — whose the workflow is: the one agency its jobs belong to. One whose

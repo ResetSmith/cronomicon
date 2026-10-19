@@ -62,8 +62,10 @@ type RetentionPolicy struct {
 	// disagree about what permanent deletion means (trigger cascades, the entity
 	// code retiring, the log folder being annotated rather than destroyed).
 	// Injected rather than reimplemented here because internal/db must not import
-	// internal/api; nil disables the definition purge entirely.
-	PurgeDefinition func(ctx context.Context, kind, name string) (bool, error)
+	// internal/api; nil disables the definition purge entirely. uid names the
+	// one binned definition of the name (2.5.0 C11, defect 78): by name alone,
+	// a name two agencies had binned was never purged.
+	PurgeDefinition func(ctx context.Context, kind, name, uid string) (bool, error)
 	// LogDir is the effective run-log directory (settings.ResolveLogDir). Empty
 	// disables the reaper entirely, so a lookup failure degrades to today's
 	// behaviour rather than sweeping the wrong tree.
@@ -612,7 +614,11 @@ func purgeExpiredDefinitions(ctx context.Context, pool *sql.DB, p RetentionPolic
 		return nil // keep forever, or no purger wired (tests)
 	}
 	cutoff := nowUTC().AddDate(0, 0, -p.RecycleBinDays).Format(time.RFC3339)
-	type victim struct{ kind, name string }
+	// Each by its uid (2.5.0 C11, defect 78): two agencies may each bin a
+	// definition of one name, and a purge by name refuses as ambiguous, so
+	// neither was ever purged and the sweep logged an error every night. A row
+	// with no uid (none since 1010's backfill) is purged by name, as before.
+	type victim struct{ kind, name, uid string }
 	var victims []victim
 	for kind, table := range map[string]string{
 		"job":      "jobs",
@@ -620,26 +626,26 @@ func purgeExpiredDefinitions(ctx context.Context, pool *sql.DB, p RetentionPolic
 		"schedule": "schedules",
 	} {
 		rows, err := pool.QueryContext(ctx,
-			`SELECT name FROM `+table+`
+			`SELECT name, COALESCE(uid, '') FROM `+table+`
 			  WHERE source='cronomicon' AND deleted_at IS NOT NULL AND deleted_at < ?`, cutoff)
 		if err != nil {
 			return fmt.Errorf("recycle-bin scan %s: %w", table, err)
 		}
 		for rows.Next() {
-			var name string
-			if err := rows.Scan(&name); err != nil {
+			var name, uid string
+			if err := rows.Scan(&name, &uid); err != nil {
 				rows.Close()
 				return fmt.Errorf("recycle-bin scan %s: %w", table, err)
 			}
-			victims = append(victims, victim{kind, name})
+			victims = append(victims, victim{kind, name, uid})
 		}
 		rows.Close()
 	}
 	purged := 0
 	for _, v := range victims {
-		ok, err := p.PurgeDefinition(ctx, v.kind, v.name)
+		ok, err := p.PurgeDefinition(ctx, v.kind, v.name, v.uid)
 		if err != nil {
-			log.Error("retention: purge definition", "kind", v.kind, "name", v.name, "err", err)
+			log.Error("retention: purge definition", "kind", v.kind, "name", v.name, "uid", v.uid, "err", err)
 			continue
 		}
 		if ok {

@@ -399,7 +399,22 @@ func (s *Server) resolveDefinitionByName(w http.ResponseWriter, r *http.Request,
 	// RH: a recycle-binned definition resolves as absent. Without this the name
 	// stays claimed (PRIMARY KEY (source, name)) but resolves to a rowid the
 	// session routes would 404 on — a machine caller could fire a binned job.
-	query := `SELECT rowid, source FROM ` + table + ` WHERE name = ? AND deleted_at IS NULL`
+	//
+	// Whose (2.5.0 C11, defect 77, question 107): a token of an agency resolves
+	// the name among that agency's definitions only, so another agency's of the
+	// same name neither breaks it (409 ambiguous_name, which ?source= could not
+	// settle) nor is confirmed by it. A token that reaches every agency
+	// (Global's) resolves among Global's first, and among every agency's only
+	// when Global has none.
+	owner := agencyid.JobOwnerSQL("d")
+	if table == "workflows" {
+		owner = agencyid.WorkflowOwnerSQL // reads the alias w
+	}
+	alias := "d"
+	if table == "workflows" {
+		alias = "w"
+	}
+	query := `SELECT rowid, source, ` + owner + ` FROM ` + table + ` ` + alias + ` WHERE name = ? AND deleted_at IS NULL`
 	args := []any{name}
 	if source != "" {
 		query += ` AND source = ?`
@@ -414,17 +429,38 @@ func (s *Server) resolveDefinitionByName(w http.ResponseWriter, r *http.Request,
 	}
 	defer rows.Close()
 	type hit struct {
-		id  int64
-		src string
+		id     int64
+		src    string
+		agency string
 	}
-	var hits []hit
+	var all []hit
 	for rows.Next() {
 		var h hit
-		if err := rows.Scan(&h.id, &h.src); err != nil {
+		if err := rows.Scan(&h.id, &h.src, &h.agency); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return 0, "", false
 		}
-		hits = append(hits, h)
+		all = append(all, h)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return 0, "", false
+	}
+	everywhere := false
+	if id, ok := auth.IdentityFrom(r.Context()); ok {
+		everywhere, _ = id.AgenciesRead()
+	}
+	var hits, global []hit
+	for _, h := range all {
+		switch {
+		case everywhere && h.agency == agencyid.Global:
+			global = append(global, h)
+		case everywhere || readsAgency(r, h.agency):
+			hits = append(hits, h)
+		}
+	}
+	if len(global) > 0 {
+		hits = global
 	}
 	switch len(hits) {
 	case 0:

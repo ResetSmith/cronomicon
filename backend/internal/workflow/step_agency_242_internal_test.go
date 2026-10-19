@@ -33,11 +33,15 @@ func TestRV_AStepRunsItsWorkflowsAgencysJobOnlyAndARefusedStepIsTheWorkflows(t *
 	if err := f.e.db.QueryRow(`SELECT rowid FROM workflows WHERE uid = 'w-b'`).Scan(&wfB); err != nil {
 		t.Fatal(err)
 	}
-	run := func(step string) (uid, status, reason, agencies, env string) {
+	run := func(step string, pin ...string) (uid, status, reason, agencies, env string) {
 		t.Helper()
+		s := Step{Type: "job", Name: step}
+		if len(pin) > 0 {
+			s.JobUID = pin[0]
+		}
 		if _, err := f.e.Trigger(context.Background(), TriggerParams{
 			WorkflowName: "b-flow", WorkflowSource: "cronomicon", WorkflowID: wfB, TriggeredBy: "scheduler",
-			Steps: []Step{{Type: "job", Name: step}},
+			Steps: []Step{s},
 		}); err != nil {
 			t.Fatalf("Trigger: %v", err)
 		}
@@ -51,7 +55,8 @@ func TestRV_AStepRunsItsWorkflowsAgencysJobOnlyAndARefusedStepIsTheWorkflows(t *
 		return uid, status, reason, agencies, env
 	}
 
-	uid, status, reason, agencies, env := run("backup")
+	// Pinned to C's job by its uid: found, and refused as C's.
+	uid, status, reason, agencies, env := run("backup", "j-c")
 	if status != "failure" || reason != runref.ReasonStepJobOtherAgency {
 		t.Errorf("B's workflow running C's backup (both agencies hold a scope web): %q, %q; want it refused with %q", status, reason, runref.ReasonStepJobOtherAgency)
 	}
@@ -60,6 +65,15 @@ func TestRV_AStepRunsItsWorkflowsAgencysJobOnlyAndARefusedStepIsTheWorkflows(t *
 	}
 	if env != "" && env != "{}" {
 		t.Errorf("the refused step's row carries an environment: %s", env)
+	}
+
+	// By its name only: B's workflow built in the app is at home in B (2.5.0
+	// C11, defect 79), so C's job of the name is not found at all. (The walk is
+	// asynchronous: the pinned run's row goes first, so lastRun waits for this one.)
+	f.exec(`DELETE FROM runs WHERE job_name = 'backup'`)
+	_, status, reason, _, _ = run("backup")
+	if status != "failure" || reason != runref.ReasonStepJobNotFound {
+		t.Errorf("B's workflow naming backup, which only C holds: %q, %q; want %q", status, reason, runref.ReasonStepJobNotFound)
 	}
 
 	_, status, reason, agencies, _ = run("no-such-job")
