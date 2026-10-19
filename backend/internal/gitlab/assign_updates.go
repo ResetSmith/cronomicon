@@ -22,8 +22,8 @@ import (
 // per assignment (per target agency and origin definition), filed under the
 // target agency, naming both. It is resolved when the origin's files are as
 // they were copied again (an update was assigned, which replaces the record,
-// or the origin went back), and when the agency has removed its copy, whose
-// record then goes.
+// or the origin went back), and when the agency has removed its copy or the
+// origin its definition, whose record then goes.
 //
 // The check runs after every sync (of either side) and when the Notices page
 // is opened. An assignment whose commit the agency's last sync has not reached
@@ -84,9 +84,12 @@ func (r *Registry) CheckAssignmentUpdates(ctx context.Context) error {
 			}
 			continue
 		}
-		if _, err := ReadCommitTree(targetDir, targetSHA, a.targetPath); err != nil {
-			// The agency has removed its copy of the definition: nothing is
-			// followed any more.
+		_, targetErr := ReadCommitTree(targetDir, targetSHA, a.targetPath)
+		_, originErr := ReadCommitTree(originDir, originSHA, a.originPath)
+		if targetErr != nil || originErr != nil {
+			// The agency has removed its copy of the definition, or the origin
+			// no longer has it (there is nothing to update from: the copy is
+			// the agency's own now). Nothing is followed any more.
 			if _, err := r.db.ExecContext(ctx, `DELETE FROM assignments WHERE id = ?`, a.id); err != nil {
 				return err
 			}
@@ -105,10 +108,17 @@ func (r *Registry) CheckAssignmentUpdates(ctx context.Context) error {
 				files.Close()
 				return err
 			}
+			moved := false
 			if now, err := ReadCommitTree(originDir, originSHA, op); err != nil || len(now) != 1 {
-				originMoved = append(originMoved, op+" (removed)")
+				originMoved, moved = append(originMoved, op+" (removed)"), true
 			} else if fileHash(now[0].Content) != oh {
-				originMoved = append(originMoved, op)
+				originMoved, moved = append(originMoved, op), true
+			}
+			// The agency's change matters where the origin's does too: that is
+			// the file an update refuses. Its change to a file the origin left
+			// alone is its own, and an update leaves it alone too.
+			if !moved {
+				continue
 			}
 			if theirs, err := ReadCommitTree(targetDir, targetSHA, tp); err != nil || len(theirs) != 1 {
 				agencyMoved = append(agencyMoved, tp+" (removed)")

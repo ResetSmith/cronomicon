@@ -71,7 +71,11 @@ func (s *Server) handleAssign(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "assign_failed", err)
 		return
 	}
-	if err := settings.WriteChangeLog(r.Context(), s.db, target, id.Email, "Assignment", "assigned",
+	action := "assigned"
+	if res.Updated {
+		action = "updated"
+	}
+	if err := settings.WriteChangeLog(r.Context(), s.db, target, id.Email, "Assignment", action,
 		res.Kind+":"+res.Name, gitlab.AssignmentDetails(res)); err != nil {
 		s.log.Error("assignment: change log", "error", err)
 	}

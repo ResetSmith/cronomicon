@@ -134,12 +134,18 @@ func TestAnAgencysChangeIsReportedAndNotOverwritten(t *testing.T) {
 	if _, err := f.assign(); err != nil {
 		t.Fatalf("assign: %v", err)
 	}
-	f.finChanges(map[string]string{"scripts/nightly.sh": "#!/bin/sh\necho finance's own fix\n"})
+	// Finance changes the script, which Global changes too, and the schedule,
+	// which Global leaves alone: only the first stands in an update's way.
+	schedule := sysGit(t, f.finBare, "show", f.branch+":schedules/nightly-cron.yaml") + "\n# Finance's note\n"
+	f.finChanges(map[string]string{"scripts/nightly.sh": "#!/bin/sh\necho finance's own fix\n", "schedules/nightly-cron.yaml": schedule})
 	f.globalChanges(map[string]string{"scripts/nightly.sh": assignScriptV2})
 
 	detail, open, _ := f.updateNotice()
-	if !open || !strings.Contains(detail, "changed its own copy of scripts/nightly.sh") {
+	if !open || !strings.Contains(detail, "changed its own copy of scripts/nightly.sh:") {
 		t.Fatalf("notice: open %v, %q", open, detail)
+	}
+	if strings.Contains(detail, "schedules/nightly-cron.yaml") {
+		t.Errorf("the notice names Finance's change to a file Global did not change: %q", detail)
 	}
 	before := f.head()
 	_, err := f.assign()
@@ -155,6 +161,95 @@ func TestAnAgencysChangeIsReportedAndNotOverwritten(t *testing.T) {
 	}
 	if f.head() != before {
 		t.Error("a refused update pushed")
+	}
+}
+
+// Finance's change to a file Global did not change is Finance's: an update
+// replaces what Global changed and leaves that file as Finance has it.
+func TestAnUpdateLeavesAnAgencysChangeToAFileTheOriginLeft(t *testing.T) {
+	f := newAssignFixture(t, nil, nil)
+	f.finHasCalendar()
+	if _, err := f.assign(); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+	schedule := sysGit(t, f.finBare, "show", f.branch+":schedules/nightly-cron.yaml") + "\n# Finance's note\n"
+	f.finChanges(map[string]string{"schedules/nightly-cron.yaml": schedule})
+	f.globalChanges(map[string]string{"scripts/nightly.sh": assignScriptV2})
+	res, err := f.assign()
+	if err != nil {
+		t.Fatalf("assign again: %v", err)
+	}
+	if a := actions(res); a["scripts/nightly.sh"] != "replaced" || a["schedules/nightly-cron.yaml"] != "unchanged" {
+		t.Errorf("actions %v", a)
+	}
+	if got := sysGit(t, f.finBare, "show", res.CommitSHA+":schedules/nightly-cron.yaml"); !strings.Contains(got, "Finance's note") {
+		t.Errorf("Finance's change was overwritten:\n%s", got)
+	}
+}
+
+// Global removing the job's file leaves nothing to update from: the copy is
+// Finance's own, the record goes, and nothing is raised.
+func TestTheOriginRemovingTheDefinitionEndsTheAssignment(t *testing.T) {
+	f := newAssignFixture(t, nil, nil)
+	f.finHasCalendar()
+	if _, err := f.assign(); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+	gitRemoveFile(t, f.globalRepo, "jobs/nightly.yaml", "Global withdraws the template")
+	grSync(t, f.global, "Global's repository, without the job")
+	if _, open, _ := f.updateNotice(); open {
+		t.Error("a notice offering an update from a definition the origin no longer has")
+	}
+	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignments`); n != "0" {
+		t.Errorf("assignment records: %s, want none", n)
+	}
+}
+
+// A file Global removes and adds again is a new row, with a new uid: the
+// assignment is still found by its file, and assigning again is an update.
+func TestAFileAddedAgainInTheOriginIsStillTheSameAssignment(t *testing.T) {
+	f := newAssignFixture(t, nil, nil)
+	f.finHasCalendar()
+	if _, err := f.assign(); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+	gitRemoveFile(t, f.globalRepo, "jobs/nightly.yaml", "removed")
+	grBackdateAll(t, f.global) // so the sync's prune sees the row as stale
+	grSync(t, f.global, "Global's repository, without the job")
+	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM jobs WHERE name = 'nightly' AND repo_id = 'global'`); n != "0" {
+		t.Fatalf("the removed job was not pruned (count %s)", n)
+	}
+	f.globalChanges(map[string]string{"jobs/nightly.yaml": strings.Replace(assignJob, "the nightly backup", "the nightly backup, again", 1)})
+	newUID := grString(t, f.global.db, `SELECT uid FROM jobs WHERE name = 'nightly' AND repo_id = 'global'`)
+	if newUID == f.jobUID {
+		t.Fatal("the job kept its uid: this test is of one that does not")
+	}
+	f.jobUID = newUID
+	res, err := f.assign()
+	if err != nil {
+		t.Fatalf("assign again: %v", err)
+	}
+	if a := actions(res); a["jobs/nightly.yaml"] != "replaced" || !res.Updated {
+		t.Errorf("actions %v, updated %v", a, res.Updated)
+	}
+}
+
+// Question 95 (asked, not built): an update is judged by the origin's files,
+// so assigning again with another scope, the origin unchanged, changes
+// nothing.
+func TestReassigningWithAnotherScopeIsUpToDate(t *testing.T) {
+	f := newAssignFixture(t, nil, nil)
+	f.finHasCalendar()
+	if _, err := f.assign(); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+	grAgencyScope(t, f.global.db, "ag-fin", "fin-other")
+	if _, err := f.global.db.Exec(`UPDATE scopes SET owner_agency = 'ag-fin' WHERE id = 'id-fin-other'`); err != nil {
+		t.Fatal(err)
+	}
+	f.finScope = "fin-other"
+	if _, err := f.assign(); refusalCode(err) != "up_to_date" {
+		t.Fatalf("want up_to_date (question 95 as built), got %v", err)
 	}
 }
 

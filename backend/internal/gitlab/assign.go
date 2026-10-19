@@ -98,6 +98,7 @@ type AssignResult struct {
 
 	// For the caller's audit row, not the answer.
 	Kind         string `json:"-"`
+	Updated      bool   `json:"-"` // an update of an earlier assignment (C10.3)
 	OriginAgency string `json:"-"`
 	Name         string `json:"-"`
 }
@@ -302,6 +303,7 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 		return nil, err
 	}
 	st.res.CommitSHA, st.res.Branch = commit.CommitSHA, commit.Branch
+	st.res.Updated = st.prevID != ""
 
 	// The record. The commit is in: a record that cannot be written is logged,
 	// and the answer still says what was committed.
@@ -379,12 +381,14 @@ func (st *assignState) add(f CommitFile, role string, content []byte) {
 }
 
 // loadPrevious finds the last assignment of this definition to this agency,
-// which makes this one an update.
+// which makes this one an update: by the definition's uid, or by its file (a
+// file removed from the origin and added again is a new row, with a new uid).
 func (st *assignState) loadPrevious(top defRow) error {
 	st.recorded = map[string]recordedFile{}
 	err := st.r.db.QueryRowContext(st.ctx, `
-		SELECT id FROM assignments WHERE target_agency = ? AND origin_uid = ? AND kind = ?
-		 ORDER BY created_at DESC, rowid DESC LIMIT 1`, st.req.TargetAgency, top.uid, st.req.Kind).Scan(&st.prevID)
+		SELECT id FROM assignments
+		 WHERE target_agency = ? AND kind = ? AND (origin_uid = ? OR (origin_repo = ? AND origin_path = ?))
+		 ORDER BY created_at DESC, rowid DESC LIMIT 1`, st.req.TargetAgency, st.req.Kind, top.uid, top.repo, top.path).Scan(&st.prevID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
