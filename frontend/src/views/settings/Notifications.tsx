@@ -364,7 +364,9 @@ function GlobalTargets() {
         ))}
         <div style={{ fontSize: c.fontXs, color: c.textSec }}>
           Global's alert rules push to these, and each agency keeps its own. They are added, changed and removed under{" "}
-          <Link to="/settings?tab=alerts&agency=global">Settings → Alerts, working in Global</Link>, which keeps the rules
+          <Link to="/settings?tab=alerts&agency=global" style={{ color: c.primary }}>
+            Settings → Alerts, working in Global
+          </Link>, which keeps the rules
           that name each one.
         </div>
       </div>
