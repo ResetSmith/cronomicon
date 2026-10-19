@@ -19,6 +19,12 @@ import (
 // read-only, so staging the file (which writes its blob) fails.
 func readOnlyObjects(t *testing.T, clone string) {
 	t.Helper()
+	// root writes through a read-only directory, so the failure cannot be made
+	// this way under root (a container's test run, say): skip rather than
+	// fail on the precondition.
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: a read-only directory does not stop root writing to it")
+	}
 	objects := filepath.Join(clone, ".git", "objects")
 	var dirs []string
 	_ = filepath.WalkDir(objects, func(p string, d fs.DirEntry, err error) error {
