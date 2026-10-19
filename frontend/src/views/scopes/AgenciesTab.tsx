@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../../api/client";
+import { allReadable, api } from "../../api/client";
 import { GLOBAL_AGENCY } from "../../api/access";
 import { globalOnly } from "../../api/globalAdmin";
 import { useGet, rows, useTableSort } from "../../hooks";
@@ -180,6 +180,14 @@ export function AgenciesTab({
               </div>
             </>
           )}
+        </div>
+      )}
+      {/* 2.5.0 C7.4 (question 97): the one view whose counts span agencies.
+          A global administrator reads them all; anyone else reads what their
+          grants reach (CF-1), and the counts are of that. */}
+      {filtered.length > 0 && !globalAdmin && (
+        <div role="note" style={{ fontSize: c.fontXs, color: c.textSec, marginBottom: 8 }}>
+          The counts and lists here are of what you may read: an agency you hold no grant on shows less than it has.
         </div>
       )}
       {filtered.length > 0 && (
@@ -731,7 +739,103 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
       {agencyId !== GLOBAL_AGENCY && <VaultPathsEditor agencyId={agencyId} globalAdmin={globalAdmin} />}
       {agencyId !== GLOBAL_AGENCY && <GroupsEditor agencyId={agencyId} rolesAdmin={rolesAdmin} />}
       <ConcurrencyEditor agencyId={agencyId} value={maxConcurrent} globalAdmin={globalAdmin} onSaved={onMembersChanged} />
+      <AgencyElsewhere agencyId={agencyId} />
     </DetailPanel>
+  );
+}
+
+// AgencyElsewhere — what the agency has that is edited on another page (2.5.0
+// C7.4, question 96): its repository, the grants that name it, its alerts.
+// Read-only here, each with the way to the page that edits it, working in this
+// agency; no second editor. A read the caller may not make says so.
+function AgencyElsewhere({ agencyId }: { agencyId: string }) {
+  type Repo = { url?: string; branch?: string; lastStatus?: string; lastSyncedAt?: string };
+  type Grant = { adGroup?: string; role?: string; agencyId?: string };
+  type Owned = { ownerAgency?: string };
+  const repoQ = useGet<Repo>(() => api.GET("/agencies/{agencyId}/git-repo", { params: { path: { agencyId } } }), [agencyId]);
+  const grantsQ = useGet<unknown>(() => api.GET("/access-grants"), []);
+  const rulesQ = useGet<unknown>(() => api.GET("/alerts", { headers: allReadable }), []);
+  const targetsQ = useGet<unknown>(() => api.GET("/alert-targets", { headers: allReadable }), []);
+  const there = (tab: string) => `/settings?tab=${tab}&agency=${encodeURIComponent(agencyId)}`;
+  const notYours = <span style={{ color: c.textMuted }}>not yours to read</span>;
+
+  const grants = rows<Grant>(grantsQ.data).filter((g) => g.agencyId === agencyId);
+  const rules = rows<Owned>(rulesQ.data).filter((r) => r.ownerAgency === agencyId).length;
+  const targets = rows<Owned>(targetsQ.data).filter((t) => t.ownerAgency === agencyId).length;
+  const repo = repoQ.data;
+
+  const line = (label: string, body: React.ReactNode, tab: string, linkLabel: string) => (
+    <div style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: c.fontSm, marginBottom: 4 }}>
+      <span style={{ minWidth: 86, color: c.textSec }}>{label}</span>
+      <span style={{ flex: 1, minWidth: 0 }}>{body}</span>
+      <Link to={there(tab)} style={{ color: c.primary, fontSize: c.fontXs, whiteSpace: "nowrap" }}>
+        {linkLabel}
+      </Link>
+    </div>
+  );
+
+  return (
+    <div style={{ borderTop: `1px solid ${c.borderLight}`, paddingTop: 10 }}>
+      <div style={{ fontSize: c.fontXs, fontFamily: c.sansCond, fontWeight: 700, color: c.textMuted, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 6 }}>
+        Repository, access and alerts
+      </div>
+      {line(
+        "Repository",
+        repoQ.loading ? (
+          <InlineLoading />
+        ) : repoQ.error ? (
+          notYours
+        ) : repo?.url ? (
+          <>
+            <code style={{ fontFamily: c.mono, fontSize: c.fontXs }}>{repo.url}</code>
+            {repo.branch && <span style={{ color: c.textSec }}> · {repo.branch}</span>}
+            <span style={{ color: repo.lastStatus && repo.lastStatus !== "success" ? c.warning : c.textSec }}>
+              {" "}· {repo.lastSyncedAt ? `last sync ${repo.lastStatus ?? ""} ${fmtDate(repo.lastSyncedAt)}` : "not synced yet"}
+            </span>
+          </>
+        ) : (
+          <span style={{ color: c.warning }}>none connected</span>
+        ),
+        "repositories",
+        "Repositories →",
+      )}
+      {line(
+        "Access",
+        grantsQ.loading ? (
+          <InlineLoading />
+        ) : grantsQ.error ? (
+          notYours
+        ) : grants.length === 0 ? (
+          <span style={{ color: c.textSec }}>no grant names this agency</span>
+        ) : (
+          <span>
+            {grants.length} {grants.length === 1 ? "grant" : "grants"}:{" "}
+            {grants.map((g, i) => (
+              <span key={i}>
+                {i > 0 && ", "}
+                <strong>{g.adGroup}</strong> <span style={{ color: c.textSec }}>({g.role})</span>
+              </span>
+            ))}
+          </span>
+        ),
+        "users",
+        "Users & Access →",
+      )}
+      {line(
+        "Alerts",
+        rulesQ.loading || targetsQ.loading ? (
+          <InlineLoading />
+        ) : rulesQ.error && targetsQ.error ? (
+          notYours
+        ) : (
+          <span>
+            {rules} alert {rules === 1 ? "rule" : "rules"}, {targets} push {targets === 1 ? "target" : "targets"}
+          </span>
+        ),
+        "alerts",
+        "Alerts →",
+      )}
+    </div>
   );
 }
 
