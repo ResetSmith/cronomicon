@@ -34,7 +34,9 @@ import (
 // What is copied is files of a repository, at the commit the origin last
 // synced (question 87: a definition built in the app is refused; 2.6.0 makes
 // every definition a file). Calendars are not files before 2.6.0 (question 88):
-// the answer names the ones the target lacks. A script, schedule, job or
+// a calendar the copy names that the target lacks refuses the assignment
+// (question 94), as the target's sync would refuse the schedule naming it and
+// the definition with it. A script, schedule, job or
 // sub-workflow the target's repository has by name is its own and is used,
 // not added (question 90); a name its agency has only in the app refuses, as a
 // Git step does not resolve to it. Secrets, variables and keys are the
@@ -68,11 +70,8 @@ type AssignedFile struct {
 
 // AssignLack is something the copy needs that the target agency does not have.
 type AssignLack struct {
-	Kind string `json:"kind"` // secret, variable, key, calendar, reactionUpstream, targetHost
+	Kind string `json:"kind"` // secret, variable, key, reactionUpstream, targetHost
 	Name string `json:"name"`
-	// Why is what the lack does, when it does more than leave a run without
-	// it: a calendar the copy names is one the target's sync refuses it for.
-	Why string `json:"why,omitempty"`
 }
 
 // AssignBinding is a binding the origin's job or script has, which the copy
@@ -105,10 +104,11 @@ type AssignResult struct {
 
 // AssignError is a refusal: nothing was committed.
 type AssignError struct {
-	Status  int
-	Code    string
-	Message string
-	Paths   []string
+	Status    int
+	Code      string
+	Message   string
+	Paths     []string
+	Calendars []string // calendar_missing: the calendars the target lacks
 }
 
 func (e *AssignError) Error() string { return e.Message }
@@ -175,6 +175,7 @@ type assignState struct {
 	jobsSeen, wfsSeen map[string]bool
 	scopesChecked     map[string]bool
 	calendars         map[string]bool
+	missingCalendars  []string
 	bindingOwners     []string
 	secrets, keys     []string
 	reactions         []ReactionEntry
@@ -271,6 +272,13 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 	if err := st.computeLacks(); err != nil {
 		return nil, err
 	}
+	if len(st.missingCalendars) > 0 {
+		e := refuse(http.StatusUnprocessableEntity, "calendar_missing",
+			"%s has no calendar named %s, which the copy's schedules name: its sync would refuse them, and what names them. Create the calendars in %s and assign again",
+			st.targetName, strings.Join(st.missingCalendars, ", "), st.targetName)
+		e.Calendars = st.missingCalendars
+		return nil, e
+	}
 
 	var writes []FileWrite
 	for _, p := range st.plan {
@@ -351,8 +359,10 @@ func (st *assignState) origin(p string) []string {
 }
 
 // add plans a file, once. A file the last assignment wrote (an update) is
-// replaced when the agency has not changed it, and refused when it has.
-func (st *assignState) add(f CommitFile, role string, content []byte) {
+// replaced when the agency has not changed it, and refused when it has. scope
+// is the scope a job's copy names (nil for any other file): a copy on another
+// scope than the one now picked is an update too (question 95).
+func (st *assignState) add(f CommitFile, role string, content []byte, scope *string) {
 	for _, p := range st.plan {
 		if p.write.Path == f.Path {
 			return
@@ -366,7 +376,7 @@ func (st *assignState) add(f CommitFile, role string, content []byte) {
 		// would differ even when the origin's file has not.
 		if theirs, err := ReadCommitTree(st.targetSvc.cloneDir, st.targetSHA, f.Path); err == nil && len(theirs) == 1 {
 			switch {
-			case p.originHash == rec.originHash:
+			case p.originHash == rec.originHash && !scopeMoved(theirs[0].Content, scope):
 				p.unchanged, p.keptHash, action = true, rec.committedHash, "unchanged"
 			case fileHash(theirs[0].Content) != rec.committedHash:
 				st.changedByAgency = append(st.changedByAgency, f.Path)
@@ -378,6 +388,16 @@ func (st *assignState) add(f CommitFile, role string, content []byte) {
 	}
 	st.plan = append(st.plan, p)
 	st.res.Files = append(st.res.Files, AssignedFile{Path: f.Path, Role: role, Action: action})
+}
+
+// scopeMoved reports whether a job's copy names another scope than the one
+// now picked.
+func scopeMoved(copy []byte, scope *string) bool {
+	if scope == nil {
+		return false
+	}
+	var doc JobYAML
+	return yaml.Unmarshal(copy, &doc) == nil && strings.TrimSpace(doc.Spec.Scope) != *scope
 }
 
 // loadPrevious finds the last assignment of this definition to this agency,
@@ -417,7 +437,7 @@ func (st *assignState) stamped(f CommitFile, role string, scope *string) error {
 	if err != nil {
 		return refuse(http.StatusUnprocessableEntity, "origin_unreadable", "%s: %v", f.Path, err)
 	}
-	st.add(f, role, content)
+	st.add(f, role, content, scope)
 	return nil
 }
 
@@ -498,7 +518,7 @@ func (st *assignState) addJob(row defRow, role string) error {
 		if err != nil {
 			return err
 		}
-		st.add(files[0], "script", files[0].Content)
+		st.add(files[0], "script", files[0].Content, nil)
 	}
 	return st.addSchedules(spec.Spec.ScheduleRefs, spec.Spec.Schedules)
 }
@@ -548,7 +568,7 @@ func (st *assignState) addScript(ref string) error {
 			return err
 		}
 	} else {
-		st.add(files[0], "script", files[0].Content)
+		st.add(files[0], "script", files[0].Content, nil)
 	}
 	more := ""
 	switch {
@@ -563,7 +583,7 @@ func (st *assignState) addScript(ref string) error {
 			return err
 		}
 		for _, f := range files {
-			st.add(f, "script", f.Content)
+			st.add(f, "script", f.Content, nil)
 		}
 	}
 	return nil
@@ -923,17 +943,15 @@ func (st *assignState) computeLacks() error {
 	}
 	sort.Strings(names)
 	for _, c := range names {
-		if err := lack("calendar", c, `SELECT 1 FROM calendars WHERE name = ? AND owner_agency = ?`, c, agency); err != nil {
+		// Calendars are not files before 2.6.0 (question 88), and a sync
+		// refuses a schedule naming one its agency does not have, and the
+		// definition with it: the assignment is refused (question 94).
+		var ok bool
+		if err := q.QueryRowContext(st.ctx, `SELECT EXISTS (SELECT 1 FROM calendars WHERE name = ? AND owner_agency = ?)`, c, agency).Scan(&ok); err != nil {
 			return err
 		}
-	}
-	for i := range res.Lacks {
-		if res.Lacks[i].Kind == "calendar" {
-			// Calendars are not files before 2.6.0 (question 88): the copy is
-			// committed, and the target's sync refuses the schedule that names
-			// this calendar, and what names that schedule, until the agency has
-			// one.
-			res.Lacks[i].Why = "the agency's sync refuses the schedule naming it, and the definition with it, until the agency has a calendar of this name; create it there and sync"
+		if !ok {
+			st.missingCalendars = append(st.missingCalendars, c)
 		}
 	}
 	for _, re := range st.reactions {

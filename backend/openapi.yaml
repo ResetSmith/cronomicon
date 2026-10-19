@@ -7363,14 +7363,18 @@ paths:
         commit would add, refuses the whole assignment (422 `name_taken`,
         `paths`), and nothing is pushed. Secrets, variables and keys are the agency's own:
         `bindings` lists the job's (and its script's) bindings, which the copy
-        does not have, and `lacks` what it names that the agency does not have,
-        with the calendars its schedules skip or keep to (calendars are not
-        files before 2.6.0; the agency's sync refuses a schedule naming one it
-        lacks, and the job with it, until it has one).
+        does not have, and `lacks` what it names that the agency does not have.
+        A calendar the copy's schedules skip or keep to that the agency lacks
+        refuses the assignment (422 `calendar_missing`, `calendars`; question
+        94): calendars are not files before 2.6.0, and the agency's sync would
+        refuse the schedule naming it, and the definition with it. Create the
+        calendars in the agency and assign again.
 
         Assigning a definition the agency was given before is an UPDATE (C10.3):
         it replaces only the files the last assignment wrote whose origin has
-        changed since (`replaced`), leaves the rest (`unchanged`), and refuses,
+        changed since, and a job's copy on another scope than the one now
+        picked (question 95) (`replaced`), leaves the rest (`unchanged`), and
+        refuses,
         naming them, files the agency has changed in its copy since (422
         `changed_by_agency`; nothing is pushed). 409 `up_to_date` when the
         origin has not changed. The record is the new one. When the origin
@@ -13012,9 +13016,8 @@ components:
             type: object
             required: [kind, name]
             properties:
-              kind: { type: string, enum: [secret, variable, key, calendar, reactionUpstream, targetHost] }
+              kind: { type: string, enum: [secret, variable, key, reactionUpstream, targetHost] }
               name: { type: string }
-              why: { type: string }
         bindings:
           type: array
           description: The origin job's and script's bindings, which the copy does not have.

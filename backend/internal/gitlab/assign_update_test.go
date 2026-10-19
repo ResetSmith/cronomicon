@@ -234,10 +234,10 @@ func TestAFileAddedAgainInTheOriginIsStillTheSameAssignment(t *testing.T) {
 	}
 }
 
-// Question 95 (asked, not built): an update is judged by the origin's files,
-// so assigning again with another scope, the origin unchanged, changes
-// nothing.
-func TestReassigningWithAnotherScopeIsUpToDate(t *testing.T) {
+// Question 95: assigning again with another scope, the origin unchanged, moves
+// the job's copy to it (its file rewritten; the script and the schedule left).
+// A copy the agency has changed is refused, as for any update.
+func TestReassigningWithAnotherScopeMovesTheCopy(t *testing.T) {
 	f := newAssignFixture(t, nil, nil)
 	f.finHasCalendar()
 	if _, err := f.assign(); err != nil {
@@ -248,8 +248,23 @@ func TestReassigningWithAnotherScopeIsUpToDate(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.finScope = "fin-other"
-	if _, err := f.assign(); refusalCode(err) != "up_to_date" {
-		t.Fatalf("want up_to_date (question 95 as built), got %v", err)
+	res, err := f.assign()
+	if err != nil {
+		t.Fatalf("assign on another scope: %v", err)
+	}
+	if a := actions(res); a["jobs/nightly.yaml"] != "replaced" || a["scripts/nightly.sh"] != "unchanged" || a["schedules/nightly-cron.yaml"] != "unchanged" {
+		t.Errorf("actions %v", a)
+	}
+	if got := sysGit(t, f.finBare, "show", res.CommitSHA+":jobs/nightly.yaml"); !strings.Contains(got, "scope: fin-other") {
+		t.Errorf("the copy was not moved:\n%s", got)
+	}
+
+	// Finance changes the job, and asks for the first scope back: refused.
+	job := sysGit(t, f.finBare, "show", f.branch+":jobs/nightly.yaml") + "# Finance's note\n"
+	f.finChanges(map[string]string{"jobs/nightly.yaml": job})
+	f.finScope = "hosts-of-repo-fin"
+	if _, err := f.assign(); refusalCode(err) != "changed_by_agency" {
+		t.Fatalf("want changed_by_agency, got %v", err)
 	}
 }
 

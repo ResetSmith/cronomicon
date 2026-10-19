@@ -121,13 +121,26 @@ func refusalCode(err error) string {
 
 // One commit carrying the whole set: the job (naming Finance's scope, stamped
 // with its origin, its comment kept), its script and its schedule. The answer
-// lists the secret it names and the calendar its schedule skips, neither of
-// which Finance has. The record has one row per file. Finance's sync brings
-// the job in as Finance's.
+// lists the secret it names, which Finance has not. The record has one row per
+// file. Finance's sync brings the job in as Finance's.
+//
+// Question 94: while Finance has no calendar the schedule skips, its sync
+// would refuse the schedule and the job with it: the assignment is refused,
+// naming the calendar, and nothing is pushed.
 func TestAnAssignmentIsOneCommitCarryingTheWholeSet(t *testing.T) {
 	f := newAssignFixture(t, nil, nil)
 	before := f.head()
 	globalSHA := grString(t, f.global.db, `SELECT last_sha FROM git_repos WHERE id = 'global'`)
+
+	_, err := f.assign()
+	var refusal *AssignError
+	if !errors.As(err, &refusal) || refusal.Code != "calendar_missing" || len(refusal.Calendars) != 1 || refusal.Calendars[0] != "holidays" {
+		t.Fatalf("Finance lacks the calendar: want calendar_missing naming holidays, got %v", err)
+	}
+	if f.head() != before {
+		t.Fatal("a refused assignment pushed")
+	}
+	f.finHasCalendar()
 
 	res, err := f.assign()
 	if err != nil {
@@ -173,30 +186,13 @@ func TestAnAssignmentIsOneCommitCarryingTheWholeSet(t *testing.T) {
 	for _, l := range res.Lacks {
 		lacks[l.Kind+":"+l.Name] = true
 	}
-	if !lacks["secret:DB_PASS"] || !lacks["calendar:holidays"] || len(res.Lacks) != 2 {
-		t.Errorf("lacks = %+v, want the secret DB_PASS and the calendar holidays", res.Lacks)
+	if !lacks["secret:DB_PASS"] || len(res.Lacks) != 1 {
+		t.Errorf("lacks = %+v, want the secret DB_PASS", res.Lacks)
 	}
 	if !res.SyncStarted {
 		t.Error("no sync of Finance's repository was started")
 	}
-	// Calendars are not files before 2.6.0 (question 88): until Finance has
-	// the calendar, its sync refuses the schedule and the job with it. Once it
-	// has one, the next sync brings the job in as Finance's.
 	finJob := `SELECT COUNT(*) FROM jobs WHERE name = 'nightly' AND owner_agency = 'ag-fin' AND repo_id = 'repo-fin'`
-	if n := grString(t, f.global.db, finJob); n != "0" {
-		t.Errorf("the job was synced into Finance while Finance lacks its calendar (count %s)", n)
-	}
-	for _, l := range res.Lacks {
-		if l.Kind == "calendar" && !strings.Contains(l.Why, "refuses") {
-			t.Errorf("the calendar's lack does not say what it does: %+v", l)
-		}
-	}
-	if _, err := f.global.db.Exec(`INSERT INTO calendars (source, name, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 't', 't', 'ag-fin')`); err != nil {
-		t.Fatal(err)
-	}
-	if r := grSync(t, f.fin, "Finance's repository, with the calendar"); r.Status != "success" {
-		t.Fatalf("Finance's sync with the calendar: %s %s", r.Status, r.ErrorMessage)
-	}
 	if n := grString(t, f.global.db, finJob); n != "1" {
 		t.Errorf("Finance's sync did not bring the job in as Finance's (count %s)", n)
 	}
@@ -254,6 +250,7 @@ func TestAScopeNotTheTargetsAloneRefusesWithNothingPushed(t *testing.T) {
 // the answer says that it differs from Global's. It has no row in the record.
 func TestADependencyTheTargetHasIsUsedAndReported(t *testing.T) {
 	f := newAssignFixture(t, nil, map[string]string{"scripts/nightly.sh": "#!/bin/sh\necho finances-own\n"})
+	f.finHasCalendar()
 	res, err := f.assign()
 	if err != nil {
 		t.Fatalf("assign: %v", err)
@@ -280,6 +277,7 @@ func TestADependencyTheTargetHasIsUsedAndReported(t *testing.T) {
 // clone is behind its branch.
 func TestATargetWithNoCloneYetStartsASync(t *testing.T) {
 	f := newAssignFixture(t, nil, nil)
+	f.finHasCalendar()
 	if err := os.RemoveAll(f.fin.cloneDir); err != nil {
 		t.Fatal(err)
 	}

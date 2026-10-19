@@ -62,6 +62,9 @@ func (s *Server) handleAssign(w http.ResponseWriter, r *http.Request) {
 		if len(refusal.Paths) > 0 {
 			out["paths"] = refusal.Paths
 		}
+		if len(refusal.Calendars) > 0 {
+			out["calendars"] = refusal.Calendars
+		}
 		httpx.JSON(w, refusal.Status, out)
 		return
 	case errors.As(err, &protected):
