@@ -135,4 +135,41 @@ func TestC12_DeregisteringARunnerEndsItsRunningRuns(t *testing.T) {
 	if st, _, reason := runEnd(t, svc, "run-dereg"); st != "failure" || reason.String != "runner_lost" {
 		t.Errorf("a running run of a deregistered runner: %s (%s), want failure (runner_lost)", st, reason.String)
 	}
+	// Through the reaper's own path (C12's code review): the run-end activity
+	// is written, as for every runner_lost.
+	var n int
+	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM activity WHERE kind = 'run-end' AND trace_id = 'run-dereg'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("run-end activity for the deregistered runner's run: %d rows, want 1", n)
+	}
+}
+
+// A deregistration that fails closes nothing (C12's code review): its runs
+// were ended before its transaction, so a failed delete left the agent running
+// runs already recorded as lost, their alerts sent.
+func TestC12_AFailedDeregistrationEndsNoRun(t *testing.T) {
+	svc := newTestService(t)
+	insertRunner(t, svc, "r-keep", "keep", "online", []string{"bash"})
+	ts := now()
+	if _, err := svc.db.Exec(`
+		INSERT INTO runs(id, job_name, run_type, scope, status, runner_id, triggered_by, trigger_kind, executor, created_at, started_at)
+		VALUES ('run-keep', 'j', 'bash', 'prod', 'running', 'r-keep', 'test', 'manual', 'runner', ?, ?)`, ts, ts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.Exec(`CREATE TRIGGER c12_refuse_runner_delete BEFORE DELETE ON runners
+		BEGIN SELECT RAISE(ABORT, 'refused by the test'); END`); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/runners/r-keep", nil)
+	req.SetPathValue("id", "r-keep")
+	rec := httptest.NewRecorder()
+	svc.HandleDeregisterRunner(rec, req)
+	if rec.Code/100 == 2 {
+		t.Fatalf("deregister with its delete refused = %d, want a failure", rec.Code)
+	}
+	if st, _, reason := runEnd(t, svc, "run-keep"); st != "running" {
+		t.Errorf("a run of a runner whose deregistration failed: %s (%s), want still running", st, reason.String)
+	}
 }

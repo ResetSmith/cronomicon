@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
@@ -161,9 +162,6 @@ func (s *Service) failRunningRuns(ctx context.Context, runnerID string) int {
 // C6a, processes.go), where the process that started may hold runs of its own.
 // A claim stamps started_at, so it is the claim's time.
 func (s *Service) failRunningRunsBefore(ctx context.Context, runnerID, before string) int {
-	ts := now()
-	nowT := reaperNow()
-
 	// Collect the runner's still-running runs (and started_at to compute duration).
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, job_name, COALESCE(scope,''), COALESCE(started_at,'')
@@ -187,7 +185,38 @@ func (s *Service) failRunningRunsBefore(ctx context.Context, runnerID, before st
 	}
 	_ = rows.Err()
 	rows.Close()
+	return s.closeLostRuns(ctx, runnerName, orphans)
+}
 
+// runningRunsOf reads a runner's running runs as closeLostRuns takes them
+// (id, job, scope, started_at), inside a caller's transaction. Drained.
+func runningRunsOf(ctx context.Context, tx *sql.Tx, runnerID string) ([][4]string, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, job_name, COALESCE(scope,''), COALESCE(started_at,'')
+		  FROM runs WHERE runner_id = ? AND status = 'running'`, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][4]string
+	for rows.Next() {
+		var tid, jn, sc, startedAt string
+		if err := rows.Scan(&tid, &jn, &sc, &startedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, [4]string{tid, jn, sc, startedAt})
+	}
+	return out, rows.Err()
+}
+
+// closeLostRuns ends each run (id, job, scope, started_at) that is still
+// running as runner_lost: status-guarded, with its run-end activity, the
+// RunFinished metric and the run-end notifications. The reaper's close, a
+// start's (started=1) and a deregistration's (2.5.0 C12) share it. Returns
+// how many it closed.
+func (s *Service) closeLostRuns(ctx context.Context, runnerName string, orphans [][4]string) int {
+	ts := now()
+	nowT := reaperNow()
 	closed := 0
 	for _, run := range orphans {
 		tid, jn, sc, startedAt := run[0], run[1], run[2], run[3]

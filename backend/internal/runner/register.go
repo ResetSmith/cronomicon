@@ -677,17 +677,6 @@ func revokeRunnerKeys(ctx context.Context, tx *sql.Tx, runnerID, ts string) erro
 func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request) {
 	runnerID := r.PathValue("id")
 
-	// Its running runs end first, as runner_lost (2.5.0 C12, present defect 92):
-	// the delete below sets their runner_id to NULL, and nothing closed them
-	// after that (the reaper walks runner rows; the agent, its key revoked, is
-	// refused). Before the transaction, while the row is there to name the
-	// runner: one writer at a time. A failure to read them stops the
-	// deregistration, as a failure to revoke the keys does.
-	if s.failRunningRuns(r.Context(), runnerID) < 0 {
-		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
-		return
-	}
-
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
@@ -716,14 +705,18 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
 		return
 	}
-	// A run claimed after failRunningRuns above and before the delete (a held
-	// poll answered in between) is ended here, in the delete's transaction: once
-	// its runner_id is NULL nothing finds it again (C12.4's re-review). It gets
-	// no run-end activity; failRunningRuns gave one to every run before it.
-	if _, err := tx.ExecContext(r.Context(), `
-		UPDATE runs SET status = 'failure', queued_reason = 'runner_lost', completed_at = ?
-		 WHERE runner_id = ? AND status = 'running'`, ts, runnerID); err != nil {
-		s.log.Error("end a deregistered runner's runs", "runner_id", runnerID, "error", err)
+	// Its running runs end as runner_lost (2.5.0 C12, present defect 92): the
+	// delete below sets their runner_id to NULL, and nothing closed them after
+	// that (the reaper walks runner rows; the agent, its key revoked, is
+	// refused). They are read HERE, after the keys' revocation took the write
+	// lock, so no claim lands between this read and the delete, and they are
+	// closed after the commit through the reaper's own path (closeLostRuns:
+	// activity, alerts, the metric): a deregistration that fails closes nothing
+	// (C12's code review; C12.1 closed them before the transaction, and C12.4
+	// ended the stragglers with a bare UPDATE that sent no alert).
+	lost, err := runningRunsOf(r.Context(), tx, runnerID)
+	if err != nil {
+		s.log.Error("read a deregistered runner's runs", "runner_id", runnerID, "error", err)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
 		return
 	}
@@ -767,6 +760,7 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db commit error")
 		return
 	}
+	s.closeLostRuns(r.Context(), name, lost)
 	// Its processes went with the row (C6a): nothing is left to share the
 	// identity, and nothing would ever poll to resolve the notice.
 	s.clearIdentityShared(r.Context(), runnerID)
