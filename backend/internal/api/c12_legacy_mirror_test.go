@@ -51,4 +51,20 @@ func TestC12_AScheduleEditRewritesOnlyItsOwnDefinitions(t *testing.T) {
 	if got := mirror("j-mt"); got != "0 5 * * *" {
 		t.Errorf("TAX's `backup` after FIN's edit: schedule %q, want its own, untouched", got)
 	}
+
+	// The sole holder of a name whose lowest entry records no uid (C12's code
+	// review): the scheduler fires that entry, so the mirror shows it, not the
+	// bound schedule's entry at position 1.
+	exec(`INSERT INTO jobs (uid, name, source, run_type, scope, owner_agency, command, enabled, schedule, created_at) VALUES
+	        ('j-ms', 'c12-solo-mirror', 'cronomicon', 'bash', 'fin-hosts', 'ag:FIN', 'true', 1, '0 1 * * *', '2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, position, source_ref, owner_uid, schedule_uid) VALUES
+	        ('cronomicon', 'job', 'c12-solo-mirror', 'legacy', '0 1 * * *', 0, NULL, NULL, NULL),
+	        ('cronomicon', 'job', 'c12-solo-mirror', 'c12-nightly', '0 4 * * *', 1, 'c12-nightly', 'j-ms', ?)`, schedUID)
+	if rec := gateReqWithHeader(t, h, http.MethodPut, "/api/v1/schedule-defs/c12-nightly", gFinAdmin,
+		`{"cron":"0 6 * * *"}`, agencyctx.Header, "ag:FIN"); rec.Code != http.StatusOK {
+		t.Fatalf("editing FIN's schedule again = %d %s", rec.Code, rec.Body)
+	}
+	if got := mirror("j-ms"); got != "0 1 * * *" {
+		t.Errorf("the sole holder's mirror after the edit: %q, want its position-0 entry's cron", got)
+	}
 }

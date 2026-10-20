@@ -841,11 +841,15 @@ func recomputeLegacyMirror(ctx context.Context, tx *sql.Tx, o scheduleOwner) err
 	if ownerKind == "workflow" {
 		table = "workflows"
 	}
+	// An entry that records no uid is this definition's only when it is the one
+	// definition of the name, as the scheduler fires it (C12's code review).
+	soleHolder := `(SELECT COUNT(*) FROM ` + table + ` h WHERE h.name = ? AND h.source = ?) = 1`
 	if o.uid != "" {
 		var cron sql.NullString
 		_ = tx.QueryRowContext(ctx,
-			`SELECT cron FROM definition_schedules WHERE owner_kind=? AND owner_uid=?
-			 ORDER BY position LIMIT 1`, ownerKind, o.uid).Scan(&cron)
+			`SELECT cron FROM definition_schedules WHERE owner_kind=?
+			   AND (owner_uid=? OR (owner_uid IS NULL AND owner_source=? AND owner_name=? AND `+soleHolder+`))
+			 ORDER BY position LIMIT 1`, ownerKind, o.uid, ownerSource, ownerName, ownerName, ownerSource).Scan(&cron)
 		var mirror any
 		if cron.Valid {
 			mirror = cron.String
@@ -864,7 +868,8 @@ func recomputeLegacyMirror(ctx context.Context, tx *sql.Tx, o scheduleOwner) err
 		mirror = cron.String
 	}
 	_, err := tx.ExecContext(ctx,
-		`UPDATE `+table+` SET schedule=? WHERE source=? AND name=?`, mirror, ownerSource, ownerName)
+		`UPDATE `+table+` SET schedule=? WHERE source=? AND name=? AND `+soleHolder,
+		mirror, ownerSource, ownerName, ownerName, ownerSource)
 	return err
 }
 
