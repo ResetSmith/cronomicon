@@ -251,7 +251,10 @@ Found by a second review, of what the first did not reach:
   cancel with a 403 naming the other agency's scope. The workflow list's
   agencies and History's link to a run's job were found by name the same way
   (also in 2.2.3, the link): a workflow showed another agency among its
-  agencies, and a run linked to another agency's job.
+  agencies, and a run linked to another agency's job. So were the job and
+  workflow lists' schedule count and next run: a job showed another agency's
+  namesake's schedules and next fire, and that agency pausing its namesake hid
+  this one's next run.
 - **A run's end that cannot be delivered ends anyway.** A run whose log
   reached its cap (`CRONOMICON_MAX_RUN_LOG_BYTES`) had its last upload refused
   with the rest, and stayed *running* for good (also in 2.2.3); it now ends

@@ -370,7 +370,8 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			lr.duration_ms AS last_run_duration_ms,
 			ls.created_at AS last_skipped_at,
 			ls.queued_reason AS last_skip_reason,
-			(SELECT COUNT(*) FROM definition_schedules ds WHERE ds.owner_source = j.source AND ds.owner_kind = 'job' AND ds.owner_name = j.name) AS schedule_count,
+			(SELECT COUNT(*) FROM definition_schedules ds WHERE ds.owner_kind = 'job'
+			    AND (ds.owner_uid = j.uid OR (ds.owner_uid IS NULL AND ds.owner_source = j.source AND ds.owner_name = j.name))) AS schedule_count,
 			-- RB-23: the job's agency, for display. Since 1400 a job has an owner
 			-- (agencyid.JobSQL: a Git job its repository's, one built in the app
 			-- its owner's); until then it was derived from its scope's name, which
@@ -559,67 +560,11 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	// kept. Computed through the full Spec (cron, interval, window) rather than
 	// bare cronutil.Next — the projection must not show a phantom fire outside an
 	// entry's window, nor nothing at all for an interval-mode entry.
-	nextRuns := map[[2]string]*string{}
-	if len(bases) > 0 {
-		names := make([]any, 0, len(bases))
-		seen := map[string]bool{}
-		for _, j := range bases {
-			if !seen[j.name] {
-				seen[j.name] = true
-				names = append(names, j.name)
-			}
-		}
-		ph := strings.Repeat(",?", len(names))[1:]
-		srows, err := s.db.QueryContext(r.Context(), `
-			SELECT owner_source, owner_name, cron, COALESCE(interval,''), COALESCE(start_at,''), COALESCE(end_at,'')
-			  FROM definition_schedules
-			 WHERE owner_kind = 'job' AND owner_name IN (`+ph+`)`, names...)
-		if err != nil {
-			// The projection degrades to "no next run" for the page rather than
-			// failing the list — but silently, it reads as "nothing scheduled",
-			// so the failure is at least on record.
-			s.log.Warn("jobs list: batch next-run query failed; page shows no projections", "err", err)
-		}
-		if err == nil {
-			type entrySpec struct{ cron, interval, startAt, endAt string }
-			specs := map[[2]string][]entrySpec{}
-			for srows.Next() {
-				var src, nm string
-				var e entrySpec
-				if srows.Scan(&src, &nm, &e.cron, &e.interval, &e.startAt, &e.endAt) == nil {
-					k := [2]string{src, nm}
-					specs[k] = append(specs[k], e)
-				}
-			}
-			srows.Close() // drain BEFORE any further queries (SQLite pool rule)
-			now := time.Now()
-			appLoc := s.appLocation()
-			pausedKeys := map[[2]string]bool{}
-			for _, j := range bases {
-				if j.status == "paused" {
-					pausedKeys[[2]string{j.source, j.name}] = true
-				}
-			}
-			for k, es := range specs {
-				if pausedKeys[k] {
-					continue // matches the detail path: a paused job projects no next run
-				}
-				entries := make([]scheduleEntryResp, 0, len(es))
-				for _, e := range es {
-					resp := scheduleEntryResp{}
-					win := cronutil.NewWindow(
-						windowBound(sql.NullString{String: e.startAt, Valid: e.startAt != ""}),
-						windowBound(sql.NullString{String: e.endAt, Valid: e.endAt != ""}))
-					spec := cronutil.Spec{Cron: e.cron, Interval: e.interval, Window: win}
-					if next, ok := cronutil.NextSpec(spec, now, appLoc); ok {
-						resp.NextRunAt = rfc3339Ptr(next)
-					}
-					entries = append(entries, resp)
-				}
-				nextRuns[k] = earliestNextRunAt(entries)
-			}
-		}
+	jobOwners := make([]nextRunOwner, 0, len(bases))
+	for _, j := range bases {
+		jobOwners = append(jobOwners, nextRunOwner{uid: j.uid.String, source: j.source, name: j.name, paused: j.status == "paused"})
 	}
+	nextRuns := s.batchNextRuns(r.Context(), "job", jobOwners)
 
 	items := []jobRow{}
 	for _, j := range bases {
@@ -680,7 +625,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			jr.LastDurationMs = &j.lastDurationMs.Int64
 		}
 		jr.ScheduleCount = j.scheduleCount
-		jr.NextRunAt = nextRuns[[2]string{j.source, j.name}]
+		jr.NextRunAt = nextRuns[nextRunOwner{uid: j.uid.String, source: j.source, name: j.name}.key()]
 
 		items = append(items, jr)
 	}
@@ -2782,71 +2727,11 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 	// reused so the comparison semantics are identical; a paused workflow gets no
 	// next-run (mirroring loadSchedules(paused=true)). Runs after the outer
 	// iterator is drained, so it does not nest inside an open result set.
-	nextRuns := map[[2]string]*string{}
-	if len(bases) > 0 {
-		names := make([]any, 0, len(bases))
-		seen := map[string]bool{}
-		paused := map[[2]string]bool{}
-		for _, wf := range bases {
-			if !seen[wf.name] {
-				seen[wf.name] = true
-				names = append(names, wf.name)
-			}
-			if wf.pausedCount > 0 {
-				paused[[2]string{wf.source, wf.name}] = true
-			}
-		}
-		// FX-F1 — the FULL spec, not the cron column alone. This query used to
-		// select `cron` only and project through bare cronutil.Next, which made
-		// this list the one surface in the app disagreeing with the engine: an
-		// interval- or once-mode entry showed NO next run at all (Next("") fails),
-		// and a windowed cron showed a PHANTOM fire before its window opened and
-		// after it expired. The workflow DETAIL projects through loadSchedules and
-		// was right, so list and detail disagreed about the same entry — the kind
-		// of disagreement an operator resolves by trusting whichever is wrong.
-		ph := strings.Repeat(",?", len(names))[1:]
-		srows, err := s.db.QueryContext(r.Context(), `
-			SELECT owner_source, owner_name, cron, COALESCE(interval,''), COALESCE(start_at,''), COALESCE(end_at,'')
-			FROM definition_schedules
-			WHERE owner_kind = 'workflow' AND owner_name IN (`+ph+`)
-			ORDER BY owner_source, owner_name, position, name`, names...)
-		if err != nil {
-			s.log.Warn("workflows list: batch next-run query failed; page shows no projections", "err", err)
-		}
-		if err == nil {
-			type entrySpec struct{ cron, interval, startAt, endAt string }
-			specs := map[[2]string][]entrySpec{}
-			for srows.Next() {
-				var src, nm string
-				var e entrySpec
-				if srows.Scan(&src, &nm, &e.cron, &e.interval, &e.startAt, &e.endAt) == nil {
-					k := [2]string{src, nm}
-					specs[k] = append(specs[k], e)
-				}
-			}
-			srows.Close()
-			now := time.Now()
-			appLoc := s.appLocation()
-			for k, es := range specs {
-				if paused[k] {
-					continue
-				}
-				entries := make([]scheduleEntryResp, 0, len(es))
-				for _, e := range es {
-					resp := scheduleEntryResp{}
-					win := cronutil.NewWindow(
-						windowBound(sql.NullString{String: e.startAt, Valid: e.startAt != ""}),
-						windowBound(sql.NullString{String: e.endAt, Valid: e.endAt != ""}))
-					spec := cronutil.Spec{Cron: e.cron, Interval: e.interval, Window: win}
-					if next, ok := cronutil.NextSpec(spec, now, appLoc); ok {
-						resp.NextRunAt = rfc3339Ptr(next)
-					}
-					entries = append(entries, resp)
-				}
-				nextRuns[k] = earliestNextRunAt(entries)
-			}
-		}
+	wfOwners := make([]nextRunOwner, 0, len(bases))
+	for _, wf := range bases {
+		wfOwners = append(wfOwners, nextRunOwner{uid: wf.uid.String, source: wf.source, name: wf.name, paused: wf.pausedCount > 0})
 	}
+	nextRuns := s.batchNextRuns(r.Context(), "workflow", wfOwners)
 
 	// RF-17 — the derived agency set per workflow, batched exactly like Next Run
 	// above (one query for the whole page, after the outer iterator is drained, so
@@ -2913,7 +2798,7 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 		if wf.lastSkipReason.Valid && wf.lastSkipReason.String != "" {
 			wr.LastSkipReason = &wf.lastSkipReason.String
 		}
-		wr.NextRunAt = nextRuns[[2]string{wf.source, wf.name}]
+		wr.NextRunAt = nextRuns[nextRunOwner{uid: wf.uid.String, source: wf.source, name: wf.name}.key()]
 		items = append(items, wr)
 	}
 	httpx.JSON(w, http.StatusOK, pageEnvelope(page, pageSize, total, items))
