@@ -787,11 +787,18 @@ func liveScheduleOwners(ctx context.Context, db *sql.DB, owners []scheduleOwner)
 		if o.kind == "workflow" {
 			table = "workflows"
 		}
+		// By the owner's uid (C12's code review): since defect 99 an owner is one
+		// definition, and by name another agency's live namesake kept a binned
+		// owner "live", so its schedule could not be deleted without force. An
+		// owner that records no uid is judged by its name, as before.
+		where, args := `uid=?`, []any{o.uid}
+		if o.uid == "" {
+			where, args = `source=? AND name=?`, []any{o.source, o.name}
+		}
 		var n int
 		//nolint:gosec // table is a package-local constant chosen by the kind switch
 		if err := db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM `+table+` WHERE source=? AND name=? AND deleted_at IS NULL`,
-			o.source, o.name).Scan(&n); err != nil {
+			`SELECT COUNT(*) FROM `+table+` WHERE `+where+` AND deleted_at IS NULL`, args...).Scan(&n); err != nil {
 			return nil, err
 		}
 		if n > 0 {

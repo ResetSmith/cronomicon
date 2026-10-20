@@ -68,3 +68,30 @@ func TestC12_AScheduleEditRewritesOnlyItsOwnDefinitions(t *testing.T) {
 		t.Errorf("the sole holder's mirror after the edit: %q, want its position-0 entry's cron", got)
 	}
 }
+
+// TestC12_AScheduleWhoseOnlyUserIsBinnedDeletes (C12's code review): a
+// schedule's delete is refused (409) while a LIVE definition uses it, and that
+// was judged by name. FIN's binned `backup`, its only user, counted as live
+// because TAX has a live `backup` of its own, so the delete needed force.
+func TestC12_AScheduleWhoseOnlyUserIsBinnedDeletes(t *testing.T) {
+	h, pool := gateServer(t)
+	seedSwitcher(t, pool)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO jobs (uid, name, source, run_type, scope, owner_agency, command, enabled, deleted_at, created_at) VALUES
+	        ('j-df', 'backup', 'cronomicon', 'bash', 'fin-hosts', 'ag:FIN', 'true', 1, '2026-02-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+	        ('j-dt', 'backup', 'cronomicon', 'bash', 'tax-hosts', 'ag:TAX', 'true', 1, NULL, '2026-01-01T00:00:00Z')`)
+	if c := gateReqWithHeader(t, h, http.MethodPost, "/api/v1/schedule-defs", gFinAdmin,
+		`{"name":"c12-del","cron":"0 3 * * *"}`, agencyctx.Header, "ag:FIN").Code; c != http.StatusCreated {
+		t.Fatalf("creating FIN's schedule = %d", c)
+	}
+	var schedUID string
+	if err := pool.QueryRow(`SELECT uid FROM schedules WHERE name = 'c12-del' AND owner_agency = 'ag:FIN'`).Scan(&schedUID); err != nil {
+		t.Fatal(err)
+	}
+	exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, position, source_ref, owner_uid, schedule_uid) VALUES
+	        ('cronomicon', 'job', 'backup', 'c12-del', '0 3 * * *', 0, 'c12-del', 'j-df', ?)`, schedUID)
+	rec := gateReqWithHeader(t, h, http.MethodDelete, "/api/v1/schedule-defs/c12-del", gFinAdmin, "", agencyctx.Header, "ag:FIN")
+	if rec.Code/100 != 2 {
+		t.Errorf("deleting a schedule whose only user is binned = %d %s, want it deleted", rec.Code, rec.Body)
+	}
+}
