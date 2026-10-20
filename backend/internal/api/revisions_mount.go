@@ -591,7 +591,7 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 		// to be recomputed for every owner that just got its binding back —
 		// exactly as the delete recomputed it on the way out.
 		for _, o := range owners {
-			if err := recomputeLegacyMirror(r.Context(), tx, o.source, o.kind, o.name); err != nil {
+			if err := recomputeLegacyMirror(r.Context(), tx, o); err != nil {
 				httpx.Fail500(w, s.log, "db_error", err)
 				return
 			}

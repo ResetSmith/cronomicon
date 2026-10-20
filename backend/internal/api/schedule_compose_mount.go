@@ -320,7 +320,7 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 		// Keep the legacy display mirror (jobs/workflows.schedule = lowest-position
 		// cron, §3.7) consistent for owners whose position-0 entry is this schedule.
 		for _, o := range owners {
-			if err := recomputeLegacyMirror(r.Context(), tx, o.source, o.kind, o.name); err != nil {
+			if err := recomputeLegacyMirror(r.Context(), tx, o); err != nil {
 				httpx.Fail500(w, s.log, "db_error", err)
 				return
 			}
@@ -443,7 +443,7 @@ func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 	// Resync the legacy display column for each detached owner to its next remaining
 	// schedule cron (or NULL), so the UI shows no stale anomaly (D3 Legacy Column Sync).
 	for _, o := range owners {
-		if err := recomputeLegacyMirror(r.Context(), tx, o.source, o.kind, o.name); err != nil {
+		if err := recomputeLegacyMirror(r.Context(), tx, o); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
@@ -577,7 +577,10 @@ func (s *Server) scheduleBinned(ctx context.Context, uid string) (bool, error) {
 	return deletedAt.Valid, err
 }
 
-type scheduleOwner struct{ source, kind, name string }
+// scheduleOwner is one definition bound to a schedule: its (source, kind, name)
+// and its uid, "" for an entry from before 1050 that records none. The uid is
+// what says WHICH definition once two agencies hold the name (2.5.0 C12, 99).
+type scheduleOwner struct{ source, kind, name, uid string }
 
 // diffOwners returns the owners in all that are absent from live — i.e. the
 // recycle-binned referrers a delete proceeded past (FX2-C2).
@@ -755,7 +758,7 @@ func restoreScheduleBindings(ctx context.Context, tx *sql.Tx, bindings []schedul
 			strOrNil(b.SkipCalendars), strOrNil(b.OnlyCalendars), ownerUID, scheduleUID); err != nil {
 			return nil, err
 		}
-		o := scheduleOwner{source: b.OwnerSource, kind: b.OwnerKind, name: b.OwnerName}
+		o := scheduleOwner{source: b.OwnerSource, kind: b.OwnerKind, name: b.OwnerName, uid: ownerUID}
 		if !seen[o] {
 			seen[o] = true
 			owners = append(owners, o)
@@ -805,7 +808,7 @@ func liveScheduleOwners(ctx context.Context, db *sql.DB, owners []scheduleOwner)
 // want different sets.
 func collectScheduleOwners(ctx context.Context, db *sql.DB, scheduleUID string) ([]scheduleOwner, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT DISTINCT owner_source, owner_kind, owner_name FROM definition_schedules
+		`SELECT DISTINCT owner_source, owner_kind, owner_name, COALESCE(owner_uid, '') FROM definition_schedules
 		 WHERE schedule_uid=? ORDER BY owner_kind, owner_name`, scheduleUID)
 	if err != nil {
 		return nil, err
@@ -814,7 +817,7 @@ func collectScheduleOwners(ctx context.Context, db *sql.DB, scheduleUID string) 
 	var out []scheduleOwner
 	for rows.Next() {
 		var o scheduleOwner
-		if err := rows.Scan(&o.source, &o.kind, &o.name); err != nil {
+		if err := rows.Scan(&o.source, &o.kind, &o.name, &o.uid); err != nil {
 			return nil, err
 		}
 		out = append(out, o)
@@ -826,16 +829,36 @@ func collectScheduleOwners(ctx context.Context, db *sql.DB, scheduleUID string) 
 // its lowest-position remaining schedule entry's cron (NULL when none remain), so the
 // denormalized mirror (§3.7) stays consistent after a propagate/cascade. ownerKind is
 // CHECK-constrained to job|workflow, so the table name is safe to branch on.
-func recomputeLegacyMirror(ctx context.Context, tx *sql.Tx, ownerSource, ownerKind, ownerName string) error {
+//
+// The definition is found by its uid: until 2.5.0 C12 both the read and the
+// write went by (source, name), so an edit of FIN's `nightly` rewrote the
+// column on TAX's `backup` too, from whichever agency's entry came first
+// (present defect 99, question 119). An owner that records no uid (an entry
+// from before 1050) is still found by its name.
+func recomputeLegacyMirror(ctx context.Context, tx *sql.Tx, o scheduleOwner) error {
+	ownerSource, ownerKind, ownerName := o.source, o.kind, o.name
+	table := "jobs"
+	if ownerKind == "workflow" {
+		table = "workflows"
+	}
+	if o.uid != "" {
+		var cron sql.NullString
+		_ = tx.QueryRowContext(ctx,
+			`SELECT cron FROM definition_schedules WHERE owner_kind=? AND owner_uid=?
+			 ORDER BY position LIMIT 1`, ownerKind, o.uid).Scan(&cron)
+		var mirror any
+		if cron.Valid {
+			mirror = cron.String
+		}
+		//nolint:gosec // table is a package-local constant chosen by the kind switch
+		_, err := tx.ExecContext(ctx, `UPDATE `+table+` SET schedule=? WHERE uid=?`, mirror, o.uid)
+		return err
+	}
 	var cron sql.NullString
 	_ = tx.QueryRowContext(ctx,
 		`SELECT cron FROM definition_schedules
 		 WHERE owner_source=? AND owner_kind=? AND owner_name=?
 		 ORDER BY position LIMIT 1`, ownerSource, ownerKind, ownerName).Scan(&cron)
-	table := "jobs"
-	if ownerKind == "workflow" {
-		table = "workflows"
-	}
 	var mirror any
 	if cron.Valid {
 		mirror = cron.String

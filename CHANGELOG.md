@@ -254,7 +254,9 @@ Found by a second review, of what the first did not reach:
   agencies, and a run linked to another agency's job. So were the job and
   workflow lists' schedule count and next run: a job showed another agency's
   namesake's schedules and next fire, and that agency pausing its namesake hid
-  this one's next run.
+  this one's next run. And an edit, delete or restore of a reusable schedule
+  rewrote the schedule shown on another agency's job or workflow of the same
+  name as one bound to it.
 - **A run's end that cannot be delivered ends anyway.** A run whose log
   reached its cap (`CRONOMICON_MAX_RUN_LOG_BYTES`) had its last upload refused
   with the rest, and stayed *running* for good (also in 2.2.3); it now ends
