@@ -5,7 +5,7 @@
 #
 #   ghcr.io/resetsmith/cronomicon             the server (backend/Dockerfile)
 #   ghcr.io/resetsmith/cronomicon-runner      slim runner (backend/Dockerfile.runner)
-#   ghcr.io/resetsmith/cronomicon-runner-fat  runner + ansible/terraform (backend/Dockerfile.runner.fat)
+#   ghcr.io/resetsmith/cronomicon-runner-fat  runner + ansible and git (backend/Dockerfile.runner.fat)
 #   ghcr.io/resetsmith/cronomicon-validate    `cronomicon validate` for CI (backend/Dockerfile, target validate; 2.5.0)
 #
 # Each is tagged X.Y.Z, X.Y and latest. This is a publish step, not a gate:
@@ -92,7 +92,7 @@ jobs:
             description: Cronomicon runner agent (slim, SSH-onward, no local toolchains)
           - image: cronomicon-runner-fat
             dockerfile: backend/Dockerfile.runner.fat
-            description: Cronomicon runner agent with ansible, terraform and git
+            description: Cronomicon runner agent with ansible and git
           - image: cronomicon-validate
             dockerfile: backend/Dockerfile
             target: validate

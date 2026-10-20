@@ -57,7 +57,9 @@ agents with the server.
    for each other agency it served, or hand it over (Runners), before you
    upgrade, or that agency's runs wait. **An agent in a container** takes the
    new image tag, and `--stop-timeout 300` (Compose: `stop_grace_period: 5m`)
-   so that a stop drains it (2.3.2). From now on, stop or restart an agent
+   so that a stop drains it (2.3.2). The `cronomicon-runner-fat` image no
+   longer has Terraform (Removed, below): an agent that runs Terraform jobs
+   needs an image you build with it, or a host that has it. From now on, stop or restart an agent
    while the server is up: an agent of 2.5.0 keeps sending the end of a run
    until the server takes it, so a stop while the server is down waits for
    each such run, up to the unit's stop timeout (five minutes as installed);
@@ -192,6 +194,12 @@ gain an `agency` column (last), after 2.4.4's `actingAgency`.
 - The run request's `executor` field, ignored since 2.3.0; a body that still
   sends it is accepted and the key is not read.
 - The 2.3.0 local-runner upgrade pass (see Upgrading, step 1).
+- **Terraform from the `cronomicon-runner-fat` image.** The project no longer
+  describes or supports Terraform, and its binary brought findings of its own
+  into every release's scan. The `terraform` run type is unchanged: an agent
+  claims it when its host has the binary, or in an image you build `FROM` the
+  fat one with it added. A Terraform job given to a fat-image agent of 2.5.0
+  waits for such an agent.
 
 ### Fixed
 

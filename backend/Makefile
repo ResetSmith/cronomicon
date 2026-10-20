@@ -128,7 +128,7 @@ verify: tidy vet installer-check test build
 #   make images IMAGES=runner        # server | runner | runner-fat | validate, space-separated
 #   make images DOCKER="sudo docker"
 #
-# The fat image is the long one (it installs ansible and terraform).
+# The fat image is the long one (it installs ansible).
 DOCKER    ?= docker
 IMAGE_TAG ?= $(VERSION)-local
 IMAGES    ?= server runner runner-fat validate

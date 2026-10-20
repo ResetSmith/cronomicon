@@ -314,7 +314,8 @@ function cpusOf(percent: string): string {
 }
 
 // The published runner images (.github/workflows/publish-images.yml): the slim
-// agent, and a separate -fat package that adds the ansible/terraform toolchains.
+// agent, and a separate -fat package that adds the ansible toolchain (and git).
+// No published image carries terraform since 2.5.0 (C13).
 export const RUNNER_IMAGE = "ghcr.io/resetsmith/cronomicon-runner";
 
 // runnerImage pins the image to the server's release when /version reports one:
@@ -328,7 +329,8 @@ export function runnerImage(fat: boolean, serverVersion?: string): string {
 
 // provisionDockerRun emits the container variant (runner-install.html §10):
 // identity + keys persist on a named volume; slim vs fat is derived from the
-// selected capabilities (ansible/terraform need the fat image's toolchains).
+// selected capabilities (ansible needs the fat image's toolchain; terraform is
+// in no published image, so the command says to build one FROM the fat image).
 export function provisionDockerRun(o: ProvisionOptions, serverVersion?: string): string {
   if (limitsInvalid(o.limits)) return INVALID_LIMITS_COMMAND;
   const limitFlags = containerLimitFlags(o.limits);
@@ -339,7 +341,7 @@ export function provisionDockerRun(o: ProvisionOptions, serverVersion?: string):
     `CRONOMICON_RUNNER_REGISTRATION_TOKEN=${o.token}`,
     `CRONOMICON_RUNNER_NAME=${name}`,
     // Detect mode omits the var: the agent probes the image's toolchains at
-    // startup (slim ⇒ the SSH-onward run-types; fat adds ansible/terraform).
+    // startup (slim ⇒ the SSH-onward run-types; fat adds ansible).
     ...(o.capabilities.length > 0 ? [`CRONOMICON_RUNNER_CAPABILITIES=${o.capabilities.join(",")}`] : []),
     `CRONOMICON_RUNNER_INVENTORY=${o.inventory}`,
   ];
@@ -368,7 +370,13 @@ export function provisionDockerRun(o: ProvisionOptions, serverVersion?: string):
     ...(o.capabilities.length === 0
       ? [
           `# Capabilities auto-detect at startup: every image claims the shell types`,
-          `# (they run on the targets); only the -fat image has ansible/terraform.`,
+          `# (they run on the targets); only the -fat image has ansible.`,
+        ]
+      : []),
+    ...(o.capabilities.includes("terraform")
+      ? [
+          `# terraform: no published image has it (2.5.0). Build an image FROM the -fat`,
+          `# one that adds the terraform binary, or run this agent on a host that has it.`,
         ]
       : []),
     ...(limitFlags.length > 0

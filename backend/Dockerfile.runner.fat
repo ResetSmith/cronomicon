@@ -1,20 +1,26 @@
 # Fat runner image (R4.1 — the confirmed T-a driver): the SAME cronomicon-runner
-# agent PLUS the local toolchains it shells out to — ansible (+ Python), git and
-# terraform. Published as ghcr.io/resetsmith/cronomicon-runner-fat.
+# agent PLUS the local toolchains it shells out to — ansible (+ Python) and git.
+# Published as ghcr.io/resetsmith/cronomicon-runner-fat.
 #
-# ansible/terraform run ON the executor, not on the remote host, so a runner
-# that claims `ansible`/`terraform` runs must carry the toolchain locally.
+# ansible runs ON the executor, not on the remote host, so a runner that claims
+# `ansible` runs must carry the toolchain locally.
+#
+# Terraform is not in this image since 2.5.0 (C13): the project does not
+# describe or support it (2026-10-19), and its binary carried findings of its
+# own into every release's scan. The run type is unchanged: an agent claims
+# `terraform` when its host has the binary (runner-install.sh's detection), or
+# an image built FROM this one that adds it.
 #
 # WHY THIS IS SEPARATE from the app image and from the slim runner:
 #   • The app image (backend/Dockerfile) is distroless and DELIBERATELY ships no
-#     ansible/terraform — keeping the control plane minimal and toolchain-free is
+#     ansible — keeping the control plane minimal and toolchain-free is
 #     a conscious posture. Putting the toolchains in the app would bloat it and
 #     broaden its attack surface for a capability only out-of-process workers need.
 #   • The slim runner (Dockerfile.runner) covers SSH-onward shells and is a tiny
-#     static/distroless image. ansible+Python+terraform add hundreds of MB and a
+#     static/distroless image. ansible+Python add hundreds of MB and a
 #     full userland; forcing every runner to carry them would defeat the point.
 #   • So the toolchain lives ONLY here, on runners that declare
-#     capabilities:["ansible","terraform"]. Capability routing (claimRun filters
+#     capabilities:["ansible"]. Capability routing (claimRun filters
 #     run_type IN caps, R4.2) guarantees only this image claims those runs.
 #
 # git is here for opt-in project checkouts (-allow-checkout, runner-install.html
@@ -43,43 +49,32 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -o /out/cronomicon-runner ./cmd/cronomicon-runner
 
 # ── Stage 2: a real userland — the toolchains need Python, an OpenSSH client
-# (ansible dials targets over ssh), git and the terraform binary. trixie, not
+# (ansible dials targets over ssh) and git. trixie, not
 # bookworm: the ansible 14 line requires Python >= 3.12 and bookworm ships 3.11.
 # Versions are pinned so the image is reproducible; bump them deliberately.
 FROM debian:trixie-slim
 
 ARG ANSIBLE_VERSION=14.4.0
-ARG TERRAFORM_VERSION=1.16.4
-# Set by BuildKit from --platform; the published image is linux/amd64 only.
-ARG TARGETARCH=amd64
 
 # ca-certificates: agent HTTPS to the server. openssh-client: ansible/onward SSH.
-# git: project checkouts. python3 + pip: ansible. curl/unzip: fetch terraform.
+# git: project checkouts. python3 + pip: ansible. `apt-get upgrade` applies the
+# security fixes Debian has published since the base image was cut (C13: a build
+# picks up, e.g., an openssh fix without waiting for a new trixie-slim).
 RUN set -eux; \
     apt-get update; \
+    apt-get upgrade -y; \
     apt-get install -y --no-install-recommends \
-        ca-certificates openssh-client git python3 python3-pip \
-        curl unzip; \
+        ca-certificates openssh-client git python3 python3-pip; \
     # ansible via pip into the system interpreter (the image is single-purpose).
     # The `ansible` meta-package pulls in the matching ansible-core + collections.
     pip3 install --no-cache-dir --break-system-packages "ansible==${ANSIBLE_VERSION}"; \
-    # terraform — fetch the pinned release for the build arch, verify it against
-    # HashiCorp's published SHA256SUMS, and install it.
-    cd /tmp; \
-    TF_ZIP="terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip"; \
-    curl -fsSLO "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/${TF_ZIP}"; \
-    curl -fsSLO "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_SHA256SUMS"; \
-    grep " ${TF_ZIP}\$" "terraform_${TERRAFORM_VERSION}_SHA256SUMS" | sha256sum -c -; \
-    unzip -d /usr/local/bin "${TF_ZIP}" terraform; \
-    rm -f /tmp/terraform_*; \
-    # drop the fetch tools we no longer need; keep openssh-client, git + python.
-    apt-get purge -y --auto-remove curl unzip; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
-    # sanity: the toolchains the agent shells out to must be on PATH.
+    # sanity: the toolchains the agent shells out to must be on PATH, and
+    # terraform must not be (C13).
     ansible-playbook --version; \
-    terraform version; \
-    git --version
+    git --version; \
+    if command -v terraform; then echo "terraform must not be in this image (C13)" >&2; exit 1; fi
 
 # Non-root service account (the agent never needs root).
 RUN useradd --system --create-home --uid 10001 --shell /usr/sbin/nologin cronomicon

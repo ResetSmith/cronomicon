@@ -3321,8 +3321,8 @@ function ProvisionPanel({
               to narrow the claim set (e.g. this agent must not run python jobs). Solid buttons
               (bash, perl, powershell, python) execute <strong>over SSH on the target hosts</strong>; the runner
               needs no local toolchain (slim container image). Dashed buttons (ansible, terraform) run{" "}
-              <strong>local toolchains on the runner itself</strong> — use the fat image, or a host with the
-              tooling installed.
+              <strong>local toolchains on the runner itself</strong> — use the fat image for ansible, or a host
+              with the tooling installed (no published image includes terraform).
             </div>
           </div>
 
