@@ -95,8 +95,16 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	// live kill-switch (L2): a run dispatched while ON stays fail-closed even after
 	// the switch is flipped OFF and the process restarts.
 	var injectedSecretAtDispatch bool
-	_ = s.db.QueryRowContext(r.Context(),
-		`SELECT injects_secret FROM runs WHERE id = ?`, traceID).Scan(&injectedSecretAtDispatch)
+	if err := s.db.QueryRowContext(r.Context(),
+		`SELECT injects_secret FROM runs WHERE id = ?`, traceID).Scan(&injectedSecretAtDispatch); err != nil {
+		// A read that failed is not "no secret" (2.5.0 C12, question 120): the
+		// flag read false, the chunk took the lenient path, and a Vault-sourced
+		// value the run echoed could be stored unmasked. Refused; the agent sends
+		// the chunk again.
+		s.log.Error("ingest: read the run's injection flag", "trace_id", traceID, "error", err)
+		httpx.Fail(w, http.StatusServiceUnavailable, "unavailable", "the run could not be read; send it again")
+		return
+	}
 
 	// Build redactor for this run's scope (T7/S7): stored-secret values plus
 	// multi-line env_var key material. Variable values and per-run prompt answers
@@ -179,8 +187,14 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	// code compared against redacted bytes on disk — causing spurious 409s after any
 	// redaction event. Using log_raw_offset keeps both sides in the same unit.
 	var rawOffset int64
-	_ = s.db.QueryRowContext(r.Context(),
-		`SELECT COALESCE(log_raw_offset, 0) FROM runs WHERE id = ?`, traceID).Scan(&rawOffset)
+	if err := s.db.QueryRowContext(r.Context(),
+		`SELECT COALESCE(log_raw_offset, 0) FROM runs WHERE id = ?`, traceID).Scan(&rawOffset); err != nil {
+		// A failed read read as offset 0, which opens the log with O_TRUNC (2.5.0
+		// C12, question 120). Refused; the agent sends the chunk again.
+		s.log.Error("ingest: read the run's log offset", "trace_id", traceID, "error", err)
+		httpx.Fail(w, http.StatusServiceUnavailable, "unavailable", "the run could not be read; send it again")
+		return
+	}
 
 	// SU-9: cap the cumulative per-run log size. This endpoint is intentionally
 	// exempt from the global 2 MiB body cap (a run streams many chunks), which

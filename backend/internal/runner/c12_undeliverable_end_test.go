@@ -114,6 +114,25 @@ func TestC12_AFailedReadOfTheRunIsNotA404(t *testing.T) {
 	}
 }
 
+// Question 120: the ingest route ignored the errors of two reads. A failed
+// read of runs.injects_secret read false, so a secret-bearing run's chunk took
+// the lenient redaction path; a failed read of log_raw_offset read 0, which
+// opens the log with O_TRUNC. Each failure refuses with 503 now (the agent
+// sends the chunk again). The column is renamed from under the one read.
+func TestC12_AFailedReadOnTheIngestPathRefuses(t *testing.T) {
+	for _, column := range []string{"injects_secret", "log_raw_offset"} {
+		t.Run(column, func(t *testing.T) {
+			svc, post := logCapFixture(t, "run-noread-"+strings.ReplaceAll(column, "_", "-"))
+			if _, err := svc.db.Exec(`ALTER TABLE runs RENAME COLUMN ` + column + ` TO ` + column + `_gone`); err != nil {
+				t.Fatal(err)
+			}
+			if c := post("a line\n", true); c != http.StatusServiceUnavailable {
+				t.Errorf("a chunk whose run's %s cannot be read = %d, want 503", column, c)
+			}
+		})
+	}
+}
+
 // Deregistering a runner ends its running runs as runner_lost: the delete sets
 // their runner_id to NULL, and nothing found them after that.
 func TestC12_DeregisteringARunnerEndsItsRunningRuns(t *testing.T) {

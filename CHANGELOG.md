@@ -265,6 +265,12 @@ Found by a second review, of what the first did not reach:
   2.2.3). The agent no longer re-sends, every minute for as long as it lives,
   an upload the server has refused for good (Cronomicon's own 401, 404 or 413);
   a proxy's answer while the server restarts is still sent again.
+- **A log upload the server cannot check is refused, not taken.** When the
+  server could not read whether a run had been given a secret, it took the
+  chunk as one that had not, and could store a Vault-sourced value it printed
+  unmasked; when it could not read the run's log offset, it started the log
+  again from nothing (also in 2.2.3). Both answer 503 now, and the agent sends
+  the chunk again.
 - **An agency's push target names no generic webhook.** An agency's
   administrator could aim a push target at Apprise's `json`, `xml` or `form`
   webhooks, or its `apprise` relay, which the gateway sends to any address it
