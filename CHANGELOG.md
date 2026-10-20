@@ -109,6 +109,15 @@ gain an `agency` column (last), after 2.4.4's `actingAgency`.
 
 ### Added
 
+- **Verifiable releases.** Every published image carries a build-provenance
+  attestation (SLSA, Sigstore-signed through GitHub's attestations) and a signed
+  SPDX SBOM, made by the release workflow from the tag's commit, and the docs zip
+  is attested too: `gh attestation verify
+  oci://ghcr.io/resetsmith/cronomicon:2.5.0 --repo ResetSmith/cronomicon`. The
+  GitHub Release carries each image's SBOM and Trivy report and the source's
+  `govulncheck` and `npm audit` reports, with a count by severity in its notes
+  (reports, not a gate). A test run of the workflow (`test` ticked) publishes to
+  `ghcr.io/resetsmith/test/*`, verifies every attestation, and makes no Release.
 - **The installation freeze in the app**: an *Installation freeze* switch at the
   top of Settings → General (a reason is required; a global administrator's),
   and a banner above every page while it is on, with the reason, who set it and
