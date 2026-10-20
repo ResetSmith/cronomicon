@@ -3834,7 +3834,7 @@ export interface paths {
         put?: never;
         /**
          * Create a push target
-         * @description AL-3: `configureApp` on the agency the target is created in, chosen as for an alert rule. 422 `url_required` without a URL.
+         * @description AL-3: `configureApp` on the agency the target is created in, chosen as for an alert rule. 422 `url_required` without a URL. 422 `target_scheme_not_allowed` for an agency's target that names one of Apprise's generic webhooks (`json`, `jsons`, `xml`, `xmls`, `form`, `forms`, anywhere in the URL), unless the caller is a global administrator (2.5.0 C12, question 112): they reach any address the Apprise gateway can. Global's targets are not limited.
          */
         post: operations["createAlertTarget"];
         delete?: never;
@@ -3853,7 +3853,7 @@ export interface paths {
         get?: never;
         /**
          * Update a push target
-         * @description AL-3: `configureApp` on the target's agency; 404 to a caller who does not read it. The target keeps its agency and the rules that name it.
+         * @description AL-3: `configureApp` on the target's agency; 404 to a caller who does not read it. The target keeps its agency and the rules that name it. A changed `url` is judged as on create (422 `target_scheme_not_allowed`); an unchanged one is kept, so an agency's administrator may relabel or switch off a webhook a global administrator added.
          */
         put: operations["updateAlertTarget"];
         post?: never;
