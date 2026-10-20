@@ -71,6 +71,7 @@ func (s *Server) validateWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid request body")
 		return
 	}
+	r = withComposeAgency(r, creationComposeAgency(r, in.OwnerAgency)) // 2.5.0 C11 (compose_home.go)
 	errs := []workflow.ValidationError{}
 	if name := strings.TrimSpace(in.Name); name != "" && !composeNameRe.MatchString(name) {
 		errs = append(errs, workflow.ValidationError{Field: "name", Message: "invalid workflow name (want " + composeNameRe.String() + ")"})
@@ -109,6 +110,7 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid workflow name (want "+composeNameRe.String()+")")
 		return
 	}
+	r = withComposeAgency(r, creationComposeAgency(r, in.OwnerAgency)) // 2.5.0 C11 (compose_home.go)
 	// RH: a binned workflow still holds its name — see createJob.
 	// R2-5 — per-agency uniqueness, derived from the graph's jobs (a workflow
 	// has no scope of its own). Same generic-refusal rule as jobs.
@@ -139,6 +141,7 @@ func (s *Server) updateWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
 		return
 	}
+	r = withComposeAgency(r, existing.OwnerAgency) // at home in its agency (2.5.0 C11, compose_home.go)
 	if existing.Source != "cronomicon" {
 		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source workflows are editable in-app")
 		return
@@ -199,6 +202,7 @@ func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
 		return
 	}
+	r = withComposeAgency(r, existing.OwnerAgency) // at home in its agency (2.5.0 C11, compose_home.go)
 	if existing.Source != "cronomicon" {
 		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source workflows are deletable in-app")
 		return
@@ -624,9 +628,7 @@ func (s *Server) validateComposedWorkflowSteps(ctx context.Context, selfName str
 			}
 			continue
 		}
-		var n int
-		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE name=? AND deleted_at IS NULL`, ref.Name).Scan(&n)
-		if n == 0 {
+		if _, _, found := s.stepJobRow(ctx, ref); !found {
 			errs = append(errs, workflow.ValidationError{Step: ref.Name, Message: "step references unknown job: " + ref.Name})
 		}
 	}
@@ -831,24 +833,10 @@ func copySeen(m map[string]bool) map[string]bool {
 // whichever source sorted first rather than the one that will actually run.
 func (s *Server) stepJobScope(r *http.Request, ref workflow.StepRef) (sql.NullString, bool) {
 	// R2F-2 — a pinned step resolves by identity alone, exactly as the engine's
-	// resolveJobDef does. Falling back to the name here would authorize against a
-	// sibling department's job and then run the pinned one.
-	if ref.UID != "" {
-		var scope sql.NullString
-		err := s.db.QueryRowContext(r.Context(),
-			`SELECT scope FROM jobs WHERE uid = ? AND deleted_at IS NULL`, ref.UID).Scan(&scope)
-		return scope, err == nil
-	}
-	for _, src := range workflow.StepSourceOrder(ref.Source, "cronomicon") {
-		var scope sql.NullString
-		err := s.db.QueryRowContext(r.Context(),
-			`SELECT scope FROM jobs WHERE name = ? AND source = ? AND deleted_at IS NULL`,
-			ref.Name, src).Scan(&scope)
-		if err == nil {
-			return scope, true
-		}
-	}
-	return sql.NullString{}, false
+	// resolveJobDef does; a name-only one in the workflow's agency, as the
+	// engine looks it up (stepJobRow; 2.5.0 C11).
+	scope, _, ok := s.stepJobRow(r.Context(), ref)
+	return scope, ok
 }
 
 // workflowOwner works out whose a workflow built in the app is, from the jobs
@@ -964,13 +952,13 @@ func (s *Server) requireJoblessWorkflowOwner(w http.ResponseWriter, r *http.Requ
 // save that would change a workflow's agency asks of the graph it replaces
 // (empty: the workflow had no jobs, and its agency was only the default).
 func (s *Server) workflowJobAgencies(r *http.Request, steps []workflow.Step) (map[string]bool, error) {
-	nested, err := workflow.New(s.db, s.log).SubWorkflowJobAgencies(r.Context(), steps, "cronomicon")
+	nested, err := workflow.New(s.db, s.log).SubWorkflowJobAgencyScopesAt(r.Context(), steps, "cronomicon", "")
 	if err != nil {
 		return nil, err
 	}
 	agencies := map[string]bool{}
 	for _, a := range nested {
-		agencies[a] = true
+		agencies[a.Agency] = true
 	}
 	for _, ref := range workflow.CollectStepRefs(steps) {
 		if ref.Name == "" {
@@ -1218,24 +1206,6 @@ func (s *Server) refuseNewSpan(w http.ResponseWriter, r *http.Request, tx *sql.T
 
 // stepJobAgency is stepJobScope for the step job's agency (agencyid.JobSQL).
 func (s *Server) stepJobAgency(r *http.Request, ref workflow.StepRef) (string, bool) {
-	read := func(where string, args ...any) (string, bool) {
-		var a sql.NullString
-		err := s.db.QueryRowContext(r.Context(), `SELECT `+agencyid.JobSQL("j")+` FROM jobs j WHERE `+where+` AND j.deleted_at IS NULL`, args...).Scan(&a)
-		if err != nil {
-			return "", false
-		}
-		if !a.Valid {
-			return agencyid.Global, true
-		}
-		return a.String, true
-	}
-	if ref.UID != "" {
-		return read(`j.uid = ?`, ref.UID)
-	}
-	for _, src := range workflow.StepSourceOrder(ref.Source, "cronomicon") {
-		if a, ok := read(`j.name = ? AND j.source = ?`, ref.Name, src); ok {
-			return a, true
-		}
-	}
-	return "", false
+	_, agency, ok := s.stepJobRow(r.Context(), ref)
+	return agency, ok
 }

@@ -1460,22 +1460,6 @@ func (e *Engine) JobAgencyScopesAt(ctx context.Context, steps []Step, wfSource, 
 	return out, nil
 }
 
-// SubWorkflowJobAgencies is SubWorkflowJobScopes for the jobs' AGENCIES
-// (agencyid.JobSQL: an in-app job's owner since 1400): whose the jobs the
-// graph reaches through its sub-workflows are. A scope's name says nothing of
-// whose it is once names are per agency (I2).
-func (e *Engine) SubWorkflowJobAgencies(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
-	seen := map[string]bool{}
-	var out []string
-	err := e.walkSubWorkflowJobs(ctx, steps, wfSource, "", func(jd jobDef) {
-		if !seen[jd.agency] {
-			seen[jd.agency] = true
-			out = append(out, jd.agency)
-		}
-	})
-	return out, err
-}
-
 // SubWorkflowJobAgencyScopesAt is SubWorkflowJobScopesAt with each scope's
 // agency (the job's owner, agencyid.JobSQL), for a caller that asks a grant of
 // it (I2).

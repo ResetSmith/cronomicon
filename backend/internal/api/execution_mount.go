@@ -2643,14 +2643,18 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 		-- applied: a suppressed fire impersonated the last run. Fixed on both sides
 		-- together -- a guard on one twin and not the other is how the last three
 		-- of these survived review.
+		-- THIS workflow's runs (2.5.0 C11, defect 76, found by C11's re-review):
+		-- by its uid, and by source and name only for a run that records none, as
+		-- workflowLastRun. By name the list showed another agency's run of a
+		-- workflow of the same name.
 		LEFT JOIN workflow_runs lr ON lr.rowid = (
 			SELECT r.rowid FROM workflow_runs r
-			WHERE r.workflow_source = w.source AND r.workflow_name = w.name
+			WHERE (r.workflow_uid = w.uid OR (r.workflow_uid IS NULL AND r.workflow_source = w.source AND r.workflow_name = w.name))
 			  AND r.status <> 'skipped'
 			ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1)
 		LEFT JOIN workflow_runs ls ON ls.rowid = (
 			SELECT r.rowid FROM workflow_runs r
-			WHERE r.workflow_source = w.source AND r.workflow_name = w.name
+			WHERE (r.workflow_uid = w.uid OR (r.workflow_uid IS NULL AND r.workflow_source = w.source AND r.workflow_name = w.name))
 			  AND r.status = 'skipped'
 			ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1)
 		WHERE w.deleted_at IS NULL`
