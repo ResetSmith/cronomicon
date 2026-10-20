@@ -55,3 +55,23 @@ func TestC12_AWorkflowRunIsJudgedByItsOwnStepsJobs(t *testing.T) {
 		t.Errorf("cancel TAX's run by FIN's operator: %d, want 404", got.Code)
 	}
 }
+
+// TestC12_AStepCheckThatCannotReadRefuses (C12's code review): a failed read of
+// a step's job was skipped, so the scope it would have named went unchecked and
+// the run's detail and cancel passed. A failed read refuses.
+func TestC12_AStepCheckThatCannotReadRefuses(t *testing.T) {
+	h, pool := gateServer(t)
+	seedSwitcher(t, pool)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO workflow_runs (id, workflow_name, workflow_source, workflow_uid, status, triggered_by, trigger_kind, created_at, agency_id, steps_snapshot)
+	      VALUES ('wr-c12-noread', 'finflow', 'cronomicon', 'w-none', 'running', 'x', 'manual', '2026-03-07T07:07:07Z', 'ag:FIN',
+	              '[{"type":"job","name":"secret-step","jobUid":"j-secret"}]')`)
+	// The step's job cannot be read: its table is gone from under the query.
+	exec(`ALTER TABLE jobs RENAME TO jobs_unreadable`)
+	if got := gateReq(t, h, http.MethodGet, "/api/v1/workflow-runs/wr-c12-noread", gFinOperator, ""); got.Code == http.StatusOK {
+		t.Errorf("GET a run whose step's job cannot be read: 200, want a refusal")
+	}
+	if got := gateReq(t, h, http.MethodPost, "/api/v1/workflows/runs/wr-c12-noread/cancel", gFinOperator, `{}`); got.Code/100 == 2 {
+		t.Errorf("cancel a run whose step's job cannot be read: %d, want a refusal", got.Code)
+	}
+}
