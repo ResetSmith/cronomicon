@@ -5,6 +5,7 @@ import {
   AGENT_UNIT_PATTERNS,
   KILLMODE_DROPIN,
   RESTART_WATCH_SECONDS,
+  STATEDIR_DROPIN,
   SYSCALL_DROPIN,
   upgradeCommand,
 } from "./runner-upgrade-cmd";
@@ -103,6 +104,20 @@ describe("upgradeCommand", () => {
     );
     expect(cmd.indexOf("KillMode=mixed")).toBeLessThan(cmd.indexOf("systemctl daemon-reload"));
     expect(cmd.indexOf("systemctl daemon-reload")).toBeLessThan(cmd.indexOf("systemctl restart $UNITS || true"));
+  });
+
+  // 2.5.0 C12, defect 96: a unit written before 2.3.0 keeps its state directory
+  // with no mode, and systemd resets it to 0755 at every start. The installer has
+  // written StateDirectoryMode=0750 since 2.3.0; the upgrade carries it to the
+  // units that keep a state directory and name no mode, and to no others.
+  it("adds StateDirectoryMode=0750 to a unit with a state directory and no mode", () => {
+    const cmd = upgradeCommand(ORIGIN);
+    expect(STATEDIR_DROPIN).toBe("30-statedir-mode.conf");
+    expect(cmd).toContain(`grep -q '^StateDirectory=' <<<"$CONF" && ! grep -q '^StateDirectoryMode=' <<<"$CONF"`);
+    expect(cmd).toContain(
+      `printf '[Service]\\nStateDirectoryMode=0750\\n' > "/etc/systemd/system/\${U}.d/${STATEDIR_DROPIN}"`,
+    );
+    expect(cmd.indexOf("StateDirectoryMode=0750")).toBeLessThan(cmd.indexOf("systemctl daemon-reload"));
   });
 
   it("fetches the binary and its checksums from the given origin's /agents/", () => {

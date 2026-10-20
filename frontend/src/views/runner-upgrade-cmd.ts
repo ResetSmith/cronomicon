@@ -2,10 +2,11 @@
 //
 // Upgrading an installed agent is binary-swap + restart: the runner keeps its
 // id, API key, config and unit — only /usr/local/bin/cronomicon-runner changes.
-// The exceptions are two drop-ins, each for a unit written by an installer that
-// did not yet know the line: SYSCALL_DROPIN (a unit that filters system calls
-// without an error number, every one written before 2.3.0) and KILLMODE_DROPIN
-// (a unit that names no KillMode, every one written before 2.3.2).
+// The exceptions are three drop-ins, each for a unit written by an installer
+// that did not yet know the line: SYSCALL_DROPIN (a unit that filters system
+// calls without an error number, every one written before 2.3.0),
+// KILLMODE_DROPIN (a unit that names no KillMode, every one written before
+// 2.3.2) and STATEDIR_DROPIN (a state directory with no mode, before 2.3.0).
 //
 // The command upgrades a MACHINE, not a runner (MA-22). A machine may run
 // several agents (runner-install.sh --instance), each with a unit of its own,
@@ -61,6 +62,16 @@ export const SYSCALL_DROPIN = "10-syscall-errno.conf";
  * alone.
  */
 export const KILLMODE_DROPIN = "20-killmode.conf";
+/**
+ * The third drop-in, beside a unit that keeps a state directory and names no
+ * mode for it (every unit written before 2.3.0): systemd resets the directory
+ * to 0755 at every start, so another user of the machine (a second agent's,
+ * once one is added with --instance) can list the agent's state, its identity
+ * file's name and its runs' work directories. runner-install.sh has written
+ * `StateDirectoryMode=0750` since 2.3.0 (2.5.0 C12, defect 96: until then only
+ * the installer carried it, and an upgraded agent kept 0755).
+ */
+export const STATEDIR_DROPIN = "30-statedir-mode.conf";
 /** How long each restarted unit is watched before it is reported, in seconds. */
 export const RESTART_WATCH_SECONDS = 20;
 
@@ -90,6 +101,8 @@ export const RESTART_WATCH_SECONDS = 20;
  *   - a unit that names no KillMode gets the KILLMODE_DROPIN drop-in before it
  *     restarts, so the restart that follows is already a drain for an agent
  *     that can drain; a unit that names one is left alone.
+ *   - a unit with a StateDirectory and no StateDirectoryMode gets the
+ *     STATEDIR_DROPIN drop-in (0750); a unit that names a mode is left alone.
  *   - every agent unit that is ENABLED OR RUNNING is restarted, and each is
  *     watched and reported on its own line. "Active" at one moment proves
  *     nothing: an agent that exits some seconds in is started again by systemd
@@ -161,6 +174,14 @@ export function upgradeCommand(origin: string): string {
     `    mkdir -p "/etc/systemd/system/\${U}.d"`,
     `    printf '[Service]\\nKillMode=mixed\\n' > "/etc/systemd/system/\${U}.d/${KILLMODE_DROPIN}"`,
     `    echo ">> Added KillMode=mixed to \${U} (/etc/systemd/system/\${U}.d/${KILLMODE_DROPIN})"`,
+    `    RELOAD=1`,
+    `  fi`,
+    `  # A unit from an installer older than 2.3.0 keeps a state directory with no`,
+    `  # mode, and systemd resets it to 0755 at every start: listable by any user.`,
+    `  if grep -q '^StateDirectory=' <<<"$CONF" && ! grep -q '^StateDirectoryMode=' <<<"$CONF"; then`,
+    `    mkdir -p "/etc/systemd/system/\${U}.d"`,
+    `    printf '[Service]\\nStateDirectoryMode=0750\\n' > "/etc/systemd/system/\${U}.d/${STATEDIR_DROPIN}"`,
+    `    echo ">> Added StateDirectoryMode=0750 to \${U} (/etc/systemd/system/\${U}.d/${STATEDIR_DROPIN})"`,
     `    RELOAD=1`,
     `  fi`,
     `done`,
