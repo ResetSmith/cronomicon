@@ -64,6 +64,23 @@ func TestC12_TheListsCountAndProjectThisAgencysSchedules(t *testing.T) {
 		t.Errorf("workflow next runs: FIN %v, TAX %v; FIN's is its own", deref(f.NextRunAt), deref(x.NextRunAt))
 	}
 
+	// An entry that records no uid is a row's only when one definition holds the
+	// name, as the scheduler fires it (C12's code review): with two `backup`s it
+	// fires neither, so neither row may count or project it.
+	exec(`INSERT INTO jobs (uid, name, source, run_type, scope, owner_agency, command, enabled, created_at) VALUES
+	        ('j-solo', 'c12-solo', 'cronomicon', 'bash', 'fin-hosts', 'ag:FIN', 'true', 1, '2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, position, owner_uid) VALUES
+	        ('cronomicon', 'job', 'backup', 'ownerless', '* * * * *', 5, NULL),
+	        ('cronomicon', 'job', 'c12-solo', 'ownerless', '0 3 1 1 *', 0, NULL)`)
+	jobs = list("/api/v1/jobs?q=backup&pageSize=50")
+	if f := jobs["j-sf"]; f.ScheduleCount != 1 || f.NextRunAt == nil || *f.NextRunAt == deref(jobs["j-st"].NextRunAt) {
+		t.Errorf("FIN's `backup` with an ownerless entry of the shared name: count %d, next %v; want 1 and its own yearly fire",
+			f.ScheduleCount, deref(f.NextRunAt))
+	}
+	if solo := list("/api/v1/jobs?q=c12-solo&pageSize=50")["j-solo"]; solo.ScheduleCount != 1 || solo.NextRunAt == nil {
+		t.Errorf("the sole holder of a name with an ownerless entry: count %d, next %v; want 1 and a fire", solo.ScheduleCount, deref(solo.NextRunAt))
+	}
+
 	// TAX pauses its `backup`: FIN's still projects.
 	exec(`INSERT INTO paused_jobs (source, owner_kind, name, paused_by, paused_at, owner_uid)
 	      VALUES ('cronomicon', 'job', 'backup', 'x', '2026-01-01T00:00:00Z', 'j-st')`)

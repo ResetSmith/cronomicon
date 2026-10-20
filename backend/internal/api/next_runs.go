@@ -33,8 +33,10 @@ func (o nextRunOwner) key() string {
 // owner's Next Run is the earliest of its entries' (earliestNextRunAt).
 //
 // An entry is its owner's by owner_uid, as the scheduler joins it; one that
-// records no uid (from before 1050) by its owner's (source, name), as the
-// paused join beside these lists does. Until 2.5.0 C12 both lists matched
+// records no uid (from before 1050, or a restore that could not tell whose) by
+// its owner's (source, name), and only when one definition holds the name, as
+// the scheduler fires it: with two, it fires neither, and the list said both
+// were scheduled (C12's code review). Until 2.5.0 C12 both lists matched
 // every entry by (source, name), so FIN's `backup` showed TAX's next fire,
 // and a paused TAX `backup` hid FIN's (present defect 98, question 118).
 func (s *Server) batchNextRuns(ctx context.Context, kind string, owners []nextRunOwner) map[string]*string {
@@ -58,6 +60,10 @@ func (s *Server) batchNextRuns(ctx context.Context, kind string, owners []nextRu
 	if len(uids) > 0 {
 		uidIn = strings.Repeat(",?", len(uids))[1:]
 	}
+	holders := "jobs"
+	if kind == "workflow" {
+		holders = "workflows"
+	}
 	args := append(append([]any{kind}, uids...), names...)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT COALESCE(owner_uid,''), owner_source, owner_name, cron,
@@ -65,7 +71,9 @@ func (s *Server) batchNextRuns(ctx context.Context, kind string, owners []nextRu
 		  FROM definition_schedules
 		 WHERE owner_kind = ?
 		   AND (owner_uid IN (`+uidIn+`)
-		        OR (owner_uid IS NULL AND owner_name IN (`+strings.Repeat(",?", len(names))[1:]+`)))
+		        OR (owner_uid IS NULL AND owner_name IN (`+strings.Repeat(",?", len(names))[1:]+`)
+		            AND (SELECT COUNT(*) FROM `+holders+` o
+		                  WHERE o.name = definition_schedules.owner_name AND o.source = definition_schedules.owner_source) = 1))
 		 ORDER BY owner_source, owner_name, position, name`, args...)
 	if err != nil {
 		// The projection degrades to "no next run" for the page rather than

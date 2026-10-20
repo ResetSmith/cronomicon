@@ -371,7 +371,8 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			ls.created_at AS last_skipped_at,
 			ls.queued_reason AS last_skip_reason,
 			(SELECT COUNT(*) FROM definition_schedules ds WHERE ds.owner_kind = 'job'
-			    AND (ds.owner_uid = j.uid OR (ds.owner_uid IS NULL AND ds.owner_source = j.source AND ds.owner_name = j.name))) AS schedule_count,
+			    AND (ds.owner_uid = j.uid OR (ds.owner_uid IS NULL AND ds.owner_source = j.source AND ds.owner_name = j.name
+			         AND (SELECT COUNT(*) FROM jobs o WHERE o.name = j.name AND o.source = j.source) = 1))) AS schedule_count,
 			-- RB-23: the job's agency, for display. Since 1400 a job has an owner
 			-- (agencyid.JobSQL: a Git job its repository's, one built in the app
 			-- its owner's); until then it was derived from its scope's name, which
