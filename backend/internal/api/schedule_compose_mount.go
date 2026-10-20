@@ -908,12 +908,7 @@ func (s *Server) writeScheduleDef(w http.ResponseWriter, r *http.Request, owner,
 		// owner as a user while a GET on the same resource a moment later did not.
 		`SELECT owner_kind, owner_name FROM definition_schedules ds
 		  WHERE schedule_uid=?
-		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
-		                     AND j2.source=ds.owner_source AND j2.name=ds.owner_name
-		                     AND j2.deleted_at IS NOT NULL)
-		    AND NOT EXISTS (SELECT 1 FROM workflows w2 WHERE ds.owner_kind='workflow'
-		                     AND w2.source=ds.owner_source AND w2.name=ds.owner_name
-		                     AND w2.deleted_at IS NOT NULL)
+		    AND NOT `+binnedOwnerSQL+`
 		  ORDER BY owner_kind, owner_name`, sd.UID)
 	if err == nil {
 		defer drows.Close()

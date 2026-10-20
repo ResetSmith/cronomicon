@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -66,6 +67,62 @@ func TestC12_AScheduleEditRewritesOnlyItsOwnDefinitions(t *testing.T) {
 	}
 	if got := mirror("j-ms"); got != "0 1 * * *" {
 		t.Errorf("the sole holder's mirror after the edit: %q, want its position-0 entry's cron", got)
+	}
+}
+
+// TestC12_ABinnedNamesakeHidesNoLiveUser (C12.5's review): whether a schedule
+// entry's owner is binned was judged by name, so TAX binning its `backup` hid
+// FIN's live `backup` from FIN's Schedules list (and Upcoming, and the calendar
+// flags), and FIN's schedule counted no user, while its delete still answered
+// 409 "referenced". The owner is judged by its uid.
+func TestC12_ABinnedNamesakeHidesNoLiveUser(t *testing.T) {
+	h, pool := gateServer(t)
+	seedSwitcher(t, pool)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO jobs (uid, name, source, run_type, scope, owner_agency, command, enabled, deleted_at, created_at) VALUES
+	        ('j-bf', 'backup', 'cronomicon', 'bash', 'fin-hosts', 'ag:FIN', 'true', 1, NULL, '2026-01-01T00:00:00Z'),
+	        ('j-bt', 'backup', 'cronomicon', 'bash', 'tax-hosts', 'ag:TAX', 'true', 1, '2026-02-01T00:00:00Z', '2026-01-01T00:00:00Z')`)
+	if c := gateReqWithHeader(t, h, http.MethodPost, "/api/v1/schedule-defs", gFinAdmin,
+		`{"name":"c12-used","cron":"0 3 * * *"}`, agencyctx.Header, "ag:FIN").Code; c != http.StatusCreated {
+		t.Fatalf("creating FIN's schedule = %d", c)
+	}
+	var schedUID string
+	if err := pool.QueryRow(`SELECT uid FROM schedules WHERE name = 'c12-used' AND owner_agency = 'ag:FIN'`).Scan(&schedUID); err != nil {
+		t.Fatal(err)
+	}
+	exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, position, source_ref, owner_uid, schedule_uid) VALUES
+	        ('cronomicon', 'job', 'backup', 'c12-used', '0 3 * * *', 0, 'c12-used', 'j-bf', ?)`, schedUID)
+
+	var defs struct {
+		Items []struct {
+			Name        string `json:"name"`
+			UsedByCount int    `json:"usedByCount"`
+		} `json:"items"`
+	}
+	rec := gateReqWithHeader(t, h, http.MethodGet, "/api/v1/schedule-defs?pageSize=200", gFinAdmin, "", agencyctx.Header, "ag:FIN")
+	if err := json.Unmarshal(rec.Body.Bytes(), &defs); err != nil {
+		t.Fatalf("schedule-defs = %d %s", rec.Code, rec.Body)
+	}
+	for _, d := range defs.Items {
+		if d.Name == "c12-used" && d.UsedByCount != 1 {
+			t.Errorf("FIN's schedule used by %d, want 1 (FIN's live `backup`)", d.UsedByCount)
+		}
+	}
+	var rows struct {
+		Items []struct {
+			OwnerUID string `json:"ownerUid"`
+		} `json:"items"`
+	}
+	rec = gateReqWithHeader(t, h, http.MethodGet, "/api/v1/schedules", gFinAdmin, "", agencyctx.Header, "ag:FIN")
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("schedules = %d %s", rec.Code, rec.Body)
+	}
+	found := false
+	for _, it := range rows.Items {
+		found = found || it.OwnerUID == "j-bf"
+	}
+	if !found {
+		t.Errorf("FIN's live `backup` is missing from FIN's Schedules list: %s", rec.Body)
 	}
 }
 
