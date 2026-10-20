@@ -2505,19 +2505,52 @@ type wfAgencyInput struct{ uid, stepsJSON string }
 // spanning two departments reports both rather than picking one: "whose is this?"
 // and "who may run it?" should not have different answers.
 //
-// One query for the whole page, keyed by (source, name). Job-name resolution
-// deliberately ignores the A11 per-step source override: this is a display hint,
-// and a name that resolves to a different source still belongs to the same
-// department in every real deployment. Authorization does the precise walk.
+// One query for the whole page. A step's job is the one it pins (jobUid), else
+// the job of its name in the workflow's own agency, as the engine resolves it;
+// its scope is the scope of that name in the job's agency. Until 2.5.0 C12 both
+// were by name across every agency (present defect 97): a FIN workflow whose
+// step TAX also has a job of showed TAX among its agencies, to FIN's readers.
+// Job-name resolution ignores the A11 per-step source override: this is a
+// display hint. Authorization does the precise walk.
 func (s *Server) workflowAgencies(r *http.Request, in []wfAgencyInput) map[string][]string {
 	out := map[string][]string{}
 	if len(in) == 0 {
 		return out
 	}
-	// Flatten every page workflow's steps once, collecting the job names to ask about.
-	names := make([]any, 0, len(in))
-	seen := map[string]bool{}
-	perWF := make(map[string][]string, len(in))
+	// Whose each workflow is: a name-only step is looked for in its agency.
+	wfUIDs := make([]any, 0, len(in))
+	for _, wf := range in {
+		if wf.uid != "" {
+			wfUIDs = append(wfUIDs, wf.uid)
+		}
+	}
+	if len(wfUIDs) == 0 {
+		return out
+	}
+	owners := map[string]string{}
+	orows, err := s.db.QueryContext(r.Context(),
+		`SELECT w.uid, `+agencyid.WorkflowOwnerSQL+` FROM workflows w WHERE w.uid IN (`+strings.Repeat(",?", len(wfUIDs))[1:]+`)`, wfUIDs...)
+	if err != nil {
+		return out // display-only: a failure here costs a column, never the page
+	}
+	for orows.Next() {
+		var uid, owner string
+		if orows.Scan(&uid, &owner) == nil {
+			owners[uid] = owner
+		}
+	}
+	orows.Close()
+
+	// Flatten every page workflow's steps once, collecting the jobs to ask about.
+	args := []any{}
+	seenArg := map[string]bool{}
+	ask := func(v string) {
+		if !seenArg[v] {
+			seenArg[v] = true
+			args = append(args, v)
+		}
+	}
+	perWF := make(map[string][]workflow.StepRef, len(in))
 	for _, wf := range in {
 		if wf.uid == "" {
 			continue // no identity to key on; the column simply stays empty
@@ -2526,44 +2559,55 @@ func (s *Server) workflowAgencies(r *http.Request, in []wfAgencyInput) map[strin
 		if err != nil {
 			continue
 		}
-		jobs := workflow.FlattenSteps(steps)
-		perWF[wf.uid] = jobs
-		for _, jn := range jobs {
-			if !seen[jn] {
-				seen[jn] = true
-				names = append(names, jn)
+		refs := workflow.CollectStepRefs(steps)
+		perWF[wf.uid] = refs
+		for _, ref := range refs {
+			if ref.UID != "" {
+				ask(ref.UID)
+			} else {
+				ask(ref.Name)
 			}
 		}
 	}
-	if len(names) == 0 {
+	if len(args) == 0 {
 		return out
 	}
 
-	ph := strings.Repeat(",?", len(names))[1:]
+	ph := strings.Repeat(",?", len(args))[1:]
+	jobOwner := agencyid.JobOwnerSQL("j")
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT j.name, a.name
+		SELECT j.uid, j.name, `+jobOwner+`, a.name
 		FROM jobs j
-		JOIN scopes s          ON s.name = j.scope
+		JOIN scopes s          ON `+agencyid.ScopeIn("s", "j.scope", jobOwner)+`
 		JOIN scope_agencies sa ON sa.scope_id = s.id
 		JOIN agencies a        ON a.id = sa.agency_id
-		WHERE j.name IN (`+ph+`)`, names...)
+		WHERE j.uid IN (`+ph+`) OR j.name IN (`+ph+`)`, append(append([]any{}, args...), args...)...)
 	if err != nil {
-		return out // display-only: a failure here costs a column, never the page
+		return out
 	}
-	byJob := map[string][]string{}
+	byUID := map[string][]string{}
+	byNameIn := map[string][]string{} // name NUL agency
 	for rows.Next() {
-		var jobName, agency string
-		if rows.Scan(&jobName, &agency) == nil {
-			byJob[jobName] = append(byJob[jobName], agency)
+		var uid sql.NullString
+		var jobName, owner, agency string
+		if rows.Scan(&uid, &jobName, &owner, &agency) == nil {
+			if uid.Valid {
+				byUID[uid.String] = append(byUID[uid.String], agency)
+			}
+			byNameIn[jobName+"\x00"+owner] = append(byNameIn[jobName+"\x00"+owner], agency)
 		}
 	}
 	rows.Close()
 
-	for key, jobs := range perWF {
+	for key, refs := range perWF {
 		set := map[string]bool{}
 		var list []string
-		for _, jn := range jobs {
-			for _, a := range byJob[jn] {
+		for _, ref := range refs {
+			found := byNameIn[ref.Name+"\x00"+owners[key]]
+			if ref.UID != "" {
+				found = byUID[ref.UID]
+			}
+			for _, a := range found {
 				if !set[a] {
 					set[a] = true
 					list = append(list, a)
@@ -4468,7 +4512,10 @@ type runMapCaches struct {
 	s         *Server
 	ctx       context.Context
 	redactors map[string]*runner.Redactor // nil entry ⇒ build failed ⇒ fail closed
-	jobIDs    map[string]int64            // runJobKey(source, name) → jobs.rowid
+	jobIDs    map[string]int64            // runJobKey(source, name, owner) → jobs.rowid
+	// jobIDsByUID is jobs.uid → jobs.rowid: a run that records its job's uid
+	// (every run since 1010) is linked to that job (2.5.0 C12, defect 97).
+	jobIDsByUID map[string]int64
 	// detail is set for a single-run detail render. Only then does redactOutputs
 	// pay the per-run injected-value resolution (a possible Vault round-trip), so a
 	// large runs-list page is never slowed for the rare row that carries outputs
@@ -4485,28 +4532,35 @@ type runMapCaches struct {
 // builds per request.
 var newRunRedactor = runner.NewRedactor
 
-func runJobKey(source, name string) string { return source + "\x00" + name }
+func runJobKey(source, name, owner string) string { return source + "\x00" + name + "\x00" + owner }
 
-// newRunMapCaches batch-loads the jobs-rowid map for a drained page of runs.
-// One query for every distinct job name on the page, pair-matched on (source,
-// name) below so a run without a matching job row keeps jobId 0, as before.
+// newRunMapCaches batch-loads the jobs-rowid maps for a drained page of runs.
+// One query for every distinct job uid and name on the page. A run is linked
+// to the job its uid names, else (a run from before 1010) to the job of its
+// source and name in the run's own agency, so a run without a matching job row
+// keeps jobId 0, as before. Until 2.5.0 C12 it was by (source, name) across
+// every agency (present defect 97): FIN's run of `backup` could link to TAX's.
 func (s *Server) newRunMapCaches(ctx context.Context, raws []runRaw) *runMapCaches {
-	c := &runMapCaches{s: s, ctx: ctx, redactors: map[string]*runner.Redactor{}, jobIDs: map[string]int64{}}
+	c := &runMapCaches{s: s, ctx: ctx, redactors: map[string]*runner.Redactor{},
+		jobIDs: map[string]int64{}, jobIDsByUID: map[string]int64{}}
 	if len(raws) == 0 {
 		return c
 	}
-	nameSet := map[string]struct{}{}
+	keySet := map[string]struct{}{}
 	for _, rr := range raws {
-		nameSet[rr.jobName] = struct{}{}
+		keySet[rr.jobName] = struct{}{}
+		if rr.jobUID.Valid && rr.jobUID.String != "" {
+			keySet[rr.jobUID.String] = struct{}{}
+		}
 	}
-	placeholders := make([]string, 0, len(nameSet))
-	names := make([]any, 0, len(nameSet))
-	for n := range nameSet {
-		placeholders = append(placeholders, "?")
-		names = append(names, n)
+	keys := make([]any, 0, len(keySet))
+	for k := range keySet {
+		keys = append(keys, k)
 	}
+	ph := strings.Repeat(",?", len(keys))[1:]
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT rowid, source, name FROM jobs WHERE name IN (`+strings.Join(placeholders, ",")+`)`, names...)
+		`SELECT j.rowid, j.uid, j.source, j.name, `+agencyid.JobOwnerSQL("j")+` FROM jobs j
+		  WHERE j.uid IN (`+ph+`) OR j.name IN (`+ph+`)`, append(append([]any{}, keys...), keys...)...)
 	if err != nil {
 		// Degrade like the old per-row lookup did (jobId 0), but say so: one
 		// failure here blanks jobId for the whole page, not a single row.
@@ -4516,9 +4570,13 @@ func (s *Server) newRunMapCaches(ctx context.Context, raws []runRaw) *runMapCach
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
-		var source, name string
-		if rows.Scan(&id, &source, &name) == nil {
-			c.jobIDs[runJobKey(source, name)] = id
+		var uid sql.NullString
+		var source, name, owner string
+		if rows.Scan(&id, &uid, &source, &name, &owner) == nil {
+			c.jobIDs[runJobKey(source, name, owner)] = id
+			if uid.Valid {
+				c.jobIDsByUID[uid.String] = id
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -4558,7 +4616,10 @@ func (s *Server) runToMap(rr runRaw, caches *runMapCaches) map[string]any {
 	if jobSrc == "" {
 		jobSrc = "git"
 	}
-	jobID := caches.jobIDs[runJobKey(jobSrc, rr.jobName)]
+	jobID := caches.jobIDs[runJobKey(jobSrc, rr.jobName, runOwnerOf(rr))]
+	if rr.jobUID.Valid && rr.jobUID.String != "" {
+		jobID = caches.jobIDsByUID[rr.jobUID.String]
+	}
 
 	// M4 — read-time stuck-run signal: a queued runner run whose agency has no online
 	// eligible runner will wait indefinitely; surface why (unless a stored reason wins).
