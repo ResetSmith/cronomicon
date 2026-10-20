@@ -103,13 +103,15 @@ describe("JobComposer — scope is a required choice (AF-1)", () => {
     const q = renderComposer("/compose?script=tools%2Fbackup.sh");
     await waitFor(() => expect(q.getAllByText("tools/backup.sh").length).toBeGreaterThan(0));
     fireEvent.change(q.getByPlaceholderText("nightly-backup"), { target: { value: "global-job" } });
-    pickScope(q, /All agencies \(global\)/);
+    pickScope(q, /^No scope/);
     fireEvent.click(q.getByRole("button", { name: "Create job" }));
 
     await waitFor(() => expect(posts.filter((p) => p.path === "/jobs")).toHaveLength(1));
     expect(posts[0].body).toMatchObject({ name: "global-job", scope: "" });
-    // The consequence is stated, so "All" is never chosen blind.
-    expect(q.getByText(/Visible to every agency/)).toBeTruthy();
+    // The consequence is stated, so "No scope" is never chosen blind; and it is
+    // the agency's, not every agency's (2.5.0 C11, defect 90).
+    expect(q.getAllByText(/No scope: the job is Global.s, and runs on Global.s hosts/).length).toBeGreaterThan(0);
+    expect(q.queryByText(/Visible to every agency/)).toBeNull();
   });
 
   it("sends a named scope unchanged", async () => {
@@ -140,7 +142,7 @@ describe("JobComposer — scope is a required choice (AF-1)", () => {
     const q = renderComposer("/compose?id=8");
     // The picker states the existing choice rather than sitting empty: the value
     // was decided (a legacy default counts), so re-asking would be noise.
-    await waitFor(() => expect(q.getAllByDisplayValue("All agencies (global)").length).toBeGreaterThan(0));
+    await waitFor(() => expect(q.getAllByDisplayValue("No scope").length).toBeGreaterThan(0));
   });
 });
 
@@ -170,7 +172,7 @@ describe("JobComposer — All is withheld without composeUnbound (AF-2)", () => 
     fireEvent.click(q.getByRole("combobox", { name: "Scope" }));
     // The named scopes are still offered; only the global option is absent.
     await waitFor(() => expect(q.getByRole("option", { name: /^Prod/ })).toBeTruthy());
-    expect(q.queryByRole("option", { name: /All agencies \(global\)/ })).toBeNull();
+    expect(q.queryByRole("option", { name: /^No scope/ })).toBeNull();
     expect(q.getByText(/Pick one of the scopes your role is granted/)).toBeTruthy();
   });
 });

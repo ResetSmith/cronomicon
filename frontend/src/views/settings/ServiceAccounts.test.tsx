@@ -33,6 +33,10 @@ const listPayload = {
   ],
 };
 
+// The agency in use (2.5.0 C11): none unless a test sets one.
+const { inUse } = vi.hoisted(() => ({ inUse: { current: null as null | { agency: string; agencyName: string } } }));
+vi.mock("../../agency", () => ({ useAgencyOptional: () => inUse.current }));
+
 vi.mock("../../api/client", () => ({
   csrfHeader: { "X-CSRF-Token": "t" },
   errMsg: (e: unknown) => String(e),
@@ -56,6 +60,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  inUse.current = null;
 });
 
 describe("ServiceAccounts (ET-C)", () => {
@@ -152,5 +157,40 @@ describe("ServiceAccounts — the all-scopes option is a global administrator's 
     const body = await lastBody();
     expect(body.allScopes).toBe(true);
     expect("agencyId" in body).toBe(false);
+  });
+});
+
+// 2.5.0 C11, defect 87 (question 108): an account is made in the agency the
+// person works in, and the server refuses another; one of another agency, or of
+// every agency, was made from an agency and never listed.
+describe("ServiceAccounts — working in an agency (C11)", () => {
+  const lastBody = async () => {
+    const { api } = await import("../../api/client");
+    const calls = (api.POST as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    return (calls[calls.length - 1][1] as { body: Record<string, unknown> }).body;
+  };
+  it("mints in the agency in use, with no choice to make", async () => {
+    inUse.current = { agency: "ag-1", agencyName: "Tax" };
+    render(<ServiceAccountsSection canGrantEverywhere />);
+    await waitFor(() => expect(screen.getByText("nagios")).toBeTruthy());
+    expect(screen.queryByLabelText("Where")).toBeNull();
+    expect(screen.getByTestId("sa-where").textContent).toContain("In Tax");
+    fireEvent.change(screen.getByPlaceholderText("nagios"), { target: { value: "fresh" } });
+    fireEvent.click(screen.getByRole("button", { name: /Create service account/ }));
+    await waitFor(() => expect(screen.getByTestId("minted-token")).toBeTruthy());
+    const body = await lastBody();
+    expect(body.agencyId).toBe("ag-1");
+    expect("allScopes" in body).toBe(false);
+  });
+
+  it("mints one for every agency only while working in Global", async () => {
+    inUse.current = { agency: "global", agencyName: "Global" };
+    render(<ServiceAccountsSection canGrantEverywhere />);
+    await waitFor(() => expect(screen.getByText("nagios")).toBeTruthy());
+    expect(screen.getByTestId("sa-where").textContent).toContain("Every agency");
+    fireEvent.change(screen.getByPlaceholderText("nagios"), { target: { value: "fresh" } });
+    fireEvent.click(screen.getByRole("button", { name: /Create service account/ }));
+    await waitFor(() => expect(screen.getByTestId("minted-token")).toBeTruthy());
+    expect((await lastBody()).allScopes).toBe(true);
   });
 });

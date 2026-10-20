@@ -1,6 +1,8 @@
 import { Fragment, Suspense, lazy, useEffect, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
+import { useAgencyOptional } from "../agency";
+import { agenciesFor, useMyAccess } from "../api/access";
 import { WorkflowAssignDialog } from "./AssignDialog";
 import type { components } from "../api/schema";
 import { useLiveGet, rows, useClientPager, useColumnWidths, useInlineAnnotation, useInlineTags, useTableSort, useToast } from "../hooks";
@@ -222,6 +224,8 @@ export function Workflows() {
   // longer note there on why this replaced the client-side role list and why it
   // remains a UX affordance rather than a boundary).
   const [canCompose, setCanCompose] = useState(false);
+  const [composeAdmin, setComposeAdmin] = useState(false);
+  const composeAgency = useAgencyOptional()?.agency;
   const [canRun, setCanRun] = useState(false);
   // 2.5.0 C7.3 (IN-12): a global administrator gives a Git workflow to an agency.
   const [globalAdmin, setGlobalAdmin] = useState(false);
@@ -232,10 +236,21 @@ export function Workflows() {
   useEffect(() => {
     fetchCapabilities().then((caps) => {
       setCanCompose(!!caps.compose);
+      setComposeAdmin(!!caps.composeAdmin);
       setCanRun(!!caps.triggerJobs);
       setGlobalAdmin(!!caps.configureAppGlobal);
     });
   }, []);
+  // 2.5.0 C11, defect 88: what is created and edited here is the agency in
+  // use's, and the server answers 403 to someone who composes elsewhere but
+  // not in it. "May compose somewhere" (caps.compose) offered + Create, Edit,
+  // Clone and Delete in an agency where the person only views. As Schedules and
+  // Calendars gate it: a global composer, or compose on the agency in use (and,
+  // while access is not yet read, nothing is claimed).
+  const composeAccess = useMyAccess();
+  const canComposeHere =
+    canCompose &&
+    (composeAdmin || composeAccess == null || !composeAgency || agenciesFor(composeAccess, "compose").some((a) => a.id === composeAgency));
 
   // WB-O2: poll the list while any workflow is running/queued so live status
   // (and Next/Last run) updates without a manual refresh; stops once all settle.
@@ -583,7 +598,7 @@ export function Workflows() {
           )}
           {/* Edit only for cronomicon rows the caller may compose (hidden for git
               rows + non-admins). Delete lives in the editor behind a confirm. */}
-          {canCompose && w.source === "cronomicon" && (
+          {canComposeHere && w.source === "cronomicon" && (
             <Link to={`/workflow-editor?id=${w.id}`} style={{ textDecoration: "none" }}>
               <Btn small>Edit</Btn>
             </Link>
@@ -655,7 +670,7 @@ export function Workflows() {
                       here, behind the same confirm and the same cronomicon-only gate
                       as Edit. Destructive last, dangerQuiet — Runners' order. */}
                   {/* RH: in-app definitions get history here; git rows get it from Git. */}
-                  {canCompose && w.source === "cronomicon" && (
+                  {canComposeHere && w.source === "cronomicon" && (
                     <Btn
                       small
                       onClick={() => setHistoryFor(w.name ?? "")}
@@ -663,7 +678,7 @@ export function Workflows() {
                       History
                     </Btn>
                   )}
-                  {canCompose && w.source === "cronomicon" && (
+                  {canComposeHere && w.source === "cronomicon" && (
                     <Btn small dangerQuiet disabled={busyId === w.id || delBusy} onClick={() => setDeleting(w)}>
                       Delete
                     </Btn>
@@ -769,7 +784,7 @@ export function Workflows() {
         {/* I-1 (VF-11) — same gate as the empty state's "Create a workflow"
             below, and as the editor's own. Ungated, it was a primary button
             leading a Viewer to WorkflowEditor's refusal notice. */}
-        {canCompose && (
+        {canComposeHere && (
           <Link to="/workflow-editor" style={{ textDecoration: "none" }}>
             <Btn primary style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ Create</Btn>
           </Link>
@@ -790,7 +805,7 @@ export function Workflows() {
       {!loading && !error && items.length === 0 && (
         <div style={{ color: c.textSec }}>
           <div>No workflows yet. Workflows are synced from the workflows/ directory of the definitions repo, or authored in the workflow editor.</div>
-          {canCompose && (
+          {canComposeHere && (
             <div style={{ marginTop: 12 }}>
               <Link to="/workflow-editor" style={{ textDecoration: "none" }}>
                 <Btn small>Create a workflow</Btn>

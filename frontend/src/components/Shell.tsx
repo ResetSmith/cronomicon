@@ -24,6 +24,7 @@ import { useSidebarCollapsed } from "../hooks";
 // just hides the text. The rail shows emblem + name only; the tagline is an
 // opt-in line that Login renders and the sidebar deliberately does not.
 import { Wordmark } from "./Wordmark";
+import { InstallationFreezeBanner } from "./InstallationFreezeBanner";
 // EP-3 — one refresh glyph for the whole app; the copy that lived here is gone.
 import { IcRefresh } from "./ui";
 
@@ -256,6 +257,8 @@ export function Shell() {
             every view from the mutable `c` tokens WITHOUT remounting — so the active
             tab, search, pagination and expanded rows survive the toggle. */}
         <main style={{ flex: 1, overflow: "auto", padding: 28 }}>
+          {/* 2.5.0 C11: the installation freeze, above every page while it is on. */}
+          <InstallationFreezeBanner />
           {/* Keyed by the agency (2.4.4): a switch remounts the page, so every
               list it holds is read again for the agency now in use. */}
           <Outlet key={ag ? (ag.onOverview ? "overview" : ag.agency) : ""} />

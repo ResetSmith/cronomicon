@@ -320,8 +320,8 @@ func run() error {
 		// RH: the reaper and the manual "Purge now" button share one implementation
 		// of what permanent deletion means. Injected because internal/db must not
 		// import internal/api.
-		PurgeDefinition: func(ctx context.Context, kind, name string) (bool, error) {
-			return api.PurgeDefinition(ctx, pool, settings.ResolveLogDir(ctx, pool), kind, name)
+		PurgeDefinition: func(ctx context.Context, kind, name, uid string) (bool, error) {
+			return api.PurgeDefinition(ctx, pool, settings.ResolveLogDir(ctx, pool), kind, name, uid)
 		},
 		BackupAt: cfg.BackupAt, // PP-H6: wall-clock daily sweep
 		Upload:   uploader,     // nil when unconfigured ⇒ snapshot kept locally only

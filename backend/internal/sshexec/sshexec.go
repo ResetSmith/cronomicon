@@ -1190,7 +1190,7 @@ func (s *Service) reconcileOrphan(ctx context.Context, o orphan) bool {
 // runner claimed (its id on the row), or one the SSH executor claimed before
 // 2.3.0, which stamped no runner and is known by its executor. The second arm
 // is for rows a crash left 'running' across the upgrade; nothing writes
-// executor='ssh' any more.
+// executor='ssh' any more, and migration 1590 closes those left queued.
 const localRunSQL = `(runner_id IN (SELECT id FROM runners WHERE kind = 'server') OR executor = 'ssh')`
 
 // reconcileOrphans runs the given orphan query, reconciles each match, and

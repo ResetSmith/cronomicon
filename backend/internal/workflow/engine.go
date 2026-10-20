@@ -1275,13 +1275,50 @@ func StepKey(s Step) string { return StepRefOf(s).Key() }
 // Whoever AUTHORIZES a workflow must ask with the same home the engine runs it
 // with (JobScopesAt), or the walk authorizes one job and the engine runs
 // another.
+//
+// A workflow built in the app is at home in its owner agency (2.5.0 C11,
+// defect 79): its name-only steps are that agency's jobs and workflows, a Git
+// name its repository's, and no other agency's (AgencyHome). With no home they
+// were counted among every agency's, so another agency's commit of a job of
+// the same name made the step refuse as ambiguous.
 func (e *Engine) Home(ctx context.Context, workflowID int64) string {
-	var repo string
+	var source, repo, owner string
 	if err := e.db.QueryRowContext(ctx,
-		`SELECT COALESCE(repo_id, ?) FROM workflows WHERE rowid = ? AND source = 'git'`, repoid.Global, workflowID).Scan(&repo); err != nil {
+		`SELECT source, COALESCE(repo_id, ?), COALESCE(NULLIF(owner_agency, ''), ?) FROM workflows WHERE rowid = ?`,
+		repoid.Global, agencyid.Global, workflowID).Scan(&source, &repo, &owner); err != nil {
 		return ""
 	}
-	return repo
+	if source == "git" {
+		return repo
+	}
+	return AgencyHome(owner)
+}
+
+// agencyHomePrefix marks a home that is an agency, not a repository: a
+// repository id never starts with a NUL.
+const agencyHomePrefix = "\x00agency:"
+
+// AgencyHome is the home of a workflow built in the app by the agency: its
+// names are that agency's (Home).
+func AgencyHome(agency string) string { return agencyHomePrefix + agency }
+
+// homeAgency is the agency of a home that is an agency (AgencyHome), and
+// false for a repository's home or none.
+func homeAgency(home string) (string, bool) {
+	if a, ok := strings.CutPrefix(home, agencyHomePrefix); ok {
+		return a, true
+	}
+	return "", false
+}
+
+// homeRepoSQL is the condition, on the row's repo_id, that a Git row is of the
+// home's repository: that repository's for a Git workflow's home, and the
+// agency's repository for an agency's (AgencyHome).
+func homeRepoSQL(home string) (string, any) {
+	if a, ok := homeAgency(home); ok {
+		return `COALESCE(repo_id, '` + repoid.Global + `') IN (SELECT g.id FROM git_repos g WHERE g.agency_id = ?)`, a
+	}
+	return `COALESCE(repo_id, '` + repoid.Global + `') = ?`, home
 }
 
 // stepOutsideWorkflowAgency reports whether a step of the workflow of a rowid
@@ -1343,6 +1380,9 @@ func (e *Engine) agencyOfHome(ctx context.Context, home string) string {
 	if home == "" {
 		return ""
 	}
+	if a, ok := homeAgency(home); ok {
+		return a
+	}
 	var agency string
 	if err := e.db.QueryRowContext(ctx, `SELECT agency_id FROM git_repos WHERE id = ?`, home).Scan(&agency); err != nil {
 		// A home that cannot be read confines to nobody: nothing in-app is found.
@@ -1352,8 +1392,10 @@ func (e *Engine) agencyOfHome(ctx context.Context, home string) string {
 }
 
 // jobOfAgencySQL is "this row of `jobs` is the agency ?'s" (agencyid.JobSQL;
-// an in-app job's owner since 1400).
-var jobOfAgencySQL = ` AND ` + agencyid.JobSQL("jobs") + ` = ?`
+// an in-app job's owner since 1400), by the no-owner rule: Global's jobs built
+// in the app record no owner (NULL), and by the column alone a workflow at home
+// in Global found none of them (2.5.0 C11, found with defect 79).
+var jobOfAgencySQL = ` AND ` + agencyid.JobOwnerSQL("jobs") + ` = ?`
 
 // lookupJobDefs resolves each step's referenced job def. A step pinning a uid
 // (R2F-2) resolves by identity alone; otherwise the A11 step-source precedence
@@ -1416,22 +1458,6 @@ func (e *Engine) JobAgencyScopesAt(ctx context.Context, steps []Step, wfSource, 
 		return nil, err
 	}
 	return out, nil
-}
-
-// SubWorkflowJobAgencies is SubWorkflowJobScopes for the jobs' AGENCIES
-// (agencyid.JobSQL: an in-app job's owner since 1400): whose the jobs the
-// graph reaches through its sub-workflows are. A scope's name says nothing of
-// whose it is once names are per agency (I2).
-func (e *Engine) SubWorkflowJobAgencies(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
-	seen := map[string]bool{}
-	var out []string
-	err := e.walkSubWorkflowJobs(ctx, steps, wfSource, "", func(jd jobDef) {
-		if !seen[jd.agency] {
-			seen[jd.agency] = true
-			out = append(out, jd.agency)
-		}
-	})
-	return out, err
 }
 
 // SubWorkflowJobAgencyScopesAt is SubWorkflowJobScopesAt with each scope's
@@ -1614,7 +1640,8 @@ func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource, home 
 		// there are. (The existence rule of FX-A1 holds: a binned or disabled
 		// job of the home repository is the one found.)
 		if src == "git" && home != "" {
-			if _, jd, ok := scan(`name = ? AND source = 'git' AND COALESCE(repo_id, ?) = ?`, name, repoid.Global, home); ok {
+			cond, arg := homeRepoSQL(home)
+			if _, jd, ok := scan(`name = ? AND source = 'git' AND `+cond, name, arg); ok {
 				return src, jd, true
 			}
 			continue

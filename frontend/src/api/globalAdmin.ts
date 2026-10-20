@@ -30,10 +30,6 @@ export const GLOBAL_ADMIN_ONLY = globalAdminOnly();
 /** For a surface whose READ is refused too (the GitLab and Vault connections). */
 export const GLOBAL_ADMIN_VIEW_ONLY = globalAdminOnly("view or change this");
 
-/** Reusable schedules, calendars, reactions and the recycle bin (`composeAdmin`). */
-export const COMPOSE_ADMIN_ONLY =
-  "Reusable schedules, calendars, reactions and the recycle bin are shared by every agency — only a global administrator (a role on every agency) can change them.";
-
 /**
  * A Vault-backed secret or key that is GLOBAL's: any path on the installation's
  * one Vault connection, so a global administrator's. (An agency's own is its

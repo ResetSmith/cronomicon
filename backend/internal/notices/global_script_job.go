@@ -55,9 +55,12 @@ func checkGlobalScriptJob(ctx context.Context, database *sql.DB) error {
 		found = append(found, Finding{
 			AgencyID: agency.String,
 			Subject:  j.uid,
+			// 2.5.0 C11, defect 90: it said "its runs are refused"; a run on
+			// no scope runs as Global's (runref.RepoScopeMismatch, question 31).
 			Detail: fmt.Sprintf("The job %s is built on the script %s of Global's repository. A definition takes nothing "+
-				"from Global's: its runs are refused, with the reason. Copy the script into this agency's repository "+
-				"and choose it for the job. This notice clears when it is done.", j.name, j.script),
+				"from Global's: its runs on this agency's scopes are refused, with the reason, and a run with no scope "+
+				"runs as Global's, on Global's runners. Copy the script into this agency's repository and choose it "+
+				"for the job. This notice clears when it is done.", j.name, j.script),
 		})
 	}
 	return Reconcile(ctx, database, KindGlobalScriptJob, found)

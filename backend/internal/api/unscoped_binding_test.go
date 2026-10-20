@@ -302,11 +302,16 @@ func TestDeferredWorkflowTriggerIsAuthorizedAtCreation(t *testing.T) {
 	      VALUES ('step-tax','cronomicon','bash','tax',1)`)
 	seed(`INSERT INTO jobs (name, source, run_type, scope, enabled)
 	      VALUES ('step-fin','cronomicon','bash','finance',1)`)
-	seed(`INSERT INTO workflows (name, source, steps, enabled, synced_at)
-	      VALUES ('wf-tax','cronomicon','[{"type":"job","name":"step-tax"}]',1,'t')`)
+	// Both are tax's (1360; 2.5.0 C11: another agency's workflow is absent).
+	seed(`INSERT INTO workflows (name, source, steps, enabled, synced_at, owner_agency)
+	      VALUES ('wf-tax','cronomicon','[{"type":"job","name":"step-tax"}]',1,'t','ag:tax')`)
 	// A workflow reaching into a department the operator does NOT hold.
-	seed(`INSERT INTO workflows (name, source, steps, enabled, synced_at)
-	      VALUES ('wf-mixed','cronomicon','[{"type":"job","name":"step-tax"},{"type":"job","name":"step-fin"}]',1,'t')`)
+	seed(`UPDATE jobs SET uid = 'u-' || name WHERE uid IS NULL`) // these fixtures' jobs record none
+	// The steps pin their jobs by uid, as the editor saves them (R2F-2): since
+	// 2.5.0 C11 a name-only step of a workflow built in the app is looked up in
+	// its own agency only (defect 79), and these jobs are another agency's.
+	seed(`INSERT INTO workflows (name, source, steps, enabled, synced_at, owner_agency)
+	      VALUES ('wf-mixed','cronomicon',json_array(json_object('type','job','name','step-tax','jobUid',(SELECT uid FROM jobs WHERE name = 'step-tax')),json_object('type','job','name','step-fin','jobUid',(SELECT uid FROM jobs WHERE name = 'step-fin'))),1,'t','ag:tax')`)
 
 	trigger := func(name string) string {
 		var rowid int64

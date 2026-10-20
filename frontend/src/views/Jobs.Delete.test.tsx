@@ -37,6 +37,21 @@ const JOBS = {
 // row is on screen, canCompose has already been applied.
 const laterTick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+// The agency in use and the person's access (2.5.0 C11): none unless a test
+// sets them, which keeps every older test as it was.
+const { inUse, myAccess } = vi.hoisted(() => ({
+  inUse: { current: null as null | { agency: string; agencyName: string } },
+  myAccess: { current: null as unknown },
+}));
+vi.mock("../agency", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agency")>();
+  return { ...actual, useAgencyOptional: () => inUse.current };
+});
+vi.mock("../api/access", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/access")>();
+  return { ...actual, useMyAccess: () => myAccess.current };
+});
+
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
   return {
@@ -85,7 +100,11 @@ beforeEach(() => {
   deleteStatus = 200;
   deletes.length = 0;
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  inUse.current = null;
+  myAccess.current = null;
+});
 
 // Queries are scoped to this render's container rather than document.body, which
 // keeps a second render in the same file from colliding.
@@ -155,6 +174,30 @@ describe("Jobs — expanded-row Delete", () => {
     // fetch, so its presence proves compose was genuinely off rather than unread.
     await waitFor(() => expect(off.getByRole("link", { name: /Publish to the repository/ })).toBeTruthy());
     expect(off.queryByRole("link", { name: "+ Create" })).toBeNull();
+  });
+
+  // 2.5.0 C11, defect 88: what is created and edited here is the agency in
+  // use's, and the server answers 403 to a person who composes elsewhere only.
+  // "May compose somewhere" offered + Create, Edit and Delete in an agency where
+  // they only view.
+  it("offers + Create and Delete only in an agency the person composes in", async () => {
+    myAccess.current = {
+      grants: [{ role: "composer", allScopes: false, agencyId: "ag-fin", agencyName: "Finance", scopes: [], permissions: ["compose"], groups: [], origin: "group" }],
+    };
+    inUse.current = { agency: "ag-tax", agencyName: "Tax" };
+    const tax = await renderJobs();
+    await waitFor(() => expect(tax.getByRole("link", { name: /Publish to the repository/ })).toBeTruthy());
+    expect(tax.queryByRole("link", { name: "+ Create" })).toBeNull();
+    expandRow(tax, "cronomicon-job");
+    await waitFor(() => expect(tax.getByText("Run on")).toBeTruthy());
+    expect(deleteBtn(tax)).toBeNull();
+    cleanup();
+
+    inUse.current = { agency: "ag-fin", agencyName: "Finance" };
+    const fin = await renderJobs();
+    await waitFor(() => expect(fin.getByRole("link", { name: "+ Create" })).toBeTruthy());
+    expandRow(fin, "cronomicon-job");
+    await waitFor(() => expect(deleteBtn(fin)).toBeTruthy());
   });
 
   it("confirms before deleting, then DELETEs the expanded job's id", async () => {

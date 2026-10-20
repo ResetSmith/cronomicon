@@ -211,4 +211,46 @@ describe("the switcher (2.4.4 F1)", () => {
     await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("ag-b"));
     expect(screen.getByTestId("search").textContent).toBe("?agency=ag-b");
   });
+
+  // 2.5.0 C11, defect 85: on a page that shows one object of the agency in use
+  // (a run's detail, a job in the composer), switching kept the object in the
+  // address, the page switched straight back to the object's agency, and the
+  // person could not leave it but by another page.
+  function RunDetail() {
+    const loc = useLocation();
+    const trace = new URLSearchParams(loc.search).get("trace");
+    useEnsureAgency(trace ? "ag-a" : undefined); // the run is agency-alpha's
+    return null;
+  }
+
+  it("switches away from an object's page and stays, keeping how the page is shown", async () => {
+    render(
+      <MemoryRouter initialEntries={["/runs?trace=t1&tab=executions&agency=ag-a"]}>
+        <AgencyProvider>
+          <AgencySwitcher collapsed={false} />
+          <RunDetail />
+          <Probe />
+        </AgencyProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("ag-a"));
+    fireEvent.click(screen.getByTestId("agency-switcher"));
+    fireEvent.click(await screen.findByRole("option", { name: /agency-beta/ }));
+    await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("ag-b"));
+    await act(async () => new Promise((r) => setTimeout(r, 50)));
+    expect(screen.getByTestId("agency").textContent).toBe("ag-b");
+    const search = screen.getByTestId("search").textContent ?? "";
+    expect(search).not.toContain("trace=");
+    expect(search).toContain("tab=executions");
+    expect(screen.getByTestId("path").textContent).toBe("/runs");
+  });
+
+  it("shows an editor's list when the object it had open goes with the switch", async () => {
+    renderAt("/compose?id=7&agency=ag-a");
+    await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("ag-a"));
+    fireEvent.click(screen.getByTestId("agency-switcher"));
+    fireEvent.click(await screen.findByRole("option", { name: /agency-beta/ }));
+    await waitFor(() => expect(screen.getByTestId("path").textContent).toBe("/jobs"));
+    expect(screen.getByTestId("search").textContent).toBe("?agency=ag-b");
+  });
 });

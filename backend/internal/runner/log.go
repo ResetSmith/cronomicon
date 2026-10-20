@@ -62,6 +62,7 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if status != "running" {
+		s.unredactableSince.Delete(traceID) // ended another way (C11)
 		httpx.Fail(w, http.StatusConflict, "conflict",
 			fmt.Sprintf("run is in status %q, not running", status))
 		return
@@ -121,6 +122,25 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("ingest: incomplete redaction for a secret-bearing run; failing closed",
 			"trace_id", traceID, "resolve_error", injectErr, "redactor_error", err,
 			"resolved_values", len(injectRedact))
+		// The FINAL chunk (2.5.0 C11, present defect 83, question 106): refusing it
+		// for good left the run `running` for good whenever the fault does not
+		// clear. Its outcome is no secret: the run ends with its exit code and
+		// duration, none of this request's text is stored, and the log says why.
+		// At once when the fault is one that cannot clear (the run's secret now
+		// resolves to nothing: its binding deleted or its job pruned mid-run); for
+		// one that may (a resolve that failed, a redactor that could not be built)
+		// the chunk is refused, and the agent re-sends it, until unredactableGrace
+		// has passed since the first refusal.
+		if r.Header.Get("X-Log-Partial") != "1" {
+			permanent := injectErr == nil && !redactorBroken
+			first, _ := s.unredactableSince.LoadOrStore(traceID, time.Now())
+			if permanent || time.Since(first.(time.Time)) >= unredactableGrace {
+				s.unredactableSince.Delete(traceID)
+				s.endUnredactable(r, traceID, entityCode, jobName, scope, runnerID)
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
 		httpx.Fail(w, http.StatusServiceUnavailable, "redactor_unavailable",
 			"cannot fully redact a secret-bearing run's output right now; refusing to persist it un-redacted")
 		return
@@ -458,6 +478,56 @@ func exitCodeToStatus(code int) string {
 
 // finalizeRun transitions a run to a terminal status and emits run-end activity.
 // This is B4's ownership of the running→terminal transition seam.
+// unredactableGrace is how long a secret-bearing run's final chunk is refused
+// for a redaction fault that may clear before the run is ended without it
+// (C11, defect 83). A seam for tests.
+var unredactableGrace = 10 * time.Minute
+
+// reasonLogNotRedactable is the end reason of a run whose final chunk could not
+// be redacted and was not stored (endUnredactable).
+const reasonLogNotRedactable = "log_not_redactable"
+
+// noteLogNotRedactable is the line written to such a run's log in place of
+// the chunk.
+const noteLogNotRedactable = "cronomicon: the end of this run's output was not stored: it could not be redacted " +
+	"(a secret it was given can no longer be resolved). The run's outcome and exit code are kept."
+
+// endUnredactable ends a secret-bearing run from its final chunk without
+// storing any of that chunk's text (C11, defect 83): the body is read to its
+// last line, the trailing envelope gives the outcome, and the log gets one
+// line saying why the rest is missing. Captured outputs are not read either:
+// they are text of the run. A chunk with no envelope ends the run as lost, as
+// below.
+func (s *Service) endUnredactable(r *http.Request, traceID, entityCode, jobName, scope, runnerID string) {
+	var last string
+	scanner := bufio.NewScanner(r.Body)
+	scanner.Buffer(make([]byte, 1<<20), 1<<20)
+	for scanner.Scan() {
+		if line := strings.TrimSpace(scanner.Text()); line != "" {
+			last = line
+		}
+	}
+	if err := s.ensureLogDir(entityCode); err == nil {
+		if logPath, perr := s.logPath(entityCode, traceID); perr == nil {
+			if f, oerr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640); oerr == nil {
+				_, _ = f.WriteString(noteLogNotRedactable + "\n")
+				_ = f.Close()
+			}
+		}
+	}
+	env := parseTrailingEnvelope(last)
+	if env == nil {
+		s.finalizeRun(r.Context(), traceID, jobName, scope, runnerID, "failure", nil, 0, "log_stream_lost")
+		return
+	}
+	reason := env.Reason
+	if reason == "" {
+		reason = reasonLogNotRedactable
+	}
+	s.finalizeRun(r.Context(), traceID, jobName, scope, runnerID,
+		exitCodeToStatus(env.ExitCode), &env.ExitCode, env.DurationMs, reason)
+}
+
 func (s *Service) finalizeRun(ctx context.Context, traceID, jobName, scope, runnerID,
 	status string, exitCode *int, durationMs int64, reason string) {
 

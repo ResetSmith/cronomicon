@@ -383,9 +383,12 @@ export function OwnerChip({ owner }: { owner?: string | null }) {
   return (
     <span
       title={
+        // 2.5.0 C11, defect 90: a row is its owner's runs' alone since 2.4.0
+        // (§0a, IN-6). The text said Global's was every agency's, resolved after
+        // an agency's own: an order that no longer exists.
         owner === "Global"
-          ? "Owned by Global: shared by every agency. An agency's own row of the same name is used before this one."
-          : `Owned by ${owner}. This agency's runs resolve this row before any shared row of the same name.`
+          ? "Owned by Global: used by Global's runs only, and changed only by global administrators."
+          : `Owned by ${owner}: used by ${owner}'s runs only, and changed by its administrators.`
       }
       style={{
         padding: "1px 6px",

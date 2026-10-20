@@ -2246,7 +2246,7 @@
                 </div>
 
                 <p>This manual describes the service as it stands: the current database schema is
-                    <strong>1580</strong>, and the runner wire protocol is <strong>v14</strong>. Cronomicon follows
+                    <strong>1590</strong>, and the runner wire protocol is <strong>v14</strong>. Cronomicon follows
                     Semantic Versioning. The project's <a
                         href="https://gitlab.example.com/ops/cronomicon/-/blob/main/CHANGELOG.md"><code>CHANGELOG.md</code></a>
                     in the Cronomicon repository records the reasoning behind each behavior in this book.</p>
@@ -2322,7 +2322,7 @@
                         reach</strong>: it tells you if the caller has an <em>All scopes</em> grant. A sibling flag,
                     <code>composeUnbound</code>, says whether the caller may author an <em>All-scoped</em> (global)
                     definition &mdash; only an unrestricted compose grant qualifies, and the Job Composer reads it to
-                    withhold the &ldquo;All agencies (global)&rdquo; scope option from everyone else.</p>
+                    withhold the &ldquo;No scope&rdquo; option from everyone else.</p>
                 <p>From v2.2.2 the response also contains five flags that answer a different question: not
                     &ldquo;can the caller do this <em>somewhere</em>&rdquo; but &ldquo;can the caller do this to the
                     <em>installation</em>&rdquo;. They are <code>configureAppGlobal</code>,
@@ -2399,8 +2399,10 @@
                     The signal comes from data, not from the role, so a scope-restricted <em>admin</em> stays
                     restricted.</p>
                 <p><strong>Composing follows the same rule, per object.</strong> An Cronomicon-composed job must name a
-                    scope, one of its own agency's. &ldquo;All agencies (global)&rdquo; in the scope picker means no
-                    scope, which makes the job Global's; it is an explicit choice (the API takes <code>""</code>),
+                    scope, one of its own agency's. &ldquo;No scope&rdquo; in the scope picker makes the job the
+                    agency's it is created in, each run given one of that agency's scopes when it starts (in Global:
+                    Global's, on Global's hosts and runners; until 2.5.0 the option read &ldquo;All agencies
+                    (global)&rdquo;); it is an explicit choice (the API takes <code>""</code>),
                     not a default, and an omitted scope is refused with <code>422 validation_failed</code>. A Git
                     job with no <code>scope</code> syncs only from Global's repository, where it is Global's; an
                     agency's repository refuses it (&sect;5.4). Authoring authority is decided per
@@ -3156,11 +3158,14 @@
                     agency, stop every producer.</p>
                 <p id="freeze"><strong>The installation-wide freeze (since 2.4.0).</strong> A calendar belongs to
                     one agency, and a global calendar freezes its own agency's fires only. To freeze every agency,
-                    a global administrator turns on the installation-wide freeze, with a reason:
-                    <code>PUT /api/v1/settings/freeze</code> with <code>{on, reason}</code> (a reason is required
-                    to turn it on). While it is on, no scheduled fire of any agency happens, and each one is
-                    recorded as skipped, with the reason. Anyone signed in can read it
-                    (<code>GET /api/v1/settings/freeze</code>). It replaces the freeze that Global's global
+                    a global administrator turns on the installation-wide freeze, with a reason: the
+                    <strong>Installation freeze</strong> card at the top of Settings &rarr; General (since 2.5.0;
+                    the route is <code>PUT /api/v1/settings/freeze</code> with <code>{on, reason}</code>, and a
+                    reason is required to turn it on). While it is on, no scheduled fire of any agency happens, and
+                    each one is recorded as skipped, with the reason; manual runs and runs by a token go on. A
+                    banner above every page says so, with the reason, who set it and when, for everyone signed in
+                    (<code>GET /api/v1/settings/freeze</code>); <strong>Lift the freeze</strong> on the same card
+                    ends it. It replaces the freeze that Global's global
                     calendar gave every agency before 2.4.0; a notice lists each such calendar
                     (<code>global_calendar_scope</code>, &sect;8.10).</p>
                 <p>A fire reads the job again. Thus job-level env, and the job's <strong>pinned target host</strong>
@@ -4014,7 +4019,10 @@ cronomicon validate .                # Global's repository
                         run (with their scripts and schedules), and every sub-workflow, each name once. Each copied
                         job names the target agency's scope that you picked. Each YAML file is stamped with
                         <code>metadata.origin</code> (where it came from: the repository, the path and the commit).
-                        Only a definition that is a file of a repository can be given; one built in the app is
+                        The repository is named by its host and path, never with a user, a password or a query
+                        (2.5.0): Global's connection may still hold its token in the URL, as agencies' may not, and
+                        the stamp stays in the target's history. Give Global's token in the token field, as an
+                        agency's is given (&sect;5.6). Only a definition that is a file of a repository can be given; one built in the app is
                         refused.</li>
                     <li><strong>What is used, and what is added.</strong> A script, schedule, job or sub-workflow
                         that the target's repository already has by name is the target's own, and is used, not
@@ -4027,7 +4035,15 @@ cronomicon validate .                # Global's repository
                     <li><strong>Calendars.</strong> Calendars are not files until 2.6.0. A calendar that the copy's
                         schedules name, and that the target agency does not have, refuses the assignment
                         (<code>422 calendar_missing</code>), because the target's sync would refuse the schedule and
-                        the definition with it.</li>
+                        the definition with it. So does a schedule that keeps to (<code>onlyCalendars</code>) a
+                        calendar that the target has as global, which may be skipped and never kept to
+                        (<code>422 calendar_not_bindable</code>).</li>
+                    <li><strong>Reactions.</strong> A reaction whose upstream the target would not have refuses the
+                        assignment (<code>422 upstream_missing</code>, naming each as <code>kind:name</code>): a Git
+                        upstream that is neither in the target's repository nor in the assignment, or one built in
+                        the app that is not the target agency's. Give the upstream first, or create it there. (Until
+                        2.5.0's last fixes the copy was committed, the target's sync refused it, and every later sync
+                        of that agency left its prune off.)</li>
                     <li><strong>The commit.</strong> It goes to the branch that the agency syncs, as a publish does:
                         fetched first, never forced, and the server's clone is put back if the commit fails. The
                         assignment starts the target's sync, and the copy shows in the agency when that sync
@@ -5256,6 +5272,17 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                         envelope finalizes the run <code>log_stream_lost</code>, and the output-secret-leak
                         fail-closed check finalizes even on a partial chunk. The UI's live tail reads the same
                         append-only file through <code>GET /runs/{traceId}/log?offset=</code>.</p>
+                    <p><strong>A run's end always arrives (2.5.0).</strong> The server learns that a run ended only
+                        from the agent's final upload. When that upload spends its retry budget (a server that is
+                        restarting, an upgrade's migrations), a 2.5.0 agent sends it again, backing off to once a
+                        minute, for as long as the run's process lives; the run keeps its slot meanwhile, and a first
+                        stop signal waits for it as for a run in flight (a second gives up). For a run that was given
+                        a secret and whose output can no longer be redacted (its binding deleted or its job pruned
+                        while it ran, or a resolve that keeps failing for ten minutes), the server ends the run from
+                        the final upload's envelope, with its outcome and exit code, stores none of that upload's
+                        text, writes one line saying so, and records the reason <code>log_not_redactable</code>. An
+                        agent older than 2.5.0 still gives up after its budget: a run it ended then reads as running
+                        until it is stopped (&sect;8.7, step 3).</p>
                 </div>
                 <div class="callout warn">
                     <div class="ct"><span class="em">🗝️</span> Secret &amp; key injection to an agent: gated,
@@ -6636,21 +6663,27 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                 <h4 id="upgrade-2-5">Upgrading from 2.2.3 to 2.5.0</h4>
                 <p>2.5.0 is the first published release since 2.2.3. Production and every published image go from
                     2.2.3 (or any release since) to 2.5.0 <strong>in one step</strong>: there is no stop at 2.3.x or
-                    2.4.x. The schema goes from 1210 to <strong>1580</strong>, and the runner protocol stays at
+                    2.4.x. The schema goes from 1210 to <strong>1590</strong>, and the runner protocol stays at
                     <strong>14</strong>. The project's <code>CHANGELOG.md</code> says what each release in between
                     did. What has to be done, in order, is this. An installation with no data has nothing to do but
                     upgrade the agents with the server.</p>
                 <ol class="steps">
                     <li><strong>Before you stop the old server, let queued runs finish, or cancel them.</strong> A
-                        run still queued for the in-app SSH executor of 2.2.x is claimed by nothing from 2.5.0 on:
-                        the 2.3.0 pass that moved such runs to the local runner is retired in 2.5.0. The same is
-                        true of a run pinned to a runner tag: bind the scope after the upgrade (&sect;7.10), or let
+                        run still queued for the in-app SSH executor of 2.2.x is closed at the upgrade as skipped,
+                        with the reason (migration 1590): nothing has claimed such a run since 2.3.0, and the 2.3.0
+                        pass that moved them to the local runner is retired in 2.5.0. Run its job again afterwards.
+                        A run pinned to a runner tag waits: bind the scope after the upgrade (&sect;7.10), or let
                         the run finish first.</li>
                     <li><strong>Take a backup</strong> that you can put back, then run the report with the new
-                        binary against the existing database: <code>cronomicon preflight</code> (read-only). It
-                        covers what 2.3.0 changes on the first start (below). There is no 2.4.0 or 2.5.0 section:
-                        their conversions are reported in the Notices inbox instead. The only way back is to
-                        restore the backup under the old binary; the runs made in the interval are lost.</li>
+                        binary against the existing database: <code>cronomicon preflight</code> (read-only). It says
+                        what 2.3.0 changes on the first start (below), and in its last block what 2.4.0 and 2.5.0
+                        stop or move, for this installation: the Git jobs on an agency's scope that stop running
+                        (step 6), the Git scopes that become an agency's own, the hand-written host records that an
+                        agency's runs stop finding, the global calendars that each agency gets a copy of, the queued
+                        runs that step 1 closes, and the run history that becomes Global's (below). Lines marked
+                        <code>!!</code> need action before the upgrade; the Notices inbox lists each item after it.
+                        The only way back is to restore the backup under the old binary; the runs made in the
+                        interval are lost.</li>
                     <li><strong>Upgrade every agent with the server</strong> (<strong>Copy upgrade
                             command</strong> on a runner's row). Protocol 14 is the floor. Drain the agents first, or
                         run the command when nothing is running: the agents being replaced are older than 2.3.2,
@@ -6675,18 +6708,30 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <li><strong>Give each agency its repository</strong> if it has none (Settings &rarr;
                         Repositories, &sect;5.6). Every agency syncs its own, and the single GitLab connection of
                         2.2.x became Global's (its webhook is on unless it was configured off). The connection's
-                        token must be able to push.</li>
+                        token must be able to push. <strong>A Git job of 2.2.x whose scope is an agency's stops
+                            running at the upgrade:</strong> it is Global's repository's, and a job of Global's
+                        repository runs on Global's scopes only, so each of its runs is refused, with the reason
+                        (<code>global_job_on_agency_scope</code>). Move its file to the agency's repository, or give
+                        it to the agency (<strong>Give to an agency&hellip;</strong> on the job, &sect;5.7). The
+                        report of step 2 lists them.</li>
                 </ol>
                 <p><strong>What reads differently after the upgrade.</strong> People of one agency no longer see
                     Global's rows (its jobs, runs, scopes, runners, notices and the rest), nor its activity; only a
                     global administrator and a viewer of every agency do (&sect;3). A request that names an object
-                    that the caller may not read is answered <code>404</code>. An existing alert rule is Global's,
+                    that the caller may not read is answered <code>404</code>. <strong>The run history of 2.2.x
+                        Git jobs is Global's</strong>, with the activity of those runs: a run belongs to its job's
+                    agency (2.4.0), and every 2.2.x Git job is Global's repository's, so an agency's people no
+                    longer see their own history of those runs (a global administrator and a viewer of every agency
+                    do). The history of jobs built in the app stays their agency's. An existing alert rule is Global's,
                     and so is every existing push target; each rule pushes where it pushed before (&sect;8.11). The
                     audit export's rows and stream lines gain two columns at the end: <code>actingAgency</code>
                     (2.4.4), then <code>agency</code> (2.5.0); a reader that takes columns by position sees two
                     more.</p>
                 <p><strong>Two results of the independent model are easy to miss.</strong></p>
                 <ul>
+                    <li><strong>A Git job on an agency's scope does not run</strong> until its file is in that
+                        agency's repository (step 6). The upgrade does not move it: Global's repository is one
+                        agency's, and its jobs run on Global's scopes.</li>
                     <li><strong>An agency's shell jobs need an agent of the agency.</strong> The local runner serves
                         Global only. An agency whose shell jobs the server ran in 2.2.x waits for an agent of its
                         own (<code>local_runner_served</code> for an agency that 2.3.x placed on the local runner;
@@ -8888,7 +8933,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     <code>POST &hellip;/git-repo/webhook-secret/rotate</code>,
                                     <code>GET /git-repos/{repoId}/problems</code> (&sect;5.6);
                                     <code>POST /agencies/{agencyId}/assign</code> (&sect;5.7; <code>422
-                                        calendar_missing</code> / <code>name_taken</code> /
+                                        calendar_missing</code> / <code>calendar_not_bindable</code> /
+                                    <code>upstream_missing</code> / <code>name_taken</code> /
                                     <code>changed_by_agency</code>, <code>409 up_to_date</code>)</td>
                                 <td>ConfigureApp on the repository's agency (Global's = a global administrator);
                                     an assignment = a global administrator</td>
@@ -9402,7 +9448,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     badge), <code>drain_timeout</code> (force-killed at the drain deadline),
                     <code>vault_unreachable</code>, <code>log_stream_lost</code> (a runner's final, non-partial log
                     upload arrived without a parseable trailing envelope; mid-run <code>X-Log-Partial: 1</code> chunks
-                    are exempt by design, &sect;7.5), <code>cronomicon: job timed out</code>.
+                    are exempt by design, &sect;7.5), <code>log_not_redactable</code> (a run given a secret whose
+                    output could no longer be redacted: the outcome is kept, the end of its output is not),
+                    <code>cronomicon: job timed out</code>.
                 </p>
                 <p><strong>Trigger kinds</strong> (<code>runs.trigger_kind</code> /
                     <code>workflow_runs.trigger_kind</code>): <code>manual</code> (a click),

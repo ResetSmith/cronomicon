@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { fetchCapabilities } from "../api/client";
 import { useGet, rows } from "../hooks";
-import { useEnsureAgency } from "../agency";
+import { useAgencyOptional, useEnsureAgency } from "../agency";
 import { c } from "../theme";
 import { guideForRunType } from "../components/docLinks";
 import { EnvRowsEditor, Btn, InfoBody, InfoToggle, Input, Select, SourceBadge, fieldLabelStyle, inputStyle, type EnvKV,
@@ -196,6 +196,14 @@ export function JobComposer() {
   // (RB-30). A departmental composer is offered named scopes only, rather than
   // being shown an option the server will refuse.
   const [canComposeUnbound, setCanComposeUnbound] = useState(false);
+  // What "No scope" means, said of the agency the job is created in (2.5.0 C11,
+  // defect 90: it said "visible to every agency", and even the 2.5.0 hint was
+  // true only in Global): the agency's job, a scope of its given to each run.
+  const inAgency = useAgencyOptional();
+  const noScopeMeans =
+    !inAgency || inAgency.agency === "global"
+      ? "the job is Global's, and runs on Global's hosts and runners"
+      : `the job is ${inAgency.agencyName}'s, and each run is given one of ${inAgency.agencyName}'s scopes when it starts`;
   // Reactions were, from GC (v2.2.2) until 2.4.2, the one part of this form the
   // server took only from a compose administrator; since question 61 they are
   // the job's agency's, like the job.
@@ -672,9 +680,7 @@ export function JobComposer() {
     // the author is told in the form rather than by a 422 after a full round-trip;
     // the server enforces the same rule for every other client.
     if (scope == null) {
-      return setErr(
-        'Pick a scope — it decides where this job runs. "All agencies (global)" means no scope: the job is then Global\'s, run on Global\'s runners.',
-      );
+      return setErr(`Pick a scope — it decides where this job runs. Or pick "No scope": ${noScopeMeans}.`);
     }
     setBusy(true);
     const body: Record<string, unknown> = {
@@ -925,7 +931,7 @@ export function JobComposer() {
               Decides where this job runs.{" "}
               {canComposeUnbound ? (
                 <>
-                  <strong>All agencies (global)</strong> means no scope: the job is then Global's, run on Global's runners.
+                  <strong>No scope</strong>: {noScopeMeans}.
                 </>
               ) : (
                 <>Pick one of the scopes your role is granted.</>
@@ -934,7 +940,7 @@ export function JobComposer() {
           )}
           {scope === "" && (
             <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
-              No scope (Global). Visible to every agency, and runnable by anyone who may trigger jobs.
+              No scope: {noScopeMeans}.
             </div>
           )}
           {/* AF-Q3 — advisory, never blocking: a scope that maps to no agency is

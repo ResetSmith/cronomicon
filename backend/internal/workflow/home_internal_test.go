@@ -216,7 +216,9 @@ func TestAGitWorkflowsSubWorkflowIsItsRepositorysOnly(t *testing.T) {
 		// oldest of the name was another agency's.
 		{"with no home: Global's", "flow", "", rowG, "global"},
 		// Built in the app: the workflow's own agency's, and no other's.
-		{"the app's workflow of its own agency, from repo-b", "month-end", "repo-b", appRow("app-b"), ""},
+		// ...and at home in its agency (2.5.0 C11, defect 79: its own names are
+		// that agency's).
+		{"the app's workflow of its own agency, from repo-b", "month-end", "repo-b", appRow("app-b"), AgencyHome("ag-b")},
 		{"the app's workflow of another agency, from repo-b", "c-only", "repo-b", 0, ""},
 		// Two agencies' workflows built in the app hold the name: by the name
 		// alone, from Global's, neither runs (2.4.0, present defect 50; it was
@@ -302,8 +304,10 @@ func TestHomeIsAGitWorkflowsRepository(t *testing.T) {
 	}{
 		"an agency's repository's workflow":         {git, "repo-b"},
 		"a Git workflow that records no repository": {rowOf("wf-old"), "global"},
-		"a workflow built in the app":               {rowOf("wf-app"), ""},
-		"no such workflow":                          {99999, ""},
+		// At home in its owner agency (2.5.0 C11, defect 79); this one names
+		// none, so Global's.
+		"a workflow built in the app": {rowOf("wf-app"), AgencyHome("global")},
+		"no such workflow":            {99999, ""},
 	} {
 		if got := f.e.Home(ctx, c.row); got != c.want {
 			t.Errorf("%s: home %q, want %q", what, got, c.want)

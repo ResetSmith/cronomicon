@@ -2907,7 +2907,9 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		// the whole repo's sync on one file. The warning is the fix path — the row
 		// is written either way, so the operator can see it and add the field.
 		if strings.TrimSpace(j.Spec.Scope) == "" {
-			s.logWarn("git sync: job declares no scope, so it lands in All — visible to every agency; add `spec.scope` to place it with one department",
+			// 2.5.0 C11, defect 90: it said the job "lands in All — visible to
+			// every agency", the pre-2.4 model.
+			s.logWarn("git sync: job declares no scope: in Global's repository it is Global's and runs on Global's hosts and runners, and an agency's repository refuses it; add `spec.scope`",
 				"job", j.Metadata.Name, "source_path", j.SourcePath)
 		}
 		// LR-71 — a fixed target_host must be one of the job's scope's hosts, or

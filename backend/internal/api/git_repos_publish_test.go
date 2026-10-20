@@ -70,6 +70,11 @@ func TestAPublishNamesARepositoryAndIsGatedByItsAgency(t *testing.T) {
 	passes("FIN's approver publishing a workflow file to FIN's repository", gFinApprover, fin, "workflows/flow.yaml", workflow)
 	passes("FIN's administrator, the same", gFinAdmin, fin, "jobs/fin-new.yaml", jobYAML("fin-new", "fin-hosts"))
 	refused("FIN's approver publishing a job in TAX's scope to FIN's repository", gFinApprover, fin, "jobs/x.yaml", jobYAML("x", "tax-hosts"))
+	// The scope is the repository's agency's (2.5.0 C11, defect 73): a grant on
+	// TAX covered TAX's scope by its name, and the gate let it into FIN's
+	// repository (the sync then refused the file).
+	refused("FIN's approver who administers TAX publishing a job in TAX's scope to FIN's repository", gFinApprover+","+gTaxAdmin, fin, "jobs/x.yaml", jobYAML("x", "tax-hosts"))
+	passes("the same person publishing FIN's job to FIN's repository", gFinApprover+","+gTaxAdmin, fin, "jobs/fin-new.yaml", jobYAML("fin-new", "fin-hosts"))
 	refused("FIN's approver publishing a job with no scope to FIN's repository", gFinApprover, fin, "jobs/x.yaml", jobYAML("x", ""))
 	refused("FIN's approver publishing content whose scope cannot be read to FIN's repository", gFinApprover, fin, "jobs/x.yaml", "::: not yaml :::")
 	refused("FIN's approver publishing a job with no name to FIN's repository", gFinApprover, fin, "jobs/x.yaml",

@@ -525,12 +525,15 @@ func deriveSourceKind(command, script, scriptPath *string) string {
 
 // updateScriptTags sets a script's user-authored tags (scripts-tags.md). Tags are
 // SQLite-only and are preserved across Git syncs (see gitlab.upsertScripts). The
-// request is a full replace of the tag set. Gate is session + CSRF only (D1: any
-// logged-in user) — wired in mountScripts, not here.
+// request is a full replace of the tag set. Gate is session + CSRF (D1: any
+// logged-in user), wired in mountScripts, and here the script's agency: the
+// answer carries the body, so a script the caller may not read is absent
+// (2.5.0 C11, defect 71; GET /scripts/{name} answered 404 while this answered
+// 200 with the body).
 func (s *Server) updateScriptTags(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	uid, found := s.scriptUID(r, name)
-	if !found {
+	if !found || !readsAgency(r, s.ownerBy(r.Context(), `SELECT `+agencyid.ScriptOwnerSQL("sx")+` FROM scripts sx WHERE sx.uid = ?`, uid)) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "script not found")
 		return
 	}

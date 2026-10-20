@@ -137,6 +137,16 @@ func TestUnclaimableReasonExplainsTheUnboundTrap(t *testing.T) {
 		t.Errorf("unbound run on a departmentalised fleet = %q, want it to explain that "+
 			"it is Global's and name the remedy", got)
 	}
+	// 2.5.0 C11, defect 90: the local runner runs shell types only, so it is
+	// not offered to an Ansible run, and is to a shell one.
+	if strings.Contains(got, "local runner") {
+		t.Errorf("an Ansible run of Global's is offered the local runner, which cannot run it: %q", got)
+	}
+	f.runner("r-dept-sh", "online", `["bash"]`, "a1", 1) // a shell runner, departmental too
+	f.seedRun("run-unbound-bash", "bash", `[]`, "")
+	if got := f.reason(t, "run-unbound-bash"); !strings.Contains(got, "turn on the local runner") {
+		t.Errorf("a shell run of Global's is not offered the local runner: %q", got)
+	}
 }
 
 // TestStampUnclaimableReasonOnlyTouchesQueuedRuns — the hint is written after the

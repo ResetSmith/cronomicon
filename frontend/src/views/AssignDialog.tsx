@@ -21,7 +21,7 @@ type Workflow = components["schemas"]["Workflow"];
 type AgencyRow = { id?: string; name?: string };
 
 /** A refusal's body: the code, the sentence, and what it names. */
-type Refusal = { code?: string; message?: string; paths?: string[]; calendars?: string[] };
+type Refusal = { code?: string; message?: string; paths?: string[]; calendars?: string[]; upstreams?: string[] };
 
 const ACTION: Record<string, string> = {
   added: "added",
@@ -203,6 +203,7 @@ export function AssignDialog({
           {refusal.message ?? refusal.code ?? "The assignment was refused."}
           {(refusal.paths?.length ?? 0) > 0 && <div style={{ fontFamily: c.mono, fontSize: c.fontXs }}>{refusal.paths!.join(", ")}</div>}
           {(refusal.calendars?.length ?? 0) > 0 && <div>Calendars: {refusal.calendars!.join(", ")}</div>}
+          {(refusal.upstreams?.length ?? 0) > 0 && <div>Reacts to: {refusal.upstreams!.join(", ")}</div>}
         </div>
       )}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>

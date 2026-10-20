@@ -24,8 +24,8 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
-	"github.com/ResetSmith/cronomicon/internal/runner"
 	"github.com/ResetSmith/cronomicon/internal/runcap"
+	"github.com/ResetSmith/cronomicon/internal/runner"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/scheduler"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
@@ -163,15 +163,15 @@ type jobRow struct {
 	// RepoID is the repository a Git job is of (2.4.0; jobs.repo_id, 1310);
 	// empty for one built in the app. As the workflow rows have had: Publish
 	// edits a job in the repository it came from (from R8).
-	RepoID     string  `json:"repoId,omitempty"`
-	Type       string  `json:"type"`
-	Host       *string `json:"host"`
-	Scope      *string `json:"scope"`
+	RepoID string  `json:"repoId,omitempty"`
+	Type   string  `json:"type"`
+	Host   *string `json:"host"`
+	Scope  *string `json:"scope"`
 	// OwnerAgency is whose the job is (agencyid.JobSQL): the agency its scope is
 	// looked for in, and whose grant is asked of it (I2). Set by fetchJobDetail,
 	// and sent with the detail since 2.4.2 (present defect 68: the Run dialog's
 	// calendar note had no agency to judge the job's schedules by).
-	OwnerAgency string `json:"ownerAgency,omitempty"`
+	OwnerAgency string  `json:"ownerAgency,omitempty"`
 	Status      string  `json:"status"`
 	Schedule    *string `json:"schedule"`
 	LastRunAt   *string `json:"lastRunAt"`
@@ -399,9 +399,13 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 		-- duration, and -- because 'skipped' matches neither arm of the status CASE
 		-- below -- derive to idle, so a job that succeeded yesterday dropped out
 		-- of ?status=success and out of its own count.
+		-- THIS job's runs (2.5.0 C11, defect 76): by its uid, and by source and
+		-- name only for a run that records none (from before 1010's backfill), as
+		-- the pause join above. Two agencies may hold jobs of one name, and by name
+		-- FIN's job showed TAX's last run.
 		LEFT JOIN runs lr ON lr.rowid = (
 			SELECT r.rowid FROM runs r
-			WHERE r.job_source = j.source AND r.job_name = j.name
+			WHERE (r.job_uid = j.uid OR (r.job_uid IS NULL AND r.job_source = j.source AND r.job_name = j.name))
 			  AND r.status <> 'skipped'
 			ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1)
 		-- The suppression is not discarded, only separated: the newest one rides
@@ -409,7 +413,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 		-- that fire was a run.
 		LEFT JOIN runs ls ON ls.rowid = (
 			SELECT r.rowid FROM runs r
-			WHERE r.job_source = j.source AND r.job_name = j.name
+			WHERE (r.job_uid = j.uid OR (r.job_uid IS NULL AND r.job_source = j.source AND r.job_name = j.name))
 			  AND r.status = 'skipped'
 			ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1)
 		WHERE j.deleted_at IS NULL -- RH: the recycle bin is not the catalog
@@ -894,13 +898,13 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 	var lastRunAt sql.NullString
 	var lastDur sql.NullInt64
 	_ = s.db.QueryRowContext(r.Context(), `
-		SELECT created_at, duration_ms FROM runs
-		WHERE job_source = ? AND job_name = ? AND status <> 'skipped'
+		SELECT created_at, duration_ms FROM runs r
+		WHERE `+runOfJobSQL("r")+` AND status <> 'skipped'
 		-- rowid breaks the tie, matching the list query: created_at is
 		-- second-precision, so two runs in the same second would otherwise let the
 		-- list and the detail disagree about which was last.
 		ORDER BY created_at DESC, rowid DESC LIMIT 1
-	`, j.source, j.name).Scan(&lastRunAt, &lastDur)
+	`, j.uid.String, j.source, j.name).Scan(&lastRunAt, &lastDur)
 	if lastRunAt.Valid {
 		jr.LastRunAt = &lastRunAt.String
 	}
@@ -916,20 +920,20 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 	// currently not starting.
 	var queuedReason sql.NullString
 	_ = s.db.QueryRowContext(r.Context(), `
-		SELECT queued_reason FROM runs
-		WHERE job_source = ? AND job_name = ? AND status = 'queued'
+		SELECT queued_reason FROM runs r
+		WHERE `+runOfJobSQL("r")+` AND status = 'queued'
 		ORDER BY created_at DESC, rowid DESC LIMIT 1
-	`, j.source, j.name).Scan(&queuedReason)
+	`, j.uid.String, j.source, j.name).Scan(&queuedReason)
 	if queuedReason.Valid && queuedReason.String != "" {
 		jr.QueuedReason = &queuedReason.String
 	}
 
 	var lastSkipAt, lastSkipReason sql.NullString
 	_ = s.db.QueryRowContext(r.Context(), `
-		SELECT created_at, COALESCE(queued_reason,'') FROM runs
-		WHERE job_source = ? AND job_name = ? AND status = 'skipped'
+		SELECT created_at, COALESCE(queued_reason,'') FROM runs r
+		WHERE `+runOfJobSQL("r")+` AND status = 'skipped'
 		ORDER BY created_at DESC, rowid DESC LIMIT 1
-	`, j.source, j.name).Scan(&lastSkipAt, &lastSkipReason)
+	`, j.uid.String, j.source, j.name).Scan(&lastSkipAt, &lastSkipReason)
 	if lastSkipAt.Valid {
 		jr.LastSkippedAt = &lastSkipAt.String
 	}
@@ -2036,7 +2040,9 @@ func (s *Server) pauseJob(w http.ResponseWriter, r *http.Request) {
 	if jr.Scope != nil {
 		jobScope = *jr.Scope
 	}
-	if !auth.ScopeReadableIn(id, jr.OwnerAgency, jobScope) {
+	// Whose it is first (C11, defect 72): another agency's no-scope job passed
+	// the scope check and answered 403 below, saying it exists.
+	if !readsAgency(r, jr.OwnerAgency) || !auth.ScopeReadableIn(id, jr.OwnerAgency, jobScope) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
@@ -2089,7 +2095,8 @@ func (s *Server) resumeJob(w http.ResponseWriter, r *http.Request) {
 	if jr.Scope != nil {
 		jobScope = *jr.Scope
 	}
-	if !auth.ScopeReadableIn(id, jr.OwnerAgency, jobScope) {
+	// Whose it is first (C11, defect 72), as pauseJob.
+	if !readsAgency(r, jr.OwnerAgency) || !auth.ScopeReadableIn(id, jr.OwnerAgency, jobScope) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
@@ -2145,8 +2152,11 @@ func (s *Server) requirePauseAuthority(w http.ResponseWriter, r *http.Request, i
 		s.auth.AuditDenied(r, id.Email, "insufficient_scope", auth.AllScopes,
 			auditDetails(r, "pause or resume of an unscoped job ("+auth.PermKillJobs+" required unbound)"))
 	}
+	// 2.5.0 C11, defect 90: it said the job "belongs to no one agency"; since
+	// 2.4.0 a job with no scope is its agency's. Who may pause it is unchanged
+	// (the review's section F).
 	httpx.Fail(w, http.StatusForbidden, "forbidden",
-		"this job has no scope, so it belongs to no one agency; only an unrestricted operator may pause or resume it")
+		"this job has no scope: pausing or resuming it takes killJobs on every agency, which only a global operator holds")
 	return false
 }
 
@@ -2203,6 +2213,12 @@ func (s *Server) killJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
+	// Whose it is (C11, defect 72): another agency's job answered 409 or a 403
+	// naming its run's scope, which said it exists. The authorization target
+	// is the RUN (below), so a caller who may not read the job may still stop
+	// a run bound to a scope of their own (a 2.4 run of Global's job against
+	// FIN's scope is FIN's to stop, question 78); anyone else is answered 404.
+	jobReadable := readsAgency(r, jr.OwnerAgency)
 
 	// RX-4 — the disposition. Stopping a run and saying what it MEANT are two
 	// different acts: `status` becomes the outcome, `killed_by` stays the proof a
@@ -2251,10 +2267,14 @@ func (s *Server) killJob(w http.ResponseWriter, r *http.Request) {
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT r.id, r.status, r.scope, r.started_at, rn.name, `+agencyid.RunScopeOwnerSQL("r.agencies_json")+`
 		FROM runs r LEFT JOIN runners rn ON rn.id = r.runner_id
-		WHERE r.job_source = ? AND r.job_name = ? AND r.status IN ('queued','running')
+		WHERE `+runOfJobSQL("r")+` AND r.status IN ('queued','running')
 		ORDER BY r.created_at DESC LIMIT 1
-	`, jr.Source, jr.Name).Scan(&traceID, &currentStatus, &runScopeRaw, &startedAtRaw, &runnerNameRaw, &runOwner)
+	`, jr.UID, jr.Source, jr.Name).Scan(&traceID, &currentStatus, &runScopeRaw, &startedAtRaw, &runnerNameRaw, &runOwner)
 	if errors.Is(err, sql.ErrNoRows) {
+		if !jobReadable {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
+			return
+		}
 		httpx.Fail(w, http.StatusConflict, "no_active_run", "job has no active run")
 		return
 	}
@@ -2263,6 +2283,10 @@ func (s *Server) killJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runScope := runScopeRaw.String
+	if !jobReadable && (runScope == "" || !readsAgency(r, runOwner) || !auth.ScopeReadableIn(id, runOwner, runScope)) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
+		return
+	}
 
 	// PP-L2 scope guard + RB-2 verb guard, both against the RUN's effective scope.
 	// A genuinely unbound run (system-global, or a scheduled fire of an unscoped job
@@ -2619,14 +2643,18 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 		-- applied: a suppressed fire impersonated the last run. Fixed on both sides
 		-- together -- a guard on one twin and not the other is how the last three
 		-- of these survived review.
+		-- THIS workflow's runs (2.5.0 C11, defect 76, found by C11's re-review):
+		-- by its uid, and by source and name only for a run that records none, as
+		-- workflowLastRun. By name the list showed another agency's run of a
+		-- workflow of the same name.
 		LEFT JOIN workflow_runs lr ON lr.rowid = (
 			SELECT r.rowid FROM workflow_runs r
-			WHERE r.workflow_source = w.source AND r.workflow_name = w.name
+			WHERE (r.workflow_uid = w.uid OR (r.workflow_uid IS NULL AND r.workflow_source = w.source AND r.workflow_name = w.name))
 			  AND r.status <> 'skipped'
 			ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1)
 		LEFT JOIN workflow_runs ls ON ls.rowid = (
 			SELECT r.rowid FROM workflow_runs r
-			WHERE r.workflow_source = w.source AND r.workflow_name = w.name
+			WHERE (r.workflow_uid = w.uid OR (r.workflow_uid IS NULL AND r.workflow_source = w.source AND r.workflow_name = w.name))
 			  AND r.status = 'skipped'
 			ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1)
 		WHERE w.deleted_at IS NULL`
@@ -2978,7 +3006,10 @@ func (s *Server) patchWorkflow(eng *workflow.Engine) http.HandlerFunc {
 		}
 		wfID := r.PathValue("workflowId")
 		wr := s.fetchWorkflowByID(r, wfID)
-		if wr == nil || wr.DeletedAt != nil {
+		// Whose it is first (C11, defect 72): a workflow of another agency whose
+		// steps resolve to no scoped job passed the scope loop below, and was
+		// paused; one whose steps did answered 403 naming their scope.
+		if wr == nil || wr.DeletedAt != nil || !s.workflowReadable(r, wr) {
 			// RH: pausing a binned workflow is meaningless — it reads as absent.
 			httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
 			return
@@ -3031,7 +3062,8 @@ func (s *Server) triggerWorkflow(eng *workflow.Engine) http.HandlerFunc {
 		}
 		wfID := r.PathValue("workflowId")
 		wr := s.fetchWorkflowByID(r, wfID)
-		if wr == nil || wr.DeletedAt != nil {
+		// Whose it is first (C11, defect 72), before the disabled answer too.
+		if wr == nil || wr.DeletedAt != nil || !s.workflowReadable(r, wr) {
 			// RH: a binned workflow reads as absent, exactly as a binned job does in
 			// getJob/runJob. fetchWorkflowByID deliberately returns deleted rows so the
 			// recycle bin can read them, so every path that ACTS on the definition
@@ -3230,7 +3262,7 @@ func (s *Server) fetchWorkflowByID(r *http.Request, wfID string) *workflowRow {
 	}
 	// LB12: Last Run timestamp + Result status from the most-recent workflow_runs
 	// row (NextRunAt is already populated from the schedules below).
-	if at, st := s.workflowLastRun(r.Context(), wf.source, wf.name); at != nil {
+	if at, st := s.workflowLastRun(r.Context(), wf.uid.String, wf.source, wf.name); at != nil {
 		wr.LastRunAt = at
 		if st != "" {
 			wr.Status = st
@@ -3282,13 +3314,15 @@ func (s *Server) isWorkflowDisabled(r *http.Request, source, name, uid string) b
 // subquery and scheduleLastRunAt). Returns (nil, "") when the workflow has no
 // runs. LB12: the Workflows list/detail serializers never joined workflow_runs,
 // so "Last Run" was always empty and "Result" was hardcoded "idle".
-func (s *Server) workflowLastRun(ctx context.Context, source, name string) (*string, string) {
+// workflowLastRun is THIS workflow's newest run: by its uid, and by source and
+// name only for a run that records none (2.5.0 C11, defect 76, as runOfJobSQL).
+func (s *Server) workflowLastRun(ctx context.Context, uid, source, name string) (*string, string) {
 	var lastRunAt, lastStatus sql.NullString
 	_ = s.db.QueryRowContext(ctx, `
 		SELECT created_at, status FROM workflow_runs
-		WHERE workflow_source = ? AND workflow_name = ? AND status <> 'skipped'
+		WHERE (workflow_uid = ? OR (workflow_uid IS NULL AND workflow_source = ? AND workflow_name = ?)) AND status <> 'skipped'
 		ORDER BY created_at DESC LIMIT 1
-	`, source, name).Scan(&lastRunAt, &lastStatus)
+	`, uid, source, name).Scan(&lastRunAt, &lastStatus)
 	var at *string
 	if lastRunAt.Valid {
 		at = &lastRunAt.String
@@ -3630,15 +3664,25 @@ func (s *Server) cancelWorkflowRun(eng *workflow.Engine) http.HandlerFunc {
 		var status, wfSource string
 		var stepsSnapshot sql.NullString
 		var workflowID int64
+		var wrAgency string
 		err := s.db.QueryRowContext(r.Context(), `
-			SELECT status, steps_snapshot, COALESCE(workflow_source,''), COALESCE(workflow_id, 0) FROM workflow_runs WHERE id = ?
-		`, traceID).Scan(&status, &stepsSnapshot, &wfSource, &workflowID)
+			SELECT status, steps_snapshot, COALESCE(workflow_source,''), COALESCE(workflow_id, 0),
+			       `+agencyid.ColumnOwnerSQL("workflow_runs", "agency_id")+`
+			FROM workflow_runs WHERE id = ?
+		`, traceID).Scan(&status, &stepsSnapshot, &wfSource, &workflowID, &wrAgency)
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "workflow run not found")
 			return
 		}
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		// Whose it is first (C11, defect 72), as getWorkflowRun: another agency's
+		// run, or Global's, with no child run yet passed every check below and
+		// was cancelled.
+		if !readsAgency(r, wrAgency) {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "workflow run not found")
 			return
 		}
 
@@ -5179,6 +5223,17 @@ func (s *Server) listChangeLog(w http.ResponseWriter, r *http.Request) {
 // Shared helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+// runOfJobSQL is the condition that the row `r` of runs is a run of one job:
+// by the job's uid, and by its source and name only for a run that records no
+// uid (one from before 1010's backfill). Its arguments are the job's uid,
+// source and name. Two agencies may hold jobs of one name (names per agency
+// since 2.4.0, and an assignment keeps the name), and by name Kill stopped,
+// and a job's detail showed, the newest run of either (2.5.0 C11, defects 75
+// and 76).
+func runOfJobSQL(r string) string {
+	return `(` + r + `.job_uid = ? OR (` + r + `.job_uid IS NULL AND ` + r + `.job_source = ? AND ` + r + `.job_name = ?))`
+}
+
 func (s *Server) deriveJobStatus(r *http.Request, source, jobName, jobUID string, enabled int, schedule string) string {
 	if enabled == 0 {
 		return "paused"
@@ -5190,10 +5245,10 @@ func (s *Server) deriveJobStatus(r *http.Request, source, jobName, jobUID string
 	// Check for active runs.
 	var status sql.NullString
 	_ = s.db.QueryRowContext(r.Context(), `
-		SELECT status FROM runs
-		 WHERE job_source = ? AND job_name = ? AND status <> 'skipped'
+		SELECT status FROM runs r
+		 WHERE `+runOfJobSQL("r")+` AND status <> 'skipped'
 		 ORDER BY created_at DESC LIMIT 1
-	`, source, jobName).Scan(&status)
+	`, jobUID, source, jobName).Scan(&status)
 	if status.Valid {
 		switch status.String {
 		case "running":

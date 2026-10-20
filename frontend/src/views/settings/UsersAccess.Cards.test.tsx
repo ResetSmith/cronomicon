@@ -27,6 +27,13 @@ const posts: Array<{ path: string; body: unknown }> = [];
 const deletes: string[] = [];
 const gets: string[] = [];
 
+// The agency in use (2.5.0 C11): none unless a test sets one.
+const { inUse } = vi.hoisted(() => ({ inUse: { current: null as null | { agency: string; agencyName: string } } }));
+vi.mock("../../agency", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agency")>();
+  return { ...actual, useAgencyOptional: () => inUse.current };
+});
+
 vi.mock("../../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/client")>();
   return {
@@ -91,7 +98,10 @@ beforeEach(() => {
     { id: "g2", adGroup: "SG-Admins", role: "admin", agencyId: null, agencyName: null, allScopes: true },
   ];
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  inUse.current = null;
+});
 
 const renderSection = async () => {
   render(
@@ -204,6 +214,37 @@ describe("Access Grants card (RB-20)", () => {
     const wheres = within(addRow).getAllByRole("combobox");
     fireEvent.change(wheres[wheres.length - 1], { target: { value: "ag-tax" } });
     expect((within(addRow).getByText("+ Add").closest("button") as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+// 2.5.0 C11, defect 87 (question 108): a grant is made in the agency the person
+// works in, and the list shows that agency's grants only; one on another
+// agency, or on every agency, was made from Tax and then never listed.
+describe("Access Grants card — working in an agency (C11)", () => {
+  it("grants in the agency in use, with no where to choose and no agency filter", async () => {
+    inUse.current = { agency: "ag-tax", agencyName: "Tax" };
+    GRANTS = Array.from({ length: 6 }, (_, i) => ({ id: `g${i}`, adGroup: i ? `SG-${i}` : "SG-Tax", role: "viewer", agencyId: "ag-tax", agencyName: "Tax", allScopes: false }));
+    await renderSection();
+    expect(screen.getByTestId("grant-where").textContent).toBe("In Tax");
+    expect(screen.queryByRole("option", { name: "All agencies" })).toBeNull();
+    const group = screen.getByPlaceholderText("SG-Cronomicon-Tax");
+    fireEvent.change(group, { target: { value: "SG-New" } });
+    const add = within(group.parentElement as HTMLElement).getByText("+ Add").closest("button") as HTMLButtonElement;
+    expect(add.disabled).toBe(false);
+    fireEvent.click(add);
+    await waitFor(() => expect(posts.some((p) => p.path === "/access-grants")).toBe(true));
+    expect(posts.find((p) => p.path === "/access-grants")!.body).toMatchObject({ adGroup: "SG-New", agencyId: "ag-tax" });
+  });
+
+  it("grants on every agency only while working in Global", async () => {
+    inUse.current = { agency: "global", agencyName: "Global" };
+    await renderSection();
+    expect(screen.getByTestId("grant-where").textContent).toBe("On every agency");
+    const group = screen.getByPlaceholderText("SG-Cronomicon-Tax");
+    fireEvent.change(group, { target: { value: "SG-Root" } });
+    fireEvent.click(within(group.parentElement as HTMLElement).getByText("+ Add").closest("button") as HTMLButtonElement);
+    await waitFor(() => expect(posts.some((p) => p.path === "/access-grants")).toBe(true));
+    expect(posts.find((p) => p.path === "/access-grants")!.body).toMatchObject({ adGroup: "SG-Root", allScopes: true });
   });
 });
 

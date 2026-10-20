@@ -2959,6 +2959,9 @@
                         it. A link to an agency you may not use gives way to your default, with a notice that does not
                         say why (<em>That agency is not available to you; showing …</em>). A link to another agency's
                         run, job, workflow or schedule switches to that agency and says so (<em>Switched to …</em>).</li>
+                    <li><strong>Switching from a page that shows one item</strong> (a run's detail, the job composer,
+                        the workflow editor, the schedule builder) shows that page's list in the new agency: the item
+                        is the other agency's. How the page is shown (its tab, its filters) is kept.</li>
                     <li><strong>Where a visit starts</strong>: your own default, set from the account menu
                         (<strong>Make … my default</strong>, and <strong>Clear my default</strong>); otherwise Global
                         for a global administrator, the Operations overview for anyone else whose access reaches every
@@ -2968,7 +2971,9 @@
                         to create in another agency, switch to it first. A request that names another agency is
                         refused (<code>422 agency_context_mismatch</code>). A global administrator creates for an agency
                         the same way, and their changes there are recorded in the change log as acting in that
-                        agency.</li>
+                        agency. That holds for SSH targets, runner tokens, access grants and service accounts too; a
+                        grant or service account on <em>every</em> agency is made while working in Global. Create,
+                        Edit and Delete on Jobs and Workflows are offered where you compose in the agency in use.</li>
                 </ul>
                 <div class="callout note">
                     <div class="ct"><span class="em">🔒</span> What you can see</div>
@@ -4869,8 +4874,9 @@
                     change freeze is one checkbox rather than an edit to every schedule you own — and one un-tick to
                     lift. It does not reach another agency's schedules: a global calendar of Global's freezes Global
                     only. Stopping every agency's fires at once is the <strong>installation-wide freeze</strong>, a
-                    global administrator's installation setting with a reason; while it is on no scheduled fire of any
-                    agency happens, and each is recorded as skipped with the reason.
+                    global administrator's switch with a reason (Settings &rarr; General); while it is on no scheduled
+                    fire of any agency happens, each is recorded as skipped with the reason, and a banner above every
+                    page says so, with the reason and who set it.
                 </p>
                 <p>A global calendar is <strong>skip-only</strong>: it can never be used as a “run only on days in”
                     list, and a calendar already bound that way cannot be promoted to global. That combination would
@@ -5690,8 +5696,10 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <ul>
                     <li><strong>Refused</strong>, saying why: a definition built in the app (only a file of a
                         repository can be given), a calendar the copy's schedules name that the agency lacks
-                        (<code>calendar_missing</code> &mdash; create it in the agency and give again), and a name the
-                        agency holds only in the app.</li>
+                        (<code>calendar_missing</code> &mdash; create it in the agency and give again), a schedule
+                        that keeps to a calendar the agency has as global (<code>calendar_not_bindable</code>), a
+                        reaction to a definition the agency would not have (<code>upstream_missing</code> &mdash; give
+                        that one first), and a name the agency holds only in the app.</li>
                     <li><strong>When the original changes</strong>, the agency is told: <a
                             href="#notices">Notices</a> lists <code>assignment_update_available</code> (<em>An assigned
                             definition has changed in its origin</em>) under the agency that has the copy, naming the
@@ -9654,7 +9662,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     crash/restart and
                     reconciled by the startup sweep or age reaper — shows a <em>plain</em> Failed badge with the reason,
                     <strong>not</strong> the amber Lost badge), <code>drain_timeout</code> (force-killed at drain
-                    deadline), <code>vault_unreachable</code>, <code>log_stream_lost</code>,
+                    deadline), <code>vault_unreachable</code>, <code>log_stream_lost</code>, <code>log_not_redactable</code>
+                    (the run's outcome is kept and the end of its output is not: it could not be redacted),
                     <code>cronomicon: job timed out</code>, and <code>unbound_references</code> (a scheduled run that
                     needed a department-owned credential but had no scope — see below). In a shell run's log, a host
                     that failed with <code>host_key_unverified</code> had no host key approved for the runner that took

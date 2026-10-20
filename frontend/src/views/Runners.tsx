@@ -2,6 +2,7 @@ import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, csrfHeader, errMsg, fetchCapabilities, fetchVersion, type BuildInfo } from "../api/client";
 import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../api/access";
+import { useAgencyOptional } from "../agency";
 import { useGet, rows, paged, useColumnWidths, useTableSort, useToast } from "../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../components/table";
 import { RefreshScope } from "../components/RefreshScope";
@@ -1598,18 +1599,32 @@ export function Runners() {
   // caller is offered the agencies they administer; a global administrator is
   // offered Global and every agency. One option is not a choice and is chosen.
   const access = useMyAccess();
-  const tokenOwners: AgencyRef[] = canConfigGlobal
+  // 2.5.0 C11, defect 86: a token is minted in the agency the person works in
+  // (the server refuses another, agency_context_mismatch). A global
+  // administrator working in Finance was offered every agency, Global by
+  // default, and refused. Outside a provider the choice stays as it was.
+  const ag = useAgencyOptional();
+  const here: AgencyRef | null = ag ? { id: ag.agency, name: ag.agencyName } : null;
+  const mayMintFor: AgencyRef[] = canConfigGlobal
     ? [{ id: GLOBAL_AGENCY, name: "Global" }, ...availableAgencies.filter((a) => a.id !== GLOBAL_AGENCY)]
     : agenciesFor(access ?? null, "configureApp");
+  const tokenOwners: AgencyRef[] = here ? [here] : mayMintFor;
   const [mintAgencyPick, setMintAgency] = useState("");
-  const mintAgency = tokenOwners.some((a) => a.id === mintAgencyPick)
-    ? mintAgencyPick
-    : canConfigGlobal
-      ? GLOBAL_AGENCY
-      : tokenOwners.length === 1
-        ? tokenOwners[0].id
+  const mintAgency = here
+    ? here.id
+    : tokenOwners.some((a) => a.id === mintAgencyPick)
+      ? mintAgencyPick
+      : canConfigGlobal
+        ? GLOBAL_AGENCY
+        : tokenOwners.length === 1
+          ? tokenOwners[0].id
+          : "";
+  const mintBlocked =
+    here && !canConfigGlobal && access != null && !mayMintFor.some((a) => a.id === here.id)
+      ? `You do not administer ${here.name}: switch to an agency you administer to mint a token there`
+      : !here && !canConfigGlobal && tokenOwners.length > 1 && !mintAgency
+        ? "Choose the agency this runner is for"
         : "";
-  const mintBlocked = !canConfigGlobal && tokenOwners.length > 1 && !mintAgency ? "Choose the agency this runner is for" : "";
   // The plaintext token is returned by the mint POST only once; the list never
   // carries it. Hold the freshly minted token locally so it stays copyable.
   const [minted, setMinted] = useState<MintedToken | null>(null);
@@ -1636,7 +1651,7 @@ export function Runners() {
       title="The agency that will own the runner this token enrols. Its administrators manage the runner, and it serves that agency's runs and no other's."
       style={{ padding: "7px 8px", background: c.panel2, border: `1px solid ${c.borderStrong}`, borderRadius: c.radiusChip, fontSize: c.fontSm, color: c.text, maxWidth: 220 }}
     >
-      {!canConfigGlobal && tokenOwners.length !== 1 && <option value="">Runner for…</option>}
+      {!here && !canConfigGlobal && tokenOwners.length !== 1 && <option value="">Runner for…</option>}
       {tokenOwners.map((a) => (
         <option key={a.id} value={a.id}>
           For {a.name}
