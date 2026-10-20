@@ -55,7 +55,7 @@ export function InstallationFreezeBanner() {
         fontSize: c.fontSm,
       }}
     >
-      <strong>Installation freeze: every agency's scheduled runs are skipped.</strong> {freeze.reason}
+      <strong>Installation freeze: no run starts in any agency.</strong> {freeze.reason}
       {(freeze.setBy || freeze.setAt) && (
         <span style={{ color: c.textMuted }}>
           {" "}
@@ -63,7 +63,8 @@ export function InstallationFreezeBanner() {
           {freeze.setAt ? ` at ${fmtInAppZone(freeze.setAt)}` : ""}
         </span>
       )}
-      . Manual runs are unaffected; a global administrator lifts it under Settings → General.
+      . Schedules, Run, tokens, reactions and file arrivals are all skipped; runs already going finish. A global
+      administrator lifts it under Settings → General.
     </div>
   );
 }

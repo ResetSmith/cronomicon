@@ -6,8 +6,11 @@ import { FREEZE_CHANGED_EVENT, useInstallationFreeze } from "../../components/In
 import { Btn, Card, SettingRow, csrfHeader, errMsg, inputStyle } from "./ui";
 
 // 2.5.0 C11, defect 84 (question 105): the switch for the freeze of the whole
-// installation. It stops every agency's scheduled fires (manual runs go on), and
-// takes a reason, which every skipped fire records. A global administrator's;
+// installation. It stops every run from starting, in every agency: schedules,
+// Run, tokens, reactions, deferred runs and file arrivals (the gate matrix's
+// globalFreeze, FX-Q2: a freeze a click can walk through is not one; C12,
+// defect 93, corrected the copy that said manual runs go on). It takes a
+// reason, which every skipped run records. A global administrator's;
 // anyone else reads it. Until C11 only `PUT /settings/freeze` set it, though the
 // changelog and the manual said Settings.
 export function InstallationFreezeCard({ canWrite }: { canWrite: boolean }) {
@@ -34,9 +37,9 @@ export function InstallationFreezeCard({ canWrite }: { canWrite: boolean }) {
     <div style={{ marginBottom: 16 }}>
     <Card title="Installation freeze">
       <div style={{ color: c.textSec, fontSize: c.fontSm, marginBottom: 12 }}>
-        While the installation is frozen, no agency's schedules fire: every fire is skipped, with the reason. Manual runs
-        and runs by a token go on. An agency freezes its own schedules with a global calendar of its own (Schedules →
-        Calendars).
+        While the installation is frozen, no run starts in any agency: schedules, Run, tokens, reactions, deferred runs
+        and file arrivals are all skipped, with the reason. Runs already going finish. An agency freezes its own schedules
+        with a global calendar of its own (Schedules → Calendars).
       </div>
       {freeze == null ? null : on ? (
         <SettingRow label="Frozen" hint={`${freeze.reason ?? ""}${freeze.setBy ? ` — set by ${freeze.setBy}` : ""}${freeze.setAt ? ` at ${fmtInAppZone(freeze.setAt)}` : ""}`}>
