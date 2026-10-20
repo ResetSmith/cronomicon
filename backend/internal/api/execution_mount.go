@@ -2152,8 +2152,11 @@ func (s *Server) requirePauseAuthority(w http.ResponseWriter, r *http.Request, i
 		s.auth.AuditDenied(r, id.Email, "insufficient_scope", auth.AllScopes,
 			auditDetails(r, "pause or resume of an unscoped job ("+auth.PermKillJobs+" required unbound)"))
 	}
+	// 2.5.0 C11, defect 90: it said the job "belongs to no one agency"; since
+	// 2.4.0 a job with no scope is its agency's. Who may pause it is unchanged
+	// (the review's section F).
 	httpx.Fail(w, http.StatusForbidden, "forbidden",
-		"this job has no scope, so it belongs to no one agency; only an unrestricted operator may pause or resume it")
+		"this job has no scope: pausing or resuming it takes killJobs on every agency, which only a global operator holds")
 	return false
 }
 

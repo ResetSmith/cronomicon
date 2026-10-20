@@ -95,6 +95,12 @@ gain an `agency` column (last), after 2.4.4's `actingAgency`.
 
 ### Added
 
+- **The installation freeze in the app**: an *Installation freeze* switch at the
+  top of Settings → General (a reason is required; a global administrator's),
+  and a banner above every page while it is on, with the reason, who set it and
+  when. Until now only `PUT /settings/freeze` set it, though 2.4.0 said
+  Settings, and nothing in the app said why every agency's schedules were
+  quiet.
 - **Settings → Alerts**, per agency: an agency's alert rules and push targets,
   changed by its administrators. A rule matches only its own agency's runs (a
   Global rule matches every agency's), names its own agency's job, and pushes
@@ -174,6 +180,54 @@ gain an `agency` column (last), after 2.4.4's `actingAgency`.
   installation's cap.
 - A publish that failed while staging or committing left its file in the
   server's clone until the next sync.
+
+Found by the review of everything since 2.2.3, before this release:
+
+- **Confidential reads on writes.** The tag and annotation writes of a job,
+  a workflow and a script answered another agency's object, or Global's, with
+  the whole row, script body included, where its read answered 404. Pause,
+  resume, Kill, a workflow's pause, trigger and run cancel, and a pending run's
+  cancel now answer 404 on an object the caller may not read, before any other
+  check, so no refusal names another agency's scope. Kill still lets a person
+  stop a run bound to a scope of their own.
+- **The publish gate** checks the scope of the repository's agency, not any
+  scope of the name. **An assignment's origin stamp** no longer carries a user
+  or token that Global's repository URL holds.
+- **The object, not its name.** Kill stopped, and a job's detail, list, status
+  and file sightings showed, the newest run of ANY job of the name (also in
+  2.2.3); a workflow's last run likewise. A service-account token triggering by
+  name was refused when another agency held the name. The recycle-bin clean-up
+  never purged a name two agencies had binned (also in 2.2.3). A workflow built
+  in the app looked up its name-only steps and sub-workflows in every agency,
+  so another agency's commit refused them; it looks in its own (and Global's
+  in-app jobs, which record no owner, are found in Global's).
+- **The upgrade from 2.2.3**: queued runs for the SSH executor are closed
+  (1590, step 1) instead of blocking Global's cap and a Forbid job's key for
+  good; `cronomicon preflight` no longer says the upgrade "converts nothing",
+  and lists what stops at the first start (step 2).
+- **A run's end always arrives.** An agent sends a run's final upload again,
+  backing off to once a minute, until the server takes it; until now it gave up
+  after about 7.5 s (a server restart, an upgrade) and the run stayed *running*
+  for good (also in 2.2.3). A run given a secret whose output can no longer be
+  redacted is ended from its outcome, without that text
+  (`log_not_redactable`): at once when its secret is gone, after ten minutes of
+  a fault that may clear.
+- **One agency at a time, in the app.** Switching agency on a run's detail or
+  in an editor switched straight back; it shows the page's list. SSH Targets'
+  Add, Runners' Mint token, access grants and service accounts create in the
+  agency in use (the server refused another, or saved a grant that was never
+  listed). Jobs' and Workflows' Create, Edit and Delete are offered only where
+  the person composes.
+- **An assignment the target's sync would refuse** is refused, naming what:
+  a reaction whose upstream the agency would not have (`upstream_missing`), a
+  schedule keeping to a calendar the agency has as global
+  (`calendar_not_bindable`). It was committed, and the agency's prune stayed off.
+- **Words of the pre-2.4 model**: "No scope" in the composer (it said "All
+  agencies (global)", "visible to every agency"), the secret and variable owner
+  chip, the publish refusal, the sync's no-scope warning, the
+  `global_script_job` notice, the waiting reason of a Global Ansible run (it
+  offered the local runner, which runs shell types only), and the pause
+  refusal.
 
 ### For developers
 

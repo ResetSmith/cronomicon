@@ -31,6 +31,7 @@ export function InstallationFreezeCard({ canWrite }: { canWrite: boolean }) {
   }
 
   return (
+    <div style={{ marginBottom: 16 }}>
     <Card title="Installation freeze">
       <div style={{ color: c.textSec, fontSize: c.fontSm, marginBottom: 12 }}>
         While the installation is frozen, no agency's schedules fire: every fire is skipped, with the reason. Manual runs
@@ -68,5 +69,6 @@ export function InstallationFreezeCard({ canWrite }: { canWrite: boolean }) {
       )}
       {err && <div style={{ color: c.danger, fontSize: c.fontSm, marginTop: 8 }}>{err}</div>}
     </Card>
+    </div>
   );
 }

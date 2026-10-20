@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/runcap"
+	"slices"
 	"strings"
 )
 
@@ -38,6 +39,10 @@ import (
 // triggerJobs on the run's scope, the facts are about infrastructure rather than
 // credentials, and a reason vague enough to leak nothing is a reason nobody can act
 // on — which is the entire failure being fixed.
+// localRunnerTypes are the run types the local runner runs
+// (settings.LocalRunnerCapabilities, which this package does not import).
+var localRunnerTypes = []string{"bash", "perl", "powershell", "python"}
+
 func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (string, error) {
 	var agenciesJSON, runType, requiresJSON, scope, executor sql.NullString
 	err := database.QueryRowContext(ctx, `
@@ -52,8 +57,10 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	}
 	// Nothing claims a row frozen onto the SSH executor any more (2.3.0, LR-42):
 	// every run is written for the runner executor and the server takes its
-	// share as the local runner. The upgrade converts the rows that were
-	// waiting; one that is still here was written around the one writer of runs.
+	// share as the local runner. Migration 1590 (2.5.0 C11) closes the rows a
+	// 2.2.x installation left waiting (the 2.3.0 upgrade pass that converted
+	// them is retired); one that is still here was written around the one
+	// writer of runs.
 	if executor.String == "ssh" {
 		return ReasonQueuedForSSHExecutor, nil
 	}
@@ -162,8 +169,14 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 		case len(names) == 1 && names[0] == agencyid.GlobalName:
 			// Since 2.4.0 (§0a) a Global job names Global's scopes only: binding it
 			// to an agency's scope is not a remedy, so the reason does not offer it.
+			// The local runner is offered only for what it runs (2.5.0 C11,
+			// defect 90: it was offered to an Ansible run too).
+			remedy := "enrol a runner for Global"
+			if slices.Contains(localRunnerTypes, runType.String) {
+				remedy += ", or turn on the local runner (it serves Global)"
+			}
 			return "this run belongs to Global (it has no scope, or its scope is Global's), and no online " +
-				"runner serves Global — enrol a runner for Global, or turn on the local runner (it serves Global)", nil
+				"runner serves Global — " + remedy, nil
 		}
 		return "no online runner serves " + strings.Join(names, ", "), nil
 	}

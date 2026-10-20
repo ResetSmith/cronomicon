@@ -2322,7 +2322,7 @@
                         reach</strong>: it tells you if the caller has an <em>All scopes</em> grant. A sibling flag,
                     <code>composeUnbound</code>, says whether the caller may author an <em>All-scoped</em> (global)
                     definition &mdash; only an unrestricted compose grant qualifies, and the Job Composer reads it to
-                    withhold the &ldquo;All agencies (global)&rdquo; scope option from everyone else.</p>
+                    withhold the &ldquo;No scope&rdquo; option from everyone else.</p>
                 <p>From v2.2.2 the response also contains five flags that answer a different question: not
                     &ldquo;can the caller do this <em>somewhere</em>&rdquo; but &ldquo;can the caller do this to the
                     <em>installation</em>&rdquo;. They are <code>configureAppGlobal</code>,
@@ -2399,8 +2399,10 @@
                     The signal comes from data, not from the role, so a scope-restricted <em>admin</em> stays
                     restricted.</p>
                 <p><strong>Composing follows the same rule, per object.</strong> An Cronomicon-composed job must name a
-                    scope, one of its own agency's. &ldquo;All agencies (global)&rdquo; in the scope picker means no
-                    scope, which makes the job Global's; it is an explicit choice (the API takes <code>""</code>),
+                    scope, one of its own agency's. &ldquo;No scope&rdquo; in the scope picker makes the job the
+                    agency's it is created in, each run given one of that agency's scopes when it starts (in Global:
+                    Global's, on Global's hosts and runners; until 2.5.0 the option read &ldquo;All agencies
+                    (global)&rdquo;); it is an explicit choice (the API takes <code>""</code>),
                     not a default, and an omitted scope is refused with <code>422 validation_failed</code>. A Git
                     job with no <code>scope</code> syncs only from Global's repository, where it is Global's; an
                     agency's repository refuses it (&sect;5.4). Authoring authority is decided per
@@ -3156,11 +3158,14 @@
                     agency, stop every producer.</p>
                 <p id="freeze"><strong>The installation-wide freeze (since 2.4.0).</strong> A calendar belongs to
                     one agency, and a global calendar freezes its own agency's fires only. To freeze every agency,
-                    a global administrator turns on the installation-wide freeze, with a reason:
-                    <code>PUT /api/v1/settings/freeze</code> with <code>{on, reason}</code> (a reason is required
-                    to turn it on). While it is on, no scheduled fire of any agency happens, and each one is
-                    recorded as skipped, with the reason. Anyone signed in can read it
-                    (<code>GET /api/v1/settings/freeze</code>). It replaces the freeze that Global's global
+                    a global administrator turns on the installation-wide freeze, with a reason: the
+                    <strong>Installation freeze</strong> card at the top of Settings &rarr; General (since 2.5.0;
+                    the route is <code>PUT /api/v1/settings/freeze</code> with <code>{on, reason}</code>, and a
+                    reason is required to turn it on). While it is on, no scheduled fire of any agency happens, and
+                    each one is recorded as skipped, with the reason; manual runs and runs by a token go on. A
+                    banner above every page says so, with the reason, who set it and when, for everyone signed in
+                    (<code>GET /api/v1/settings/freeze</code>); <strong>Lift the freeze</strong> on the same card
+                    ends it. It replaces the freeze that Global's global
                     calendar gave every agency before 2.4.0; a notice lists each such calendar
                     (<code>global_calendar_scope</code>, &sect;8.10).</p>
                 <p>A fire reads the job again. Thus job-level env, and the job's <strong>pinned target host</strong>
@@ -4014,7 +4019,10 @@ cronomicon validate .                # Global's repository
                         run (with their scripts and schedules), and every sub-workflow, each name once. Each copied
                         job names the target agency's scope that you picked. Each YAML file is stamped with
                         <code>metadata.origin</code> (where it came from: the repository, the path and the commit).
-                        Only a definition that is a file of a repository can be given; one built in the app is
+                        The repository is named by its host and path, never with a user, a password or a query
+                        (2.5.0): Global's connection may still hold its token in the URL, as agencies' may not, and
+                        the stamp stays in the target's history. Give Global's token in the token field, as an
+                        agency's is given (&sect;5.6). Only a definition that is a file of a repository can be given; one built in the app is
                         refused.</li>
                     <li><strong>What is used, and what is added.</strong> A script, schedule, job or sub-workflow
                         that the target's repository already has by name is the target's own, and is used, not

@@ -200,8 +200,11 @@ func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) strin
 		return ""
 	}
 	if !t.NewParsed || t.NewScope == "" {
+		// 2.5.0 C11, defect 90: it said "an unscoped job is shared by every
+		// agency", the pre-2.4 model; an agency's repository refuses one
+		// (confine.go).
 		return deny("no scope", "a job you publish must name a scope you hold publishSchedule on; "+
-			"an unscoped job is shared by every agency")
+			"a job with no scope is refused in an agency's repository")
 	}
 	// The scope of the repository's agency (C11, defect 73): a scope's name is
 	// unique within an agency only (I2), and Can matched a grant on another
