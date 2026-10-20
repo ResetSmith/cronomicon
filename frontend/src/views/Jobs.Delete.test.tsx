@@ -200,6 +200,29 @@ describe("Jobs — expanded-row Delete", () => {
     await waitFor(() => expect(deleteBtn(fin)).toBeTruthy());
   });
 
+  // 2.5.0 C12, defect 94: a grant on every agency that carries compose, with no
+  // configureApp (so not composeAdmin), composes in every agency; C11's gate
+  // asked for an agency grant and hid every action from such a person.
+  it("offers + Create and Delete to a composer on every agency without configureApp", async () => {
+    myAccess.current = {
+      grants: [{ role: "composer", allScopes: true, agencyId: "", agencyName: "", scopes: [], permissions: ["compose"], groups: [], origin: "group" }],
+    };
+    inUse.current = { agency: "ag-tax", agencyName: "Tax" };
+    const q = await renderJobs();
+    await waitFor(() => expect(q.getByRole("link", { name: "+ Create" })).toBeTruthy());
+    expandRow(q, "cronomicon-job");
+    await waitFor(() => expect(deleteBtn(q)).toBeTruthy());
+  });
+
+  // While the person's access is being read, nothing is offered in an agency.
+  it("offers no + Create in an agency while access is still being read", async () => {
+    myAccess.current = undefined;
+    inUse.current = { agency: "ag-fin", agencyName: "Finance" };
+    const q = await renderJobs();
+    await waitFor(() => expect(q.getByRole("link", { name: /Publish to the repository/ })).toBeTruthy());
+    expect(q.queryByRole("link", { name: "+ Create" })).toBeNull();
+  });
+
   it("confirms before deleting, then DELETEs the expanded job's id", async () => {
     const q = await renderJobs();
     expandRow(q, "cronomicon-job");
