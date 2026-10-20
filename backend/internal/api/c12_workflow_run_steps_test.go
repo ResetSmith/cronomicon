@@ -56,6 +56,34 @@ func TestC12_AWorkflowRunIsJudgedByItsOwnStepsJobs(t *testing.T) {
 	}
 }
 
+// TestC12_AChildRunThatCannotBeReadRefuses (C12.5's review): the run's child
+// runs are each checked by their scope, and one that could not be read was
+// left out of the list, so the detail and the cancel passed. A child on TAX's
+// scope: readable, FIN's operator gets 404 and 403; unreadable (its duration
+// holds text, so its scan fails), 200 and 202 until now. An unparseable step
+// snapshot refuses too.
+func TestC12_AChildRunThatCannotBeReadRefuses(t *testing.T) {
+	h, pool := gateServer(t)
+	seedSwitcher(t, pool)
+	exec := mustExec(t, pool)
+	for _, wr := range [][2]string{{"wr-c12-bad", "[]"}, {"wr-c12-badc", "[]"}, {"wr-c12-snap", "not json"}} {
+		exec(`INSERT INTO workflow_runs (id, workflow_name, workflow_source, workflow_uid, status, triggered_by, trigger_kind, created_at, agency_id, steps_snapshot)
+		      VALUES (?, 'finflow', 'cronomicon', 'w-none', 'running', 'x', 'manual', '2026-03-07T07:07:07Z', 'ag:FIN', ?)`, wr[0], wr[1])
+	}
+	exec(`INSERT INTO runs (id, job_name, job_uid, run_type, status, triggered_by, trigger_kind, created_at, scope, agencies_json, workflow_run_id, duration_ms) VALUES
+	      ('rc-c12-bad',  's0-tax-job', 'j-tax', 'bash', 'running', 'x', 'manual', '2026-03-07T07:07:07Z', 'tax-hosts', '["TAX"]', 'wr-c12-bad', 'garbage'),
+	      ('rc-c12-badc', 's0-tax-job', 'j-tax', 'bash', 'running', 'x', 'manual', '2026-03-07T07:07:07Z', 'tax-hosts', '["TAX"]', 'wr-c12-badc', 'garbage')`)
+	if got := gateReq(t, h, http.MethodGet, "/api/v1/workflow-runs/wr-c12-bad", gFinOperator, ""); got.Code == http.StatusOK {
+		t.Errorf("GET a run whose child cannot be read: 200, want a refusal")
+	}
+	if got := gateReq(t, h, http.MethodPost, "/api/v1/workflows/runs/wr-c12-badc/cancel", gFinOperator, `{}`); got.Code/100 == 2 {
+		t.Errorf("cancel a run whose child cannot be read: %d, want a refusal", got.Code)
+	}
+	if got := gateReq(t, h, http.MethodGet, "/api/v1/workflow-runs/wr-c12-snap", gFinOperator, ""); got.Code == http.StatusOK {
+		t.Errorf("GET a run whose step snapshot cannot be parsed: 200, want a refusal")
+	}
+}
+
 // TestC12_AStepCheckThatCannotReadRefuses (C12's code review): a failed read of
 // a step's job was skipped, so the scope it would have named went unchecked and
 // the run's detail and cancel passed. A failed read refuses.

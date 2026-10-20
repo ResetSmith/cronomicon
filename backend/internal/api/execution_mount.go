@@ -3499,7 +3499,11 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 
 	// Load the child runs ONCE (drained before any per-row sub-query — the redactor
 	// builds query secrets; SQLite pool rule). Everything below derives from them.
-	children := s.loadWorkflowChildRuns(r, traceID)
+	children, err := s.loadWorkflowChildRuns(r, traceID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
 
 	// Scope access check (FR-H2 IDOR mitigation, A5 fix), after whose the run
 	// is (2.5.0 C2, CF-1; 1520): another agency's run, or Global's, whose jobs
@@ -3587,7 +3591,7 @@ func (s *Server) workflowRunStepScopes(ctx context.Context, snapshot sql.NullStr
 	}
 	steps, err := workflow.ParseSteps(snapshot.String)
 	if err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("workflow run's step snapshot: %w", err)
 	}
 	owner := `COALESCE(` + agencyid.JobSQL("j") + `, '` + agencyid.Global + `')`
 	seen := map[runStepScope]bool{}
@@ -3661,7 +3665,11 @@ func (s *Server) cancelWorkflowRun(eng *workflow.Engine) http.HandlerFunc {
 		// (CanUnbound), and there is deliberately NO id.Unrestricted() fast path for
 		// the verb half — unrestricted describes scope reach, not authority, and an
 		// unrestricted viewer holds no verb at all.
-		children := s.loadWorkflowChildRuns(r, traceID)
+		children, err := s.loadWorkflowChildRuns(r, traceID)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
 		id, hasID := auth.IdentityFrom(r.Context())
 		// Fail CLOSED on a missing identity. The route is mounted behind
 		// requireSession so this should be unreachable, but the guard below used to
@@ -3822,14 +3830,18 @@ type nodeStat struct {
 // loadWorkflowChildRuns drains the child runs of a workflow run into a slice. It
 // MUST drain fully before any per-row sub-query runs (the context redactor builds
 // query secrets; SQLite pool rule, see db.maxOpenConns).
-func (s *Server) loadWorkflowChildRuns(r *http.Request, wfTraceID string) []wfChildRun {
+//
+// A read that fails is an error (C12.5's review): the callers check each child's
+// scope from this list, so a run left out of it went unchecked, and the detail
+// and the cancel passed.
+func (s *Server) loadWorkflowChildRuns(r *http.Request, wfTraceID string) ([]wfChildRun, error) {
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, job_name, run_type, status, COALESCE(scope,''), started_at, completed_at, duration_ms, env_json, outputs_json,
 		       `+agencyid.RunScopeOwnerSQL("agencies_json")+`
 		FROM runs WHERE workflow_run_id = ? ORDER BY created_at
 	`, wfTraceID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	var out []wfChildRun
@@ -3837,11 +3849,11 @@ func (s *Server) loadWorkflowChildRuns(r *http.Request, wfTraceID string) []wfCh
 		var cr wfChildRun
 		if err := rows.Scan(&cr.id, &cr.jobName, &cr.runType, &cr.status, &cr.scope,
 			&cr.startedAt, &cr.completedAt, &cr.durationMs, &cr.envJSON, &cr.outputsJSON, &cr.scopeOwner); err != nil {
-			continue
+			return nil, err
 		}
 		out = append(out, cr)
 	}
-	return out
+	return out, rows.Err()
 }
 
 // workflowRunSteps builds the flat step timeline from pre-loaded child runs. Each
