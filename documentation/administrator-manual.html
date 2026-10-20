@@ -7486,6 +7486,16 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         offers its own agency's push targets, and shows when the rule's channel is Apprise (<code>422
                             unknown_target</code> for another). A push no longer goes to every target.</li>
                     <li><strong>A target's URL is read only by its agency's administrators.</strong></li>
+                    <li><strong>An agency's target may not be a generic webhook or a relay</strong> (since
+                        2.5.0): Apprise's <code>json</code>, <code>xml</code>, <code>form</code> and
+                        <code>apprise</code> schemes (and their <code>s</code> forms) send to any address the
+                        gateway reaches, with headers of the URL's choosing, so an agency's administrator is
+                        refused them (<code>422 target_scheme_not_allowed</code>). A global administrator may add
+                        one in an agency, whose administrators may then relabel it or switch it off, but not
+                        point it elsewhere. Services Apprise reaches at their own hosts (Slack, Teams, Discord,
+                        Telegram, &hellip;) and self-hosted ones (ntfy, Gotify, Mattermost) are the agency's to
+                        name; the self-hosted ones reach the host they are given, so keep the gateway's own
+                        egress narrow.</li>
                     <li><strong>The relay's default recipients</strong> are added to the mail of Global's rules
                         only.</li>
                     <li><strong>An agency that owns a rule or a target is not deleted</strong> (&sect;6.1c).</li>

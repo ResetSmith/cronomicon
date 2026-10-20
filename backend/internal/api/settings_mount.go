@@ -1608,9 +1608,11 @@ func decodeAlertTargetInput(w http.ResponseWriter, r *http.Request) (*settings.A
 	return inp, true
 }
 
-// genericPushScheme finds Apprise's generic webhook schemes: each sends a request
-// to any host its URL names, with headers its URL chooses (`+Header=value`), and
-// the installation's Apprise gateway makes it, past the server's egress rules.
+// genericPushScheme finds Apprise's generic webhook schemes (json, xml, form) and
+// its relay (apprise: a second Apprise server, which reaches as far): each sends
+// a request to any host its URL names, with headers its URL chooses
+// (`+Header=value`), and the installation's Apprise gateway makes it, past the
+// server's egress rules (question 117 added the relay, option A).
 //
 // They are found the way Apprise finds a URL in a target's text, not by
 // splitting it: Apprise's URL_DETECTION_RE takes a scheme wherever a run of
@@ -1619,7 +1621,7 @@ func decodeAlertTargetInput(w http.ResponseWriter, r *http.Request) (*settings.A
 // is refused anywhere it starts the string or follows a character that is not
 // a letter or digit ("/json://…", "[json://…", "ntfy://x\x1cjson://…"); one
 // preceded by a letter or digit is another scheme to Apprise ("xjson").
-var genericPushScheme = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])((?:json|xml|form)s?)://`)
+var genericPushScheme = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])((?:json|xml|form|apprise)s?)://`)
 
 // pushTargetSchemeAllowed refuses an agency's push target that names a generic
 // webhook unless a global administrator writes it (2.5.0 C12, present defect 95,
@@ -1634,7 +1636,7 @@ func pushTargetSchemeAllowed(w http.ResponseWriter, id auth.Identity, owner, raw
 	}
 	if m := genericPushScheme.FindStringSubmatch(raw); m != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "target_scheme_not_allowed",
-			"an agency's push target may not use Apprise's generic webhooks ("+strings.ToLower(m[1])+"://): they reach "+
+			"an agency's push target may not use Apprise's generic webhooks or its relay ("+strings.ToLower(m[1])+"://): they reach "+
 				"any address the server can. A global administrator can add one in this agency")
 		return false
 	}

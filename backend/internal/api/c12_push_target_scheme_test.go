@@ -40,13 +40,17 @@ func TestC12_AnAgencysPushTargetNamesNoGenericWebhook(t *testing.T) {
 		`\"jsons://127.0.0.1:8200/v1/sys/seal?+X-Vault-Token=x`,
 		`ntfy://topic\u001cjson://169.254.169.254/x`,
 		`ntfy://topic,\u001fxmls://10.0.0.1/x`,
+		// Question 117 (A): Apprise's relay reaches as far, with chosen headers.
+		"apprise://127.0.0.1:8200/v1/?+X-Vault-Token=x",
+		"APPRISES://internal-host/notify/key",
 	} {
 		if code, _ := create(gFinAdmin, `{"label":"x","url":"`+url+`"}`); code != http.StatusUnprocessableEntity {
 			t.Errorf("FIN's administrator creating %q = %d, want 422", url, code)
 		}
 	}
 	// A scheme a letter or digit precedes is another scheme to Apprise.
-	for _, url := range []string{"ntfy://topic", "slack://a/b/c", "mailto://u:p@example.com", "ntfy://topic/xjson://x"} {
+	for _, url := range []string{"ntfy://topic", "slack://a/b/c", "mailto://u:p@example.com", "ntfy://topic/xjson://x",
+		"gotify://gotify.internal/token", "mmost://mattermost.internal/token"} {
 		if code, _ := create(gFinAdmin, `{"label":"x","url":"`+url+`"}`); code != http.StatusCreated {
 			t.Errorf("FIN's administrator creating %q = %d, want 201", url, code)
 		}

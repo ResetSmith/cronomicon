@@ -6341,10 +6341,12 @@ paths:
         AL-3: `configureApp` on the agency the target is created in, chosen as
         for an alert rule. 422 `url_required` without a URL. 422
         `target_scheme_not_allowed` for an agency's target that names one of
-        Apprise's generic webhooks (`json`, `jsons`, `xml`, `xmls`, `form`,
-        `forms`, anywhere in the URL), unless the caller is a global
-        administrator (2.5.0 C12, question 112): they reach any address the
-        Apprise gateway can. Global's targets are not limited.
+        Apprise's generic webhooks or its relay (`json`, `jsons`, `xml`,
+        `xmls`, `form`, `forms`, `apprise`, `apprises`, wherever Apprise would
+        find one in the URL), unless the caller is a global administrator
+        (2.5.0 C12, questions 112 and 117): they reach any address the
+        Apprise gateway can, with headers of the URL's choosing. Global's
+        targets are not limited.
       parameters: [{ $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true

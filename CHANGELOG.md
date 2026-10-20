@@ -262,10 +262,12 @@ Found by a second review, of what the first did not reach:
   a proxy's answer while the server restarts is still sent again.
 - **An agency's push target names no generic webhook.** An agency's
   administrator could aim a push target at Apprise's `json`, `xml` or `form`
-  webhooks, which the gateway sends to any address it reaches (a cloud
-  metadata service, Vault on the loopback), with headers of their choosing;
-  such a URL is refused (`target_scheme_not_allowed`) unless a global
-  administrator writes it. Global's targets are not limited.
+  webhooks, or its `apprise` relay, which the gateway sends to any address it
+  reaches (a cloud metadata service, Vault on the loopback), with headers of
+  their choosing; such a URL is refused (`target_scheme_not_allowed`) unless a
+  global administrator writes it. Global's targets are not limited. The
+  self-hosted services (ntfy, Gotify, Mattermost and the like) still take the
+  host an agency names (the security review, AL-4).
 - **The freeze says what it stops.** The banner, the Settings card and the
   manuals said manual runs and runs by a token go on during the
   installation-wide freeze; every way a run starts is stopped, as it was.
