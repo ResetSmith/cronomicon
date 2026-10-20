@@ -1417,8 +1417,18 @@ export interface paths {
          *     line: {"exitCode":0,"durationMs":12435,"endedAt":"2026-06-09T14:22:01Z"}.
          *     On transient connection loss the runner retries with X-Resume-Offset;
          *     Cronomicon appends idempotently from that byte offset. Redaction is
-         *     performed by Cronomicon on ingest (T7). Exhausting the retry budget marks
-         *     the run danger with reason log_stream_lost.
+         *     performed by Cronomicon on ingest (T7). A final chunk (no
+         *     X-Log-Partial) ends the run from its envelope; one whose last line is
+         *     not an envelope ends it with reason log_stream_lost. An agent of 2.5.0
+         *     re-sends a final chunk until it is taken, the run is closed (409), or
+         *     Cronomicon refuses it for good (its own JSON refusal with a 4xx other
+         *     than 429). A secret-bearing run's final chunk that cannot be redacted
+         *     is refused 503 redactor_unavailable, and past a grace (or at once when
+         *     its secret resolves to nothing) the run ends from the envelope with no
+         *     text stored, reason log_not_redactable. A final chunk at or across the
+         *     run's log cap ends the run from its envelope, the text past the cap
+         *     discarded (2.5.0 C12); a partial chunk there is refused 413
+         *     log_limit_exceeded.
          */
         post: operations["streamRunLog"];
         delete?: never;
@@ -1631,12 +1641,10 @@ export interface paths {
         put?: never;
         /**
          * Create a local (Cronomicon-source) scope (S8)
-         * @description **A scope may not take a name that jobs of another agency name**
-         *     (v2.4.0): 409 `scope_name_in_use`. A job carries its scope by name, so a
-         *     scope of that name would take those jobs, listed to its agency and run
-         *     on its hosts. A job from an agency's repository is that agency's, one
-         *     from Global's repository Global's; one built in the app whose scope is
-         *     gone is counted as another's. A global administrator is not refused.
+         * @description **A scope's name is its agency's** (I2): a job finds its scope in its
+         *     own agency, so a scope of a name another agency's jobs use takes none
+         *     of them. A name the agency already uses is refused (409). (2.4.0's 409
+         *     `scope_name_in_use` went with I2.)
          */
         post: operations["createScope"];
         delete?: never;
@@ -1675,12 +1683,10 @@ export interface paths {
          *     or a secret, which keep the old name and are listed in
          *     brokenReferences (`entity` jobs, envVars, secrets) so the UI can warn.
          *
-         *     **A scope may not take a name that jobs of another agency name**
-         *     (v2.4.0): 409 `scope_name_in_use`. A job carries its scope by name, so a
-         *     scope of that name would take those jobs, listed to its agency and run
-         *     on its hosts. A job from an agency's repository is that agency's, one
-         *     from Global's repository Global's; one built in the app whose scope is
-         *     gone is counted as another's. A global administrator is not refused.
+         *     **A scope's name is its agency's** (I2): a job finds its scope in its
+         *     own agency, so a scope of a name another agency's jobs use takes none
+         *     of them. A name the agency already uses is refused (409). (2.4.0's 409
+         *     `scope_name_in_use` went with I2.)
          *
          *     A rename is refused (409 code=scope_bound_busy) while the scope is bound
          *     to runners and has runs queued or scheduled under its current name: a run
@@ -2210,12 +2216,10 @@ export interface paths {
          *     how a second agency gets a set of hosts without the first agency's
          *     jobs being stranded, which moving the scope does.
          *
-         *     **A scope may not take a name that jobs of another agency name**
-         *     (v2.4.0): 409 `scope_name_in_use`. A job carries its scope by name, so a
-         *     scope of that name would take those jobs, listed to its agency and run
-         *     on its hosts. A job from an agency's repository is that agency's, one
-         *     from Global's repository Global's; one built in the app whose scope is
-         *     gone is counted as another's. A global administrator is not refused.
+         *     **A scope's name is its agency's** (I2): a job finds its scope in its
+         *     own agency, so a scope of a name another agency's jobs use takes none
+         *     of them. A name the agency already uses is refused (409). (2.4.0's 409
+         *     `scope_name_in_use` went with I2.)
          *
          *     **Copied:** the hosts, the groups and their nesting, the host and group
          *     variables, the inventory as written, and the tags.
@@ -19034,7 +19038,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Webhook delivery is disabled in Settings → Integrations (Webhook Enabled). */
+            /** @description Webhook delivery is disabled for this repository in Settings → Repositories (Webhook Enabled). */
             403: {
                 headers: {
                     [name: string]: unknown;

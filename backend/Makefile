@@ -65,11 +65,11 @@ dev: build stop
 	CRONOMICON_DEV_AUTH=true CRONOMICON_DEV_SEED=true CRONOMICON_COOKIE_SECURE=false \
 	CRONOMICON_DB_PATH=$(DEV_DB) ./$(BIN)
 
-# -race matches CI (the pipeline runs `go test -race ./...`). It is ~2-3x
+# -race is the gate (there is no CI: `make verify` is the gate). It is ~2-3x
 # slower on the internal/db and internal/api suites; that is the price of the
 # local gate telling the truth. This tree has ~30 non-test goroutine launch
 # sites, 20 mutexes, 14 tickers and a bounded-parallelism workflow engine —
-# races here surface as mis-dispatched runs, so they must not wait for CI.
+# races here surface as mis-dispatched runs, so they must not wait for a review.
 # Use `make test-fast` for the inner loop.
 test:
 	go test -race ./...
@@ -84,8 +84,7 @@ vet:
 # GM-1 found nine advisories reachable from our code (x/crypto ssh + go-git)
 # that had gone unnoticed because nothing ever ran this. Deliberately NOT part
 # of `verify`: it fetches the vulnerability DB from vuln.go.dev, and `verify`
-# must work on an air-gapped build box. CI runs it as its own job, and it is a
-# pre-release checklist step.
+# must work on an air-gapped build box. It is a pre-release checklist step.
 vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
@@ -95,8 +94,8 @@ vuln:
 deadcode:
 	go run golang.org/x/tools/cmd/deadcode@latest -test ./...
 
-# GM-4. Reports the FULL backlog (~168 findings at introduction); CI gates only
-# what an MR touches (--new-from-rev), so this is a survey tool, not a gate.
+# GM-4. Reports the FULL backlog (~168 findings at introduction); pass
+# --new-from-rev to see only what a change touches. A survey tool, not a gate.
 # Not in `verify` for the same reason as `vuln`: it fetches the tool.
 lint:
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run --timeout=15m ./...

@@ -5,8 +5,9 @@ documents. The deployment stack (Docker Compose, reverse proxy, SSO provider,
 Vault Agent sidecar, load tests, the deployment guide and the day-2 runbooks) is
 the operator's own concern and is not shipped here; the administrator manual's
 Deployment chapter describes a reference topology. The container images are
-built from `backend/Dockerfile`, `backend/Dockerfile.runner` and
-`backend/Dockerfile.runner.fat`, and published to `ghcr.io/resetsmith/` by
+built from `backend/Dockerfile` (the server, and its `validate` target for CI),
+`backend/Dockerfile.runner` and `backend/Dockerfile.runner.fat`, four images
+published to `ghcr.io/resetsmith/` by
 `.github/workflows/publish-images.yml` on every release tag.
 
 | File | Purpose | Consumed by |

@@ -2,7 +2,10 @@
 
 Cronomicon keeps all durable state in one SQLite file on the mounted volume
 (`/var/lib/cronomicon/cronomicon.db`). Backups are a nightly consistent snapshot
-shipped offsite to S3-compatible storage.
+shipped offsite to S3-compatible storage. Each agency's Git repository is also
+cloned on the volume (since 2.4.0, one clone per repository); the clones are not
+in the snapshot, because the repositories are their source and the server
+rebuilds them (see [After a restore: runs and repositories](#after-a-restore-runs-and-repositories)).
 
 ## How the nightly backup works
 
@@ -266,6 +269,38 @@ Filtering for just the relevant lines:
 ```
 journalctl -u cronomicon-runner --since '30 min ago' | grep -Ei 'register|401|404'
 ```
+
+## After a restore: runs and repositories
+
+**Runs that were running at the restore point read as running for good.** The
+snapshot is taken at 02:00 UTC by default, when nightly jobs run, so a restored
+database usually holds some. Nothing closes them: an agent that kept running
+through the restore never reports them as lost (it reports that only when it
+starts again), and the reaper acts on a runner that has gone silent, which this
+one has not. Each counts against the installation's concurrency cap at the
+claim (five by default), so enough of them stop every agency's runs from
+starting, and a job with a Forbid or Queue policy stays held. Before you declare
+the restore complete, either **restart every agent** (each start closes the runs
+it held as `runner_lost`), or open History, filter to *running*, and **Stop**
+each run that started before the restore point.
+
+**The repositories.** The clones under the volume are not in the snapshot. At
+the first start the server syncs every agency's repository again; until a
+repository's first sync lands, a scheduled run of a Git job whose script is a
+file of that repository fails with "cannot be read". Then check, per repository
+(Settings → Repositories):
+
+- **A token or webhook secret changed after the restore point comes back as
+  the old one.** A revoked token makes every sync and publish fail; enter the
+  current one. A rotated webhook secret makes GitLab's deliveries fail; rotate
+  it again and update the hook.
+- **An assignment made after the restore point has no record.** Its files are
+  in the agency's repository (the commit was pushed), so giving the same job
+  again refuses `name_taken`. Remove the copied files from the agency's
+  repository and assign again, or leave the copy as the agency's own.
+- **A repository created after the restore point** is absent from the database;
+  its clone directory stays on the volume, unused. Delete it, or create the
+  repository again.
 
 ## Verifying a backup
 

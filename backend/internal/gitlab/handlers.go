@@ -180,7 +180,7 @@ func (h *Handlers) ListGitHistoryOf(repoID string, w http.ResponseWriter, r *htt
 
 // F2-3 — the Webhook Enabled / Webhook Events settings are read here, and until
 // this they were not read anywhere. They were parsed, persisted and surfaced in
-// Settings → Integrations, and the handler synced regardless; the feature and
+// Settings (Repositories since 2.4.0), and the handler synced regardless; the feature and
 // the configuration were both real, only the join was missing.
 //
 // Order matters: the token is validated FIRST, so an unauthenticated caller
@@ -232,7 +232,7 @@ func (h *Handlers) WebhookGitLab(w http.ResponseWriter, r *http.Request) {
 	if !policy.Enabled {
 		metrics.WebhookSync("disabled")
 		writeError(w, http.StatusForbidden, "webhook_disabled",
-			"GitLab webhook delivery is turned off in Cronomicon (Settings → Integrations → Webhook Enabled)")
+			"GitLab webhook delivery is turned off for this repository in Cronomicon (Settings → Repositories → Webhook Enabled)")
 		return
 	}
 	if event := r.Header.Get("X-Gitlab-Event"); !policy.Accepts(event) {

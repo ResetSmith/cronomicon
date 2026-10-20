@@ -3161,8 +3161,10 @@
                     a global administrator turns on the installation-wide freeze, with a reason: the
                     <strong>Installation freeze</strong> card at the top of Settings &rarr; General (since 2.5.0;
                     the route is <code>PUT /api/v1/settings/freeze</code> with <code>{on, reason}</code>, and a
-                    reason is required to turn it on). While it is on, no scheduled fire of any agency happens, and
-                    each one is recorded as skipped, with the reason; manual runs and runs by a token go on. A
+                    reason is required to turn it on). While it is on, no run of any agency starts: a schedule's
+                    fire, <strong>Run</strong>, a token's trigger, a reaction, a deferred run that comes due and a
+                    file arrival are each recorded as skipped, with the reason (a freeze a click can walk through
+                    is not a freeze); runs already going finish. A
                     banner above every page says so, with the reason, who set it and when, for everyone signed in
                     (<code>GET /api/v1/settings/freeze</code>); <strong>Lift the freeze</strong> on the same card
                     ends it. It replaces the freeze that Global's global
@@ -5280,9 +5282,15 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                         a secret and whose output can no longer be redacted (its binding deleted or its job pruned
                         while it ran, or a resolve that keeps failing for ten minutes), the server ends the run from
                         the final upload's envelope, with its outcome and exit code, stores none of that upload's
-                        text, writes one line saying so, and records the reason <code>log_not_redactable</code>. An
-                        agent older than 2.5.0 still gives up after its budget: a run it ended then reads as running
-                        until it is stopped (&sect;8.7, step 3).</p>
+                        text, writes one line saying so, and records the reason <code>log_not_redactable</code>. A
+                        run whose log has reached its cap (<code>CRONOMICON_MAX_RUN_LOG_BYTES</code>) ends from its
+                        final upload too, the text past the cap discarded. The agent stops sending only when
+                        Cronomicon itself refuses the upload for good (its own <code>401</code>, <code>404</code> or
+                        <code>413</code>); a proxy's answer while the server restarts is sent again. Deregistering a
+                        runner ends its running runs as <code>runner_lost</code>. While the server is down, a stop
+                        of the agent therefore waits for the runs whose end it holds, up to the unit's stop timeout
+                        (&sect;8.7, step 3). An agent older than 2.5.0 still gives up after its budget: a run it
+                        ended then reads as running until it is stopped (&sect;8.7, step 3).</p>
                 </div>
                 <div class="callout warn">
                     <div class="ct"><span class="em">🗝️</span> Secret &amp; key injection to an agent: gated,
@@ -6671,9 +6679,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <li><strong>Before you stop the old server, let queued runs finish, or cancel them.</strong> A
                         run still queued for the in-app SSH executor of 2.2.x is closed at the upgrade as skipped,
                         with the reason (migration 1590): nothing has claimed such a run since 2.3.0, and the 2.3.0
-                        pass that moved them to the local runner is retired in 2.5.0. Run its job again afterwards.
-                        A run pinned to a runner tag waits: bind the scope after the upgrade (&sect;7.10), or let
-                        the run finish first.</li>
+                        pass that moved them to the local runner is retired in 2.5.0. Run its job again afterwards.</li>
                     <li><strong>Take a backup</strong> that you can put back, then run the report with the new
                         binary against the existing database: <code>cronomicon preflight</code> (read-only). It says
                         what 2.3.0 changes on the first start (below), and in its last block what 2.4.0 and 2.5.0
@@ -6689,7 +6695,17 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         run the command when nothing is running: the agents being replaced are older than 2.3.2,
                         and they end their runs when they are stopped. An installed agent's unit needs
                         <code>KillMode=mixed</code> (the upgrade command adds it; a unit that you wrote needs the
-                        line). For several agencies' agents on one machine, give each unit a limit (&sect;7.1).</li>
+                        line). For several agencies' agents on one machine, give each unit a limit (&sect;7.1). An
+                        agent in a container takes the new image tag, and <code>--stop-timeout 300</code> (Compose:
+                        <code>stop_grace_period: 5m</code>) so that a stop drains it. From now on, stop or restart an
+                        agent while the server is up: an agent of 2.5.0 keeps sending the end of a run until the
+                        server takes it (&sect;7.5), so a stop while the server is down waits for each such run, up
+                        to the unit's stop timeout (five minutes as installed); a second signal gives up
+                        (<code>systemctl kill --kill-who=main &lt;unit&gt;</code>: a second <code>systemctl
+                        stop</code> joins the stop under way and sends none), and the run
+                        is closed as <code>runner_lost</code> when the agent starts again. <strong>Then stop the old
+                        server and start 2.5.0 on the same database</strong> (it migrates at its first start); the
+                        steps below come after.</li>
                     <li><strong>Read the Notices inbox</strong> (&sect;8.10). Every conversion that needs a person is
                         listed there, by agency: what was shared before 2.4.0 stays Global's and stops where it
                         reached another agency (<code>workflow_spans_agencies</code>,
@@ -6714,6 +6730,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         (<code>global_job_on_agency_scope</code>). Move its file to the agency's repository, or give
                         it to the agency (<strong>Give to an agency&hellip;</strong> on the job, &sect;5.7). The
                         report of step 2 lists them.</li>
+                    <li><strong>Assign Vault path prefixes</strong> (Scopes &rarr; Agencies) to each agency that
+                        holds Vault-backed secrets or keys. Until it has one, an agency's administrators cannot
+                        manage its Vault-backed secrets and keys; its runs are not affected.</li>
                 </ol>
                 <p><strong>What reads differently after the upgrade.</strong> People of one agency no longer see
                     Global's rows (its jobs, runs, scopes, runners, notices and the rest), nor its activity; only a
@@ -6727,7 +6746,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     audit export's rows and stream lines gain two columns at the end: <code>actingAgency</code>
                     (2.4.4), then <code>agency</code> (2.5.0); a reader that takes columns by position sees two
                     more.</p>
-                <p><strong>Two results of the independent model are easy to miss.</strong></p>
+                <p><strong>Three results of the independent model are easy to miss.</strong></p>
                 <ul>
                     <li><strong>A Git job on an agency's scope does not run</strong> until its file is in that
                         agency's repository (step 6). The upgrade does not move it: Global's repository is one

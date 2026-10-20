@@ -936,7 +936,7 @@ func (r Report230) write24(p func(string, ...any)) {
 	}
 	if r.QueuedSSHRuns > 0 {
 		p("")
-		p("  Runs queued for the SSH executor (%d) are closed as skipped, with the reason:", r.QueuedSSHRuns)
+		p("  !! Runs queued for the SSH executor (%d) are closed as skipped, with the reason:", r.QueuedSSHRuns)
 		p("  nothing has claimed them since 2.3.0. Let them run, or cancel them, before you")
 		p("  stop the old server, or run their jobs again after the upgrade.")
 	}
@@ -953,7 +953,7 @@ func (r Report230) write24(p func(string, ...any)) {
 	}
 	if r.Agencies > 0 {
 		p("")
-		p("  Each agency (%d) needs a repository of its own (Settings → Integrations); until", r.Agencies)
+		p("  Each agency (%d) needs a repository of its own (Settings → Repositories); until", r.Agencies)
 		p("  it has one it works as before and cannot be given a definition.")
 	}
 	if r.AgencyGrants > 0 {

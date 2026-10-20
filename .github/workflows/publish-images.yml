@@ -179,6 +179,7 @@ jobs:
           docker pull ghcr.io/resetsmith/cronomicon:$V
           docker pull ghcr.io/resetsmith/cronomicon-runner:$V
           docker pull ghcr.io/resetsmith/cronomicon-runner-fat:$V
+          docker pull ghcr.io/resetsmith/cronomicon-validate:$V
           \`\`\`
 
           ## Documentation
