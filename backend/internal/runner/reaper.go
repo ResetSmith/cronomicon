@@ -212,12 +212,37 @@ func runningRunsOf(ctx context.Context, tx *sql.Tx, runnerID string) ([][4]strin
 // closeLostRuns ends each run (id, job, scope, started_at) that is still
 // running as runner_lost: status-guarded, with its run-end activity, the
 // RunFinished metric and the run-end notifications. The reaper's close, a
-// start's (started=1) and a deregistration's (2.5.0 C12) share it. Returns
-// how many it closed.
+// start's (started=1) and a deferred close share it; a deregistration runs its
+// two halves itself, around its transaction (2.5.0 C12). Returns how many it
+// closed.
 func (s *Service) closeLostRuns(ctx context.Context, runnerName string, orphans [][4]string) int {
+	ended, _ := s.endLostRuns(ctx, s.db, runnerName, orphans)
+	s.announceLostRuns(ended)
+	return len(ended)
+}
+
+// announceLostRuns is the half of a runner_lost close that leaves the
+// database: the RunFinished metric and the run-end notifications, after the
+// write that closed the runs has committed.
+func (s *Service) announceLostRuns(ended []notify.RunEvent) {
+	for _, ev := range ended {
+		s.unredactableSince.Delete(ev.TraceID) // C12: as finalizeRun
+		// Same terminal seam as finalizeRun / drain-timeout: a runner_lost
+		// failure must also emit the RunFinished metric and fire notifications.
+		s.emitRunTerminal(ev)
+	}
+}
+
+// endLostRuns is the database half: each run still running is set to
+// failure/runner_lost (status-guarded) with its run-end activity, through ex,
+// the database or a caller's transaction. It returns the runs it closed, and
+// the first error of a close's write (a run whose write failed is skipped, and
+// the others go on).
+func (s *Service) endLostRuns(ctx context.Context, ex auditlog.Execer, runnerName string, orphans [][4]string) ([]notify.RunEvent, error) {
 	ts := now()
 	nowT := reaperNow()
-	closed := 0
+	var ended []notify.RunEvent
+	var firstErr error
 	for _, run := range orphans {
 		tid, jn, sc, startedAt := run[0], run[1], run[2], run[3]
 
@@ -237,22 +262,24 @@ func (s *Service) closeLostRuns(ctx context.Context, runnerName string, orphans 
 		// operator stopped in between (or one whose late log landed) must keep
 		// the terminal state it already reached rather than being rewritten as
 		// runner_lost — and must not double-emit run-end.
-		res, err := s.db.ExecContext(ctx, `
+		res, err := ex.ExecContext(ctx, `
 			UPDATE runs
 			SET status = 'failure', queued_reason = 'runner_lost',
 			    completed_at = ?, duration_ms = ?
 			WHERE id = ? AND status = 'running'`, ts, durationMs, tid)
 		if err != nil {
 			s.log.Error("reaper: finalize orphaned run", "trace_id", tid, "error", err)
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
 			continue // already terminal — don't overwrite or double-emit
 		}
-		s.unredactableSince.Delete(tid) // C12: as finalizeRun
 		// run-end activity, actor 'system' (mirrors the drain-timeout path). It
 		// shares ts with the completed_at just written above.
-		if err := auditlog.WriteActivity(ctx, s.db, auditlog.ActivityParams{
+		if err := auditlog.WriteActivity(ctx, ex, auditlog.ActivityParams{
 			At:         ts,
 			Kind:       "run-end",
 			Outcome:    "failure",
@@ -264,12 +291,9 @@ func (s *Service) closeLostRuns(ctx context.Context, runnerName string, orphans 
 		}); err != nil {
 			s.log.Error("reaper: insert run-end activity", "trace_id", tid, "error", err)
 		}
-		// Same terminal seam as finalizeRun / drain-timeout: a runner_lost
-		// failure must also emit the RunFinished metric and fire notifications.
-		s.emitRunTerminal(notify.RunEvent{TraceID: tid, JobName: jn, Scope: sc, Status: "failure"})
-		closed++
+		ended = append(ended, notify.RunEvent{TraceID: tid, JobName: jn, Scope: sc, Status: "failure"})
 	}
-	return closed
+	return ended, firstErr
 }
 
 // sweepDeregister fully removes runners that have been offline longer than

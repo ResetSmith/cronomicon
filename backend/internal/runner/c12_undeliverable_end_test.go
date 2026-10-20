@@ -165,6 +165,41 @@ func TestC12_DeregisteringARunnerEndsItsRunningRuns(t *testing.T) {
 	}
 }
 
+// A close that cannot be written fails the deregistration (C12.5's review):
+// C12.5 closed the runs after the commit, so a close that failed then left a
+// run running with its runner gone and its runner_id NULL, which nothing ever
+// finds again. The close is in the delete's transaction: both or neither.
+func TestC12_AFailedCloseFailsTheDeregistration(t *testing.T) {
+	svc := newTestService(t)
+	insertRunner(t, svc, "r-x", "x", "online", []string{"bash"})
+	ts := now()
+	if _, err := svc.db.Exec(`
+		INSERT INTO runs(id, job_name, run_type, scope, status, runner_id, triggered_by, trigger_kind, executor, created_at, started_at)
+		VALUES ('run-x', 'j', 'bash', 'prod', 'running', 'r-x', 'test', 'manual', 'runner', ?, ?)`, ts, ts); err != nil {
+		t.Fatal(err)
+	}
+	// Stands in for any failure of the close's write.
+	if _, err := svc.db.Exec(`CREATE TRIGGER c12_refuse_lost BEFORE UPDATE OF status ON runs
+		WHEN NEW.queued_reason = 'runner_lost' BEGIN SELECT RAISE(ABORT, 'refused by the test'); END`); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/runners/r-x", nil)
+	req.SetPathValue("id", "r-x")
+	rec := httptest.NewRecorder()
+	svc.HandleDeregisterRunner(rec, req)
+	var status string
+	var rid sql.NullString
+	if err := svc.db.QueryRow(`SELECT status, runner_id FROM runs WHERE id = 'run-x'`).Scan(&status, &rid); err != nil {
+		t.Fatal(err)
+	}
+	var runners int
+	_ = svc.db.QueryRow(`SELECT COUNT(*) FROM runners WHERE id = 'r-x'`).Scan(&runners)
+	if rec.Code/100 == 2 || runners != 1 || status != "running" || rid.String != "r-x" {
+		t.Errorf("deregister %d: run %s, runner_id %v, runner rows %d; want the deregistration refused and the run still its runner's",
+			rec.Code, status, rid, runners)
+	}
+}
+
 // A deregistration that fails closes nothing (C12's code review): its runs
 // were ended before its transaction, so a failed delete left the agent running
 // runs already recorded as lost, their alerts sent.
