@@ -3588,32 +3588,10 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if stepsSnapshot.Valid && stepsSnapshot.String != "" {
-			steps, err := workflow.ParseSteps(stepsSnapshot.String)
-			if err == nil {
-				jobNames := workflow.FlattenSteps(steps)
-				if len(jobNames) > 0 {
-					placeholders := strings.Repeat("?,", len(jobNames))
-					placeholders = placeholders[:len(placeholders)-1]
-					query := fmt.Sprintf("SELECT DISTINCT COALESCE(scope,''), COALESCE("+agencyid.JobSQL("jobs")+", '"+agencyid.Global+"') FROM jobs WHERE name IN (%s)", placeholders)
-					args := make([]any, len(jobNames))
-					for i, name := range jobNames {
-						args[i] = name
-					}
-					rows, err := s.db.QueryContext(r.Context(), query, args...)
-					if err == nil {
-						defer rows.Close()
-						for rows.Next() {
-							var sc, owner string
-							if err := rows.Scan(&sc, &owner); err == nil && sc != "" {
-								if !auth.ScopeReadableIn(id, owner, sc) {
-									s.notReadable(w, r, sc, "workflow run")
-									return
-								}
-							}
-						}
-					}
-				}
+		for _, st := range s.workflowRunStepScopes(r.Context(), stepsSnapshot, wrAgency) {
+			if !auth.ScopeReadableIn(id, st.owner, st.scope) {
+				s.notReadable(w, r, st.scope, "workflow run")
+				return
 			}
 		}
 	}
@@ -3653,6 +3631,50 @@ func workflowDisplayStatus(raw string, cancelled int) string {
 		return "cancelled"
 	}
 	return mapRunStatus(raw)
+}
+
+// runStepScope is one scope a workflow run's steps reach, with its agency.
+type runStepScope struct{ scope, owner string }
+
+// workflowRunStepScopes is the scope of each job a workflow run's snapshot
+// names, for the run's read and cancel checks. A pinned step is its job by uid;
+// a name-only step is the job of that name in the run's own agency (the
+// workflow's, in whose home the engine resolved it). Until 2.5.0 C12 it was
+// every agency's job of the name, so another agency's namesake on a scope the
+// caller does not read hid the caller's own run (404) and refused its cancel
+// with a 403 that named the scope (present defect 91). A step whose job is gone
+// adds nothing, and a job with no scope adds nothing, as before.
+func (s *Server) workflowRunStepScopes(ctx context.Context, snapshot sql.NullString, runAgency string) []runStepScope {
+	if !snapshot.Valid || snapshot.String == "" {
+		return nil
+	}
+	steps, err := workflow.ParseSteps(snapshot.String)
+	if err != nil {
+		return nil
+	}
+	owner := `COALESCE(` + agencyid.JobSQL("j") + `, '` + agencyid.Global + `')`
+	seen := map[runStepScope]bool{}
+	var out []runStepScope
+	for _, ref := range workflow.CollectStepRefs(steps) {
+		where, args := `j.name = ? AND `+owner+` = ?`, []any{ref.Name, runAgency}
+		if ref.UID != "" {
+			where, args = `j.uid = ?`, []any{ref.UID}
+		}
+		rows, err := s.db.QueryContext(ctx,
+			`SELECT DISTINCT COALESCE(j.scope, ''), `+owner+` FROM jobs j WHERE `+where, args...)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var st runStepScope
+			if rows.Scan(&st.scope, &st.owner) == nil && st.scope != "" && !seen[st] {
+				seen[st] = true
+				out = append(out, st)
+			}
+		}
+		rows.Close()
+	}
+	return out
 }
 
 // cancelWorkflowRun soft-cancels a running workflow run (WB-S2 / D4). It shares the
@@ -3740,35 +3762,13 @@ func (s *Server) cancelWorkflowRun(eng *workflow.Engine) http.HandlerFunc {
 			}
 		}
 
-		if stepsSnapshot.Valid && stepsSnapshot.String != "" {
-			steps, err := workflow.ParseSteps(stepsSnapshot.String)
-			if err == nil {
-				jobNames := workflow.FlattenSteps(steps)
-				if len(jobNames) > 0 {
-					placeholders := strings.Repeat("?,", len(jobNames))
-					placeholders = placeholders[:len(placeholders)-1]
-					query := fmt.Sprintf("SELECT DISTINCT COALESCE(scope,''), COALESCE("+agencyid.JobSQL("jobs")+", '"+agencyid.Global+"') FROM jobs WHERE name IN (%s)", placeholders)
-					args := make([]any, len(jobNames))
-					for i, name := range jobNames {
-						args[i] = name
-					}
-					rows, err := s.db.QueryContext(r.Context(), query, args...)
-					if err == nil {
-						defer rows.Close()
-						for rows.Next() {
-							var sc, owner string
-							if err := rows.Scan(&sc, &owner); err == nil && sc != "" {
-								if !auth.ScopeReadableIn(id, owner, sc) {
-									s.denyScope(w, r, sc, "scope access denied")
-									return
-								}
-								if !s.requireCan(w, r, id, auth.PermKillJobs, owner, sc) {
-									return
-								}
-							}
-						}
-					}
-				}
+		for _, st := range s.workflowRunStepScopes(r.Context(), stepsSnapshot, wrAgency) {
+			if !auth.ScopeReadableIn(id, st.owner, st.scope) {
+				s.denyScope(w, r, st.scope, "scope access denied")
+				return
+			}
+			if !s.requireCan(w, r, id, auth.PermKillJobs, st.owner, st.scope) {
+				return
 			}
 		}
 
