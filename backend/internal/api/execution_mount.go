@@ -370,7 +370,9 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			lr.duration_ms AS last_run_duration_ms,
 			ls.created_at AS last_skipped_at,
 			ls.queued_reason AS last_skip_reason,
-			(SELECT COUNT(*) FROM definition_schedules ds WHERE ds.owner_source = j.source AND ds.owner_kind = 'job' AND ds.owner_name = j.name) AS schedule_count,
+			(SELECT COUNT(*) FROM definition_schedules ds WHERE ds.owner_kind = 'job'
+			    AND (ds.owner_uid = j.uid OR (ds.owner_uid IS NULL AND ds.owner_source = j.source AND ds.owner_name = j.name
+			         AND (SELECT COUNT(*) FROM jobs o WHERE o.name = j.name AND o.source = j.source) = 1))) AS schedule_count,
 			-- RB-23: the job's agency, for display. Since 1400 a job has an owner
 			-- (agencyid.JobSQL: a Git job its repository's, one built in the app
 			-- its owner's); until then it was derived from its scope's name, which
@@ -559,67 +561,11 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	// kept. Computed through the full Spec (cron, interval, window) rather than
 	// bare cronutil.Next — the projection must not show a phantom fire outside an
 	// entry's window, nor nothing at all for an interval-mode entry.
-	nextRuns := map[[2]string]*string{}
-	if len(bases) > 0 {
-		names := make([]any, 0, len(bases))
-		seen := map[string]bool{}
-		for _, j := range bases {
-			if !seen[j.name] {
-				seen[j.name] = true
-				names = append(names, j.name)
-			}
-		}
-		ph := strings.Repeat(",?", len(names))[1:]
-		srows, err := s.db.QueryContext(r.Context(), `
-			SELECT owner_source, owner_name, cron, COALESCE(interval,''), COALESCE(start_at,''), COALESCE(end_at,'')
-			  FROM definition_schedules
-			 WHERE owner_kind = 'job' AND owner_name IN (`+ph+`)`, names...)
-		if err != nil {
-			// The projection degrades to "no next run" for the page rather than
-			// failing the list — but silently, it reads as "nothing scheduled",
-			// so the failure is at least on record.
-			s.log.Warn("jobs list: batch next-run query failed; page shows no projections", "err", err)
-		}
-		if err == nil {
-			type entrySpec struct{ cron, interval, startAt, endAt string }
-			specs := map[[2]string][]entrySpec{}
-			for srows.Next() {
-				var src, nm string
-				var e entrySpec
-				if srows.Scan(&src, &nm, &e.cron, &e.interval, &e.startAt, &e.endAt) == nil {
-					k := [2]string{src, nm}
-					specs[k] = append(specs[k], e)
-				}
-			}
-			srows.Close() // drain BEFORE any further queries (SQLite pool rule)
-			now := time.Now()
-			appLoc := s.appLocation()
-			pausedKeys := map[[2]string]bool{}
-			for _, j := range bases {
-				if j.status == "paused" {
-					pausedKeys[[2]string{j.source, j.name}] = true
-				}
-			}
-			for k, es := range specs {
-				if pausedKeys[k] {
-					continue // matches the detail path: a paused job projects no next run
-				}
-				entries := make([]scheduleEntryResp, 0, len(es))
-				for _, e := range es {
-					resp := scheduleEntryResp{}
-					win := cronutil.NewWindow(
-						windowBound(sql.NullString{String: e.startAt, Valid: e.startAt != ""}),
-						windowBound(sql.NullString{String: e.endAt, Valid: e.endAt != ""}))
-					spec := cronutil.Spec{Cron: e.cron, Interval: e.interval, Window: win}
-					if next, ok := cronutil.NextSpec(spec, now, appLoc); ok {
-						resp.NextRunAt = rfc3339Ptr(next)
-					}
-					entries = append(entries, resp)
-				}
-				nextRuns[k] = earliestNextRunAt(entries)
-			}
-		}
+	jobOwners := make([]nextRunOwner, 0, len(bases))
+	for _, j := range bases {
+		jobOwners = append(jobOwners, nextRunOwner{uid: j.uid.String, source: j.source, name: j.name, paused: j.status == "paused"})
 	}
+	nextRuns := s.batchNextRuns(r.Context(), "job", jobOwners)
 
 	items := []jobRow{}
 	for _, j := range bases {
@@ -680,7 +626,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			jr.LastDurationMs = &j.lastDurationMs.Int64
 		}
 		jr.ScheduleCount = j.scheduleCount
-		jr.NextRunAt = nextRuns[[2]string{j.source, j.name}]
+		jr.NextRunAt = nextRuns[nextRunOwner{uid: j.uid.String, source: j.source, name: j.name}.key()]
 
 		items = append(items, jr)
 	}
@@ -2505,19 +2451,52 @@ type wfAgencyInput struct{ uid, stepsJSON string }
 // spanning two departments reports both rather than picking one: "whose is this?"
 // and "who may run it?" should not have different answers.
 //
-// One query for the whole page, keyed by (source, name). Job-name resolution
-// deliberately ignores the A11 per-step source override: this is a display hint,
-// and a name that resolves to a different source still belongs to the same
-// department in every real deployment. Authorization does the precise walk.
+// One query for the whole page. A step's job is the one it pins (jobUid), else
+// the job of its name in the workflow's own agency, as the engine resolves it;
+// its scope is the scope of that name in the job's agency. Until 2.5.0 C12 both
+// were by name across every agency (present defect 97): a FIN workflow whose
+// step TAX also has a job of showed TAX among its agencies, to FIN's readers.
+// Job-name resolution ignores the A11 per-step source override: this is a
+// display hint. Authorization does the precise walk.
 func (s *Server) workflowAgencies(r *http.Request, in []wfAgencyInput) map[string][]string {
 	out := map[string][]string{}
 	if len(in) == 0 {
 		return out
 	}
-	// Flatten every page workflow's steps once, collecting the job names to ask about.
-	names := make([]any, 0, len(in))
-	seen := map[string]bool{}
-	perWF := make(map[string][]string, len(in))
+	// Whose each workflow is: a name-only step is looked for in its agency.
+	wfUIDs := make([]any, 0, len(in))
+	for _, wf := range in {
+		if wf.uid != "" {
+			wfUIDs = append(wfUIDs, wf.uid)
+		}
+	}
+	if len(wfUIDs) == 0 {
+		return out
+	}
+	owners := map[string]string{}
+	orows, err := s.db.QueryContext(r.Context(),
+		`SELECT w.uid, `+agencyid.WorkflowOwnerSQL+` FROM workflows w WHERE w.uid IN (`+strings.Repeat(",?", len(wfUIDs))[1:]+`)`, wfUIDs...)
+	if err != nil {
+		return out // display-only: a failure here costs a column, never the page
+	}
+	for orows.Next() {
+		var uid, owner string
+		if orows.Scan(&uid, &owner) == nil {
+			owners[uid] = owner
+		}
+	}
+	orows.Close()
+
+	// Flatten every page workflow's steps once, collecting the jobs to ask about.
+	args := []any{}
+	seenArg := map[string]bool{}
+	ask := func(v string) {
+		if !seenArg[v] {
+			seenArg[v] = true
+			args = append(args, v)
+		}
+	}
+	perWF := make(map[string][]workflow.StepRef, len(in))
 	for _, wf := range in {
 		if wf.uid == "" {
 			continue // no identity to key on; the column simply stays empty
@@ -2526,44 +2505,55 @@ func (s *Server) workflowAgencies(r *http.Request, in []wfAgencyInput) map[strin
 		if err != nil {
 			continue
 		}
-		jobs := workflow.FlattenSteps(steps)
-		perWF[wf.uid] = jobs
-		for _, jn := range jobs {
-			if !seen[jn] {
-				seen[jn] = true
-				names = append(names, jn)
+		refs := workflow.CollectStepRefs(steps)
+		perWF[wf.uid] = refs
+		for _, ref := range refs {
+			if ref.UID != "" {
+				ask(ref.UID)
+			} else {
+				ask(ref.Name)
 			}
 		}
 	}
-	if len(names) == 0 {
+	if len(args) == 0 {
 		return out
 	}
 
-	ph := strings.Repeat(",?", len(names))[1:]
+	ph := strings.Repeat(",?", len(args))[1:]
+	jobOwner := agencyid.JobOwnerSQL("j")
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT j.name, a.name
+		SELECT j.uid, j.name, `+jobOwner+`, a.name
 		FROM jobs j
-		JOIN scopes s          ON s.name = j.scope
+		JOIN scopes s          ON `+agencyid.ScopeIn("s", "j.scope", jobOwner)+`
 		JOIN scope_agencies sa ON sa.scope_id = s.id
 		JOIN agencies a        ON a.id = sa.agency_id
-		WHERE j.name IN (`+ph+`)`, names...)
+		WHERE j.uid IN (`+ph+`) OR j.name IN (`+ph+`)`, append(append([]any{}, args...), args...)...)
 	if err != nil {
-		return out // display-only: a failure here costs a column, never the page
+		return out
 	}
-	byJob := map[string][]string{}
+	byUID := map[string][]string{}
+	byNameIn := map[string][]string{} // name NUL agency
 	for rows.Next() {
-		var jobName, agency string
-		if rows.Scan(&jobName, &agency) == nil {
-			byJob[jobName] = append(byJob[jobName], agency)
+		var uid sql.NullString
+		var jobName, owner, agency string
+		if rows.Scan(&uid, &jobName, &owner, &agency) == nil {
+			if uid.Valid {
+				byUID[uid.String] = append(byUID[uid.String], agency)
+			}
+			byNameIn[jobName+"\x00"+owner] = append(byNameIn[jobName+"\x00"+owner], agency)
 		}
 	}
 	rows.Close()
 
-	for key, jobs := range perWF {
+	for key, refs := range perWF {
 		set := map[string]bool{}
 		var list []string
-		for _, jn := range jobs {
-			for _, a := range byJob[jn] {
+		for _, ref := range refs {
+			found := byNameIn[ref.Name+"\x00"+owners[key]]
+			if ref.UID != "" {
+				found = byUID[ref.UID]
+			}
+			for _, a := range found {
 				if !set[a] {
 					set[a] = true
 					list = append(list, a)
@@ -2738,71 +2728,11 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 	// reused so the comparison semantics are identical; a paused workflow gets no
 	// next-run (mirroring loadSchedules(paused=true)). Runs after the outer
 	// iterator is drained, so it does not nest inside an open result set.
-	nextRuns := map[[2]string]*string{}
-	if len(bases) > 0 {
-		names := make([]any, 0, len(bases))
-		seen := map[string]bool{}
-		paused := map[[2]string]bool{}
-		for _, wf := range bases {
-			if !seen[wf.name] {
-				seen[wf.name] = true
-				names = append(names, wf.name)
-			}
-			if wf.pausedCount > 0 {
-				paused[[2]string{wf.source, wf.name}] = true
-			}
-		}
-		// FX-F1 — the FULL spec, not the cron column alone. This query used to
-		// select `cron` only and project through bare cronutil.Next, which made
-		// this list the one surface in the app disagreeing with the engine: an
-		// interval- or once-mode entry showed NO next run at all (Next("") fails),
-		// and a windowed cron showed a PHANTOM fire before its window opened and
-		// after it expired. The workflow DETAIL projects through loadSchedules and
-		// was right, so list and detail disagreed about the same entry — the kind
-		// of disagreement an operator resolves by trusting whichever is wrong.
-		ph := strings.Repeat(",?", len(names))[1:]
-		srows, err := s.db.QueryContext(r.Context(), `
-			SELECT owner_source, owner_name, cron, COALESCE(interval,''), COALESCE(start_at,''), COALESCE(end_at,'')
-			FROM definition_schedules
-			WHERE owner_kind = 'workflow' AND owner_name IN (`+ph+`)
-			ORDER BY owner_source, owner_name, position, name`, names...)
-		if err != nil {
-			s.log.Warn("workflows list: batch next-run query failed; page shows no projections", "err", err)
-		}
-		if err == nil {
-			type entrySpec struct{ cron, interval, startAt, endAt string }
-			specs := map[[2]string][]entrySpec{}
-			for srows.Next() {
-				var src, nm string
-				var e entrySpec
-				if srows.Scan(&src, &nm, &e.cron, &e.interval, &e.startAt, &e.endAt) == nil {
-					k := [2]string{src, nm}
-					specs[k] = append(specs[k], e)
-				}
-			}
-			srows.Close()
-			now := time.Now()
-			appLoc := s.appLocation()
-			for k, es := range specs {
-				if paused[k] {
-					continue
-				}
-				entries := make([]scheduleEntryResp, 0, len(es))
-				for _, e := range es {
-					resp := scheduleEntryResp{}
-					win := cronutil.NewWindow(
-						windowBound(sql.NullString{String: e.startAt, Valid: e.startAt != ""}),
-						windowBound(sql.NullString{String: e.endAt, Valid: e.endAt != ""}))
-					spec := cronutil.Spec{Cron: e.cron, Interval: e.interval, Window: win}
-					if next, ok := cronutil.NextSpec(spec, now, appLoc); ok {
-						resp.NextRunAt = rfc3339Ptr(next)
-					}
-					entries = append(entries, resp)
-				}
-				nextRuns[k] = earliestNextRunAt(entries)
-			}
-		}
+	wfOwners := make([]nextRunOwner, 0, len(bases))
+	for _, wf := range bases {
+		wfOwners = append(wfOwners, nextRunOwner{uid: wf.uid.String, source: wf.source, name: wf.name, paused: wf.pausedCount > 0})
 	}
+	nextRuns := s.batchNextRuns(r.Context(), "workflow", wfOwners)
 
 	// RF-17 — the derived agency set per workflow, batched exactly like Next Run
 	// above (one query for the whole page, after the outer iterator is drained, so
@@ -2869,7 +2799,7 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 		if wf.lastSkipReason.Valid && wf.lastSkipReason.String != "" {
 			wr.LastSkipReason = &wf.lastSkipReason.String
 		}
-		wr.NextRunAt = nextRuns[[2]string{wf.source, wf.name}]
+		wr.NextRunAt = nextRuns[nextRunOwner{uid: wf.uid.String, source: wf.source, name: wf.name}.key()]
 		items = append(items, wr)
 	}
 	httpx.JSON(w, http.StatusOK, pageEnvelope(page, pageSize, total, items))
@@ -3569,7 +3499,11 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 
 	// Load the child runs ONCE (drained before any per-row sub-query — the redactor
 	// builds query secrets; SQLite pool rule). Everything below derives from them.
-	children := s.loadWorkflowChildRuns(r, traceID)
+	children, err := s.loadWorkflowChildRuns(r, traceID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
 
 	// Scope access check (FR-H2 IDOR mitigation, A5 fix), after whose the run
 	// is (2.5.0 C2, CF-1; 1520): another agency's run, or Global's, whose jobs
@@ -3588,32 +3522,15 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if stepsSnapshot.Valid && stepsSnapshot.String != "" {
-			steps, err := workflow.ParseSteps(stepsSnapshot.String)
-			if err == nil {
-				jobNames := workflow.FlattenSteps(steps)
-				if len(jobNames) > 0 {
-					placeholders := strings.Repeat("?,", len(jobNames))
-					placeholders = placeholders[:len(placeholders)-1]
-					query := fmt.Sprintf("SELECT DISTINCT COALESCE(scope,''), COALESCE("+agencyid.JobSQL("jobs")+", '"+agencyid.Global+"') FROM jobs WHERE name IN (%s)", placeholders)
-					args := make([]any, len(jobNames))
-					for i, name := range jobNames {
-						args[i] = name
-					}
-					rows, err := s.db.QueryContext(r.Context(), query, args...)
-					if err == nil {
-						defer rows.Close()
-						for rows.Next() {
-							var sc, owner string
-							if err := rows.Scan(&sc, &owner); err == nil && sc != "" {
-								if !auth.ScopeReadableIn(id, owner, sc) {
-									s.notReadable(w, r, sc, "workflow run")
-									return
-								}
-							}
-						}
-					}
-				}
+		stepScopes, err := s.workflowRunStepScopes(r.Context(), stepsSnapshot, wrAgency)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		for _, st := range stepScopes {
+			if !auth.ScopeReadableIn(id, st.owner, st.scope) {
+				s.notReadable(w, r, st.scope, "workflow run")
+				return
 			}
 		}
 	}
@@ -3655,6 +3572,60 @@ func workflowDisplayStatus(raw string, cancelled int) string {
 	return mapRunStatus(raw)
 }
 
+// runStepScope is one scope a workflow run's steps reach, with its agency.
+type runStepScope struct{ scope, owner string }
+
+// workflowRunStepScopes is the scope of each job a workflow run's snapshot
+// names, for the run's read and cancel checks. A pinned step is its job by uid;
+// a name-only step is the job of that name in the run's own agency (the
+// workflow's, in whose home the engine resolved it). Until 2.5.0 C12 it was
+// every agency's job of the name, so another agency's namesake on a scope the
+// caller does not read hid the caller's own run (404) and refused its cancel
+// with a 403 that named the scope (present defect 91). A step whose job is gone
+// adds nothing, and a job with no scope adds nothing, as before. A read that
+// fails is an error: the callers refuse, as a scope that went unread would
+// otherwise pass the read and Kill Jobs checks (2.5.0 C12's code review).
+func (s *Server) workflowRunStepScopes(ctx context.Context, snapshot sql.NullString, runAgency string) ([]runStepScope, error) {
+	if !snapshot.Valid || snapshot.String == "" {
+		return nil, nil
+	}
+	steps, err := workflow.ParseSteps(snapshot.String)
+	if err != nil {
+		return nil, fmt.Errorf("workflow run's step snapshot: %w", err)
+	}
+	owner := `COALESCE(` + agencyid.JobSQL("j") + `, '` + agencyid.Global + `')`
+	seen := map[runStepScope]bool{}
+	var out []runStepScope
+	for _, ref := range workflow.CollectStepRefs(steps) {
+		where, args := `j.name = ? AND `+owner+` = ?`, []any{ref.Name, runAgency}
+		if ref.UID != "" {
+			where, args = `j.uid = ?`, []any{ref.UID}
+		}
+		rows, err := s.db.QueryContext(ctx,
+			`SELECT DISTINCT COALESCE(j.scope, ''), `+owner+` FROM jobs j WHERE `+where, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var st runStepScope
+			if err := rows.Scan(&st.scope, &st.owner); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if st.scope != "" && !seen[st] {
+				seen[st] = true
+				out = append(out, st)
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // cancelWorkflowRun soft-cancels a running workflow run (WB-S2 / D4). It shares the
 // trigger engine instance so it can stop the in-flight walk; for runs driven by
 // another engine (scheduler), the persisted flag halts the walk between steps.
@@ -3694,7 +3665,11 @@ func (s *Server) cancelWorkflowRun(eng *workflow.Engine) http.HandlerFunc {
 		// (CanUnbound), and there is deliberately NO id.Unrestricted() fast path for
 		// the verb half — unrestricted describes scope reach, not authority, and an
 		// unrestricted viewer holds no verb at all.
-		children := s.loadWorkflowChildRuns(r, traceID)
+		children, err := s.loadWorkflowChildRuns(r, traceID)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
 		id, hasID := auth.IdentityFrom(r.Context())
 		// Fail CLOSED on a missing identity. The route is mounted behind
 		// requireSession so this should be unreachable, but the guard below used to
@@ -3740,35 +3715,18 @@ func (s *Server) cancelWorkflowRun(eng *workflow.Engine) http.HandlerFunc {
 			}
 		}
 
-		if stepsSnapshot.Valid && stepsSnapshot.String != "" {
-			steps, err := workflow.ParseSteps(stepsSnapshot.String)
-			if err == nil {
-				jobNames := workflow.FlattenSteps(steps)
-				if len(jobNames) > 0 {
-					placeholders := strings.Repeat("?,", len(jobNames))
-					placeholders = placeholders[:len(placeholders)-1]
-					query := fmt.Sprintf("SELECT DISTINCT COALESCE(scope,''), COALESCE("+agencyid.JobSQL("jobs")+", '"+agencyid.Global+"') FROM jobs WHERE name IN (%s)", placeholders)
-					args := make([]any, len(jobNames))
-					for i, name := range jobNames {
-						args[i] = name
-					}
-					rows, err := s.db.QueryContext(r.Context(), query, args...)
-					if err == nil {
-						defer rows.Close()
-						for rows.Next() {
-							var sc, owner string
-							if err := rows.Scan(&sc, &owner); err == nil && sc != "" {
-								if !auth.ScopeReadableIn(id, owner, sc) {
-									s.denyScope(w, r, sc, "scope access denied")
-									return
-								}
-								if !s.requireCan(w, r, id, auth.PermKillJobs, owner, sc) {
-									return
-								}
-							}
-						}
-					}
-				}
+		stepScopes, err := s.workflowRunStepScopes(r.Context(), stepsSnapshot, wrAgency)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		for _, st := range stepScopes {
+			if !auth.ScopeReadableIn(id, st.owner, st.scope) {
+				s.denyScope(w, r, st.scope, "scope access denied")
+				return
+			}
+			if !s.requireCan(w, r, id, auth.PermKillJobs, st.owner, st.scope) {
+				return
 			}
 		}
 
@@ -3872,14 +3830,18 @@ type nodeStat struct {
 // loadWorkflowChildRuns drains the child runs of a workflow run into a slice. It
 // MUST drain fully before any per-row sub-query runs (the context redactor builds
 // query secrets; SQLite pool rule, see db.maxOpenConns).
-func (s *Server) loadWorkflowChildRuns(r *http.Request, wfTraceID string) []wfChildRun {
+//
+// A read that fails is an error (C12.5's review): the callers check each child's
+// scope from this list, so a run left out of it went unchecked, and the detail
+// and the cancel passed.
+func (s *Server) loadWorkflowChildRuns(r *http.Request, wfTraceID string) ([]wfChildRun, error) {
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, job_name, run_type, status, COALESCE(scope,''), started_at, completed_at, duration_ms, env_json, outputs_json,
 		       `+agencyid.RunScopeOwnerSQL("agencies_json")+`
 		FROM runs WHERE workflow_run_id = ? ORDER BY created_at
 	`, wfTraceID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	var out []wfChildRun
@@ -3887,11 +3849,11 @@ func (s *Server) loadWorkflowChildRuns(r *http.Request, wfTraceID string) []wfCh
 		var cr wfChildRun
 		if err := rows.Scan(&cr.id, &cr.jobName, &cr.runType, &cr.status, &cr.scope,
 			&cr.startedAt, &cr.completedAt, &cr.durationMs, &cr.envJSON, &cr.outputsJSON, &cr.scopeOwner); err != nil {
-			continue
+			return nil, err
 		}
 		out = append(out, cr)
 	}
-	return out
+	return out, rows.Err()
 }
 
 // workflowRunSteps builds the flat step timeline from pre-loaded child runs. Each
@@ -4468,7 +4430,10 @@ type runMapCaches struct {
 	s         *Server
 	ctx       context.Context
 	redactors map[string]*runner.Redactor // nil entry ⇒ build failed ⇒ fail closed
-	jobIDs    map[string]int64            // runJobKey(source, name) → jobs.rowid
+	jobIDs    map[string]int64            // runJobKey(source, name, owner) → jobs.rowid
+	// jobIDsByUID is jobs.uid → jobs.rowid: a run that records its job's uid
+	// (every run since 1010) is linked to that job (2.5.0 C12, defect 97).
+	jobIDsByUID map[string]int64
 	// detail is set for a single-run detail render. Only then does redactOutputs
 	// pay the per-run injected-value resolution (a possible Vault round-trip), so a
 	// large runs-list page is never slowed for the rare row that carries outputs
@@ -4485,28 +4450,35 @@ type runMapCaches struct {
 // builds per request.
 var newRunRedactor = runner.NewRedactor
 
-func runJobKey(source, name string) string { return source + "\x00" + name }
+func runJobKey(source, name, owner string) string { return source + "\x00" + name + "\x00" + owner }
 
-// newRunMapCaches batch-loads the jobs-rowid map for a drained page of runs.
-// One query for every distinct job name on the page, pair-matched on (source,
-// name) below so a run without a matching job row keeps jobId 0, as before.
+// newRunMapCaches batch-loads the jobs-rowid maps for a drained page of runs.
+// One query for every distinct job uid and name on the page. A run is linked
+// to the job its uid names, else (a run from before 1010) to the job of its
+// source and name in the run's own agency, so a run without a matching job row
+// keeps jobId 0, as before. Until 2.5.0 C12 it was by (source, name) across
+// every agency (present defect 97): FIN's run of `backup` could link to TAX's.
 func (s *Server) newRunMapCaches(ctx context.Context, raws []runRaw) *runMapCaches {
-	c := &runMapCaches{s: s, ctx: ctx, redactors: map[string]*runner.Redactor{}, jobIDs: map[string]int64{}}
+	c := &runMapCaches{s: s, ctx: ctx, redactors: map[string]*runner.Redactor{},
+		jobIDs: map[string]int64{}, jobIDsByUID: map[string]int64{}}
 	if len(raws) == 0 {
 		return c
 	}
-	nameSet := map[string]struct{}{}
+	keySet := map[string]struct{}{}
 	for _, rr := range raws {
-		nameSet[rr.jobName] = struct{}{}
+		keySet[rr.jobName] = struct{}{}
+		if rr.jobUID.Valid && rr.jobUID.String != "" {
+			keySet[rr.jobUID.String] = struct{}{}
+		}
 	}
-	placeholders := make([]string, 0, len(nameSet))
-	names := make([]any, 0, len(nameSet))
-	for n := range nameSet {
-		placeholders = append(placeholders, "?")
-		names = append(names, n)
+	keys := make([]any, 0, len(keySet))
+	for k := range keySet {
+		keys = append(keys, k)
 	}
+	ph := strings.Repeat(",?", len(keys))[1:]
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT rowid, source, name FROM jobs WHERE name IN (`+strings.Join(placeholders, ",")+`)`, names...)
+		`SELECT j.rowid, j.uid, j.source, j.name, `+agencyid.JobOwnerSQL("j")+` FROM jobs j
+		  WHERE j.uid IN (`+ph+`) OR j.name IN (`+ph+`)`, append(append([]any{}, keys...), keys...)...)
 	if err != nil {
 		// Degrade like the old per-row lookup did (jobId 0), but say so: one
 		// failure here blanks jobId for the whole page, not a single row.
@@ -4516,9 +4488,13 @@ func (s *Server) newRunMapCaches(ctx context.Context, raws []runRaw) *runMapCach
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
-		var source, name string
-		if rows.Scan(&id, &source, &name) == nil {
-			c.jobIDs[runJobKey(source, name)] = id
+		var uid sql.NullString
+		var source, name, owner string
+		if rows.Scan(&id, &uid, &source, &name, &owner) == nil {
+			c.jobIDs[runJobKey(source, name, owner)] = id
+			if uid.Valid {
+				c.jobIDsByUID[uid.String] = id
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -4558,7 +4534,10 @@ func (s *Server) runToMap(rr runRaw, caches *runMapCaches) map[string]any {
 	if jobSrc == "" {
 		jobSrc = "git"
 	}
-	jobID := caches.jobIDs[runJobKey(jobSrc, rr.jobName)]
+	jobID := caches.jobIDs[runJobKey(jobSrc, rr.jobName, runOwnerOf(rr))]
+	if rr.jobUID.Valid && rr.jobUID.String != "" {
+		jobID = caches.jobIDsByUID[rr.jobUID.String]
+	}
 
 	// M4 — read-time stuck-run signal: a queued runner run whose agency has no online
 	// eligible runner will wait indefinitely; surface why (unless a stored reason wins).

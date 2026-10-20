@@ -44,9 +44,19 @@ describe("the installation freeze (C11)", () => {
     FREEZE = { on: true, reason: "Year-end change freeze", setBy: "root@example.com", setAt: "2026-10-19T12:00:00Z" };
     render(<InstallationFreezeBanner />);
     const banner = await screen.findByTestId("installation-freeze-banner");
-    expect(banner.textContent).toContain("every agency's scheduled runs are skipped");
+    expect(banner.textContent).toContain("no run starts in any agency");
     expect(banner.textContent).toContain("Year-end change freeze");
     expect(banner.textContent).toContain("root@example.com");
+  });
+
+  // 2.5.0 C12, defect 93: the freeze binds a manual run and a token's too (the
+  // gate matrix's globalFreeze, FX-Q2); the copy said they went on.
+  it("does not say a manual run or a token's run goes on", async () => {
+    FREEZE = { on: true, reason: "Year-end", setBy: "root@example.com", setAt: "2026-10-19T12:00:00Z" };
+    render(<InstallationFreezeBanner />);
+    const banner = await screen.findByTestId("installation-freeze-banner");
+    expect(banner.textContent).not.toMatch(/unaffected|go on/i);
+    expect(banner.textContent).toContain("Run, tokens");
   });
 
   it("freezes with a reason, and the banner follows at once", async () => {

@@ -36,9 +36,7 @@ agents with the server.
    A run still queued for the in-app SSH executor of 2.2.x is closed at the
    upgrade as skipped, with the reason (migration 1590): nothing has claimed
    such a run since 2.3.0, and the 2.3.0 pass that moved them to the local
-   runner is retired in this release (below). Run its job again afterwards. A
-   run pinned to a runner tag (2.3.0) waits: bind the scope after the upgrade,
-   or let it finish first.
+   runner is retired in this release (below). Run its job again afterwards.
 2. **Take a backup**, then run the report with the new binary against the
    existing database: `cronomicon preflight` (read-only). It says what 2.3.0
    changes, and in its last block what 2.4.0 and 2.5.0 stop or move at the
@@ -57,7 +55,19 @@ agents with the server.
    (2.3.1). **An agent that served several agencies before 2.3.0** (a legacy
    placement, Global's) takes only Global's runs from 2.4.0: enrol an agent
    for each other agency it served, or hand it over (Runners), before you
-   upgrade, or that agency's runs wait.
+   upgrade, or that agency's runs wait. **An agent in a container** takes the
+   new image tag, and `--stop-timeout 300` (Compose: `stop_grace_period: 5m`)
+   so that a stop drains it (2.3.2). From now on, stop or restart an agent
+   while the server is up: an agent of 2.5.0 keeps sending the end of a run
+   until the server takes it, so a stop while the server is down waits for
+   each such run, up to the unit's stop timeout (five minutes as installed);
+   a second signal gives up (`systemctl kill --kill-who=main <unit>`: a
+   second `systemctl stop` joins the stop under way and sends none), and the
+   run is closed as `runner_lost` when the agent starts again.
+
+Steps 1 to 3 come before, or with, the switch: stop the old server, start
+2.5.0 on the same database (it migrates at its first start), then steps 4 to 7.
+
 4. **Read the Notices inbox.** Every conversion that needs a person is listed
    there, by agency: what was shared before 2.4.0 stays Global's and stops
    where it reached another agency (`workflow_spans_agencies`,
@@ -80,6 +90,10 @@ agents with the server.
    so each of its runs is refused, with the reason (`global_job_on_agency_scope`).
    Move its file to the agency's repository, or give it to the agency
    (**Give to an agency…** on the job). The report of step 2 lists them.
+7. **Assign Vault path prefixes** (Scopes → Agencies) to each agency that holds
+   Vault-backed secrets or keys (2.3.0). Until it has one, an agency's
+   administrators cannot manage its Vault-backed secrets and keys; its runs
+   are not affected.
 
 **What reads differently after the upgrade.** People of one agency no longer
 see Global's rows (its jobs, runs, scopes, runners, notices and the rest),
@@ -228,6 +242,55 @@ Found by the review of everything since 2.2.3, before this release:
   `global_script_job` notice, the waiting reason of a Global Ansible run (it
   offered the local runner, which runs shell types only), and the pause
   refusal.
+
+Found by a second review, of what the first did not reach:
+
+- **A workflow run is judged by its own steps' jobs.** Its detail and its
+  cancel checked every agency's job of each step's name, so another agency
+  committing a job of the name hid an agency's own run (404) and refused its
+  cancel with a 403 naming the other agency's scope. The workflow list's
+  agencies and History's link to a run's job were found by name the same way
+  (also in 2.2.3, the link): a workflow showed another agency among its
+  agencies, and a run linked to another agency's job. So were the job and
+  workflow lists' schedule count and next run: a job showed another agency's
+  namesake's schedules and next fire, and that agency pausing its namesake hid
+  this one's next run. And an edit, delete or restore of a reusable schedule
+  rewrote the schedule shown on another agency's job or workflow of the same
+  name as one bound to it.
+- **A run's end that cannot be delivered ends anyway.** A run whose log
+  reached its cap (`CRONOMICON_MAX_RUN_LOG_BYTES`) had its last upload refused
+  with the rest, and stayed *running* for good (also in 2.2.3); it now ends
+  from its outcome, the text past the cap discarded. Deregistering a runner
+  ends its running runs as *runner lost* (they stayed *running*, also in
+  2.2.3). The agent no longer re-sends, every minute for as long as it lives,
+  an upload the server has refused for good (Cronomicon's own 401, 404 or 413);
+  a proxy's answer while the server restarts is still sent again.
+- **A log upload the server cannot check is refused, not taken.** When the
+  server could not read whether a run had been given a secret, it took the
+  chunk as one that had not, and could store a Vault-sourced value it printed
+  unmasked; when it could not read the run's log offset, it started the log
+  again from nothing (also in 2.2.3). Both answer 503 now, and the agent sends
+  the chunk again.
+- **An agency's push target names no generic webhook.** An agency's
+  administrator could aim a push target at Apprise's `json`, `xml` or `form`
+  webhooks, or its `apprise` relay, which the gateway sends to any address it
+  reaches (a cloud metadata service, Vault on the loopback), with headers of
+  their choosing; such a URL is refused (`target_scheme_not_allowed`) unless a
+  global administrator writes it. Global's targets are not limited. The
+  self-hosted services (ntfy, Gotify, Mattermost and the like) still take the
+  host an agency names (the security review, AL-4).
+- **The freeze says what it stops.** The banner, the Settings card and the
+  manuals said manual runs and runs by a token go on during the
+  installation-wide freeze; every way a run starts is stopped, as it was.
+- **A composer on every agency composes in each.** Jobs' and Workflows'
+  Create, Edit, Clone, History and Delete were hidden from a custom role with
+  compose on every agency and no configureApp.
+- **An upgraded agent's state directory is 0750.** The upgrade command adds
+  `StateDirectoryMode=0750` to a unit from an installer older than 2.3.0
+  (systemd reset the directory to 0755 at every start).
+- **Settings → Repositories** is named where the notices, `cronomicon
+  preflight` and the webhook's refusal said "Settings → Integrations", which
+  2.4.0 removed.
 
 ### For developers
 

@@ -856,6 +856,9 @@ ExecStart=/usr/local/bin/cronomicon-runner
 # Graceful drain on SIGTERM. KillMode=mixed signals the agent alone: with
 # systemd's default, the Ansible and Terraform runs it is waiting for (its own
 # child processes, in this unit's control group) are sent SIGTERM as well.
+# The drain also waits for a run whose end has not reached the server yet (a
+# server that is down), up to TimeoutStopSec. A second signal gives up:
+# systemctl kill --kill-who=main <unit> (a second systemctl stop sends none).
 KillSignal=SIGTERM
 KillMode=mixed
 TimeoutStopSec=300

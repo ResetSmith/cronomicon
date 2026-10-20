@@ -55,7 +55,7 @@ func checkAgencyNoRepository(ctx context.Context, database *sql.DB) error {
 				Detail: "Global's repository is not connected: its connection has no URL, and CRONOMICON_GITLAB_BASE_URL " +
 					"is not set. Every agency has a repository, Global included: it is where Global's definitions live, " +
 					"and where its publishes and the assignments it makes are committed. Nothing is refused while it is so. " +
-					"Connect it (a URL, and a token that can push) under Settings → Integrations; this notice clears when it is done.",
+					"Connect it (a URL, and a token that can push) under Settings → Repositories; this notice clears when it is done.",
 			})
 			continue
 		}
@@ -66,7 +66,7 @@ func checkAgencyNoRepository(ctx context.Context, database *sql.DB) error {
 				"definitions live, and where its publishes and the assignments it is given are committed. An agency is now " +
 				"created with its repository; this one is from before. Until it is connected the agency works as it did, and " +
 				"cannot receive an assignment. Connect it (a URL on the allowed hosts, and a token that can push) under " +
-				"Settings → Integrations; this notice clears when it is done.",
+				"Settings → Repositories; this notice clears when it is done.",
 		})
 	}
 	rows.Close()

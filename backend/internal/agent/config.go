@@ -270,7 +270,7 @@ func Resolve(args []string, getenv func(string) string) (Config, error) {
 		noAuthBridge      = fs.Bool("no-auth-bridge", cfg.NoAuthBridge, "disable the auth bridge (key-name→file for ansible + known_hosts injection)")
 		localInv          = fs.String("local-inventory", cfg.LocalInventoryFile, "local inventory file for 'local' mode scope resolution")
 		stateDir          = fs.String("state-dir", cfg.StateDir, "writable dir for transient run artifacts (ansible -i temp file); empty ⇒ os.TempDir()")
-		logRetry          = fs.Int("log-retry-budget", cfg.LogRetryBudget, "log-POST resume attempts per upload (a run's final upload is sent again until the server takes it)")
+		logRetry          = fs.Int("log-retry-budget", cfg.LogRetryBudget, "log-POST resume attempts per upload (a run's final upload is sent again until the server takes it or refuses it for good)")
 		fanOut            = fs.Int("fan-out", cfg.FanOut, "max parallel SSH targets within a run")
 		envBaseExtra      = fs.String("env-base-extra", strings.Join(cfg.EnvBaseExtra, ","), "comma-separated extra env-var NAMES forwarded into a scoped local-toolchain child env")
 		noSSHSock         = fs.Bool("exclude-ssh-auth-sock", cfg.ExcludeSSHAuthSock, "drop SSH_AUTH_SOCK from the scoped child env base safe-list")

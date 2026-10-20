@@ -12,7 +12,9 @@ import (
 // global 2 MiB body cap, so a per-run ceiling (CRONOMICON_MAX_RUN_LOG_BYTES) is the
 // only bound on how much a runner can write. Once a run's persisted log reaches
 // the ceiling, further ingest is refused with 413 and nothing more is appended —
-// and a subsequent chunk short-circuits to 413 without writing.
+// and a subsequent chunk short-circuits to 413 without writing. The chunks are a
+// live run's (X-Log-Partial): a FINAL chunk at the cap ends the run instead
+// (2.5.0 C12, present defect 92; c12_undeliverable_end_test.go).
 func TestIngestCapsRunLogSize(t *testing.T) {
 	svc := newTestService(t)
 	svc.cfg.MaxRunLogBytes = 200 // tiny ceiling for the test
@@ -34,6 +36,7 @@ func TestIngestCapsRunLogSize(t *testing.T) {
 	post := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/"+traceID+"/log", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("X-Log-Partial", "1")
 		req.SetPathValue("traceId", traceID)
 		rec := httptest.NewRecorder()
 		as.RequireRunner(http.HandlerFunc(svc.HandleIngestLog)).ServeHTTP(rec, req)

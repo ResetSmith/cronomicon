@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -1607,6 +1608,41 @@ func decodeAlertTargetInput(w http.ResponseWriter, r *http.Request) (*settings.A
 	return inp, true
 }
 
+// genericPushScheme finds Apprise's generic webhook schemes (json, xml, form) and
+// its relay (apprise: a second Apprise server, which reaches as far): each sends
+// a request to any host its URL names, with headers its URL chooses
+// (`+Header=value`), and the installation's Apprise gateway makes it, past the
+// server's egress rules (question 117 added the relay, option A).
+//
+// They are found the way Apprise finds a URL in a target's text, not by
+// splitting it: Apprise's URL_DETECTION_RE takes a scheme wherever a run of
+// letters and digits stands before "://", whatever precedes it, and splits at
+// separators Go's unicode.IsSpace does not know (U+001C–U+001F). So a scheme
+// is refused anywhere it starts the string or follows a character that is not
+// a letter or digit ("/json://…", "[json://…", "ntfy://x\x1cjson://…"); one
+// preceded by a letter or digit is another scheme to Apprise ("xjson").
+var genericPushScheme = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])((?:json|xml|form|apprise)s?)://`)
+
+// pushTargetSchemeAllowed refuses an agency's push target that names a generic
+// webhook unless a global administrator writes it (2.5.0 C12, present defect 95,
+// question 112): an agency administrator could aim one at an internal address
+// (a cloud metadata service, Vault on the loopback), which GR-10 refuses them
+// for a repository. Global's targets are a global administrator's anyway. The
+// services Apprise addresses by their own hosts, and the self-hosted ones
+// (ntfy, Gotify, Mattermost), stay an agency's to name.
+func pushTargetSchemeAllowed(w http.ResponseWriter, id auth.Identity, owner, raw string) bool {
+	if agencyOrGlobal(owner) == agencyid.Global || id.GlobalAdmin(auth.PermConfigureApp) {
+		return true
+	}
+	if m := genericPushScheme.FindStringSubmatch(raw); m != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "target_scheme_not_allowed",
+			"an agency's push target may not use Apprise's generic webhooks or its relay ("+strings.ToLower(m[1])+"://): they reach "+
+				"any address the server can. A global administrator can add one in this agency")
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleCreateAlertTarget(w http.ResponseWriter, r *http.Request) {
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {
@@ -1622,6 +1658,9 @@ func (s *Server) handleCreateAlertTarget(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	inp.OwnerAgency = owner
+	if !pushTargetSchemeAllowed(w, id, owner, inp.URL) {
+		return
+	}
 	t, err := settings.CreateAlertTarget(r.Context(), s.db, *inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "create_failed", err)
@@ -1636,11 +1675,17 @@ func (s *Server) handleUpdateAlertTarget(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 		return
 	}
-	if _, ok := s.alertTargetFor(w, r, id); !ok {
+	stored, ok := s.alertTargetFor(w, r, id)
+	if !ok {
 		return
 	}
 	inp, ok := decodeAlertTargetInput(w, r)
 	if !ok {
+		return
+	}
+	// The URL a global administrator gave it may be kept by the agency's own
+	// administrator (a label or the switch changed); a new one is judged.
+	if inp.URL != stored.URL && !pushTargetSchemeAllowed(w, id, stored.OwnerAgency, inp.URL) {
 		return
 	}
 	t, err := settings.UpdateAlertTarget(r.Context(), s.db, r.PathValue("targetId"), *inp, id.Email)

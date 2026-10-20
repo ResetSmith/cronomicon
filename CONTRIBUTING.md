@@ -58,8 +58,9 @@ CRONOMICON_DEV_AUTH=true CRONOMICON_DEV_SEED=true CRONOMICON_COOKIE_SECURE=false
 ## Pull requests
 
 - Describe what the change does and why. Link the issue it addresses.
-- CI runs the same gates as `make verify` and `npm run build`; a PR must be
-  green before review.
+- Run `make verify` (in `backend/`) and `npm run build` (in `frontend/`)
+  before you open it, and say that they pass: the repository has no CI of
+  its own (the one workflow publishes the images on a release tag).
 - Reviews may ask for changes. Push additional commits rather than
   force-pushing while a review is in progress.
 

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -441,9 +442,50 @@ func (c *Client) postLog(ctx context.Context, id Identity, traceID string,
 		}
 		return postLogResult{resumeMismatch: true, persistedOffset: *c409.PersistedOffset}, nil
 	default:
-		return postLogResult{}, fmt.Errorf("log post: server returned %s: %s",
-			resp.Status, readSnippet(resp.Body))
+		snippet := readSnippet(resp.Body)
+		return postLogResult{}, &logStatusError{code: resp.StatusCode, refusal: isServerRefusal(snippet),
+			msg: fmt.Sprintf("log post: server returned %s: %s", resp.Status, snippet)}
 	}
+}
+
+// logStatusError is a log upload the server answered with a status the agent
+// does not take as an answer (anything but 200, 204 and 409). The status, and
+// whether the answer is Cronomicon's own, are kept so a run's final upload knows
+// whether sending it again can ever succeed (finalUploadRetryable; 2.5.0 C12).
+type logStatusError struct {
+	code    int
+	refusal bool // the body is the server's JSON refusal ({"code": …})
+	msg     string
+}
+
+func (e *logStatusError) Error() string { return e.msg }
+
+// isServerRefusal says whether an error body is Cronomicon's own refusal: a
+// JSON object with a non-empty "code", as every refusal of the server is
+// written (httpx.Fail). A proxy in front of the server writes its own body
+// (Traefik's "404 page not found" while the server's container is stopped).
+func isServerRefusal(body string) bool {
+	var e struct {
+		Code string `json:"code"`
+	}
+	return json.Unmarshal([]byte(strings.TrimSpace(body)), &e) == nil && e.Code != ""
+}
+
+// finalUploadRetryable says whether a run's final upload that failed with err is
+// worth sending again. Only Cronomicon's own refusal with a 4xx other than 429
+// is its answer for good: 413 (the run's log reached its cap; since C12 the
+// server takes a final chunk there, so only an older server says it), 401 (the
+// runner's key was revoked by a deregister) and 404 (no such run for this
+// runner) were re-sent every minute for as long as the agent lived, holding the
+// run's slot (present defect 92). A transport error, a 5xx (a server
+// restarting, Vault away: 503 redactor_unavailable), 429, and any status a proxy
+// answered in the server's place (a 404 or 502 while it restarts) may clear.
+func finalUploadRetryable(err error) bool {
+	var se *logStatusError
+	if errors.As(err, &se) {
+		return !se.refusal || se.code >= 500 || se.code == http.StatusTooManyRequests
+	}
+	return true
 }
 
 // readSnippet reads a bounded prefix of an error body for diagnostics.

@@ -2,7 +2,7 @@ import { Fragment, Suspense, lazy, useEffect, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
 import { useAgencyOptional } from "../agency";
-import { agenciesFor, useMyAccess } from "../api/access";
+import { agenciesFor, isGlobalFor, useMyAccess } from "../api/access";
 import { WorkflowAssignDialog } from "./AssignDialog";
 import type { components } from "../api/schema";
 import { useLiveGet, rows, useClientPager, useColumnWidths, useInlineAnnotation, useInlineTags, useTableSort, useToast } from "../hooks";
@@ -245,12 +245,22 @@ export function Workflows() {
   // use's, and the server answers 403 to someone who composes elsewhere but
   // not in it. "May compose somewhere" (caps.compose) offered + Create, Edit,
   // Clone and Delete in an agency where the person only views. As Schedules and
-  // Calendars gate it: a global composer, or compose on the agency in use (and,
-  // while access is not yet read, nothing is claimed).
+  // Calendars gate it: a global composer, or compose on the agency in use.
+  // C12, defect 94: a grant on every agency that carries compose is a global
+  // composer for this too (isGlobalFor), with or without configureApp
+  // (composeAdmin needs both); until then a custom role with compose on every
+  // scope lost every action here. While /me/access is being read the actions
+  // wait (undefined); if it could not be read (null) they show, and the server
+  // decides.
   const composeAccess = useMyAccess();
   const canComposeHere =
     canCompose &&
-    (composeAdmin || composeAccess == null || !composeAgency || agenciesFor(composeAccess, "compose").some((a) => a.id === composeAgency));
+    (composeAdmin ||
+      !composeAgency ||
+      composeAccess === null ||
+      (composeAccess !== undefined &&
+        (isGlobalFor(composeAccess, "compose") ||
+          agenciesFor(composeAccess, "compose").some((a) => a.id === composeAgency))));
 
   // WB-O2: poll the list while any workflow is running/queued so live status
   // (and Next/Last run) updates without a manual refresh; stops once all settle.

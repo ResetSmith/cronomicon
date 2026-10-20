@@ -65,7 +65,7 @@ func (a *Agent) handleKeyscan(ctx context.Context, hosts []string) {
 				a.log.Warn("host-key scan failed", "host", h, "error", err)
 				return
 			}
-			if err := a.client.UploadHostKeys(ctx, a.id, []scannedHostKey{k}); err != nil {
+			if err := a.client.UploadHostKeys(ctx, a.identity(), []scannedHostKey{k}); err != nil {
 				a.log.Error("upload scanned host key failed", "host", h, "error", err)
 				return
 			}
@@ -320,7 +320,7 @@ func (a *Agent) reportKnownHosts(ctx context.Context) {
 		a.log.Error("known-hosts report: read failed", "path", path, "error", err)
 		return
 	}
-	if err := a.client.UploadKnownHosts(ctx, a.id, entries, truncated); err != nil {
+	if err := a.client.UploadKnownHosts(ctx, a.identity(), entries, truncated); err != nil {
 		a.log.Error("known-hosts report: upload failed", "error", err)
 		return
 	}

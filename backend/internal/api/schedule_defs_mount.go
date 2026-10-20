@@ -159,12 +159,7 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 		       -- counted both sets of users.
 		       (SELECT COUNT(*) FROM definition_schedules ds
 		         WHERE ds.schedule_uid = sc.uid
-		           AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
-		                            AND j2.source=ds.owner_source AND j2.name=ds.owner_name
-		                            AND j2.deleted_at IS NOT NULL)
-		           AND NOT EXISTS (SELECT 1 FROM workflows w2 WHERE ds.owner_kind='workflow'
-		                            AND w2.source=ds.owner_source AND w2.name=ds.owner_name
-		                            AND w2.deleted_at IS NOT NULL)) AS used_by,
+		           AND NOT `+binnedOwnerSQL+`) AS used_by,
 		       sc.owner_agency
 		FROM schedules sc`+where+`
 		ORDER BY sc.source, sc.name LIMIT ? OFFSET ?`, pageArgs...)
@@ -218,12 +213,7 @@ func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 		        `+agencyid.Owner(agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind"))+`
 		   FROM definition_schedules ds
 		  WHERE schedule_uid = ?
-		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
-		                     AND j2.source=ds.owner_source AND j2.name=ds.owner_name
-		                     AND j2.deleted_at IS NOT NULL)
-		    AND NOT EXISTS (SELECT 1 FROM workflows w2 WHERE ds.owner_kind='workflow'
-		                     AND w2.source=ds.owner_source AND w2.name=ds.owner_name
-		                     AND w2.deleted_at IS NOT NULL)
+		    AND NOT `+binnedOwnerSQL+`
 		  ORDER BY owner_kind, owner_name`, sd.UID)
 	// CF-7 (2.5.0 C2): only the definitions the caller reads are named;
 	// usedByCount counts them all.
@@ -296,12 +286,7 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 		`SELECT owner_kind, owner_name, `+agencyid.Owner(agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind"))+`
 		   FROM definition_schedules ds
 		  WHERE schedule_uid = ?
-		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
-		                     AND j2.source=ds.owner_source AND j2.name=ds.owner_name
-		                     AND j2.deleted_at IS NOT NULL)
-		    AND NOT EXISTS (SELECT 1 FROM workflows w2 WHERE ds.owner_kind='workflow'
-		                     AND w2.source=ds.owner_source AND w2.name=ds.owner_name
-		                     AND w2.deleted_at IS NOT NULL)
+		    AND NOT `+binnedOwnerSQL+`
 		  ORDER BY owner_kind, owner_name`, sd.UID)
 	total := 0 // CF-7: named if read, counted either way
 	if derr == nil {

@@ -705,6 +705,30 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
 		return
 	}
+	// Its running runs end as runner_lost (2.5.0 C12, present defect 92): the
+	// delete below sets their runner_id to NULL, and nothing closed them after
+	// that (the reaper walks runner rows; the agent, its key revoked, is
+	// refused). They are read HERE, after the keys' revocation took the write
+	// lock, so no claim lands between this read and the delete, and closed HERE,
+	// with their run-end activity, by the reaper's own write (endLostRuns): they
+	// commit or roll back with the delete, so a deregistration that fails closes
+	// nothing, and one that commits leaves no run running with no runner. The
+	// alerts and the metric go after the commit (announceLostRuns). C12.1 closed
+	// them before the transaction, C12.4 ended the stragglers with a bare UPDATE,
+	// and C12.5 closed them after the commit, where a failed write stranded them
+	// (C12.5's review).
+	lost, err := runningRunsOf(r.Context(), tx, runnerID)
+	if err != nil {
+		s.log.Error("read a deregistered runner's runs", "runner_id", runnerID, "error", err)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
+		return
+	}
+	ended, err := s.endLostRuns(r.Context(), tx, name, lost)
+	if err != nil {
+		s.log.Error("end a deregistered runner's runs", "runner_id", runnerID, "error", err)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
+		return
+	}
 
 	// DR-7: snapshot the operator-owned placement BEFORE the delete — the
 	// runner_agencies rows cascade away with the runner row, so afterwards there
@@ -745,6 +769,7 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db commit error")
 		return
 	}
+	s.announceLostRuns(ended)
 	// Its processes went with the row (C6a): nothing is left to share the
 	// identity, and nothing would ever poll to resolve the notice.
 	s.clearIdentityShared(r.Context(), runnerID)

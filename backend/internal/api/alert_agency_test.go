@@ -172,15 +172,15 @@ func TestPushTargetsBelongToAnAgency(t *testing.T) {
 		_ = json.Unmarshal(rec.Body.Bytes(), &tg)
 		return rec.Code, tg
 	}
-	code, fin := create(gFinAdmin, `{"label":"FIN hook","service":"json","url":"json://FINTOKEN"}`)
-	if code != http.StatusCreated || fin.OwnerAgency != "ag:FIN" || fin.URL != "json://FINTOKEN" {
+	code, fin := create(gFinAdmin, `{"label":"FIN hook","service":"ntfy","url":"ntfy://FINTOKEN"}`)
+	if code != http.StatusCreated || fin.OwnerAgency != "ag:FIN" || fin.URL != "ntfy://FINTOKEN" {
 		t.Fatalf("fin admin creating a target = %d %+v, want 201, ag:FIN and its URL", code, fin)
 	}
 	code, glob := create(gRoot, `{"label":"ops","url":"json://GLOBTOKEN"}`)
 	if code != http.StatusCreated || glob.OwnerAgency != "global" {
 		t.Fatalf("root creating a target = %d %+v, want 201 and global", code, glob)
 	}
-	_, tax := create(gTaxAdmin, `{"label":"TAX hook","url":"json://TAXTOKEN"}`)
+	_, tax := create(gTaxAdmin, `{"label":"TAX hook","url":"ntfy://TAXTOKEN"}`)
 	if c, _ := create(gFinAdmin, `{"label":"x","url":"json://x","ownerAgency":"global"}`); c != http.StatusForbidden {
 		t.Errorf("fin admin creating Global's target = %d, want 403", c)
 	}
@@ -204,18 +204,18 @@ func TestPushTargetsBelongToAnAgency(t *testing.T) {
 	if l := list(gFinViewer); len(l) != 1 || l[fin.ID].URL != "" || !l[fin.ID].URLSet {
 		t.Errorf("fin viewer reads %+v; want FIN's target alone, its URL withheld and urlSet", l)
 	}
-	if l := list(gFinAdmin); len(l) != 1 || l[fin.ID].URL != "json://FINTOKEN" {
+	if l := list(gFinAdmin); len(l) != 1 || l[fin.ID].URL != "ntfy://FINTOKEN" {
 		t.Errorf("fin admin reads %+v; want FIN's target with its URL", l)
 	}
 	if l := list(gAllViewer); len(l) != 3 || l[glob.ID].URL != "" || l[fin.ID].URL != "" {
 		t.Errorf("an everywhere-viewer reads %+v; want all three, no URL", l)
 	}
-	if l := list(gRoot); len(l) != 3 || l[tax.ID].URL != "json://TAXTOKEN" {
+	if l := list(gRoot); len(l) != 3 || l[tax.ID].URL != "ntfy://TAXTOKEN" {
 		t.Errorf("root reads %+v; want all three with URLs", l)
 	}
 
 	// Changing one: 404 unread, 403 without configureApp.
-	upd := `{"label":"renamed","url":"json://FINTOKEN2","enabled":false}`
+	upd := `{"label":"renamed","url":"ntfy://FINTOKEN2","enabled":false}`
 	for _, c := range []struct {
 		groups string
 		want   int

@@ -510,12 +510,19 @@ func (sr scheduleRow) spec() cronutil.Spec {
 // definition_schedules who forgets it silently re-opens the FX-A4 hole
 // (phantom bindings and promised runs for binned owners) — the exact drift
 // that produced FX-A4 in the first place.
+//
+// The owner is the entry's owner_uid (2.5.0 C12.5's review): by name, TAX
+// binning its `backup` made FIN's live `backup` binned too, so FIN's schedule
+// lost it from the Schedules list, Upcoming and its used-by count. An entry
+// that records no uid (from before 1050) is matched by its name, as before.
 const binnedOwnerSQL = `(EXISTS (SELECT 1 FROM jobs j2
-                   WHERE ds.owner_kind = 'job' AND j2.source = ds.owner_source
-                     AND j2.name = ds.owner_name AND j2.deleted_at IS NOT NULL)
+                   WHERE ds.owner_kind = 'job' AND j2.deleted_at IS NOT NULL
+                     AND (j2.uid = ds.owner_uid OR (ds.owner_uid IS NULL
+                          AND j2.source = ds.owner_source AND j2.name = ds.owner_name)))
               OR EXISTS (SELECT 1 FROM workflows w2
-                   WHERE ds.owner_kind = 'workflow' AND w2.source = ds.owner_source
-                     AND w2.name = ds.owner_name AND w2.deleted_at IS NOT NULL))`
+                   WHERE ds.owner_kind = 'workflow' AND w2.deleted_at IS NOT NULL
+                     AND (w2.uid = ds.owner_uid OR (ds.owner_uid IS NULL
+                          AND w2.source = ds.owner_source AND w2.name = ds.owner_name))))`
 
 func (s *Server) drainScheduleRows(ctx context.Context) ([]scheduleRow, error) {
 	// SU-2: resolve each schedule's owner scope so the read handlers can drop
@@ -526,7 +533,9 @@ func (s *Server) drainScheduleRows(ctx context.Context) ([]scheduleRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ds.owner_source, ds.owner_kind, ds.owner_name, ds.name, ds.cron, ds.env,
 		       (SELECT j.scope FROM jobs j
-		         WHERE ds.owner_kind = 'job' AND j.source = ds.owner_source AND j.name = ds.owner_name) AS owner_scope,
+		         WHERE ds.owner_kind = 'job'
+		           AND (j.uid = ds.owner_uid OR (ds.owner_uid IS NULL AND j.source = ds.owner_source AND j.name = ds.owner_name))
+		         ORDER BY j.rowid LIMIT 1) AS owner_scope,
 		       ds.start_at, ds.end_at, ds.interval, ds.skip_calendars, ds.only_calendars,
 		       -- R2F-3: the owner's identity (stamped since 1020) and, for job
 		       -- owners, its derived agencies — both in THIS select, so the
