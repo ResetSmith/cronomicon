@@ -183,6 +183,15 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	// loop against the on-disk size. A cap of 0 disables the check.
 	maxRunLog := int64(s.cfg.MaxRunLogBytes)
 	if maxRunLog > 0 && rawOffset >= maxRunLog {
+		// The run's FINAL chunk still ends it (2.5.0 C12, present defect 92): its
+		// text is discarded like the rest past the cap, its envelope gives the
+		// outcome. Refused, the run stayed `running` for good (the reaper acts only
+		// on a runner gone silent) and its agent re-sent it while it lived.
+		if r.Header.Get("X-Log-Partial") != "1" {
+			s.endWithoutText(r, traceID, entityCode, jobName, scope, runnerID, "", "")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		httpx.Fail(w, http.StatusRequestEntityTooLarge, "log_limit_exceeded",
 			"run log has reached the maximum size; further output is discarded")
 		return
@@ -290,18 +299,27 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 
 	// SU-9: the run tripped its log-size ceiling. Pin the raw offset AT the ceiling
 	// so every subsequent chunk short-circuits at the pre-check above (no duplicate
-	// appends on retry), account the bytes written this request, and refuse with 413.
-	// We do NOT finalize the run here — a later chunk may still carry a normal
-	// terminal envelope; if the runner gives up, the orphan reaper reconciles it.
+	// appends on retry), account the bytes written this request, and refuse a
+	// partial chunk with 413. A FINAL chunk ends the run (2.5.0 C12, present defect
+	// 92): the rest of its body is read, unstored, for its last line, the envelope,
+	// and the run ends below as any other. Until then it was refused too, and
+	// nothing ever closed the run.
 	if truncated {
 		if _, dbErr := s.db.ExecContext(r.Context(),
 			`UPDATE runs SET log_raw_offset = ? WHERE id = ?`, maxRunLog, traceID); dbErr != nil {
 			s.log.Error("cap log_raw_offset", "trace_id", traceID, "error", dbErr)
 		}
-		metrics.AddLogIngest(ingestBytes, 1)
-		httpx.Fail(w, http.StatusRequestEntityTooLarge, "log_limit_exceeded",
-			"run log has reached the maximum size; further output is discarded")
-		return
+		if r.Header.Get("X-Log-Partial") == "1" {
+			metrics.AddLogIngest(ingestBytes, 1)
+			httpx.Fail(w, http.StatusRequestEntityTooLarge, "log_limit_exceeded",
+				"run log has reached the maximum size; further output is discarded")
+			return
+		}
+		for scanner.Scan() {
+			if line := strings.TrimSpace(scanner.Text()); line != "" {
+				lastLine = line
+			}
+		}
 	}
 	// H2/DEC-2 — refuse: an ::cronomicon-output:: value that carries an injected
 	// secret would propagate that secret VERBATIM into outputs_json, into a child
@@ -499,6 +517,16 @@ const noteLogNotRedactable = "cronomicon: the end of this run's output was not s
 // they are text of the run. A chunk with no envelope ends the run as lost, as
 // below.
 func (s *Service) endUnredactable(r *http.Request, traceID, entityCode, jobName, scope, runnerID string) {
+	s.endWithoutText(r, traceID, entityCode, jobName, scope, runnerID, noteLogNotRedactable, reasonLogNotRedactable)
+}
+
+// endWithoutText ends a run from its final chunk, storing none of the chunk's
+// text: the body is read to its last line, whose envelope gives the outcome, and
+// note (when there is one) is appended to the log. defaultReason is the end
+// reason when the envelope names none. A chunk with no envelope ends the run as
+// lost. Used for a chunk that cannot be redacted (C11) and for one that arrives
+// once the run's log is at its cap (C12, present defect 92).
+func (s *Service) endWithoutText(r *http.Request, traceID, entityCode, jobName, scope, runnerID, note, defaultReason string) {
 	var last string
 	scanner := bufio.NewScanner(r.Body)
 	scanner.Buffer(make([]byte, 1<<20), 1<<20)
@@ -507,11 +535,13 @@ func (s *Service) endUnredactable(r *http.Request, traceID, entityCode, jobName,
 			last = line
 		}
 	}
-	if err := s.ensureLogDir(entityCode); err == nil {
-		if logPath, perr := s.logPath(entityCode, traceID); perr == nil {
-			if f, oerr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640); oerr == nil {
-				_, _ = f.WriteString(noteLogNotRedactable + "\n")
-				_ = f.Close()
+	if note != "" {
+		if err := s.ensureLogDir(entityCode); err == nil {
+			if logPath, perr := s.logPath(entityCode, traceID); perr == nil {
+				if f, oerr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640); oerr == nil {
+					_, _ = f.WriteString(note + "\n")
+					_ = f.Close()
+				}
 			}
 		}
 	}
@@ -522,7 +552,7 @@ func (s *Service) endUnredactable(r *http.Request, traceID, entityCode, jobName,
 	}
 	reason := env.Reason
 	if reason == "" {
-		reason = reasonLogNotRedactable
+		reason = defaultReason
 	}
 	s.finalizeRun(r.Context(), traceID, jobName, scope, runnerID,
 		exitCodeToStatus(env.ExitCode), &env.ExitCode, env.DurationMs, reason)
@@ -532,6 +562,9 @@ func (s *Service) finalizeRun(ctx context.Context, traceID, jobName, scope, runn
 	status string, exitCode *int, durationMs int64, reason string) {
 
 	ts := now()
+	// A refusal of this run's final chunk is no longer waited on (C11's grace):
+	// until 2.5.0 C12 the entry outlived a run that ended any other way.
+	s.unredactableSince.Delete(traceID)
 
 	// 'danger' is an API-layer concept; DB status is always 'failure' for bad exits.
 	outcome := status

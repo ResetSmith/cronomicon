@@ -1,0 +1,108 @@
+package runner
+
+import (
+	"database/sql"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// 2.5.0 C12, present defect 92: a run's end arrives however its log ends. Until
+// then a final chunk past the log cap was refused with 413 like any other (the
+// run stayed `running` for good, and since C11 its agent re-sent it every
+// minute), and a deregister left its runner's running runs to nobody.
+
+func logCapFixture(t *testing.T, traceID string) (*Service, func(body string, partial bool) int) {
+	t.Helper()
+	svc := newTestService(t)
+	svc.cfg.MaxRunLogBytes = 200
+	as := authSvc(t, svc)
+	runnerID, tok := "runner-cap", "crn_run_cap"
+	insertRunner(t, svc, runnerID, "cap", "online", []string{"bash"})
+	bindRunnerToken(t, svc, tok, runnerID)
+	ts := now()
+	if _, err := svc.db.Exec(`
+		INSERT INTO runs(id, job_name, run_type, scope, status, runner_id, triggered_by, trigger_kind, executor, created_at, started_at)
+		VALUES (?, 'j', 'bash', 'prod', 'running', ?, 'test', 'manual', 'runner', ?, ?)`,
+		traceID, runnerID, ts, ts); err != nil {
+		t.Fatal(err)
+	}
+	post := func(body string, partial bool) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/"+traceID+"/log", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		if partial {
+			req.Header.Set("X-Log-Partial", "1")
+		}
+		req.SetPathValue("traceId", traceID)
+		rec := httptest.NewRecorder()
+		as.RequireRunner(http.HandlerFunc(svc.HandleIngestLog)).ServeHTTP(rec, req)
+		return rec.Code
+	}
+	return svc, post
+}
+
+func runEnd(t *testing.T, svc *Service, traceID string) (status string, exit sql.NullInt64, reason sql.NullString) {
+	t.Helper()
+	if err := svc.db.QueryRow(`SELECT status, exit_code, queued_reason FROM runs WHERE id = ?`, traceID).
+		Scan(&status, &exit, &reason); err != nil {
+		t.Fatal(err)
+	}
+	return
+}
+
+const envelopeExit3 = `{"exitCode":3,"durationMs":5,"endedAt":"2026-10-19T00:00:00Z"}`
+
+// A final chunk that arrives once the run's log is at its cap ends the run from
+// its envelope; a partial one is still refused.
+func TestC12_AFinalChunkPastTheLogCapEndsTheRun(t *testing.T) {
+	svc, post := logCapFixture(t, "run-cap-after")
+	if c := post(strings.Repeat("x", 500)+"\n", true); c != http.StatusRequestEntityTooLarge {
+		t.Fatalf("partial chunk over the cap: %d, want 413", c)
+	}
+	if c := post("more\n", true); c != http.StatusRequestEntityTooLarge {
+		t.Fatalf("partial chunk at the cap: %d, want 413", c)
+	}
+	if c := post("discarded\n"+envelopeExit3+"\n", false); c != http.StatusNoContent {
+		t.Fatalf("final chunk at the cap: %d, want 204", c)
+	}
+	if st, exit, _ := runEnd(t, svc, "run-cap-after"); st != "failure" || !exit.Valid || exit.Int64 != 3 {
+		t.Errorf("run after its final chunk: %s exit %v, want failure exit 3", st, exit)
+	}
+}
+
+// A final chunk that itself crosses the cap ends the run from its envelope, its
+// text past the cap discarded.
+func TestC12_AFinalChunkThatCrossesTheLogCapEndsTheRun(t *testing.T) {
+	svc, post := logCapFixture(t, "run-cap-cross")
+	body := "first\n" + strings.Repeat("y", 500) + "\nafter the cap\n" + envelopeExit3 + "\n"
+	if c := post(body, false); c != http.StatusNoContent {
+		t.Fatalf("final chunk crossing the cap: %d, want 204", c)
+	}
+	if st, exit, _ := runEnd(t, svc, "run-cap-cross"); st != "failure" || !exit.Valid || exit.Int64 != 3 {
+		t.Errorf("run after its final chunk: %s exit %v, want failure exit 3", st, exit)
+	}
+}
+
+// Deregistering a runner ends its running runs as runner_lost: the delete sets
+// their runner_id to NULL, and nothing found them after that.
+func TestC12_DeregisteringARunnerEndsItsRunningRuns(t *testing.T) {
+	svc := newTestService(t)
+	insertRunner(t, svc, "r-dereg", "dereg", "online", []string{"bash"})
+	ts := now()
+	if _, err := svc.db.Exec(`
+		INSERT INTO runs(id, job_name, run_type, scope, status, runner_id, triggered_by, trigger_kind, executor, created_at, started_at)
+		VALUES ('run-dereg', 'j', 'bash', 'prod', 'running', 'r-dereg', 'test', 'manual', 'runner', ?, ?)`, ts, ts); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/runners/r-dereg", nil)
+	req.SetPathValue("id", "r-dereg")
+	rec := httptest.NewRecorder()
+	svc.HandleDeregisterRunner(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("deregister = %d, want 204 (body %s)", rec.Code, rec.Body)
+	}
+	if st, _, reason := runEnd(t, svc, "run-dereg"); st != "failure" || reason.String != "runner_lost" {
+		t.Errorf("a running run of a deregistered runner: %s (%s), want failure (runner_lost)", st, reason.String)
+	}
+}

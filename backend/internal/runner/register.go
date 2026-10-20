@@ -677,6 +677,17 @@ func revokeRunnerKeys(ctx context.Context, tx *sql.Tx, runnerID, ts string) erro
 func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request) {
 	runnerID := r.PathValue("id")
 
+	// Its running runs end first, as runner_lost (2.5.0 C12, present defect 92):
+	// the delete below sets their runner_id to NULL, and nothing closed them
+	// after that (the reaper walks runner rows; the agent, its key revoked, is
+	// refused). Before the transaction, while the row is there to name the
+	// runner: one writer at a time. A failure to read them stops the
+	// deregistration, as a failure to revoke the keys does.
+	if s.failRunningRuns(r.Context(), runnerID) < 0 {
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
+		return
+	}
+
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")

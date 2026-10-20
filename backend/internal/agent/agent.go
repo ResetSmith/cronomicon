@@ -33,7 +33,11 @@ type Agent struct {
 	log    *slog.Logger
 	exec   *executor
 
-	id Identity // populated by register/resume
+	// id is populated by register/resume and replaced by reregister. Read it
+	// through identity(): a run's flushes, the watcher and the key scans read it
+	// from their own goroutines while the poll loop may replace it (2.5.0 C12).
+	id   Identity
+	idMu sync.RWMutex
 
 	// configDigest is the canonical digest of the CURRENTLY declared config
 	// (Phase 5 drift detection), sent with every poll so the server can spot
@@ -218,7 +222,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			"capabilities", caps)
 	}
 	a.log.Info("runner agent online",
-		"id", a.id.ID, "name", a.cfg.Name, "capabilities", a.cfg.Capabilities,
+		"id", a.identity().ID, "name", a.cfg.Name, "capabilities", a.cfg.Capabilities,
 		"inventory", a.cfg.Inventory, "poll_interval", a.cfg.PollInterval)
 
 	// ET-D — start the file watcher once the agent is online, only if this host
@@ -358,7 +362,7 @@ func (a *Agent) refuse(ctx context.Context, asn *runnerproto.PollAssignment, why
 		buf := &logBuffer{}
 		buf.writeLine("cronomicon: this runner was handed the run and did not start it: " + why + ". Nothing was executed; run it again.")
 		buf.seal(makeEnvelope(1, now, now, ""))
-		if err := streamLogs(flush, a.client, a.id, asn.TraceID, buf, a.cfg.LogRetryBudget, false); err != nil && !errors.Is(err, errRunClosed) {
+		if err := streamLogs(flush, a.client, a.identity(), asn.TraceID, buf, a.cfg.LogRetryBudget, false); err != nil && !errors.Is(err, errRunClosed) {
 			a.log.Error("could not report a refused assignment", "trace_id", asn.TraceID, "error", err)
 		}
 	})
@@ -385,6 +389,20 @@ func (a *Agent) Abort() {
 	}
 }
 
+// identity is the runner identity the agent speaks as now.
+func (a *Agent) identity() Identity {
+	a.idMu.RLock()
+	defer a.idMu.RUnlock()
+	return a.id
+}
+
+// setIdentity replaces it (register, resume, reregister).
+func (a *Agent) setIdentity(id Identity) {
+	a.idMu.Lock()
+	a.id = id
+	a.idMu.Unlock()
+}
+
 // registerOrResume loads the persisted identity, or registers and saves a fresh
 // one (R2.4).
 func (a *Agent) registerOrResume(ctx context.Context) error {
@@ -393,7 +411,7 @@ func (a *Agent) registerOrResume(ctx context.Context) error {
 		return err
 	}
 	if id != nil {
-		a.id = *id
+		a.setIdentity(*id)
 		a.log.Info("resumed runner identity", "id", id.ID)
 		return nil
 	}
@@ -425,7 +443,7 @@ func (a *Agent) register(ctx context.Context) error {
 	if err := saveIdentity(a.cfg.IdentityFile, id); err != nil {
 		return err
 	}
-	a.id = id
+	a.setIdentity(id)
 	a.configDigest = a.declaredDigest(caps)
 	a.log.Info("registered with server", "id", id.ID)
 	return nil
@@ -447,7 +465,7 @@ func (a *Agent) declaredDigest(caps []string) string {
 // place (e.g. after the operator mints a new one), rather than needing manual
 // identity-file surgery.
 func (a *Agent) reregister(ctx context.Context, reason string) {
-	a.log.Warn(reason, "old_id", a.id.ID)
+	a.log.Warn(reason, "old_id", a.identity().ID)
 	_ = discardIdentity(a.cfg.IdentityFile)
 	if rerr := a.register(ctx); rerr != nil {
 		a.log.Error("re-register failed", "error", rerr)
@@ -468,7 +486,7 @@ func (a *Agent) pollOnce(ctx context.Context) (again bool) {
 	// does not know how many runs an agent holds, so a full agent that polled
 	// as usual was handed the next queued run, could not start it, and left it
 	// shown as running with nobody to end it.
-	pr, err := a.client.Poll(ctx, a.id, a.configDigest, a.settings.applied(),
+	pr, err := a.client.Poll(ctx, a.identity(), a.configDigest, a.settings.applied(),
 		pollState{started: !a.answered, noClaim: a.stopping || a.full(), process: a.process})
 	if err == nil || errors.Is(err, errNoWork) {
 		a.answered = true
@@ -595,7 +613,7 @@ func (a *Agent) handleControl(ctx context.Context, control []runnerproto.PollCon
 func (a *Agent) redeclare(ctx context.Context) {
 	caps, tc := detectCapabilities(ctx, a.cfg)
 	a.configDigest = a.declaredDigest(caps) // keep poll digest in step with what we declare
-	err := a.client.Redeclare(ctx, a.id, a.cfg, caps, tc)
+	err := a.client.Redeclare(ctx, a.identity(), a.cfg, caps, tc)
 	switch {
 	case errors.Is(err, errReaped):
 		// Row gone between the op and this call (reaped/deregistered). The next
@@ -606,7 +624,7 @@ func (a *Agent) redeclare(ctx context.Context) {
 		a.log.Error("redeclare failed", "error", err)
 	default:
 		a.log.Info("re-declared configuration with server (resync)",
-			"id", a.id.ID, "capabilities", caps)
+			"id", a.identity().ID, "capabilities", caps)
 	}
 }
 
@@ -719,7 +737,7 @@ const liveLogFlushInterval = 2 * time.Second
 // execution so operators can tail the log live, with the sealed terminal flush
 // unchanged at the end.
 func (a *Agent) executeRun(ctx context.Context, traceID string, liveLog bool) {
-	m, err := a.client.Manifest(ctx, a.id, traceID)
+	m, err := a.client.Manifest(ctx, a.identity(), traceID)
 	if err != nil {
 		a.log.Error("fetch manifest", "trace_id", traceID, "error", err)
 		// Without a manifest we can't execute; stream a single failure line +
@@ -759,7 +777,7 @@ func (a *Agent) executeRun(ctx context.Context, traceID string, liveLog bool) {
 				case <-flushCtx.Done():
 					return
 				case <-t.C:
-					if err := streamLogs(flushCtx, a.client, a.id, traceID, buf, 1, true); err != nil {
+					if err := streamLogs(flushCtx, a.client, a.identity(), traceID, buf, 1, true); err != nil {
 						a.log.Debug("live log flush skipped", "trace_id", traceID, "error", err)
 					}
 				}
@@ -784,9 +802,8 @@ func (a *Agent) executeRun(ctx context.Context, traceID string, liveLog bool) {
 // other way to learn either: flushing on ctx sent nothing at all for a run the
 // agent had just ended. That holds for a run that never got its manifest as
 // much as for one that ran, so both ends of executeRun come through here.
-// Bounded, so a server that never answers cannot hold a stopping agent. For a
-// run the server killed, it has already written the terminal state and answers
-// 409; the budget ends that quickly.
+// For a run the server killed, it has already written the terminal state and
+// answers 409; the budget ends that quickly.
 //
 // When the budget runs out (a server restarting for longer than the budget's
 // back-off, an upgrade's migrations), the upload is NOT dropped (2.5.0 C11,
@@ -794,16 +811,25 @@ func (a *Agent) executeRun(ctx context.Context, traceID string, liveLog bool) {
 // closed it, as the server learns a run's end only from this upload. It is sent
 // again, backing off to once a minute (finalUploadBackoff), for as long as the
 // run's context lives. The run keeps its slot meanwhile, which is what the
-// server counts too; a first stop signal waits for it like a run in flight, and
-// a second (Abort), or the server closing the run, ends the retries.
+// server counts too; a first stop signal waits for it like a run in flight (so
+// a stop while the server is away lasts until it answers or the unit's stop
+// timeout), and a second (Abort), or the server closing the run, ends the
+// retries. Only a failure that may clear is sent again (finalUploadRetryable;
+// 2.5.0 C12, present defect 92): a status the server will give again for good
+// ends the retries at once, and the run is the server's to close.
 func (a *Agent) flushTerminal(ctx context.Context, traceID string, buf *logBuffer) {
 	send := func(budget int) error {
 		flush, stop := context.WithTimeout(context.WithoutCancel(ctx), terminalFlushTimeout)
 		defer stop()
-		return streamLogs(flush, a.client, a.id, traceID, buf, budget, false)
+		return streamLogs(flush, a.client, a.identity(), traceID, buf, budget, false)
 	}
 	err := send(a.cfg.LogRetryBudget)
 	for n := 0; err != nil && !errors.Is(err, errRunClosed); n++ {
+		if !finalUploadRetryable(err) {
+			a.log.Error("the server refused the end of this run and will refuse it again; it is not sent again",
+				"trace_id", traceID, "error", err)
+			return
+		}
 		if n == 0 {
 			a.log.Warn("the end of this run did not reach the server; sending it again until it does "+
 				"(a second stop signal gives up)", "trace_id", traceID, "error", err)

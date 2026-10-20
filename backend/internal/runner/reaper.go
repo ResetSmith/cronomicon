@@ -220,6 +220,7 @@ func (s *Service) failRunningRunsBefore(ctx context.Context, runnerID, before st
 		if n, _ := res.RowsAffected(); n == 0 {
 			continue // already terminal — don't overwrite or double-emit
 		}
+		s.unredactableSince.Delete(tid) // C12: as finalizeRun
 		// run-end activity, actor 'system' (mirrors the drain-timeout path). It
 		// shares ts with the completed_at just written above.
 		if err := auditlog.WriteActivity(ctx, s.db, auditlog.ActivityParams{
