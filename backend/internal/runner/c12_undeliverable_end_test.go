@@ -84,6 +84,36 @@ func TestC12_AFinalChunkThatCrossesTheLogCapEndsTheRun(t *testing.T) {
 	}
 }
 
+// The line that crosses the cap may be the envelope itself (C12.4's
+// re-review): it ended the run as log_stream_lost, the outcome lost.
+func TestC12_AnEnvelopeThatCrossesTheLogCapStillEndsTheRun(t *testing.T) {
+	svc, post := logCapFixture(t, "run-cap-envelope")
+	body := strings.Repeat("z", 150) + "\n" + envelopeExit3 + "\n" // the envelope is the line past 200
+	if c := post(body, false); c != http.StatusNoContent {
+		t.Fatalf("final chunk whose envelope crosses the cap: %d, want 204", c)
+	}
+	if st, exit, reason := runEnd(t, svc, "run-cap-envelope"); st != "failure" || !exit.Valid || exit.Int64 != 3 {
+		t.Errorf("run: %s exit %v (%s), want failure exit 3 from its envelope", st, exit, reason.String)
+	}
+}
+
+// A read of the run that FAILS is not "no such run" (C12.4's re-review): since
+// C12 an agent takes the server's own 404 as final, so a busy or closing
+// database must answer what it sends again.
+func TestC12_AFailedReadOfTheRunIsNotA404(t *testing.T) {
+	svc := newTestService(t)
+	if err := svc.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/run-closed-db/log", strings.NewReader(envelopeExit3+"\n"))
+	req.SetPathValue("traceId", "run-closed-db")
+	rec := httptest.NewRecorder()
+	svc.HandleIngestLog(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("a failed read of the run = %d %s, want 503", rec.Code, rec.Body)
+	}
+}
+
 // Deregistering a runner ends its running runs as runner_lost: the delete sets
 // their runner_id to NULL, and nothing found them after that.
 func TestC12_DeregisteringARunnerEndsItsRunningRuns(t *testing.T) {

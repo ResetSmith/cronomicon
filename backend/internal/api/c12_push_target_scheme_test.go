@@ -32,12 +32,21 @@ func TestC12_AnAgencysPushTargetNamesNoGenericWebhook(t *testing.T) {
 		"forms://cronomicon-internal:8080/x",
 		"ntfy://topic, json://169.254.169.254/x", // Apprise splits at commas
 		"ntfy://topic form://10.0.0.1/x",         // and at spaces
+		// C12.4's re-review: Apprise finds a scheme after ANY character that is
+		// not a letter or digit, and splits at separators Go's IsSpace does not
+		// know. Each of these was stored, and Apprise sent the webhook.
+		"/json://169.254.169.254/latest/meta-data?method=GET",
+		"[json://169.254.169.254/x",
+		`\"jsons://127.0.0.1:8200/v1/sys/seal?+X-Vault-Token=x`,
+		`ntfy://topic\u001cjson://169.254.169.254/x`,
+		`ntfy://topic,\u001fxmls://10.0.0.1/x`,
 	} {
 		if code, _ := create(gFinAdmin, `{"label":"x","url":"`+url+`"}`); code != http.StatusUnprocessableEntity {
 			t.Errorf("FIN's administrator creating %q = %d, want 422", url, code)
 		}
 	}
-	for _, url := range []string{"ntfy://topic", "slack://a/b/c", "mailto://u:p@example.com"} {
+	// A scheme a letter or digit precedes is another scheme to Apprise.
+	for _, url := range []string{"ntfy://topic", "slack://a/b/c", "mailto://u:p@example.com", "ntfy://topic/xjson://x"} {
 		if code, _ := create(gFinAdmin, `{"label":"x","url":"`+url+`"}`); code != http.StatusCreated {
 			t.Errorf("FIN's administrator creating %q = %d, want 201", url, code)
 		}

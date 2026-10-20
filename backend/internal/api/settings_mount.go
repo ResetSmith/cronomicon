@@ -13,8 +13,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
-	"unicode"
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/auth"
@@ -1608,31 +1608,35 @@ func decodeAlertTargetInput(w http.ResponseWriter, r *http.Request) (*settings.A
 	return inp, true
 }
 
-// genericPushSchemes are Apprise's generic webhook schemes: each sends a request
+// genericPushScheme finds Apprise's generic webhook schemes: each sends a request
 // to any host its URL names, with headers its URL chooses (`+Header=value`), and
 // the installation's Apprise gateway makes it, past the server's egress rules.
-var genericPushSchemes = map[string]bool{"json": true, "jsons": true, "xml": true, "xmls": true, "form": true, "forms": true}
+//
+// They are found the way Apprise finds a URL in a target's text, not by
+// splitting it: Apprise's URL_DETECTION_RE takes a scheme wherever a run of
+// letters and digits stands before "://", whatever precedes it, and splits at
+// separators Go's unicode.IsSpace does not know (U+001C–U+001F). So a scheme
+// is refused anywhere it starts the string or follows a character that is not
+// a letter or digit ("/json://…", "[json://…", "ntfy://x\x1cjson://…"); one
+// preceded by a letter or digit is another scheme to Apprise ("xjson").
+var genericPushScheme = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])((?:json|xml|form)s?)://`)
 
 // pushTargetSchemeAllowed refuses an agency's push target that names a generic
 // webhook unless a global administrator writes it (2.5.0 C12, present defect 95,
 // question 112): an agency administrator could aim one at an internal address
 // (a cloud metadata service, Vault on the loopback), which GR-10 refuses them
-// for a repository. Global's targets are a global administrator's anyway. A
-// target's URL may hold several (Apprise splits it at commas and spaces), so
-// each is judged. The services Apprise addresses by their own hosts, and the
-// self-hosted ones (ntfy, Gotify, Mattermost), stay an agency's to name.
+// for a repository. Global's targets are a global administrator's anyway. The
+// services Apprise addresses by their own hosts, and the self-hosted ones
+// (ntfy, Gotify, Mattermost), stay an agency's to name.
 func pushTargetSchemeAllowed(w http.ResponseWriter, id auth.Identity, owner, raw string) bool {
 	if agencyOrGlobal(owner) == agencyid.Global || id.GlobalAdmin(auth.PermConfigureApp) {
 		return true
 	}
-	for _, u := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
-		scheme, _, found := strings.Cut(u, "://")
-		if found && genericPushSchemes[strings.ToLower(scheme)] {
-			httpx.Fail(w, http.StatusUnprocessableEntity, "target_scheme_not_allowed",
-				"an agency's push target may not use Apprise's generic webhooks ("+scheme+"://): they reach any address "+
-					"the server can. A global administrator can add one in this agency")
-			return false
-		}
+	if m := genericPushScheme.FindStringSubmatch(raw); m != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "target_scheme_not_allowed",
+			"an agency's push target may not use Apprise's generic webhooks ("+strings.ToLower(m[1])+"://): they reach "+
+				"any address the server can. A global administrator can add one in this agency")
+		return false
 	}
 	return true
 }

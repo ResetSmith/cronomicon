@@ -716,6 +716,17 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
 		return
 	}
+	// A run claimed after failRunningRuns above and before the delete (a held
+	// poll answered in between) is ended here, in the delete's transaction: once
+	// its runner_id is NULL nothing finds it again (C12.4's re-review). It gets
+	// no run-end activity; failRunningRuns gave one to every run before it.
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE runs SET status = 'failure', queued_reason = 'runner_lost', completed_at = ?
+		 WHERE runner_id = ? AND status = 'running'`, ts, runnerID); err != nil {
+		s.log.Error("end a deregistered runner's runs", "runner_id", runnerID, "error", err)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
+		return
+	}
 
 	// DR-7: snapshot the operator-owned placement BEFORE the delete — the
 	// runner_agencies rows cascade away with the runner row, so afterwards there

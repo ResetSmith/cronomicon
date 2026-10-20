@@ -57,8 +57,17 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(run_type,'')
 		FROM runs WHERE id = ?`, traceID).
 		Scan(&jobName, &scope, &runnerID, &status, &jobSource, &scriptRef, &entityCode, &runType)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
+		return
+	}
+	if err != nil {
+		// A read that failed (SQLite busy, the pool closing at shutdown) is not
+		// "no such run": since 2.5.0 C12 an agent takes the server's own 404 as
+		// final and stops sending a run's end, so this one must be one it sends
+		// again (C12.4's re-review).
+		s.log.Error("ingest: read the run", "trace_id", traceID, "error", err)
+		httpx.Fail(w, http.StatusServiceUnavailable, "unavailable", "the run could not be read; send it again")
 		return
 	}
 	if status != "running" {
@@ -285,6 +294,12 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 		if maxRunLog > 0 && persistedStart+int64(ingestBytes)+int64(len(redacted))+1 > maxRunLog {
 			_, _ = f.WriteString("cronomicon: run log size limit reached; further output discarded\n")
 			truncated = true
+			// The line that crosses the cap may be the last, the envelope itself:
+			// a final chunk reads it (raw, as the lines after it are read) for the
+			// run's outcome (C12.4's re-review; it ended as log_stream_lost).
+			if t := strings.TrimSpace(string(line)); t != "" {
+				lastLine = t
+			}
 			break
 		}
 
