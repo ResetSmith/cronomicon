@@ -218,8 +218,10 @@ jobs:
           [ -n "$scanned" ] || failed "the scan failed three times (its vulnerability database, most likely)"
           ./trivy convert --format table --output "$out/trivy-$NAME.txt" "$out/trivy-$NAME.json" ||
             echo "Trivy's table could not be written; see the JSON report." > "$out/trivy-$NAME.txt"
-          # One line for the release notes: counts by severity.
-          jq -r --arg n "$NAME" '[.Results[]?.Vulnerabilities[]?.Severity] as $s
+          # One line for the release notes: counts by severity, of distinct
+          # vulnerabilities. Trivy lists a CVE once per binary package (one
+          # util-linux CVE is eight rows), so rows would overstate it.
+          jq -r --arg n "$NAME" '[.Results[]?.Vulnerabilities[]?] | unique_by(.VulnerabilityID) | map(.Severity) as $s
             | "| \($n) | \([$s[] | select(. == "CRITICAL")] | length) | \([$s[] | select(. == "HIGH")] | length) | \([$s[] | select(. == "MEDIUM")] | length) |"' \
             "$out/trivy-$NAME.json" > "$out/counts-$NAME.md" || echo "| $NAME | count failed | | |" > "$out/counts-$NAME.md"
           cat "$out/counts-$NAME.md"
@@ -243,7 +245,9 @@ jobs:
 
   # C13: the source's own scans, as reports (question 122). govulncheck under the
   # newest Go 1.26 (the images build with golang:1.26, which floats to it) and
-  # npm audit; neither fails the run.
+  # npm audit; neither fails the run. check-latest: without it setup-go takes
+  # the Go already cached on the runner, which can trail the images' (it
+  # scanned go1.26.9 while the images built with go1.26.10).
   scan-source:
     needs: check-version
     if: ${{ always() && (needs.check-version.result == 'success' || (inputs.test && needs.check-version.result == 'skipped')) }}
@@ -253,6 +257,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.x"
+          check-latest: true
           cache-dependency-path: backend/go.sum
       - uses: actions/setup-node@v7
         with:
@@ -417,7 +422,8 @@ jobs:
           The same for \`cronomicon-runner\`, \`cronomicon-runner-fat\` and \`cronomicon-validate\`.
           Each image's SBOM (\`<image>-$V.spdx.json\`) and Trivy report (\`trivy-<image>-$V.txt\`,
           \`.json\`), and the source's \`govulncheck-$V.txt\` and \`npm-audit-$V.json\`, are attached
-          below. The reports are as of the release; scan again for what was found since.
+          below. The reports are as of the release; scan again for what was found since. The
+          counts are of distinct vulnerabilities: one CVE in several packages counts once.
 
           | Image | Critical | High | Medium |
           |---|---|---|---|
