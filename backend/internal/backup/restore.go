@@ -21,11 +21,14 @@ type Downloader struct {
 	bucket string
 }
 
-// Snapshot describes one stored backup object.
+// Snapshot describes one stored backup object. An encrypted one (2.5.1 SG1)
+// carries the fingerprints of the keys it was sealed to, from its metadata.
 type Snapshot struct {
 	Key          string
 	Size         int64
 	LastModified time.Time
+	Encrypted    bool
+	Recipients   []string
 }
 
 // NewDownloader builds a restore Downloader from config. It errors when no
@@ -44,17 +47,21 @@ func NewDownloader(cfg *config.Config, log *slog.Logger) (*Downloader, error) {
 // Bucket returns the configured bucket name (for operator-facing messages).
 func (d *Downloader) Bucket() string { return d.bucket }
 
-// List returns the stored .db snapshots, newest first.
+// List returns the stored snapshots, unencrypted (.db) and encrypted
+// (.db.age), newest first.
 func (d *Downloader) List(ctx context.Context) ([]Snapshot, error) {
 	var out []Snapshot
 	for obj := range d.client.ListObjects(ctx, d.bucket, minio.ListObjectsOptions{Prefix: backupPrefix, Recursive: true}) {
 		if obj.Err != nil {
 			return nil, fmt.Errorf("list s3://%s/%s: %w", d.bucket, backupPrefix, obj.Err)
 		}
-		if !strings.HasSuffix(obj.Key, ".db") {
-			continue
+		switch {
+		case strings.HasSuffix(obj.Key, ".db"):
+			out = append(out, Snapshot{Key: obj.Key, Size: obj.Size, LastModified: obj.LastModified})
+		case strings.HasSuffix(obj.Key, SealedSuffix):
+			out = append(out, Snapshot{Key: obj.Key, Size: obj.Size, LastModified: obj.LastModified, Encrypted: true,
+				Recipients: d.recipients(ctx, obj.Key)})
 		}
-		out = append(out, Snapshot{Key: obj.Key, Size: obj.Size, LastModified: obj.LastModified})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].LastModified.After(out[j].LastModified) })
 	return out, nil
@@ -80,6 +87,22 @@ func (d *Downloader) Download(ctx context.Context, key, localPath string) error 
 	}
 	if err := d.client.FGetObject(ctx, d.bucket, key, localPath, minio.GetObjectOptions{}); err != nil {
 		return fmt.Errorf("download s3://%s/%s: %w", d.bucket, key, err)
+	}
+	return nil
+}
+
+// recipients reads an encrypted snapshot's fingerprints from its metadata (set
+// by the uploader). None when the object has no such metadata or cannot be
+// read: the list is for the operator's eye, and the decrypt says the truth.
+func (d *Downloader) recipients(ctx context.Context, key string) []string {
+	info, err := d.client.StatObject(ctx, d.bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		return nil
+	}
+	for k, v := range info.UserMetadata {
+		if strings.EqualFold(k, recipientsMetadata) || strings.EqualFold(k, "X-Amz-Meta-"+recipientsMetadata) {
+			return strings.FieldsFunc(v, func(r rune) bool { return r == ',' })
+		}
 	}
 	return nil
 }

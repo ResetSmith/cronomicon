@@ -103,6 +103,25 @@ func TestParseRecipientRefusals(t *testing.T) {
 	}
 }
 
+// SG-7: an encrypted snapshot is uploaded as an opaque object with the
+// fingerprints of its keys in the metadata; an unencrypted one as before.
+func TestPutOptions(t *testing.T) {
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "cronomicon-20261021.db")
+	if o, err := putOptions(plain); err != nil || o.ContentType != "application/x-sqlite3" || len(o.UserMetadata) != 0 {
+		t.Fatalf("unencrypted: %+v %v", o, err)
+	}
+	sealed := filepath.Join(dir, "cronomicon-20261021.db.age")
+	if _, err := putOptions(sealed); err == nil {
+		t.Fatal("an encrypted snapshot without its recipients file was uploaded without them")
+	}
+	_ = os.WriteFile(sealed+RecipientsSuffix, []byte("aaaa\nbbbb\n"), 0o600)
+	o, err := putOptions(sealed)
+	if err != nil || o.ContentType != "application/octet-stream" || o.UserMetadata[recipientsMetadata] != "aaaa,bbbb" {
+		t.Fatalf("encrypted: %+v %v", o, err)
+	}
+}
+
 // A failed seal leaves neither the sealed file nor the recipients file.
 func TestEncryptFailureLeavesNothing(t *testing.T) {
 	dir := t.TempDir()

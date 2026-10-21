@@ -119,6 +119,25 @@ func EncryptFile(src, dst string, recipients []string) (fingerprints []string, e
 	return fingerprints, nil
 }
 
+// ageHeader opens every age file (the binary format; the uploader never armors).
+const ageHeader = "age-encryption.org/v1\n"
+
+// IsEncrypted reports whether the file at path is an age file, by its header
+// rather than its name, so a renamed copy is still recognised.
+func IsEncrypted(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	buf := make([]byte, len(ageHeader))
+	n, err := io.ReadFull(f, buf)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	return string(buf[:n]) == ageHeader, nil
+}
+
 // ReadIdentities reads an age identity file (as age-keygen writes it; several
 // keys may be in one file, and comment lines are skipped).
 func ReadIdentities(path string) ([]age.Identity, error) {
