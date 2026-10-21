@@ -14265,7 +14265,17 @@ components:
             appeared. `any` deliberately does NOT cover them — an operator with
             an "any run" rule asked about run outcomes, and silently widening it
             would have turned every such rule into a pager the day SL shipped.
-          enum: [failure, success, warning, killed, skipped, any, sla-breach, missed-run]
+
+
+            `secret-revealed`, `secret-changed` and `backup-key-changed`
+            (v2.5.1) are not about runs either: a stored secret was revealed;
+            a secret or SSH key was created, rotated, updated, moved, deleted
+            or migrated to Vault; the installation's backup keys changed. They
+            are matched by a rule whose target is `all` only. An agency's rule
+            hears of its own agency's secrets, Global's of every agency's, and
+            `backup-key-changed` is Global's alone. The message names the actor
+            and says when they are outside the agency.
+          enum: [failure, success, warning, killed, skipped, any, sla-breach, missed-run, secret-revealed, secret-changed, backup-key-changed]
         channels:
           type: array
           items:

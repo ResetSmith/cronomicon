@@ -15,6 +15,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/notify"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
@@ -389,6 +390,23 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
+	// 2.5.1 SG-17: a secret or key that changes hands is told to the alert
+	// rules of the agency it leaves and of the one it reaches.
+	movedTable, movedNoun := "", ""
+	switch kind {
+	case settings.MemberSecret:
+		movedTable, movedNoun = "secrets", "Secret"
+	case settings.MemberSSHCredential:
+		movedTable, movedNoun = "ssh_credentials", "SSH key"
+	}
+	ownersBefore := map[string]string{}
+	if movedTable != "" {
+		for _, m := range body {
+			if o, err := s.rowOwnerOrGlobal(r.Context(), movedTable, m.ID); err == nil {
+				ownersBefore[m.ID] = o
+			}
+		}
+	}
 	if err := settings.SetAgencyMembership(r.Context(), s.db, kind, body, id.Email); err != nil {
 		switch {
 		case errors.Is(err, settings.ErrUnknownAgency):
@@ -410,6 +428,20 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 	}
 	for _, m := range repaired {
 		s.auditRepair(r.Context(), s.memberAgency(r.Context(), string(kind), m.ID), id.Email, string(kind)+" "+m.ID, agencySet(m.AgencyIDs), rep)
+	}
+	for rowID, before := range ownersBefore {
+		after, err := s.rowOwnerOrGlobal(r.Context(), movedTable, rowID)
+		if err != nil || after == before {
+			continue
+		}
+		nameCol := "key"
+		if movedTable == "ssh_credentials" {
+			nameCol = "label"
+		}
+		var name string
+		_ = s.db.QueryRowContext(r.Context(), `SELECT `+nameCol+` FROM `+movedTable+` WHERE id = ?`, rowID).Scan(&name) //nolint:gosec // fixed identifiers
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, movedNoun, name, before, "moved to "+s.agencyNameOr(r, after))
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, movedNoun, name, after, "moved in from "+s.agencyNameOr(r, before))
 	}
 	// Scope membership decides what an agency grant reaches. Since LR-78 that is
 	// resolved per request from the grant snapshot, which the setter itself

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/backup"
@@ -122,5 +123,16 @@ func (s *Server) putBackupSettings(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
+	// SG-7: someone who can change the keys can point later backups at a key
+	// of their own, so Global's alert rules hear of every change.
+	summary := "Backups are no longer encrypted."
+	if len(st.Recipients) > 0 {
+		fps := make([]string, 0, len(st.Recipients))
+		for _, k := range st.Recipients {
+			fps = append(fps, k.Fingerprint)
+		}
+		summary = "Backups are encrypted to: " + strings.Join(fps, ", ") + "."
+	}
+	s.raiseBackupKeyAlert(r, summary)
 	httpx.JSON(w, http.StatusOK, st)
 }

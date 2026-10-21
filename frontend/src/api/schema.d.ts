@@ -9754,9 +9754,11 @@ export interface components {
              * @description Matched case-insensitively against the run's terminal status; `any` matches every run. `n-failures-window` was removed in v0.52.23 — nothing implemented the window.
              *
              *     `sla-breach` and `missed-run` (SL) are NOT run outcomes: one fires mid-run when a job passes its `warnAfterSeconds` or `mustFinishBy` deadline, the other when a schedule expected a fire and none appeared. `any` deliberately does NOT cover them — an operator with an "any run" rule asked about run outcomes, and silently widening it would have turned every such rule into a pager the day SL shipped.
+             *
+             *     `secret-revealed`, `secret-changed` and `backup-key-changed` (v2.5.1) are not about runs either: a stored secret was revealed; a secret or SSH key was created, rotated, updated, moved, deleted or migrated to Vault; the installation's backup keys changed. They are matched by a rule whose target is `all` only. An agency's rule hears of its own agency's secrets, Global's of every agency's, and `backup-key-changed` is Global's alone. The message names the actor and says when they are outside the agency.
              * @enum {string}
              */
-            trigger: "failure" | "success" | "warning" | "killed" | "skipped" | "any" | "sla-breach" | "missed-run";
+            trigger: "failure" | "success" | "warning" | "killed" | "skipped" | "any" | "sla-breach" | "missed-run" | "secret-revealed" | "secret-changed" | "backup-key-changed";
             channels: ("email" | "apprise")[];
             recipients?: string;
             owner?: string | null;

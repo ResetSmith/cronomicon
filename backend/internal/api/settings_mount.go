@@ -197,6 +197,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			}
 		}
 		s.mountWriteChangeLogID(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "created", inp.Key, id.Email, "id="+sc.ID)
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "Secret", inp.Key, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "created") // SG-17
 		httpx.JSON(w, http.StatusCreated, sc)
 	})))
 	mux.Handle("PUT /api/v1/env-secrets/{secretId}", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -292,6 +293,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			action = "rotated"
 		}
 		s.mountWriteChangeLogDetails(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", action, sc.Key, "id="+sc.ID, id.Email)
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "Secret", sc.Key, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), action) // SG-17
 		httpx.JSON(w, http.StatusOK, sc)
 	})))
 	mux.Handle("DELETE /api/v1/env-secrets/{secretId}", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -322,6 +324,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			return
 		}
 		s.mountWriteChangeLogDetails(r, secretAgency, "Secrets", "deleted", existing.Key, "id="+sid, id.Email) // SG-12: by key
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "Secret", existing.Key, secretAgency, "deleted")    // SG-17
 		w.WriteHeader(http.StatusNoContent)
 	})))
 	// 2.5.1 SG2.4: a secret's Usage — what refers to it, which runs used it,
@@ -413,6 +416,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusInternalServerError, "audit_failed", "could not record the reveal; value withheld")
 			return
 		}
+		s.raiseSecretAlert(r, notify.TriggerSecretRevealed, "Secret", sc.Key, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid), "revealed") // SG-17
 		httpx.JSON(w, http.StatusOK, map[string]string{"value": value})
 	})))
 	mux.Handle("POST /api/v1/env-secrets/{secretId}/migrate-to-vault", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -467,6 +471,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			return
 		}
 		s.mountWriteChangeLogID(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "migrated-to-vault", sc.Key, id.Email, "id="+sc.ID)
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "Secret", sc.Key, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "migrated to Vault") // SG-17
 		httpx.JSON(w, http.StatusOK, sc)
 	})))
 	// Tags (migration 470): operator-authored, SQLite-only labels on a secret —
@@ -624,6 +629,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			}
 		}
 		s.mountWriteChangeLogID(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", "created", c.Label, id.Email, "id="+c.ID)
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "SSH key", c.Label, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "created") // SG-17
 		httpx.JSON(w, http.StatusCreated, c)
 	})))
 	mux.Handle("GET /api/v1/ssh/credentials/{credentialId}", s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -700,6 +706,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			keyAction = "rotated"
 		}
 		s.mountWriteChangeLogDetails(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", keyAction, c.Label, "id="+c.ID, id.Email)
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "SSH key", c.Label, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), keyAction) // SG-17
 		httpx.JSON(w, http.StatusOK, c)
 	})))
 	mux.Handle("DELETE /api/v1/ssh/credentials/{credentialId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -745,6 +752,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			return
 		}
 		s.mountWriteChangeLogDetails(r, keyAgency, "SSH Keys", "deleted", keyLabel, "id="+cid+fmt.Sprintf(" force=%t", force), id.Email) // SG-12: by label
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "SSH key", keyLabel, keyAgency, "deleted")                                    // SG-17
 		w.WriteHeader(http.StatusNoContent)
 	})))
 	mux.Handle("GET /api/v1/ssh/credentials/{credentialId}/usage", s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1852,7 +1860,7 @@ func (s *Server) handleCreateAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inp.OwnerAgency = owner
-	if !s.alertJobInAgency(w, r, *inp, owner) || !s.alertTargetsInAgency(w, r, *inp, owner) {
+	if !alertTriggerFitsOwner(w, *inp, owner) || !s.alertJobInAgency(w, r, *inp, owner) || !s.alertTargetsInAgency(w, r, *inp, owner) {
 		return
 	}
 	ar, err := settings.CreateAlertRule(r.Context(), s.db, *inp, id.Email)
@@ -1883,7 +1891,7 @@ func (s *Server) handleUpdateAlert(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, code, msg)
 		return
 	}
-	if !s.alertJobInAgency(w, r, *inp, agencyOrGlobal(cur.OwnerAgency)) ||
+	if !alertTriggerFitsOwner(w, *inp, cur.OwnerAgency) || !s.alertJobInAgency(w, r, *inp, agencyOrGlobal(cur.OwnerAgency)) ||
 		!s.alertTargetsInAgency(w, r, *inp, agencyOrGlobal(cur.OwnerAgency)) {
 		return
 	}
@@ -1972,7 +1980,34 @@ func validateAlertRuleInput(inp settings.AlertRuleInput) (code, msg string) {
 				"channel %q has no delivery transport — use \"email\" or \"apprise\". Apprise fans out to Slack, Discord and webhooks.", ch)
 		}
 	}
+	// 2.5.1 SG-17: a secret's or the backup keys' event is no job's, so a rule
+	// aimed at a job would never hear it.
+	if notJobTrigger(inp.Trigger) && strings.EqualFold(inp.TargetMode, "job") {
+		return "invalid_target_mode", fmt.Sprintf("trigger %q is not about a job: its rule's target must be \"all\"", inp.Trigger)
+	}
 	return "", ""
+}
+
+// notJobTrigger reports whether trigger names an event that is no job's
+// (2.5.1 SG-17).
+func notJobTrigger(trigger string) bool {
+	switch strings.ToLower(trigger) {
+	case notify.TriggerSecretRevealed, notify.TriggerSecretChanged, notify.TriggerBackupKeyChanged:
+		return true
+	}
+	return false
+}
+
+// alertTriggerFitsOwner refuses a rule that could never fire because of
+// whose it is: the backup keys are the installation's, so only a Global
+// rule hears backup-key-changed (2.5.1 SG-17).
+func alertTriggerFitsOwner(w http.ResponseWriter, inp settings.AlertRuleInput, owner string) bool {
+	if strings.EqualFold(inp.Trigger, notify.TriggerBackupKeyChanged) && agencyOrGlobal(owner) != agencyid.Global {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "trigger_global_only",
+			"backup-key-changed is about the installation's backup keys: only a rule of Global's hears it")
+		return false
+	}
+	return true
 }
 
 // ── SSH Host handlers ────────────────────────────────────────────────────────

@@ -194,6 +194,9 @@ describe("Alert Rules form — the removals (J-2)", () => {
       "skipped",
       "sla-breach",
       "missed-run",
+      // 2.5.1 SG-17: not about a job; backup-key-changed is a Global rule's only.
+      "secret-revealed",
+      "secret-changed",
     ]);
     // And never a raw wire token on screen (G-1's rule).
     expect([...select.options].map((o) => o.textContent)).toEqual([
@@ -202,6 +205,8 @@ describe("Alert Rules form — the removals (J-2)", () => {
       "Run suppressed (calendar, pause, or concurrency)",
       "Job runs late (past its deadline)",
       "Scheduled run never happened",
+      "A secret is revealed",
+      "A secret or SSH key changes",
     ]);
   });
 });

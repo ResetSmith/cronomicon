@@ -65,11 +65,19 @@ const (
 	// TriggerMissedRun — a schedule expected a fire and no run appeared, with no
 	// suppression on record to explain it.
 	TriggerMissedRun = "missed-run"
+	// TriggerSecretRevealed — someone revealed a stored secret (2.5.1 SG-17).
+	TriggerSecretRevealed = "secret-revealed"
+	// TriggerSecretChanged — a stored secret or SSH key was created, rotated,
+	// updated, moved, deleted or migrated to Vault (2.5.1 SG-17).
+	TriggerSecretChanged = "secret-changed"
+	// TriggerBackupKeyChanged — the installation's backup keys changed (2.5.1
+	// SG-7, SG-17). It is the installation's, so Global's rules alone see it.
+	TriggerBackupKeyChanged = "backup-key-changed"
 )
 
 // alertTriggers is the closed set, and the single source the guard and the
 // dispatcher both read.
-var alertTriggers = []string{TriggerSLABreach, TriggerMissedRun}
+var alertTriggers = []string{TriggerSLABreach, TriggerMissedRun, TriggerSecretRevealed, TriggerSecretChanged, TriggerBackupKeyChanged}
 
 // AlertEvent is a non-run-terminal alert.
 //
@@ -98,6 +106,10 @@ type AlertEvent struct {
 	// re-computing the reason here would mean a second copy of that logic.
 	Subject string
 	Detail  string
+	// Agency is whose the event is, when it is not found by a run, a job or a
+	// workflow (2.5.1 SG-17: a secret's owner; Global for a backup key). An
+	// agency's rule matches its own agency's events; Global's, every agency's.
+	Agency string
 }
 
 // Notifier is the seam the runner and the scheduler depend on (nil ⇒ no
@@ -182,12 +194,17 @@ func runDispatchEvent(ev RunEvent) dispatchEvent {
 // transports and per-transport delivery stamps as a run notification. Only the
 // matching differs — see dispatchEvent.isRunOutcome.
 func (d *Dispatcher) AlertRaised(ev AlertEvent) {
+	d.send(alertDispatchEvent(ev))
+}
+
+// alertDispatchEvent is what AlertRaised dispatches for ev.
+func alertDispatchEvent(ev AlertEvent) dispatchEvent {
 	subject, body := renderAlert(ev)
-	d.send(dispatchEvent{
+	return dispatchEvent{
 		traceID: ev.TraceID, jobName: ev.JobName, jobUID: ev.JobUID, workflowUID: ev.WorkflowUID,
-		scope: ev.Scope, ownerKind: ev.OwnerKind,
+		scope: ev.Scope, ownerKind: ev.OwnerKind, agency: ev.Agency,
 		matchKey: ev.Trigger, isRunOutcome: false, subject: subject, body: body,
-	})
+	}
 }
 
 // dispatchEvent is what the dispatcher actually works on: a subject, a body, and
@@ -830,7 +847,9 @@ func renderAlert(ev AlertEvent) (subject, body string) {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Alert:  %s\n", ev.Trigger)
-	fmt.Fprintf(&b, "Job:    %s\n", ev.JobName)
+	if ev.JobName != "" { // a secret's or a backup key's alert names no job
+		fmt.Fprintf(&b, "Job:    %s\n", ev.JobName)
+	}
 	if ev.Scope != "" {
 		fmt.Fprintf(&b, "Scope:  %s\n", ev.Scope)
 	}
@@ -958,6 +977,9 @@ func (d *Dispatcher) resolveAnnotationOwner(ctx context.Context, ev dispatchEven
 // (1480) or its workflow run's agency (1520) by its trace; else its job's, or
 // its workflow's, by uid (a missed fire has no run); else Global's.
 func (d *Dispatcher) resolveEventAgency(ctx context.Context, ev dispatchEvent) string {
+	if ev.agency != "" { // said by the event itself (2.5.1 SG-17)
+		return ev.agency
+	}
 	var a sql.NullString
 	if ev.traceID != "" {
 		if d.db.QueryRowContext(ctx, `SELECT COALESCE(
