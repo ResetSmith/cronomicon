@@ -181,8 +181,9 @@ export function Settings() {
         <div>
           {section === "general" && (
             <>
-              <InstallationFreezeCard canWrite={isGlobal} />
               <GeneralSection canWrite={isGlobal} />
+              {/* 2.5.1 (the owner): at the bottom of General, apart from the settings above it. */}
+              <InstallationFreezeCard canWrite={isGlobal} />
             </>
           )}
           {section === "notifications" && <NotificationsSection canWrite={isGlobal} />}

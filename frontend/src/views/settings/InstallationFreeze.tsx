@@ -43,7 +43,7 @@ export function InstallationFreezeCard({ canWrite }: { canWrite: boolean }) {
   }
 
   return (
-    <div style={{ marginBottom: 16 }}>
+    <div style={{ marginTop: 16 }}>
     <Card title="Installation freeze">
       <div style={{ color: c.textSec, fontSize: c.fontSm, marginBottom: 12 }}>
         While the installation is frozen, no run starts in any agency: schedules, Run, tokens, reactions, deferred runs
