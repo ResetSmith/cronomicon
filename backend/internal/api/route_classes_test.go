@@ -99,6 +99,7 @@ var routeClasses = map[string]routeClass{
 	"/api/v1/ssh/credentials":                      {"one-agency", ""},
 	"/api/v1/ssh/credentials/{credentialId}":       {"one-agency", ""},
 	"/api/v1/ssh/credentials/{credentialId}/usage": {"one-agency", ""},
+	"/api/v1/env-secrets/{secretId}/usage":         {"one-agency", ""},
 	"/api/v1/ssh/hosts":                            {"one-agency", ""},
 	"/api/v1/workflow-runs":                        {"one-agency", ""},
 	"/api/v1/workflow-runs/{traceId}":              {"one-agency", ""},

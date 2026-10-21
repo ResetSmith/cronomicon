@@ -2634,6 +2634,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/env-secrets/{secretId}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A stored secret's Usage
+         * @description v2.5.1. What refers to the secret (each job binding, become password
+         *     or script binding the dispatch resolver would give THIS row, not
+         *     another agency's or scope's of the same name), which runs used it
+         *     (counts over 7, 30 and 90 days and the latest 25), and what was done
+         *     to it and by whom, with the actor's relation to its agency. Read by
+         *     those who read the secret (404 otherwise). Never a value.
+         */
+        get: operations["envSecretUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/env-secrets/{secretId}/reveal": {
         parameters: {
             query?: never;
@@ -4116,7 +4141,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List hosts and bastions that reference a credential */
+        /**
+         * An SSH key's Usage
+         * @description v2.5.1: the key's Usage, as for a secret (references, runs that used
+         *     it, changes and who made them), with the host records and bastions
+         *     that name it by id in `hosts` and `bastions` as before.
+         */
         get: operations["sshCredentialUsage"];
         put?: never;
         post?: never;
@@ -9890,9 +9920,62 @@ export interface components {
             id?: string;
             name?: string;
         };
-        /** @description Hosts and bastions that reference a credential by id. */
+        /** @description Hosts and bastions that reference a credential by id (the refusal of a delete names them). */
         SshCredentialUsage: {
             hosts?: components["schemas"]["SshCredentialRef"][];
+            bastions?: components["schemas"]["SshCredentialRef"][];
+        };
+        /** @description A stored secret's or SSH key's Usage (v2.5.1). */
+        RowUsage: {
+            /** @enum {string} */
+            kind: "secret" | "key";
+            id: string;
+            /** @description The secret's key or the key's label. */
+            name: string;
+            /** @description The owner agency's id. */
+            owner: string;
+            references: {
+                /** @enum {string} */
+                via: "binding" | "become" | "connectAs" | "host" | "bastion";
+                /** @enum {string} */
+                ownerKind: "job" | "script" | "host" | "bastion";
+                /** @description A job's or script's uid, a host record's or bastion's id. */
+                ownerId: string;
+                name: string;
+                scope?: string;
+                /** @description The alias the binding injects it under. */
+                as?: string;
+            }[];
+            uses: {
+                days7: number;
+                days30: number;
+                days90: number;
+            };
+            /** @description The latest 25 uses, newest first. */
+            recent: {
+                /** Format: date-time */
+                at: string;
+                traceId: string;
+                /** @enum {string} */
+                via: "binding" | "become" | "override" | "connect_as" | "host_auth" | "bastion_auth";
+                jobUid?: string;
+                jobName?: string;
+                runnerName?: string;
+            }[];
+            /** @description The latest 100 change-log rows about it, newest first (a run's injection is in `recent`). */
+            changes: {
+                /** Format: date-time */
+                at: string;
+                actor: string;
+                action: string;
+                details?: string;
+                /** @enum {string} */
+                actorRelation?: "member" | "global_admin" | "outside" | "system";
+                actingAgency?: string;
+            }[];
+            /** @description For a key, the host records that name it by id. */
+            hosts?: components["schemas"]["SshCredentialRef"][];
+            /** @description For a key, the bastions that name it by id. */
             bastions?: components["schemas"]["SshCredentialRef"][];
         };
         /**
@@ -14868,6 +14951,30 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    envSecretUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                secretId: components["parameters"]["secretId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The secret's usage. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RowUsage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     revealEnvSecret: {
         parameters: {
             query?: never;
@@ -17603,13 +17710,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Referencing hosts and bastions. */
+            /** @description The key's usage. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SshCredentialUsage"];
+                    "application/json": components["schemas"]["RowUsage"];
                 };
             };
             401: components["responses"]["Unauthorized"];

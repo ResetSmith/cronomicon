@@ -1,0 +1,71 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+
+// A secret's Usage (2.5.1 SG2.4): references, runs that used it, and changes,
+// with a mark on an actor outside the agency or a global administrator.
+
+const USAGE = {
+  kind: "secret",
+  id: "s1",
+  name: "FIN_TOKEN",
+  owner: "ag:FIN",
+  references: [
+    { via: "binding", ownerKind: "job", ownerId: "job-fin", name: "fin-deploy", scope: "fin-hosts" },
+    { via: "become", ownerKind: "job", ownerId: "job-play", name: "fin-play", scope: "fin-hosts" },
+  ],
+  uses: { days7: 1, days30: 4, days90: 9 },
+  recent: [{ at: "2026-10-21T08:00:00Z", traceId: "run-1", via: "binding", jobName: "fin-deploy", runnerName: "fin-runner" }],
+  changes: [
+    { at: "2026-10-21T09:00:00Z", actor: "root@corp", action: "revealed", actorRelation: "global_admin" },
+    { at: "2026-10-20T09:00:00Z", actor: "ana@corp", action: "created", actorRelation: "member" },
+  ],
+};
+const paths: string[] = [];
+
+vi.mock("../../api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api/client")>();
+  return {
+    ...actual,
+    api: {
+      GET: vi.fn(async (path: string) => {
+        paths.push(path);
+        return { data: USAGE };
+      }),
+    } as unknown as typeof actual.api,
+  };
+});
+
+import { RowUsagePanel } from "./RowUsage";
+
+afterEach(cleanup);
+
+describe("RowUsagePanel", () => {
+  it("shows the references, the runs and the changes, and marks a global administrator", async () => {
+    render(
+      <MemoryRouter>
+        <RowUsagePanel kind="secret" id="s1" />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("fin-deploy", { selector: "a[href^='/runs?jobUid=']" })).toBeTruthy();
+    expect(screen.getByText(/become password/)).toBeTruthy();
+    expect(screen.getByText(/1 in 7 days · 4 in 30 · 9 in 90/)).toBeTruthy();
+    expect(screen.getByText(/on fin-runner/)).toBeTruthy();
+    expect(screen.getByText("Global administrator")).toBeTruthy();
+    // The member's own change carries no mark.
+    expect(screen.getAllByText(/Global administrator|Outside the agency/)).toHaveLength(1);
+    expect(paths).toContain("/env-secrets/{secretId}/usage");
+  });
+
+  it("reads a key's usage from the key's route", async () => {
+    paths.length = 0;
+    render(
+      <MemoryRouter>
+        <RowUsagePanel kind="key" id="k1" />
+      </MemoryRouter>,
+    );
+    await screen.findAllByText("fin-deploy");
+    expect(paths).toContain("/ssh/credentials/{credentialId}/usage");
+  });
+});

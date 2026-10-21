@@ -4,6 +4,7 @@ import { VAULT_SECRET_GLOBAL_ONLY, globalOnly } from "../../api/globalAdmin";
 import { GLOBAL_AGENCY, useAgencyIdByName } from "../../api/access";
 import { useVaultPrefixes, vaultPathWhy } from "../../api/vaultPaths";
 import { MoveAgency } from "./MoveAgency";
+import { RowUsagePanel } from "./RowUsage";
 import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
@@ -517,6 +518,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                             </div>
                           </div>
                         </DetailGrid>
+                        {v.id && <RowUsagePanel kind="secret" id={v.id} />}
                         </DetailPanel>
                         <ReferenceField reference={v.reference} semantics="Resolves to the secret value at run time (always redacted in logs)." />
                         <div style={{ marginTop: 12 }}>

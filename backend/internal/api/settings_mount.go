@@ -196,7 +196,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				return
 			}
 		}
-		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "created", inp.Key, id.Email)
+		s.mountWriteChangeLogID(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "created", inp.Key, id.Email, "id="+sc.ID)
 		httpx.JSON(w, http.StatusCreated, sc)
 	})))
 	mux.Handle("PUT /api/v1/env-secrets/{secretId}", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -324,6 +324,36 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		s.mountWriteChangeLogDetails(r, secretAgency, "Secrets", "deleted", existing.Key, "id="+sid, id.Email) // SG-12: by key
 		w.WriteHeader(http.StatusNoContent)
 	})))
+	// 2.5.1 SG2.4: a secret's Usage — what refers to it, which runs used it,
+	// what was done to it and by whom. Read by those who read the secret
+	// (its scope and its agency; 404 otherwise). Never a value.
+	mux.Handle("GET /api/v1/env-secrets/{secretId}/usage", s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := auth.IdentityFrom(r.Context())
+		if !ok {
+			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		sid := r.PathValue("secretId")
+		sc, ok := s.loadSecretInScope(w, r, sec, sid, id)
+		if !ok {
+			return
+		}
+		owner, err := s.rowOwnerOrGlobal(r.Context(), "secrets", sid)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if !readsAgency(r, owner) {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
+			return
+		}
+		u, err := s.computeRowUsage(r.Context(), runref.KindSecret, sid, sc.Key, owner)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, u)
+	})))
 	mux.Handle("POST /api/v1/env-secrets/{secretId}/reveal", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := auth.IdentityFrom(r.Context())
 		if !ok {
@@ -362,7 +392,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// S1 / PP-B4b: the reveal MUST be audited. Write the change_log row BEFORE
 		// returning the plaintext and fail closed (500, no value) if the audit
 		// write errors — never hand back a secret with no audit trail.
-		if auditErr := settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid), id.Email, "Secrets", "revealed", sc.Key, ""); auditErr != nil {
+		if auditErr := settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid), id.Email, "Secrets", "revealed", sc.Key, "id="+sid); auditErr != nil {
 			s.log.Error("secret reveal audit write failed — withholding value", "key", sc.Key, "error", auditErr)
 			httpx.Fail(w, http.StatusInternalServerError, "audit_failed", "could not record the reveal; value withheld")
 			return
@@ -420,7 +450,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
-		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "migrated-to-vault", sc.Key, id.Email)
+		s.mountWriteChangeLogID(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "migrated-to-vault", sc.Key, id.Email, "id="+sc.ID)
 		httpx.JSON(w, http.StatusOK, sc)
 	})))
 	// Tags (migration 470): operator-authored, SQLite-only labels on a secret —
@@ -577,7 +607,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				return
 			}
 		}
-		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", "created", c.Label, id.Email)
+		s.mountWriteChangeLogID(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", "created", c.Label, id.Email, "id="+c.ID)
 		httpx.JSON(w, http.StatusCreated, c)
 	})))
 	mux.Handle("GET /api/v1/ssh/credentials/{credentialId}", s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -718,7 +748,20 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		httpx.JSON(w, http.StatusOK, usage)
+		// 2.5.1 SG2.4: the key's whole Usage, with the hosts and bastions the
+		// route has always answered with kept beside it.
+		owner, err := s.rowOwnerOrGlobal(r.Context(), "ssh_credentials", cid)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		u, err := s.computeRowUsage(r.Context(), runref.KindKey, cid, c.Label, owner)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		u.Hosts, u.Bastions = usage.Hosts, usage.Bastions
+		httpx.JSON(w, http.StatusOK, u)
 	})))
 	// Tags (migration 470): operator-authored, SQLite-only labels on an SSH key
 	// credential — plaintext metadata beside the sealed key; ConfigureApp gate to
@@ -762,6 +805,13 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 // (secret reveals and vault migrations, which have no settings-package equivalent).
 func (s *Server) mountWriteChangeLog(r *http.Request, agency, category, action, target, actor string) {
 	_ = settings.WriteChangeLog(r.Context(), s.db, agency, actor, category, action, target, "")
+}
+
+// mountWriteChangeLogID is mountWriteChangeLog naming the row's id in details
+// ("id=<id>"), which a secret's or key's Usage view matches its rows by (2.5.1
+// SG2.4): a key or label is unique only within an agency and a scope.
+func (s *Server) mountWriteChangeLogID(r *http.Request, agency, category, action, target, actor, idDetail string) {
+	_ = settings.WriteChangeLog(r.Context(), s.db, agency, actor, category, action, target, idDetail)
 }
 
 // mountWriteChangeLogDetails is mountWriteChangeLog with details (an id, a

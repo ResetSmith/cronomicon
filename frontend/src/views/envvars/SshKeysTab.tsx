@@ -5,6 +5,7 @@ import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../.
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
 import { MoveAgency } from "./MoveAgency";
+import { RowUsagePanel } from "./RowUsage";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { pubKeyFilename, toOpenSSH, toRFC4716 } from "../../utils/sshpubkey";
@@ -444,6 +445,7 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
                             </div>
                           </div>
                         </DetailGrid>
+                        {v.id && <RowUsagePanel kind="key" id={v.id} />}
                         </DetailPanel>
                         <ReferenceField reference={v.reference} semantics="Resolves to a key-file path on the executing host (not the key bytes)." />
                         <div style={{ marginTop: 12 }}>
