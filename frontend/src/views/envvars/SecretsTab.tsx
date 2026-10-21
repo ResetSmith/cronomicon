@@ -251,10 +251,10 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
       cell: (v) => (
         // Flex-wrap, not inline: JSX strips the newline between the key and its
         // chips, so there is no break opportunity and two badges spill out of
-        // the fixed-width column onto Scope.
+        // the fixed-width column onto Scope. The owner is not repeated here:
+        // the Agencies column says it (the owner, 2026-10-21).
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, rowGap: 4 }}>
           <span>{v.key}</span>
-          <OwnerChip owner={v.ownerAgency} />
           <ShadowBadge shadow={shadows.shadowFor("secret", v.key, v.scope)} />
           <AmbiguityBadge ambiguity={ambiguities.ambiguityFor("secret", v.key, v.scope)} />
         </div>
