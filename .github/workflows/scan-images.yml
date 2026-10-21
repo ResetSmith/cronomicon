@@ -14,7 +14,7 @@
 # open alert: the run fails instead, and GitHub mails the failure.
 #
 # GitHub runs a schedule, and offers "Run workflow", only from the default
-# branch, so this starts once it is on main. Code scanning is free on a public
+# branch (`release`), so this starts once it is merged there. Code scanning is free on a public
 # repository; a private one needs GitHub Advanced Security.
 name: Scan published images
 
