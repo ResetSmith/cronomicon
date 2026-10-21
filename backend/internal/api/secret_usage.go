@@ -95,7 +95,7 @@ func (s *Server) computeRowUsage(ctx context.Context, kind runref.Kind, id, name
 		return nil, err
 	}
 	u.References = refs
-	if err := s.rowUses(ctx, kind, id, u); err != nil {
+	if err := s.rowUses(ctx, kind, id, owner, u); err != nil {
 		return nil, err
 	}
 	category := "Secrets"
@@ -237,18 +237,21 @@ func (s *Server) rowReferences(ctx context.Context, kind runref.Kind, id, name, 
 	return out, nil
 }
 
-func (s *Server) rowUses(ctx context.Context, kind runref.Kind, id string, u *rowUsage) error {
+// rowUses reads the uses recorded while owner owned the row: a row a global
+// administrator moved from another agency brings no record of that agency's
+// runs with it (2.5.1 review; the change log is read the same way).
+func (s *Server) rowUses(ctx context.Context, kind runref.Kind, id, owner string, u *rowUsage) error {
 	now := time.Now().UTC()
 	day := func(n int) string { return now.AddDate(0, 0, -n).Format(time.RFC3339) }
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(at >= ?), 0), COALESCE(SUM(at >= ?), 0), COALESCE(SUM(at >= ?), 0)
-		  FROM secret_uses WHERE kind = ? AND row_id = ?`, day(7), day(30), day(90), string(kind), id).
+		  FROM secret_uses WHERE kind = ? AND row_id = ? AND owner_agency = ?`, day(7), day(30), day(90), string(kind), id, owner).
 		Scan(&u.Uses.Days7, &u.Uses.Days30, &u.Uses.Days90); err != nil {
 		return err
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT at, trace_id, via, COALESCE(job_uid, ''), COALESCE(job_name, ''), COALESCE(runner_name, '')
-		  FROM secret_uses WHERE kind = ? AND row_id = ? ORDER BY at DESC, id DESC LIMIT ?`, string(kind), id, usageRecentLimit)
+		  FROM secret_uses WHERE kind = ? AND row_id = ? AND owner_agency = ? ORDER BY at DESC, id DESC LIMIT ?`, string(kind), id, owner, usageRecentLimit)
 	if err != nil {
 		return err
 	}

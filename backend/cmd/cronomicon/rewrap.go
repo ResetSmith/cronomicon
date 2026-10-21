@@ -89,6 +89,13 @@ also held the plaintexts; the remediation is rotating the underlying credentials
 		return 1
 	}
 	defer pool.Close()
+	// 2.5.1 SG2.10: once the server has bound every value, an unbound one is
+	// refused here too. Without this the command would open an unbound value
+	// copied into a row after the pass and re-seal it bound to that row.
+	if _, err := secrets.ApplyBindSealsMarker(context.Background(), pool); err != nil {
+		fmt.Fprintln(os.Stderr, "rewrap-secrets:", err)
+		return 1
+	}
 
 	ctx := context.Background()
 	active := cfg.SecretKEKVersion

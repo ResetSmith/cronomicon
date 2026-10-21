@@ -155,8 +155,15 @@ func runRestore(args []string) int {
 // restoreLocalFile restores a local snapshot file (--file): the in-use guard
 // and the confirmation, then the same install as a download.
 func restoreLocalFile(src, target string, identities []string, yes bool) int {
-	if _, err := os.Stat(src); err != nil {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "restore:", err)
+		return 1
+	}
+	// The swap removes the target before it copies: a --file that IS the
+	// target would delete the only copy (2.5.1 review).
+	if tgtInfo, err := os.Stat(target); err == nil && os.SameFile(srcInfo, tgtInfo) {
+		fmt.Fprintf(os.Stderr, "restore: %q is the database it would replace; copy the snapshot somewhere else first\n", src)
 		return 1
 	}
 	if code := checkTargetAndConfirm(src, target, yes); code != 0 {

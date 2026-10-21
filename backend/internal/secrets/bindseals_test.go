@@ -99,6 +99,27 @@ func TestBindSeals(t *testing.T) {
 	}
 }
 
+// 2.5.1 review: a settings column BindSeals cannot read counts as a failure,
+// so no marker is written over tokens left unbound.
+func TestBindSealsCountsAnUnreadableColumn(t *testing.T) {
+	t.Cleanup(func() { RefuseUnboundSeals(false) })
+	pool, cleanup := openTestDB(t)
+	defer cleanup()
+	kek, _ := randomBytes(32)
+	cfg := &config.Config{SecretKEKEnv: base64.StdEncoding.EncodeToString(kek), SecretKEKVersion: 1}
+	ctx := context.Background()
+	if _, err := pool.ExecContext(ctx, `DROP TABLE alert_rule_targets`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.ExecContext(ctx, `DROP TABLE alert_targets`); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := BindSeals(ctx, pool, cfg)
+	if err != nil || rep.Complete || rep.Failed == 0 || UnboundSealsRefused() {
+		t.Fatalf("BindSeals over an unreadable column = %+v, %v; want a failure and no marker", rep, err)
+	}
+}
+
 // A value BindSeals cannot open (a KEK version not configured) is left as it
 // is, no marker is written, and unbound values stay readable.
 func TestBindSealsLeavesWhatItCannotOpen(t *testing.T) {

@@ -13,6 +13,24 @@ import (
 // bindSealsMarker records that every sealed value is bound (2.5.1 SG2.10).
 const bindSealsMarker = "upgrade.2.5.1.bindSeals"
 
+// ApplyBindSealsMarker reads whether BindSeals has bound every value and, if
+// it has, refuses unbound seals in this process. Every process that opens
+// sealed values calls it (the server through BindSeals, rewrap-secrets on its
+// own): a process that skipped it would open, and re-seal bound, an unbound
+// value copied into a row after the pass (2.5.1 review).
+func ApplyBindSealsMarker(ctx context.Context, database *sql.DB) (bool, error) {
+	var done sql.NullString
+	err := database.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, bindSealsMarker).Scan(&done)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("read %s: %w", bindSealsMarker, err)
+	}
+	if done.Valid {
+		RefuseUnboundSeals(true)
+		return true, nil
+	}
+	return false, nil
+}
+
 // BindSealsReport is what BindSeals did.
 type BindSealsReport struct {
 	Bound  int // values re-sealed bound to their rows
@@ -39,13 +57,11 @@ type BindSealsReport struct {
 // It is what makes 2.5.1 one-way: 2.5.0 cannot open a bound value.
 func BindSeals(ctx context.Context, database *sql.DB, cfg *config.Config) (BindSealsReport, error) {
 	var rep BindSealsReport
-	var done sql.NullString
-	err := database.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, bindSealsMarker).Scan(&done)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return rep, fmt.Errorf("read %s: %w", bindSealsMarker, err)
+	done, err := ApplyBindSealsMarker(ctx, database)
+	if err != nil {
+		return rep, err
 	}
-	if done.Valid {
-		RefuseUnboundSeals(true)
+	if done {
 		rep.Complete = true
 		return rep, nil
 	}
@@ -104,7 +120,11 @@ func BindSeals(ctx context.Context, database *sql.DB, cfg *config.Config) (BindS
 	for _, sc := range EncryptedSettingsColumns {
 		toks, err := ReadSettingsTokens(ctx, database, sc)
 		if err != nil {
-			continue // a table not there (a schema mid-upgrade) holds nothing to bind
+			// The migrations have run, so the table is there: this is a read that
+			// failed (a lock, a cancelled start). Counted, so the marker is not
+			// written over tokens left unbound, which would then never open.
+			rep.Failed++
+			continue
 		}
 		for _, t := range toks {
 			if _, isToken := TokenKEKVersion(t.Token); !isToken || TokenBound(t.Token) {

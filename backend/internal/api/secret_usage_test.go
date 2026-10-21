@@ -128,9 +128,17 @@ func TestSecretUsage(t *testing.T) {
 	exec(`INSERT INTO secret_uses (at, trace_id, kind, row_id, owner_agency, via, ref_name, job_uid, job_name, runner_name) VALUES
 		(?, 'run-1', 'secret', ?, 'ag:FIN', 'binding', 'FIN_TOKEN', 'job-fin', 'fin-deploy', 'fin-runner')`, time.Now().UTC().Format(time.RFC3339), fin)
 
+	// A use recorded while another agency owned the row (before a move) is
+	// that agency's history, not FIN's (2.5.1 review).
+	exec(`INSERT INTO secret_uses (at, trace_id, kind, row_id, owner_agency, via, ref_name, job_name) VALUES
+		(?, 'run-tax', 'secret', ?, 'ag:TAX', 'binding', 'FIN_TOKEN', 'tax-secret-job')`, time.Now().UTC().Format(time.RFC3339), fin)
+
 	rec := gateReq(t, h, http.MethodGet, "/api/v1/env-secrets/"+fin+"/usage", gFinAdmin, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("FIN reading its secret's usage = %d %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "tax-secret-job") || strings.Contains(rec.Body.String(), "run-tax") {
+		t.Errorf("FIN sees a use recorded under TAX: %s", rec.Body)
 	}
 	var u struct {
 		Owner      string

@@ -58,9 +58,12 @@ func scanAlertTarget(cfg *config.Config, sc interface{ Scan(...any) error }) (*A
 	t.Enabled = enabled == 1
 	t.URLSet = t.URL != ""
 	// 2.5.1 SG2.8: the URL is sealed at rest; a plain one from before reads as is.
+	// One URL that cannot be opened (its KEK version since dropped) must not
+	// take the agency's whole list with it: it reads as set and unknown, and
+	// the dispatcher skips it (2.5.1 review).
 	url, err := secrets.OpenSetting(cfg, secrets.SettingsBinding(secrets.LabelAlertTargetURL, t.ID), t.URL)
 	if err != nil {
-		return nil, fmt.Errorf("open push target %s's URL: %w", t.ID, err)
+		url = ""
 	}
 	t.URL = url
 	return &t, nil

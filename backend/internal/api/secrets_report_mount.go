@@ -74,11 +74,16 @@ func (s *Server) handleHeldByGlobal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+	id0, _ := auth.IdentityFrom(r.Context())
 	for rows.Next() {
 		var it heldByGlobalItem
 		if err := rows.Scan(&it.Kind, &it.ID, &it.Name, &it.Scope); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
+		}
+		// The secrets list's own scope rule (2.5.1 review).
+		if it.Kind == "secret" && !auth.ScopeReadableIn(id0, agency, it.Scope) {
+			continue
 		}
 		out = append(out, it)
 	}
@@ -94,17 +99,29 @@ func (s *Server) handleHeldByGlobal(w http.ResponseWriter, r *http.Request) {
 // its agencies' former secrets that Global now holds: the row is Global's and
 // lists an agency (not Global) whose rows the caller reads. Unreadable
 // membership is a no.
+//
+// A secret has a scope, and a grant limited to some of the agency's scopes
+// reads the held row only when it reads that scope, as it would the agency's
+// own secret there (2.5.1 review).
 func (s *Server) heldByGlobalFor(r *http.Request, table, memberTable, memberCol, id string) bool {
+	id0, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		return false
+	}
+	scopeExpr := "''"
+	if table == "secrets" {
+		scopeExpr = "COALESCE(t.scope, '')"
+	}
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT m.agency_id FROM `+memberTable+` m JOIN `+table+` t ON t.id = m.`+memberCol+`
+		SELECT m.agency_id, `+scopeExpr+` FROM `+memberTable+` m JOIN `+table+` t ON t.id = m.`+memberCol+`
 		 WHERE m.`+memberCol+` = ? AND t.owner_agency = ? AND m.agency_id <> ?`, id, agencyid.Global, agencyid.Global) //nolint:gosec // fixed identifiers
 	if err != nil {
 		return false
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var a string
-		if rows.Scan(&a) == nil && readsAgency(r, a) {
+		var a, scope string
+		if rows.Scan(&a, &scope) == nil && readsAgency(r, a) && auth.ScopeReadableIn(id0, a, scope) {
 			return true
 		}
 	}
@@ -244,8 +261,8 @@ func (s *Server) secretsReport(ctx context.Context, id auth.Identity, agency str
 		}
 		var lastUsed, lastOutside *string
 		if err := s.db.QueryRowContext(ctx, `
-			SELECT MAX(at), COALESCE(SUM(at >= ?), 0) FROM secret_uses WHERE kind = ? AND row_id = ?`,
-			since, string(it.kind), row.ID).Scan(&lastUsed, &row.Uses); err != nil {
+			SELECT MAX(at), COALESCE(SUM(at >= ?), 0) FROM secret_uses WHERE kind = ? AND row_id = ? AND owner_agency = ?`,
+			since, string(it.kind), row.ID, agency).Scan(&lastUsed, &row.Uses); err != nil {
 			return nil, err
 		}
 		if lastUsed != nil {
