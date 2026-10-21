@@ -3601,6 +3601,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The backup keys and what the backups have been
+         * @description Settings → Backups (v2.5.1). The age public keys every nightly snapshot
+         *     is encrypted to (none: backups are unencrypted; encryption is optional),
+         *     the last backup and the keys it was sealed to, the local copies, the
+         *     bucket and the schedule. A global administrator's.
+         */
+        get: operations["getBackupSettings"];
+        /**
+         * Replace the backup keys
+         * @description A global administrator's. Each key is an age X25519 public key
+         *     (`age1…`); a private key, an SSH key or a post-quantum key is 422
+         *     `invalid_recipient`. Adding the FIRST key turns encryption on and needs
+         *     `acknowledgedKeyCustody: true` (422 `acknowledgement_required`): the
+         *     private keys never reach the server, and if every one is lost every
+         *     encrypted backup is unreadable. Removing the last key turns it off and
+         *     needs `confirmUnencrypted: true` (422 `confirmation_required`). The
+         *     change applies to the next backup and is in the change log with the
+         *     keys' fingerprints.
+         */
+        put: operations["setBackupKeys"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/general": {
         parameters: {
             query?: never;
@@ -6640,6 +6675,39 @@ export interface components {
             scheduleName?: string;
             /** @enum {string} */
             polarity?: "skip" | "only";
+        };
+        BackupRecipient: {
+            /** @description An age X25519 public key (age1…). */
+            key: string;
+            /** @description The first 16 hex characters of the key's SHA-256, as the card, the change log and each backup name it. */
+            fingerprint: string;
+        };
+        BackupSnapshot: {
+            file: string;
+            /** Format: date-time */
+            at?: string;
+            /** @description The fingerprints it was sealed to; empty when it is unencrypted. */
+            recipients: string[];
+        };
+        BackupSettings: {
+            recipients: components["schemas"]["BackupRecipient"][];
+            lastModifiedBy?: string;
+            /** Format: date-time */
+            lastModifiedAt?: string;
+            /** @description Whether the next backup is encrypted (a key is set). */
+            encrypted: boolean;
+            /** @description The last successful backup since v2.5.1; null before the first. */
+            lastBackup: components["schemas"]["BackupSnapshot"] | null;
+            /** Format: date-time */
+            lastSuccessAt?: string;
+            /** @description The snapshots kept on the server's volume, newest first. */
+            localBackups: components["schemas"]["BackupSnapshot"][];
+            localDirectory: string;
+            localKeepDays: number;
+            /** @description The S3 bucket backups are uploaded to; empty when they are kept locally only. */
+            bucket: string;
+            /** @description The daily UTC time of the backup (CRONOMICON_BACKUP_AT). */
+            schedule: string;
         };
         InstallationFreeze: {
             on: boolean;
@@ -16362,6 +16430,63 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InstallationFreeze"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    getBackupSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The backup settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupSettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    setBackupKeys: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The whole list; empty turns encryption off. */
+                    recipients: string[];
+                    acknowledgedKeyCustody?: boolean;
+                    confirmUnencrypted?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The backup settings as written. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupSettings"];
                 };
             };
             401: components["responses"]["Unauthorized"];

@@ -17,6 +17,7 @@ import { RecycleBinSection } from "./settings/RecycleBin";
 import { VaultSection, LogStorageSection, ObservabilitySection } from "./settings/Integrations";
 import { RepositoriesSection } from "./settings/Repositories";
 import { LocalRunnerSection } from "./settings/LocalRunner";
+import { BackupsSection } from "./settings/Backups";
 import { TimezoneAlert } from "./settings/TimezoneAlert";
 
 // Settings — two groups since v2.3.0 (LR-86).
@@ -47,6 +48,8 @@ const SECTIONS = [
   { group: "Installation", key: "observability", label: "Observability", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "logstorage", label: "Log Storage", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "audit", label: "Audit & Compliance", requires: "configureAppGlobal", global: "configureAppGlobal" },
+  // 2.5.1 SG1: the nightly backup and the keys it is encrypted to (optional).
+  { group: "Installation", key: "backups", label: "Backups", requires: "configureAppGlobal", global: "configureAppGlobal" },
   // This server running shell jobs itself: its switch, its concurrency and the
   // agencies it serves (LR-1, LR-43).
   { group: "Installation", key: "localrunner", label: "Local runner", requires: "configureAppGlobal", global: "configureAppGlobal" },
@@ -190,6 +193,7 @@ export function Settings() {
           {section === "audit" && <AuditComplianceSection canWrite={isGlobal} />}
           {section === "auditexport" && <AuditExportSection />}
           {section === "localrunner" && <LocalRunnerSection canWrite={isGlobal} />}
+          {section === "backups" && <BackupsSection canWrite={isGlobal} />}
           {section === "recyclebin" && <RecycleBinSection />}
         </div>
       </div>
