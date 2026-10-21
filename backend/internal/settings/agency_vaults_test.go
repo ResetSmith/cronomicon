@@ -219,6 +219,39 @@ func TestSG3_DisconnectRefusedWhileInUse(t *testing.T) {
 	}
 }
 
+// SG3.2: the client cache keeps one client per connection: a changed secret
+// id drops the client built for the old one, and two agencies do not share
+// or evict each other's.
+func TestSG3_TheCacheKeepsOneClientPerConnection(t *testing.T) {
+	f := newAgencyVaultFix(t)
+	clients := func(agency string) int {
+		vaultClientMu.Lock()
+		defer vaultClientMu.Unlock()
+		n := 0
+		for k := range vaultClientCache {
+			if strings.HasPrefix(k, "agency\x00"+agency+"\x00"+f.own.URL) {
+				n++
+			}
+		}
+		return n
+	}
+	build := func(agency, secret string) {
+		t.Helper()
+		if _, err := AgencyVaultClient(f.ctx, f.pool, f.cfg, AgencyVaultRuntime{Agency: agency, Addr: f.own.URL, RoleID: "role", SecretID: secret}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	build("ag-fin", "s1")
+	build("ag-tax", "s1")
+	build("ag-fin", "s2")
+	if n := clients("ag-fin"); n != 1 {
+		t.Errorf("FIN's clients after a changed secret id = %d, want 1", n)
+	}
+	if n := clients("ag-tax"); n != 1 {
+		t.Errorf("TAX's client = %d, want 1 (untouched by FIN's change)", n)
+	}
+}
+
 // SG-28: agency_vault_unreachable is raised under the agency when its Vault
 // does not answer, and resolved when it does.
 func TestSG3_UnreachableNotice(t *testing.T) {

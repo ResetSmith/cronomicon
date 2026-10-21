@@ -135,6 +135,8 @@ type AgencyVaultInput struct {
 
 // AgencyVaultRuntime is what a client is built from.
 type AgencyVaultRuntime struct {
+	// Agency is whose connection this is: the cache keeps one client per agency.
+	Agency                            string
 	Addr, Namespace, RoleID, SecretID string
 	CAPEM                             []byte
 }
@@ -161,7 +163,7 @@ func GetAgencyVault(ctx context.Context, database *sql.DB, agency string) (*Agen
 // has none (it uses the installation's); an error when it has one that cannot
 // be read, which a caller must not answer with the installation's Vault.
 func ReadAgencyVaultRuntime(ctx context.Context, database *sql.DB, cfg *config.Config, agency string) (AgencyVaultRuntime, bool, error) {
-	var rt AgencyVaultRuntime
+	rt := AgencyVaultRuntime{Agency: agency}
 	var roleEnc, secretEnc, ca string
 	err := database.QueryRowContext(ctx, `
 		SELECT addr, namespace, role_id_enc, secret_id_enc, ca_pem FROM agency_vaults WHERE agency_id = ?`, agency).
@@ -189,7 +191,7 @@ func PrepareAgencyVault(ctx context.Context, database *sql.DB, cfg *config.Confi
 	if agency == agencyid.Global || agency == "" {
 		return AgencyVaultRuntime{}, ErrGlobalUsesInstallationVault
 	}
-	rt := AgencyVaultRuntime{Addr: strings.TrimRight(strings.TrimSpace(in.Addr), "/"), Namespace: strings.TrimSpace(in.Namespace)}
+	rt := AgencyVaultRuntime{Agency: agency, Addr: strings.TrimRight(strings.TrimSpace(in.Addr), "/"), Namespace: strings.TrimSpace(in.Namespace)}
 	if err := CheckVaultURL(ctx, database, rt.Addr); err != nil {
 		return rt, err
 	}

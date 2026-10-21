@@ -332,7 +332,24 @@ var (
 	// resolution. The build is still retried every time — the CA FILE may be fixed
 	// in place without the key (its path) changing — only the logging is once-per-key.
 	vaultClientErrKeys = map[string]bool{}
+	// vaultClientSlots is the key each connection last used (2.5.1 SG3.2):
+	// "installation", and "agency:<id>" for each agency's own Vault. When a
+	// slot's key changes (a rotated secret id, another address), the client
+	// built for the old key is dropped, so the cache holds one client per
+	// connection instead of one per configuration it has ever seen.
+	vaultClientSlots = map[string]string{}
 )
+
+// cacheVaultClientLocked records vc under key for slot and drops the client
+// the slot held before. vaultClientMu must be held.
+func cacheVaultClientLocked(slot, key string, vc secrets.VaultClient) {
+	if old, ok := vaultClientSlots[slot]; ok && old != key {
+		delete(vaultClientCache, old)
+		delete(vaultClientErrKeys, old)
+	}
+	vaultClientSlots[slot] = key
+	vaultClientCache[key] = vc
+}
 
 // WireVaultClient attaches the app's Vault client to sec: a dynamic client that
 // resolves the CURRENT env-or-DB credentials (ResolveVaultRuntime: AppRole, or a
@@ -434,7 +451,7 @@ func AgencyVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Con
 		CAPEM:      rt.CAPEM,
 		Egress:     httpx.EgressPolicy{AllowPrivate: appCfg.OutboundAllowPrivate, AllowLoopback: appCfg.OutboundAllowLoopback},
 	}
-	key := strings.Join([]string{"agency", rt.Addr, rt.RoleID, rt.SecretID, rt.Namespace, string(rt.CAPEM),
+	key := strings.Join([]string{"agency", rt.Agency, rt.Addr, rt.RoleID, rt.SecretID, rt.Namespace, string(rt.CAPEM),
 		fmt.Sprintf("%t/%t", opts.Egress.AllowPrivate, opts.Egress.AllowLoopback)}, "\x00")
 	vaultClientMu.Lock()
 	defer vaultClientMu.Unlock()
@@ -445,7 +462,7 @@ func AgencyVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Con
 	if err != nil {
 		return nil, err
 	}
-	vaultClientCache[key] = vc
+	cacheVaultClientLocked("agency:"+rt.Agency, key, vc)
 	return vc, nil
 }
 
@@ -506,7 +523,7 @@ func sharedVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Con
 		}
 		return nil
 	}
-	vaultClientCache[key] = vc
+	cacheVaultClientLocked("installation", key, vc)
 	if log != nil {
 		log.Info("vault client enabled", "authMethod", rt.AuthMethod, "addr", rt.Addr,
 			"namespace", opts.Namespace != "", "customCA", opts.CAFile != "", "wrappedSecretID", opts.SecretIDWrapped)
