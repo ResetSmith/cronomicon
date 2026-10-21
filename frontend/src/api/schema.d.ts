@@ -1604,7 +1604,9 @@ export interface paths {
          *     agency's approver could publish there a job file in a scope they held
          *     the permission on; an agency now publishes to its own repository, and
          *     one that has none asks a global publisher. Whether a job's name is
-         *     already taken is asked of the repository published to.
+         *     already taken is asked of the repository published to. A repository
+         *     with no connection yet (an agency created without one, v2.5.1 SG-40,
+         *     or Global's with no URL) is 422 `no_repository`.
          *
          *     A push that delivers nothing is a failure (503), where it was answered
          *     as a success. The fetch and the push are each given up after
@@ -2132,13 +2134,19 @@ export interface paths {
          *     The name `Global` is reserved in every letter case for the built-in agency
          *     (422 `name_reserved`, v2.3.0). CSRF required.
          *
-         *     **An agency is created together with its repository (v2.4.0, IN-2).**
-         *     `repository` is required (422 `repository_required`); its connection is
-         *     held to `gitAllowedHosts` (422 `repo_url_not_allowed`) and tested before
+         *     **An agency connects its repository at creation or later (v2.5.1,
+         *     SG-40; until then IN-2 required it here).** Given, `repository` needs
+         *     its `repoUrl` (422 `validation_failed`); its connection is held to
+         *     `gitAllowedHosts` (422 `repo_url_not_allowed`) and tested before
          *     anything is written, as `PUT /agencies/{agencyId}/git-repo` tests it
-         *     (422 `connection_failed`, 422 `token_cannot_push`). The answer is the
-         *     agency with the repository it was created with, whose sync starts at
-         *     once. A repository is changed afterwards, never disconnected.
+         *     (422 `connection_failed`, 422 `token_cannot_push`), and the answer is
+         *     the agency with its repository, whose sync starts at once. Left out,
+         *     the agency is created alone (`repository` null): until its
+         *     administrator (`configureApp` on it) connects one with
+         *     `PUT /agencies/{agencyId}/git-repo`, it cannot receive an assignment
+         *     (422 `no_repository`) or be published to, and the notice
+         *     `agency_no_repository` says so. A repository is changed afterwards,
+         *     never disconnected.
          */
         post: operations["createAgency"];
         delete?: never;
@@ -7820,7 +7828,9 @@ export interface components {
              *       assigned to that agency (every such row, until an upgraded
              *       installation assigns prefixes). It keeps working and cannot be
              *       edited until a prefix covers it. Subject `<kind>:<id>`. Filed
-             *       under Global.
+             *       under Global. Since v2.5.1 an agency with a Vault of its own and
+             *       no prefixes is never listed, and one whose own prefixes leave a
+             *       path out is listed under that agency.
              *     - `may_run_on_agent`, `mixed_scope`, `may_run_on_server` — after the
              *       upgrade to v2.3.0, an unbound scope whose shell jobs ran from the
              *       server, in both places, or on agents, and which the other kind of
@@ -7938,13 +7948,14 @@ export interface components {
              *       clears when the agency has a record for the host, by hand or
              *       imported for the scope, or no scope of its lists the host.
              *     - `agency_no_repository` — an agency has no repository connected
-             *       (v2.4.0). Every agency has one, Global included: an agency is
-             *       created with it and cannot disconnect it, so this is an agency
-             *       from before, or Global's repository with no URL in its
-             *       connection and none in CRONOMICON_GITLAB_BASE_URL. Nothing is
-             *       refused; the agency cannot receive an assignment. Subject: the
-             *       agency's id. Filed under the agency. It clears when the
-             *       repository is connected.
+             *       (v2.4.0): one created without it (v2.5.1, SG-40), one from before
+             *       v2.4.0, or Global's repository with no URL in its connection and
+             *       none in CRONOMICON_GITLAB_BASE_URL. A connected repository is
+             *       never disconnected. Nothing else is refused; the agency cannot
+             *       receive an assignment or be published to. Its administrator
+             *       (`configureApp` on it) connects it. Subject: the agency's id.
+             *       Filed under the agency. It clears when the repository is
+             *       connected.
              *     - `global_calendar_scope` — a calendar of Global's is global. Until
              *       v2.4.0 it froze every agency's fires; now it freezes Global's only
              *       (the whole installation is /settings/freeze). Raised while there
@@ -8017,6 +8028,12 @@ export interface components {
              *       administrators may delete it but not change it. Subject: the
              *       grant's id. Filed under the grant's agency. It clears when the
              *       group is listed or the grant is deleted.
+             *     - `agency_vault_unreachable` — an agency's own Vault did not
+             *       answer a login within three seconds, or refused it (v2.5.1,
+             *       SG-28). Its Vault-backed secrets and SSH keys fail until it
+             *       does; they are never read from the installation's Vault instead.
+             *       Subject: the agency's id. Filed under that agency. It clears
+             *       when the Vault answers or the connection is removed.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.
@@ -8493,7 +8510,7 @@ export interface components {
         AgencyInput: {
             name: string;
             description?: string | null;
-            /** @description The agency's repository connection. Required on create (v2.4.0, IN-2); not read by an update. */
+            /** @description The agency's repository connection. Optional on create (v2.5.1, SG-40; required from v2.4.0); not read by an update. */
             repository?: components["schemas"]["GitlabConfig"];
         };
         EnvSecret: components["schemas"]["RowFlags"] & {
@@ -14457,14 +14474,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created, with its repository. */
+            /** @description Created, with its repository when one was given. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["Agency"] & {
-                        repository: components["schemas"]["GitRepo"];
+                        repository: components["schemas"]["GitRepo"] | null;
                     };
                 };
             };

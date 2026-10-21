@@ -2,9 +2,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-// An agency is created with its repository (2.4.0 I3, IN-2; R8): the form
-// asks for the repository's URL, a token and its branch, and sends them as
-// `repository`; without them it says so and sends nothing.
+// An agency connects its repository at creation or later (2.5.1, SG-40;
+// before, 2.4.0 I3, IN-2, required it here): the form's repository section is
+// closed by default and sends no `repository`; opened, it asks for the URL, a
+// token and the branch, and sends them, and without them says so and sends
+// nothing.
 
 const posts: Array<{ path: string; body: unknown }> = [];
 
@@ -56,14 +58,26 @@ describe("Agencies — the row's own flags (R8)", () => {
 });
 
 describe("Agencies → Add Agency", () => {
-  it("creates an agency with its repository, and not without one", async () => {
+  it("creates an agency without a repository by default", async () => {
     render(<AgenciesTab canEdit globalAdmin />);
     await waitFor(() => expect(screen.getAllByText(/Add Agency/).length).toBeGreaterThan(0));
     fireEvent.click(screen.getAllByText(/Add Agency/)[0]);
     fireEvent.change(screen.getByPlaceholderText("e.g. agency-alpha"), { target: { value: "Ops" } });
+    expect(screen.queryByLabelText("Repository URL")).toBeNull();
+    fireEvent.click(screen.getByText("Save Agency"));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].body).toEqual({ name: "Ops", description: null });
+  });
+
+  it("creates an agency with its repository when the section is opened, and not without its URL and token", async () => {
+    render(<AgenciesTab canEdit globalAdmin />);
+    await waitFor(() => expect(screen.getAllByText(/Add Agency/).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByText(/Add Agency/)[0]);
+    fireEvent.change(screen.getByPlaceholderText("e.g. agency-alpha"), { target: { value: "Ops" } });
+    fireEvent.click(screen.getByText("Connect its repository now (optional)"));
 
     fireEvent.click(screen.getByText("Save Agency"));
-    await waitFor(() => expect(screen.getByText(/created with its repository/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/or close the repository section/)).toBeTruthy());
     expect(posts).toHaveLength(0);
 
     fireEvent.change(screen.getByLabelText("Repository URL"), { target: { value: "https://gitlab.example.org/ops/defs.git" } });

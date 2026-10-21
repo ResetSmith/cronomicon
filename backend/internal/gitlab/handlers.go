@@ -306,6 +306,15 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 		writeError(w, http.StatusNotFound, "not_found", "no such repository")
 		return
 	}
+	// 2.5.1 SG-40: an agency may be created without a repository, and one from
+	// before 2.4.0 may have a row with no connection. A publish has nowhere to
+	// commit: say so, rather than fail in the clone.
+	if svc.repoURL == "" {
+		writeError(w, http.StatusUnprocessableEntity, "no_repository",
+			"this repository is not connected yet, so there is nothing to publish to: the agency's administrator "+
+				"connects it in Settings → Repositories")
+		return
+	}
 
 	result, err := svc.Publish(r.Context(), req, baseSHA, actor)
 	if err != nil {

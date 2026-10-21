@@ -20,10 +20,12 @@ func TestI3_AnAgencyIsCreatedWithItsRepositoryAndDeletedWithIt(t *testing.T) {
 		return rec.Code, rec.Body.String()
 	}
 
-	// Not without a repository, nor with one whose token may only read, nor
-	// with one that does not answer; and nothing is written.
+	// Not with a repository given without its URL (since 2.5.1, SG-40, an
+	// agency may be created with none: agency_without_repository_test.go),
+	// nor with one whose token may only read, nor with one that does not
+	// answer; and nothing is written.
 	for _, c := range []struct{ body, code string }{
-		{`{"name":"Ops"}`, "repository_required"},
+		{`{"name":"Ops","repository":{"pat":"glpat-ops"}}`, "validation_failed"},
 		{`{"name":"Ops","repository":{"repoUrl":"https://git.example.com/ops/read-only.git","pat":"glpat-ops"}}`, "token_cannot_push"},
 		{`{"name":"Ops","repository":{"repoUrl":"https://git.example.com/ops/unreachable.git","pat":"glpat-ops"}}`, "connection_failed"},
 		{`{"name":"Ops","repository":{"repoUrl":"https://elsewhere.example.net/ops.git","pat":"glpat-ops"}}`, "repo_url_not_allowed"},

@@ -718,15 +718,18 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusConflict, "conflict", "an agency with this name already exists")
 		return
 	}
-	// An agency is created together with its repository (§0a, IN-2; Phase
-	// I3): the connection is tested — it answers, and its token may push —
-	// before anything is written, and written with the agency.
-	if inp.Repository == nil || strings.TrimSpace(inp.Repository.RepoUrl) == "" {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "repository_required",
-			"an agency is created together with its repository: give `repository` with at least its repoUrl and a token that can push")
+	// An agency connects its repository at creation or later (SG-40, 2.5.1;
+	// IN-2 as reworded): without one it cannot receive an assignment or
+	// publish, and its administrator connects it in Settings → Repositories.
+	// Given, the connection is tested — it answers, and its token may push —
+	// before anything is written, and written with the agency (§0a, Phase I3).
+	withRepo := inp.Repository != nil
+	if withRepo && strings.TrimSpace(inp.Repository.RepoUrl) == "" {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
+			"give the repository's repoUrl and a token that can push, or leave `repository` out to create the agency without one")
 		return
 	}
-	if !s.requirePushableConnection(w, r, "repo-untested", false, *inp.Repository) {
+	if withRepo && !s.requirePushableConnection(w, r, "repo-untested", false, *inp.Repository) {
 		return
 	}
 	a, err := settings.CreateAgency(r.Context(), s.db, settings.AgencyInput{Name: inp.Name, Description: inp.Description}, id.Email)
@@ -739,6 +742,10 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		httpx.Fail500(w, s.log, "create_failed", err)
+		return
+	}
+	if !withRepo {
+		httpx.JSON(w, http.StatusCreated, agencyCreated{Agency: a})
 		return
 	}
 	repo, _, err := settings.PutAgencyRepo(r.Context(), s.db, s.cfg, a.ID, *inp.Repository, id.Email)

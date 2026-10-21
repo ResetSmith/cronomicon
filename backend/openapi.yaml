@@ -2830,7 +2830,9 @@ paths:
         agency's approver could publish there a job file in a scope they held
         the permission on; an agency now publishes to its own repository, and
         one that has none asks a global publisher. Whether a job's name is
-        already taken is asked of the repository published to.
+        already taken is asked of the repository published to. A repository
+        with no connection yet (an agency created without one, v2.5.1 SG-40,
+        or Global's with no URL) is 422 `no_repository`.
 
         A push that delivers nothing is a failure (503), where it was answered
         as a success. The fetch and the push are each given up after
@@ -3739,13 +3741,19 @@ paths:
         The name `Global` is reserved in every letter case for the built-in agency
         (422 `name_reserved`, v2.3.0). CSRF required.
 
-        **An agency is created together with its repository (v2.4.0, IN-2).**
-        `repository` is required (422 `repository_required`); its connection is
-        held to `gitAllowedHosts` (422 `repo_url_not_allowed`) and tested before
+        **An agency connects its repository at creation or later (v2.5.1,
+        SG-40; until then IN-2 required it here).** Given, `repository` needs
+        its `repoUrl` (422 `validation_failed`); its connection is held to
+        `gitAllowedHosts` (422 `repo_url_not_allowed`) and tested before
         anything is written, as `PUT /agencies/{agencyId}/git-repo` tests it
-        (422 `connection_failed`, 422 `token_cannot_push`). The answer is the
-        agency with the repository it was created with, whose sync starts at
-        once. A repository is changed afterwards, never disconnected.
+        (422 `connection_failed`, 422 `token_cannot_push`), and the answer is
+        the agency with its repository, whose sync starts at once. Left out,
+        the agency is created alone (`repository` null): until its
+        administrator (`configureApp` on it) connects one with
+        `PUT /agencies/{agencyId}/git-repo`, it cannot receive an assignment
+        (422 `no_repository`) or be published to, and the notice
+        `agency_no_repository` says so. A repository is changed afterwards,
+        never disconnected.
       parameters: [{ $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -3754,7 +3762,7 @@ paths:
             schema: { $ref: '#/components/schemas/AgencyInput' }
       responses:
         '201':
-          description: Created, with its repository.
+          description: Created, with its repository when one was given.
           content:
             application/json:
               schema:
@@ -3763,7 +3771,10 @@ paths:
                   - type: object
                     required: [repository]
                     properties:
-                      repository: { $ref: '#/components/schemas/GitRepo' }
+                      repository:
+                        oneOf:
+                          - $ref: '#/components/schemas/GitRepo'
+                          - type: 'null'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409':
@@ -11965,13 +11976,14 @@ components:
               clears when the agency has a record for the host, by hand or
               imported for the scope, or no scope of its lists the host.
             - `agency_no_repository` — an agency has no repository connected
-              (v2.4.0). Every agency has one, Global included: an agency is
-              created with it and cannot disconnect it, so this is an agency
-              from before, or Global's repository with no URL in its
-              connection and none in CRONOMICON_GITLAB_BASE_URL. Nothing is
-              refused; the agency cannot receive an assignment. Subject: the
-              agency's id. Filed under the agency. It clears when the
-              repository is connected.
+              (v2.4.0): one created without it (v2.5.1, SG-40), one from before
+              v2.4.0, or Global's repository with no URL in its connection and
+              none in CRONOMICON_GITLAB_BASE_URL. A connected repository is
+              never disconnected. Nothing else is refused; the agency cannot
+              receive an assignment or be published to. Its administrator
+              (`configureApp` on it) connects it. Subject: the agency's id.
+              Filed under the agency. It clears when the repository is
+              connected.
             - `global_calendar_scope` — a calendar of Global's is global. Until
               v2.4.0 it froze every agency's fires; now it freezes Global's only
               (the whole installation is /settings/freeze). Raised while there
@@ -12692,7 +12704,7 @@ components:
         description: { type: [string, 'null'] }
         repository:
           allOf: [{ $ref: '#/components/schemas/GitlabConfig' }]
-          description: The agency's repository connection. Required on create (v2.4.0, IN-2); not read by an update.
+          description: The agency's repository connection. Optional on create (v2.5.1, SG-40; required from v2.4.0); not read by an update.
 
     EnvSecret:
       allOf:
