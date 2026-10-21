@@ -1,0 +1,86 @@
+# Scan the published release images every week (2.5.0, C13).
+#
+# A release's Trivy reports are as of the release, and an image takes the
+# fixes Debian, distroless or Go publish afterwards only when it is rebuilt.
+# This scan says when a rebuild is worth it: it scans each image's `latest`
+# with --ignore-unfixed and uploads the result to code scanning (the Security
+# tab), one category per image. An alert appears only for a finding that has a
+# fix (a rebuild, or a dependency bump for a Go module), and closes itself when
+# a later scan no longer finds it. The findings nobody can fix yet stay in the
+# release's reports and out of the Security tab. Each run's page lists what it
+# found.
+#
+# A scan that fails uploads nothing, since an empty upload would close every
+# open alert: the run fails instead, and GitHub mails the failure.
+#
+# GitHub runs a schedule, and offers "Run workflow", only from the default
+# branch, so this starts once it is on main. Code scanning is free on a public
+# repository; a private one needs GitHub Advanced Security.
+name: Scan published images
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TRIVY_VERSION: 0.76.0 # the version publish-images.yml reports with
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read # an image not yet made public
+      security-events: write # the SARIF upload
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [cronomicon, cronomicon-runner, cronomicon-runner-fat, cronomicon-validate]
+    steps:
+      # upload-sarif reads the commit it files the alerts against from the checkout.
+      - uses: actions/checkout@v7
+
+      - name: Trivy, the findings that have a fix
+        env:
+          IMAGE: ghcr.io/resetsmith/${{ matrix.image }}:latest
+          NAME: ${{ matrix.image }}
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          cd "$RUNNER_TEMP"
+          # Trivy from its release, its checksum checked, as publish-images.yml does.
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          tgz="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL --retry 3 -O "$base/$tgz"
+          curl -fsSL --retry 3 -O "$base/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " $tgz\$" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          tar xzf "$tgz" trivy
+          for try in 1 2 3; do
+            ./trivy image --quiet --ignore-unfixed --format json --output scan.json "$IMAGE" && break
+            if [ "$try" = 3 ]; then echo "::error::Trivy could not scan $IMAGE (its vulnerability database, most likely)"; exit 1; fi
+            echo "Trivy failed (try $try of 3); trying again in 30 s"
+            sleep 30
+          done
+          ./trivy convert --format sarif --output scan.sarif scan.json
+          # The run's page: what has a fix, by package.
+          jq -r --arg n "$NAME" '
+            [.Results[]?.Vulnerabilities[]?] as $v
+            | "### \($n)\n\nScanned \(.Metadata.RepoDigests[0] // .ArtifactName).\n\n"
+            + if ($v | length) == 0 then "Nothing with a fix: a rebuild would change nothing.\n"
+              else "\($v | unique_by(.VulnerabilityID) | length) vulnerabilities with a fix:\n\n"
+                + "| Package | Installed | Fixed in | Vulnerabilities |\n|---|---|---|---|\n"
+                + ($v | group_by([.PkgName, .InstalledVersion])
+                   | map("| \(.[0].PkgName) | \(.[0].InstalledVersion) | \(.[0].FixedVersion) | \([.[].VulnerabilityID] | unique | join(", ")) |")
+                   | join("\n")) + "\n"
+              end' scan.json >> "$GITHUB_STEP_SUMMARY"
+
+      # Uploaded with no results too: that is what closes the alerts a rebuild fixed.
+      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          sarif_file: ${{ runner.temp }}/scan.sarif
+          category: image-${{ matrix.image }}

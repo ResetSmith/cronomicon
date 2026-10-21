@@ -17,7 +17,9 @@
 # (SLSA, Sigstore-signed through GitHub's attestations) and a signed SPDX SBOM,
 # both pushed beside the image, and a Trivy report; the docs zip is attested
 # too; and a scan-source job runs govulncheck and npm audit. The reports and
-# SBOMs go to the GitHub Release. They are reports, not a gate (question 122).
+# SBOMs go to the GitHub Release, and the counts to the run's page. They are
+# reports, not a gate (question 122). Between releases, scan-images.yml scans
+# the published images weekly and raises an alert for what a rebuild would fix.
 # A user verifies with:
 #   gh attestation verify oci://ghcr.io/resetsmith/cronomicon:X.Y.Z --repo ResetSmith/cronomicon
 #
@@ -372,6 +374,23 @@ jobs:
           cat "$r"/counts-*.md > "$RUNNER_TEMP/counts.md"
           ls -la "$a"
           echo "dir=$a" >> "$GITHUB_OUTPUT"
+
+      # The counts on the run's page as well, where a test run (no Release) shows them.
+      - name: The scans on the run's page
+        run: |
+          set -u
+          r="$RUNNER_TEMP/reports"
+          {
+            echo "### Vulnerabilities (distinct, by severity)"
+            echo
+            echo "| Image | Critical | High | Medium |"
+            echo "|---|---|---|---|"
+            cat "$RUNNER_TEMP/counts.md"
+            echo
+            echo "govulncheck: $(grep -m1 '^Your code is affected' "$r/govulncheck.txt" || echo 'no result; see govulncheck.txt')"
+            echo
+            echo "npm audit: $(jq -er '.metadata.vulnerabilities.total // empty | "\(.) vulnerabilities"' "$r/npm-audit.json" 2>/dev/null || echo 'no result; see npm-audit.json')"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: A test run makes no Release
         if: env.TEST == 'true'

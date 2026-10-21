@@ -118,8 +118,12 @@ gain an `agency` column (last), after 2.4.4's `actingAgency`.
   oci://ghcr.io/resetsmith/cronomicon:2.5.0 --repo ResetSmith/cronomicon`. The
   GitHub Release carries each image's SBOM and Trivy report and the source's
   `govulncheck` and `npm audit` reports, with a count of distinct
-  vulnerabilities by severity in its notes (reports, not a gate). A test run of the workflow (`test` ticked) publishes to
+  vulnerabilities by severity in its notes and on the run's page (reports, not a
+  gate). A test run of the workflow (`test` ticked) publishes to
   `ghcr.io/resetsmith/test/*`, verifies every attestation, and makes no Release.
+  Between releases, a weekly workflow (`scan-images.yml`) scans the published
+  images and raises an alert in the repository's Security tab for each finding
+  that has a fix, closed by the next scan that no longer finds it.
 - **The installation freeze in the app**: an *Installation freeze* switch at the
   top of Settings → General (a reason is required; a global administrator's),
   and a banner above every page while it is on, with the reason, who set it and
