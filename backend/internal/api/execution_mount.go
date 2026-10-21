@@ -5163,7 +5163,11 @@ func (s *Server) listChangeLog(w http.ResponseWriter, r *http.Request) {
 	var total int
 	_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) "+base, args...).Scan(&total)
 
-	query := `SELECT id, at, actor, category, action, target, details ` +
+	// 2.5.1 SG-13: the row's agency, the agency a global administrator was
+	// acting in, and the actor's relation to the row's agency (SG-11) — the
+	// export had the first two since 2.5.0; the in-app log now has all three.
+	query := `SELECT id, at, actor, category, action, target, details,
+	                 COALESCE(agency_id, ''), COALESCE(acting_agency, ''), COALESCE(actor_relation, '') ` +
 		base + orderBy + " LIMIT ? OFFSET ?"
 	args = append(args, pageSize, (page-1)*pageSize)
 
@@ -5177,12 +5181,15 @@ func (s *Server) listChangeLog(w http.ResponseWriter, r *http.Request) {
 	var items []map[string]any
 	for rows.Next() {
 		var id int64
-		var at, actor, category, action string
+		var at, actor, category, action, agency, acting, relation string
 		var target, details sql.NullString
-		if err := rows.Scan(&id, &at, &actor, &category, &action, &target, &details); err != nil {
+		if err := rows.Scan(&id, &at, &actor, &category, &action, &target, &details, &agency, &acting, &relation); err != nil {
 			continue
 		}
-		items = append(items, map[string]any{
+		if agency == "" {
+			agency = agencyid.Global // an owner that names no agency reads as Global's
+		}
+		item := map[string]any{
 			"id":        id,
 			"timestamp": at,
 			"user":      actor,
@@ -5190,7 +5197,15 @@ func (s *Server) listChangeLog(w http.ResponseWriter, r *http.Request) {
 			"action":    action,
 			"target":    nullStrVal(target),
 			"details":   nullStrVal(details),
-		})
+			"agency":    agency,
+		}
+		if acting != "" {
+			item["actingAgency"] = acting
+		}
+		if relation != "" {
+			item["actorRelation"] = relation
+		}
+		items = append(items, item)
 	}
 	if items == nil {
 		items = []map[string]any{}

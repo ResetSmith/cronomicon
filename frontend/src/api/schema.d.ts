@@ -7312,9 +7312,31 @@ export interface components {
             /** @description Authenticated session identity (S6) — never client-supplied. */
             readonly user?: string;
             category?: string;
+            /**
+             * @description What was done. For a stored secret or SSH key (v2.5.1): `created`,
+             *     `rotated` (a new value or key material, or a new Vault path for
+             *     it), `updated` (anything else: description, scope, tags), `moved`
+             *     (written once in the agency it left and once in the one it
+             *     reached), `deleted` (the target is the key or label, the id is in
+             *     details), `revealed`, `injected` (a run's references; the target
+             *     is the run's trace id), `migrated-to-vault`.
+             */
             action?: string;
             target?: string;
             details?: string;
+            /** @description The agency of what was changed (v2.5.0 C1; `global` for an installation-wide change). */
+            readonly agency?: string;
+            /** @description The agency a global administrator was working in when they made the change (v2.4.4), when it was not Global. */
+            readonly actingAgency?: string;
+            /**
+             * @description How the actor stood to the row's agency when the change was made
+             *     (v2.5.1): a member (a grant names the agency; for Global, a grant
+             *     that reaches every agency), a global administrator with no grant
+             *     on it, someone outside it, or the system (no person). Absent on
+             *     rows from before v2.5.1.
+             * @enum {string}
+             */
+            readonly actorRelation?: "member" | "global_admin" | "outside" | "system";
         };
         SchedulePush: {
             readonly id?: string;

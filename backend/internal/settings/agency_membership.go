@@ -187,9 +187,14 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
+	var moves []ownerMove
 	for i, a := range assignments {
-		if err := moveOwner(ctx, tx, t, a.ID, targets[i]); err != nil {
+		mv, err := moveOwner(ctx, tx, t, a.ID, targets[i])
+		if err != nil {
 			return err
+		}
+		if mv != nil {
+			moves = append(moves, *mv)
 		}
 		if kind == MemberScope {
 			if err := presetScopeOwner(ctx, tx, a.ID, targets[i]); err != nil {
@@ -224,7 +229,30 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 	}
 	audit(ctx, database, agency, actor, "Agencies", "membership-updated",
 		t.label+" agencies", membershipAuditDetail(assignments))
+	// 2.5.1 SG-12: a secret or an SSH key that changed hands is written in its
+	// own category, once in the agency it left and once in the one it reached,
+	// so each side's review shows it (a membership row is filed under one).
+	cms := make([]catalogMove, 0, len(moves))
+	for _, mv := range moves {
+		cms = append(cms, catalogMove{t.catalog, mv})
+	}
+	auditMoves(ctx, database, actor, cms)
 	return nil
+}
+
+// ownerMove is one row moveOwner gave to another agency.
+type ownerMove struct{ id, name, from, to string }
+
+// movedCategory is the change-log category a move of a row of catalog is
+// written in, or "" for a kind whose moves are recorded as membership only.
+func movedCategory(catalog string) string {
+	switch catalog {
+	case "secrets":
+		return "Secrets"
+	case "ssh_credentials":
+		return "SSH Keys"
+	}
+	return ""
 }
 
 // presetScopeOwner makes agencyID the owner of a scope whose membership is
@@ -343,10 +371,10 @@ func ownedCatalog(catalog string) (nameCol string, scoped, owned bool) {
 // or a variable in the other's table too, since the two share one namespace per
 // owner. A no-op for a scope, which has no owner, and for a row already owned
 // by agencyID.
-func moveOwner(ctx context.Context, tx *sql.Tx, t memberTable, entityID, agencyID string) error {
+func moveOwner(ctx context.Context, tx *sql.Tx, t memberTable, entityID, agencyID string) (*ownerMove, error) {
 	nameCol, scoped, owned := ownedCatalog(t.catalog)
 	if !owned {
-		return nil
+		return nil, nil
 	}
 	var name, scope, owner string
 	scopeExpr := "''"
@@ -356,10 +384,10 @@ func moveOwner(ctx context.Context, tx *sql.Tx, t memberTable, entityID, agencyI
 	if err := tx.QueryRowContext(ctx,
 		`SELECT `+nameCol+`, `+scopeExpr+`, owner_agency FROM `+t.catalog+` WHERE id = ?`, entityID).
 		Scan(&name, &scope, &owner); err != nil {
-		return err
+		return nil, err
 	}
 	if owner == agencyID {
-		return nil
+		return nil, nil
 	}
 	tables := []string{t.catalog}
 	if scoped {
@@ -374,17 +402,17 @@ func moveOwner(ctx context.Context, tx *sql.Tx, t memberTable, entityID, agencyI
 		}
 		var n int
 		if err := tx.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
-			return err
+			return nil, err
 		}
 		if n > 0 {
-			return fmt.Errorf("%w: %s %s", ErrOwnerConflict, t.label, name)
+			return nil, fmt.Errorf("%w: %s %s", ErrOwnerConflict, t.label, name)
 		}
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE `+t.catalog+` SET owner_agency = ? WHERE id = ?`, agencyID, entityID); err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return &ownerMove{id: entityID, name: name, from: owner, to: agencyID}, nil
 }
 
 // membershipAuditDetail summarizes an assignment batch for the audit row: entity
@@ -885,6 +913,7 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 			}
 		}
 	}
+	var moved []catalogMove // 2.5.1 SG-12: written after the commit
 	for _, m := range delta.Removed {
 		t, _ := agencyMemberTableFor(m.Kind)
 		if _, err := tx.ExecContext(ctx,
@@ -896,8 +925,12 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 		t, _ := agencyMemberTableFor(m.Kind)
 		// The agency is the owner (LR-54): an entity that joins it from Global
 		// is its own from here on.
-		if err := moveOwner(ctx, tx, t, m.ID, agencyID); err != nil {
+		mv, err := moveOwner(ctx, tx, t, m.ID, agencyID)
+		if err != nil {
 			return nil, err
+		}
+		if mv != nil {
+			moved = append(moved, catalogMove{t.catalog, *mv})
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT OR IGNORE INTO `+t.join+` (`+t.col+`, agency_id) VALUES (?, ?)`, m.ID, agencyID); err != nil {
@@ -961,8 +994,12 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 			if !fits {
 				continue
 			}
-			if err := moveOwner(ctx, tx, t, m.ID, last); err != nil {
+			mv, err := moveOwner(ctx, tx, t, m.ID, last)
+			if err != nil {
 				return nil, err
+			}
+			if mv != nil {
+				moved = append(moved, catalogMove{t.catalog, *mv})
 			}
 		}
 	}
@@ -977,7 +1014,28 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 		audit(ctx, database, agencyID, actor, "Agencies", "membership-updated",
 			"agency members: "+agencyID, agencyMembersAuditDetail(delta))
 	}
+	auditMoves(ctx, database, actor, moved)
 	return delta, nil
+}
+
+// catalogMove is a moveOwner result with the table it was in.
+type catalogMove struct {
+	catalog string
+	mv      ownerMove
+}
+
+// auditMoves writes 2.5.1 SG-12's "moved" rows for the secrets and keys among
+// moves: once in the agency each left, once in the one it reached.
+func auditMoves(ctx context.Context, database *sql.DB, actor string, moves []catalogMove) {
+	for _, m := range moves {
+		cat := movedCategory(m.catalog)
+		if cat == "" {
+			continue
+		}
+		from, to := ownerOrGlobalAgency(m.mv.from), ownerOrGlobalAgency(m.mv.to)
+		audit(ctx, database, from, actor, cat, "moved", m.mv.name, "id="+m.mv.id+" to="+to)
+		audit(ctx, database, to, actor, cat, "moved", m.mv.name, "id="+m.mv.id+" from="+from)
+	}
 }
 
 // agencyMembersAuditDetail renders a delta for change_log: ids only, capped like

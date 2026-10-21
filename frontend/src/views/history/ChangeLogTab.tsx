@@ -39,6 +39,9 @@ interface ChangeLogEntry {
   action?: string;
   target?: string;
   details?: string;
+  agency?: string;
+  actingAgency?: string;
+  actorRelation?: "member" | "global_admin" | "outside" | "system";
 }
 
 // Sortable columns (TS-23, the sorting-update plan). serverSide: the keys go
@@ -166,7 +169,7 @@ export function ChangeLogTab() {
       tdStyle: { color: c.textSec, fontSize: c.fontSm, whiteSpace: "nowrap" },
       cell: (a) => fmtTime(a.timestamp),
     },
-    { key: "user", label: "User", sortKey: "user", width: COL_W.user, tdStyle: { fontWeight: 500, fontSize: c.fontSm }, cell: (a) => (a.user ?? "—").split("@")[0] },
+    { key: "user", label: "User", sortKey: "user", width: COL_W.user, tdStyle: { fontWeight: 500, fontSize: c.fontSm }, cell: (a) => <ActorCell entry={a} /> },
     { key: "category", label: "Category", sortKey: "category", width: COL_W.category, fixed: true, tdStyle: { color: c.textSec, fontSize: c.fontSm }, cell: (a) => a.category ?? "—" },
     { key: "action", label: "Action", sortKey: "action", width: COL_W.action, fixed: true, tdStyle: { color: c.textSec, fontSize: c.fontSm }, cell: (a) => a.action ?? "—" },
     { key: "target", label: "Target", sortKey: "target", width: COL_W.target, tdStyle: { fontWeight: 600, fontSize: c.fontSm }, cell: (a) => a.target ?? "—" },
@@ -231,5 +234,38 @@ export function ChangeLogTab() {
         </TableSurface>
       )}
     </div>
+  );
+}
+
+// 2.5.1 SG-11/SG-13: who made the change, and a mark when they were not of
+// the agency the change was in — a global administrator with no grant there,
+// or someone outside it — and the agency a global administrator was acting
+// in. The relation was judged when the row was written; rows from before
+// 2.5.1 carry none and show no mark.
+function ActorCell({ entry }: { entry: ChangeLogEntry }) {
+  const who = (entry.user ?? "—").split("@")[0];
+  const mark = entry.actorRelation === "global_admin" ? "Global administrator" : entry.actorRelation === "outside" ? "Outside the agency" : null;
+  const title = [entry.user, mark ? `${mark} (${entry.agency ?? "global"})` : null, entry.actingAgency ? `acting in ${entry.actingAgency}` : null]
+    .filter(Boolean)
+    .join(" — ");
+  return (
+    <span title={title} style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      {who}
+      {mark && (
+        <span
+          style={{
+            fontFamily: c.sansCond,
+            textTransform: "uppercase",
+            fontSize: c.fontXs,
+            color: c.warning,
+            border: `1px solid ${c.warning}`,
+            borderRadius: c.radiusChip,
+            padding: "0 4px",
+          }}
+        >
+          {mark}
+        </span>
+      )}
+    </span>
   );
 }

@@ -285,7 +285,13 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
-		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "updated", inp.Key, id.Email)
+		// SG-12: a new value, or a new Vault path that supplies it, is a
+		// rotation; anything else (description, scope, source alone) an update.
+		action := "updated"
+		if inp.Value != "" || inp.VaultPath != "" {
+			action = "rotated"
+		}
+		s.mountWriteChangeLogDetails(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", action, sc.Key, "id="+sc.ID, id.Email)
 		httpx.JSON(w, http.StatusOK, sc)
 	})))
 	mux.Handle("DELETE /api/v1/env-secrets/{secretId}", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -297,7 +303,8 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		sid := r.PathValue("secretId")
 		// D3/H3: enforce write-scope before deleting (404 out-of-scope; 403 on a global
 		// row — a restricted manager must not delete a secret every scope binds).
-		if _, ok := s.loadSecretWritable(w, r, sec, sid, id); !ok {
+		existing, ok := s.loadSecretWritable(w, r, sec, sid, id)
+		if !ok {
 			return
 		}
 		// RB-32: and the agency that owns it (RB-Q2/RB-Q14).
@@ -314,7 +321,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
-		s.mountWriteChangeLog(r, secretAgency, "Secrets", "deleted", sid, id.Email)
+		s.mountWriteChangeLogDetails(r, secretAgency, "Secrets", "deleted", existing.Key, "id="+sid, id.Email) // SG-12: by key
 		w.WriteHeader(http.StatusNoContent)
 	})))
 	mux.Handle("POST /api/v1/env-secrets/{secretId}/reveal", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -641,7 +648,12 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
-		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", "updated", c.Label, id.Email)
+		// SG-12: new material, or a new Vault path for it, is a rotation.
+		keyAction := "updated"
+		if inp.Material != "" || inp.VaultRef != "" {
+			keyAction = "rotated"
+		}
+		s.mountWriteChangeLogDetails(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", keyAction, c.Label, "id="+c.ID, id.Email)
 		httpx.JSON(w, http.StatusOK, c)
 	})))
 	mux.Handle("DELETE /api/v1/ssh/credentials/{credentialId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -662,6 +674,11 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		cid := r.PathValue("credentialId")
 		force := r.URL.Query().Get("force") == "true"
 		keyAgency := settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", cid) // read while the row is there
+		var keyLabel string
+		_ = s.db.QueryRowContext(r.Context(), `SELECT label FROM ssh_credentials WHERE id = ?`, cid).Scan(&keyLabel)
+		if keyLabel == "" {
+			keyLabel = cid
+		}
 		found, err := keys.Delete(r.Context(), cid, force)
 		if err != nil {
 			if errors.Is(err, sshkeys.ErrCredentialInUse) {
@@ -681,7 +698,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
-		s.mountWriteChangeLog(r, keyAgency, "SSH Keys", "deleted", cid, id.Email)
+		s.mountWriteChangeLogDetails(r, keyAgency, "SSH Keys", "deleted", keyLabel, "id="+cid+fmt.Sprintf(" force=%t", force), id.Email) // SG-12: by label
 		w.WriteHeader(http.StatusNoContent)
 	})))
 	mux.Handle("GET /api/v1/ssh/credentials/{credentialId}/usage", s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -745,6 +762,12 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 // (secret reveals and vault migrations, which have no settings-package equivalent).
 func (s *Server) mountWriteChangeLog(r *http.Request, agency, category, action, target, actor string) {
 	_ = settings.WriteChangeLog(r.Context(), s.db, agency, actor, category, action, target, "")
+}
+
+// mountWriteChangeLogDetails is mountWriteChangeLog with details (an id, a
+// flag): never a value.
+func (s *Server) mountWriteChangeLogDetails(r *http.Request, agency, category, action, target, details, actor string) {
+	_ = settings.WriteChangeLog(r.Context(), s.db, agency, actor, category, action, target, details)
 }
 
 // loadSecretInScope loads a secret by id and enforces the actor's scope grants
