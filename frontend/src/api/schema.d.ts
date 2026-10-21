@@ -4575,6 +4575,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agencies/{agencyId}/secrets-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An agency's secrets report
+         * @description v2.5.1. One row per stored secret and SSH key the agency owns: its
+         *     source and Vault path, when it was last rotated and last used, its
+         *     uses and reveals in the window, how many definitions refer to it, and
+         *     how many changes someone outside the agency (a global administrator
+         *     included) made, with the latest such actor. Never a value. Read by the
+         *     agency's people and those who reach every agency (Global's by the
+         *     latter only; 404 otherwise); a secret in a scope the caller cannot read
+         *     is left out, as in the secrets list.
+         */
+        get: operations["agencySecretsReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agencies/{agencyId}/groups": {
         parameters: {
             query?: never;
@@ -18272,6 +18299,66 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["Validation"];
+        };
+    };
+    agencySecretsReport: {
+        parameters: {
+            query?: {
+                format?: "json" | "csv";
+                /** @description The window for uses, reveals and outside changes (default 90). */
+                days?: number;
+            };
+            header?: never;
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report (CSV when format=csv). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agency: string;
+                        days: number;
+                        items: {
+                            /** @enum {string} */
+                            kind: "secret" | "key";
+                            id: string;
+                            name: string;
+                            scope: string;
+                            /** @enum {string} */
+                            source: "stored" | "vault";
+                            vaultPath?: string;
+                            /** Format: date-time */
+                            lastRotated?: string;
+                            /** Format: date-time */
+                            lastUsed?: string;
+                            uses: number;
+                            references: number;
+                            reveals: number;
+                            outsideChanges: number;
+                            lastOutsideActor?: string;
+                        }[];
+                    };
+                    "text/csv": string;
+                };
+            };
+            /** @description A format other than csv or json (`bad_format`), or days outside 1 to 3650 (`bad_days`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
         };
     };
     getAgencyGroups: {

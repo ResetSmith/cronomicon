@@ -5,7 +5,7 @@ import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../.
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
 import { MoveAgency } from "./MoveAgency";
-import { RowUsagePanel } from "./RowUsage";
+import { RowUsagePanel, SecretsReportButton } from "./RowUsage";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { pubKeyFilename, toOpenSSH, toRFC4716 } from "../../utils/sshpubkey";
@@ -297,6 +297,7 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
         </div>
         <TagFilterSelect items={creds} selected={tagFilter} onChange={setTagFilter} getTags={(v) => tagState.tagsFor(v)} matchMode={tagMatch} onMatchModeChange={setTagMatch} />
         <ColumnsMenu cols={cols} cw={cw} />
+        <SecretsReportButton />
         {canEdit && (
           <Btn primary onClick={() => setAdding(true)}>
             + Add SSH Key

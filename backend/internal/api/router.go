@@ -362,6 +362,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.mountCalendars(mux)            // CAL-4: /calendars/* (working calendars — holiday skip / run-day sets bound to schedule entries)
 	s.mountFreeze(mux)               // §0a: the installation-wide freeze (/settings/freeze)
 	s.mountBackupSettings(mux)       // 2.5.1 SG1: the backup keys (/settings/backup)
+	s.mountSecretsReport(mux)        // 2.5.1 SG2.5: an agency's secrets report
 	s.mountReactions(mux)            // RX-12: /reactions/* (a definition runs when another definition finishes)
 	s.mountFileSightings(mux)        // FX-E1: GET /jobs/{jobId}/file-sightings (the arrival ledger's read surface)
 	s.mountJobCompose(mux)           // A11: POST/PUT/DELETE /jobs (in-app cronomicon-source Job composition; Compose RBAC)

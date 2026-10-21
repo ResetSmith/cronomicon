@@ -3,9 +3,57 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
+
+// 2.5.1 SG2.5: an agency's secrets report — its own rows only, the uses and
+// reveals counted, a global administrator's reveal counted as an outside
+// change; CSV with a header row; another agency's administrator gets 404.
+func TestSecretsReport(t *testing.T) {
+	h, pool := gateServer(t)
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gFinAdmin, `{"key":"FIN_TOKEN","source":"stored","scope":"fin-hosts","value":"f"}`)
+	var c struct{ ID string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &c)
+	_ = gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gTaxAdmin, `{"key":"TAX_TOKEN","source":"stored","scope":"tax-hosts","value":"t"}`)
+	if r := gateReq(t, h, http.MethodPost, "/api/v1/env-secrets/"+c.ID+"/reveal", gRoot, ""); r.Code != http.StatusOK {
+		t.Fatalf("reveal = %d", r.Code)
+	}
+	if _, err := pool.Exec(`INSERT INTO secret_uses (at, trace_id, kind, row_id, owner_agency, via, ref_name) VALUES (?, 'run-1', 'secret', ?, 'ag:FIN', 'binding', 'FIN_TOKEN')`,
+		time.Now().UTC().Format(time.RFC3339), c.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = gateReq(t, h, http.MethodGet, "/api/v1/agencies/ag:FIN/secrets-report", gFinAdmin, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("FIN's report = %d %s", rec.Code, rec.Body)
+	}
+	var rep struct {
+		Items []struct {
+			Kind, Name, LastOutsideActor              string
+			Uses, Reveals, OutsideChanges, References int
+		}
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &rep)
+	if len(rep.Items) != 1 || rep.Items[0].Name != "FIN_TOKEN" {
+		t.Fatalf("FIN's report holds %+v", rep.Items)
+	}
+	it := rep.Items[0]
+	if it.Uses != 1 || it.Reveals != 1 || it.OutsideChanges != 1 || it.LastOutsideActor == "" {
+		t.Errorf("FIN_TOKEN's row %+v", it)
+	}
+	rec = gateReq(t, h, http.MethodGet, "/api/v1/agencies/ag:FIN/secrets-report?format=csv", gFinAdmin, "")
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Body.String(), "kind,id,name,scope,source,vault_path") || !strings.Contains(rec.Body.String(), "FIN_TOKEN") {
+		t.Errorf("CSV = %d %q", rec.Code, rec.Body.String())
+	}
+	if r := gateReq(t, h, http.MethodGet, "/api/v1/agencies/ag:FIN/secrets-report", gTaxAdmin, ""); r.Code != http.StatusNotFound {
+		t.Errorf("TAX reading FIN's report = %d, want 404", r.Code)
+	}
+	if r := gateReq(t, h, http.MethodGet, "/api/v1/agencies/ag:FIN/secrets-report?format=xml", gFinAdmin, ""); r.Code != http.StatusBadRequest {
+		t.Errorf("format=xml = %d, want 400", r.Code)
+	}
+}
 
 // 2.5.1 SG2.4: a secret's Usage lists only what would resolve to THIS row —
 // FIN's job that binds FIN_TOKEN, not TAX's job binding its own FIN_TOKEN —

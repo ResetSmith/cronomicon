@@ -7414,6 +7414,63 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Validation' }
 
+  /agencies/{agencyId}/secrets-report:
+    get:
+      tags: [Secrets]
+      operationId: agencySecretsReport
+      summary: An agency's secrets report
+      description: |
+        v2.5.1. One row per stored secret and SSH key the agency owns: its
+        source and Vault path, when it was last rotated and last used, its
+        uses and reveals in the window, how many definitions refer to it, and
+        how many changes someone outside the agency (a global administrator
+        included) made, with the latest such actor. Never a value. Read by the
+        agency's people and those who reach every agency (Global's by the
+        latter only; 404 otherwise); a secret in a scope the caller cannot read
+        is left out, as in the secrets list.
+      parameters:
+        - { $ref: '#/components/parameters/agencyId' }
+        - { name: format, in: query, required: false, schema: { type: string, enum: [json, csv] } }
+        - { name: days, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 3650 }, description: "The window for uses, reveals and outside changes (default 90)." }
+      responses:
+        '200':
+          description: The report (CSV when format=csv).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agency, days, items]
+                properties:
+                  agency: { type: string }
+                  days: { type: integer }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [kind, id, name, scope, source, uses, references, reveals, outsideChanges]
+                      properties:
+                        kind: { type: string, enum: [secret, key] }
+                        id: { type: string }
+                        name: { type: string }
+                        scope: { type: string }
+                        source: { type: string, enum: [stored, vault] }
+                        vaultPath: { type: string }
+                        lastRotated: { type: string, format: date-time }
+                        lastUsed: { type: string, format: date-time }
+                        uses: { type: integer }
+                        references: { type: integer }
+                        reveals: { type: integer }
+                        outsideChanges: { type: integer }
+                        lastOutsideActor: { type: string }
+            text/csv:
+              schema: { type: string }
+        '400':
+          description: A format other than csv or json (`bad_format`), or days outside 1 to 3650 (`bad_days`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /agencies/{agencyId}/groups:
     get:
       tags: [Agencies]

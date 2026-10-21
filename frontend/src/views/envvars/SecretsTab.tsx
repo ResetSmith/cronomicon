@@ -4,7 +4,7 @@ import { VAULT_SECRET_GLOBAL_ONLY, globalOnly } from "../../api/globalAdmin";
 import { GLOBAL_AGENCY, useAgencyIdByName } from "../../api/access";
 import { useVaultPrefixes, vaultPathWhy } from "../../api/vaultPaths";
 import { MoveAgency } from "./MoveAgency";
-import { RowUsagePanel } from "./RowUsage";
+import { RowUsagePanel, SecretsReportButton } from "./RowUsage";
 import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
@@ -356,6 +356,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         <ScopeFilterSelect scopes={scopeNames.filter((s) => s !== ALL_SCOPE_OPTION)} value={scopeFilter} onChange={setScopeFilter} />
         <TagFilterSelect items={items} selected={tagFilter} onChange={setTagFilter} getTags={(v) => tagState.tagsFor(v)} matchMode={tagMatch} onMatchModeChange={setTagMatch} />
         <ColumnsMenu cols={cols} cw={cw} />
+        <SecretsReportButton />
         {canEdit && (
           <Btn primary onClick={() => setAdding(true)}>
             + Add Secret

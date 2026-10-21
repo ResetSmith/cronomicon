@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../../api/client";
+import { api, errMsg } from "../../api/client";
+import { useAgencyOptional } from "../../agency";
 import type { components } from "../../api/schema";
 import { useGet } from "../../hooks";
 import { c } from "../../theme";
-import { InlineLoading, SectionLabel } from "../../components/ui";
+import { Btn, InlineLoading, SectionLabel } from "../../components/ui";
 import { detailBoxStyle, fmtDate } from "./ui";
 
 type RowUsage = components["schemas"]["RowUsage"];
@@ -31,6 +33,44 @@ const RELATION: Record<string, string | undefined> = {
   global_admin: "Global administrator",
   outside: "Outside the agency",
 };
+
+// The agency in use's secrets report (2.5.1 SG2.5, SG-15): every stored secret
+// and SSH key it owns, with each Usage in one CSV row, for the agency to hand
+// to its own auditors. No values. Hidden on the overview and outside the
+// agency switcher (a test, the login screen): it is one agency's.
+export function SecretsReportButton() {
+  const ctx = useAgencyOptional();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (!ctx || ctx.onOverview || !ctx.agency) return null;
+  const agency = ctx.agency;
+  const download = async () => {
+    setBusy(true);
+    setErr(null);
+    const { data, error } = await api.GET("/agencies/{agencyId}/secrets-report", {
+      params: { path: { agencyId: agency }, query: { format: "csv" } },
+      parseAs: "blob",
+    });
+    setBusy(false);
+    if (error || !data) {
+      setErr(error ? errMsg(error) : "the report could not be made");
+      return;
+    }
+    const url = URL.createObjectURL(data as unknown as Blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `secrets-report-${agency}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <Btn onClick={() => void download()} disabled={busy} title={err ?? `Every secret and SSH key of ${ctx.agencyName}: references, uses, reveals and changes by anyone outside it. No values.`}>
+      {busy ? "Working…" : "Download report"}
+    </Btn>
+  );
+}
 
 export function RowUsagePanel({ kind, id }: { kind: "secret" | "key"; id: string }) {
   const q = useGet<RowUsage>(
