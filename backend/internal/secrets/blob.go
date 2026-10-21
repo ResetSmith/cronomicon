@@ -76,8 +76,8 @@ func TokenBound(token string) bool {
 }
 
 type parsedToken struct {
-	bound                         bool
-	kekVer                        int
+	bound                       bool
+	kekVer                      int
 	ctB64, nonceB64, wrappedB64 string
 }
 

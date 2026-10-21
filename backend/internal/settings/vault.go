@@ -371,7 +371,25 @@ type dynamicVaultClient struct {
 	db  *sql.DB
 	cfg *config.Config
 	log *slog.Logger
+	// agency, when set, is the agency whose rows this client answers for
+	// (2.5.1 SG-21): its own Vault when it has connected one, the
+	// installation's when it has not, and an error, never the installation's,
+	// when its own cannot be read or used.
+	agency string
 }
+
+// ForAgency is the client for owner's rows (secrets.AgencyVault).
+func (d *dynamicVaultClient) ForAgency(owner string) secrets.VaultClient {
+	return &dynamicVaultClient{db: d.db, cfg: d.cfg, log: d.log, agency: owner}
+}
+
+// failedVaultClient answers every operation with why the agency's own Vault
+// cannot be used: the installation's is never offered in its place.
+type failedVaultClient struct{ err error }
+
+func (f failedVaultClient) Fetch(string) (string, error) { return "", f.err }
+func (f failedVaultClient) Write(string, string) error   { return f.err }
+func (f failedVaultClient) Configured() bool             { return false }
 
 // resolve returns the client for the config as of now, or nil when Vault is
 // unconfigured/misconfigured. Operations arrive without a context (the
@@ -381,7 +399,54 @@ type dynamicVaultClient struct {
 func (d *dynamicVaultClient) resolve() secrets.VaultClient {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if d.agency != "" && d.agency != agencyid.Global {
+		rt, found, err := ReadAgencyVaultRuntime(ctx, d.db, d.cfg, d.agency)
+		if err != nil {
+			return failedVaultClient{fmt.Errorf("%w: the agency's own Vault cannot be read: %v", secrets.ErrVaultUnavailable, err)}
+		}
+		if found {
+			vc, err := AgencyVaultClient(ctx, d.db, d.cfg, rt)
+			if err != nil {
+				return failedVaultClient{fmt.Errorf("%w: the agency's own Vault: %v", secrets.ErrVaultUnavailable, err)}
+			}
+			return vc
+		}
+	}
 	return sharedVaultClient(ctx, d.db, d.cfg, d.log)
+}
+
+// InstallationVaultClient is the installation's Vault client as configured
+// now, or nil when none is (the connection test, 2.5.1 SG3).
+func InstallationVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Config, log *slog.Logger) secrets.VaultClient {
+	return sharedVaultClient(ctx, database, appCfg, log)
+}
+
+// AgencyVaultClient builds (or reuses, from the process cache) the client for
+// an agency's own Vault. The address is held to the allowed hosts here as
+// well as on write, so a host taken off the list stops being reached.
+func AgencyVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Config, rt AgencyVaultRuntime) (secrets.VaultClient, error) {
+	if err := CheckVaultURL(ctx, database, rt.Addr); err != nil {
+		return nil, err
+	}
+	opts := secrets.VaultOptions{
+		AuthMethod: "approle",
+		Namespace:  rt.Namespace,
+		CAPEM:      rt.CAPEM,
+		Egress:     httpx.EgressPolicy{AllowPrivate: appCfg.OutboundAllowPrivate, AllowLoopback: appCfg.OutboundAllowLoopback},
+	}
+	key := strings.Join([]string{"agency", rt.Addr, rt.RoleID, rt.SecretID, rt.Namespace, string(rt.CAPEM),
+		fmt.Sprintf("%t/%t", opts.Egress.AllowPrivate, opts.Egress.AllowLoopback)}, "\x00")
+	vaultClientMu.Lock()
+	defer vaultClientMu.Unlock()
+	if vc, ok := vaultClientCache[key]; ok {
+		return vc, nil
+	}
+	vc, err := secrets.NewVaultClientWithOptions(rt.Addr, rt.RoleID, rt.SecretID, opts)
+	if err != nil {
+		return nil, err
+	}
+	vaultClientCache[key] = vc
+	return vc, nil
 }
 
 func (d *dynamicVaultClient) Fetch(vaultRef string) (string, error) {

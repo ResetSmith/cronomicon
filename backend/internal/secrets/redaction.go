@@ -62,6 +62,9 @@ var EncryptedSettingsColumns = []SettingsColumn{
 	// write and by settings.SealAlertTargetURLs at start; a plain URL from
 	// before (or with no KEK) is not a token, and is skipped by both consumers.
 	{Label: LabelAlertTargetURL, Table: "alert_targets", Column: "url", Where: "1=1", Key: "id"},
+	// 2.5.1 SG3: an agency's own Vault's AppRole credentials, one row per agency.
+	{Label: LabelAgencyVaultRoleID, Table: "agency_vaults", Column: "role_id_enc", Where: "1=1", Key: "agency_id"},
+	{Label: LabelAgencyVaultSecretID, Table: "agency_vaults", Column: "secret_id_enc", Where: "1=1", Key: "agency_id"},
 }
 
 // ReadSettingsTokens returns every raw (still encrypted) token stored in one

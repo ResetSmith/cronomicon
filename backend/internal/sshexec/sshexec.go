@@ -228,7 +228,6 @@ func (s *Service) Start(ctx context.Context) {
 			"hosts it has no approved key for will fail host_key_unverified until this succeeds at a later start", "error", cerr)
 	}
 
-
 	// The periodic orphan reaper runs whether or not the local runner is on: a
 	// run it started can outlive the switch being turned off.
 	s.track(func() { s.reapOrphansLoop(ctx) })

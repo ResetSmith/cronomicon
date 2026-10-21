@@ -43,6 +43,7 @@ var routeClasses = map[string]routeClass{
 	"/api/v1/agencies/{agencyId}/groups":           {"one-agency", ""},
 	"/api/v1/agencies/{agencyId}/secrets-report":   {"one-agency", ""},
 	"/api/v1/agencies/{agencyId}/held-by-global":   {"one-agency", ""},
+	"/api/v1/agencies/{agencyId}/vault":            {"one-agency", ""},
 	"/api/v1/agency-matrix":                        {"one-agency", ""},
 	"/api/v1/analytics/runs":                       {"one-agency", ""},
 	"/api/v1/audit/export":                         {"one-agency", ""}, // CF-5 (C1); a global administrator's holds all

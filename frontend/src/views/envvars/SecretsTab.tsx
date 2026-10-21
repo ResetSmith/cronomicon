@@ -3,6 +3,7 @@ import { api, fetchCapabilities } from "../../api/client";
 import { VAULT_SECRET_GLOBAL_ONLY, globalOnly } from "../../api/globalAdmin";
 import { GLOBAL_AGENCY, useAgencyIdByName } from "../../api/access";
 import { useVaultPrefixes, vaultPathWhy } from "../../api/vaultPaths";
+import { useAgencyOptional } from "../../agency";
 import { MoveAgency } from "./MoveAgency";
 import { HeldByGlobal, RowUsagePanel, SecretsReportButton } from "./RowUsage";
 import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../../hooks";
@@ -91,11 +92,16 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
 
   // Vault-source secrets are only offered when Vault is actually configured
   // (C.3); otherwise the local-KEK "stored" path is the only active option.
-  const [vaultEnabled, setVaultEnabled] = useState(false);
-  // There is ONE Vault connection for the installation. Since v2.3.0 (LR-80) it
-  // is divided by agency: a global administrator assigns each agency its path
-  // prefixes, and an agency's administrators name paths inside them for the
-  // rows their agency owns. A row that is GLOBAL's has no path limit and stays a
+  // The installation's Vault, or (2.5.1 SG3) the agency in use's own.
+  const [installationVault, setVaultEnabled] = useState(false);
+  const inUse = useAgencyOptional()?.agency;
+  const inUseVault = useVaultPrefixes(inUse && inUse !== GLOBAL_AGENCY ? inUse : undefined, canEdit);
+  const vaultEnabled = installationVault || (inUseVault.kind === "prefixes" && inUseVault.ownVault);
+  // The installation's Vault is divided by agency since v2.3.0 (LR-80): a
+  // global administrator assigns each agency its path prefixes, and an
+  // agency's administrators name paths inside them for the rows their agency
+  // owns. An agency with a Vault of its own (2.5.1) names any path in it, or
+  // inside the prefixes it set itself. A row that is GLOBAL's has no path limit and stays a
   // global administrator's: `vaultWhy` is "" for them and the explanation for
   // anyone else, and it applies to Global's rows only (rowVaultWhy).
   const [vaultGlobal, setVaultGlobal] = useState(false);
@@ -688,7 +694,9 @@ function SecretFormModal({
   const ownerName = isEdit
     ? initial?.ownerAgency || "Global"
     : agencyPick.agencies.find((a) => a.id === agencyPick.selected)?.name || "the agency";
-  const prefixes = useVaultPrefixes(ownerId, vaultEnabled);
+  const prefixes = useVaultPrefixes(ownerId);
+  // The owner's own Vault offers the source even where the installation has none.
+  const offerVault = vaultEnabled || (prefixes.kind === "prefixes" && prefixes.ownVault);
   // Why the Vault SOURCE cannot be chosen at all, and why this PATH cannot be.
   const vaultWhy = ownerId === GLOBAL_AGENCY ? globalVaultWhy : vaultPathWhy(prefixes, ownerName);
   const pathWhy = source === "vault" && ownerId !== GLOBAL_AGENCY ? vaultPathWhy(prefixes, ownerName, vaultPath) : "";
@@ -807,7 +815,7 @@ function SecretFormModal({
                 [
                   { v: "stored", l: "Stored in Cronomicon" },
                   // Vault option only appears when Vault is configured (C.3).
-                  ...(vaultEnabled ? [{ v: "vault", l: "Vault reference" }] : []),
+                  ...(offerVault ? [{ v: "vault", l: "Vault reference" }] : []),
                 ] as { v: SecretSource; l: string }[]
               ).map((opt, i) => {
                 // Vault is configured (so the option is relevant) but this row's
@@ -846,7 +854,7 @@ function SecretFormModal({
                 );
               })}
             </div>
-            {vaultEnabled && vaultWhy && (
+            {offerVault && vaultWhy && (
               <span role="note" style={{ fontSize: c.fontXs, color: c.textMuted, flex: 1, minWidth: 200 }}>{vaultWhy}</span>
             )}
           </div>

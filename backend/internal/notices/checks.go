@@ -450,6 +450,27 @@ func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
 	}
 	rows.Close()
 
+	// 2.5.1 SG-26: an agency with a Vault of its own may name any path in it
+	// when it has no prefixes, and its prefixes are its own to set.
+	own := map[string]bool{}
+	rows, err = database.QueryContext(ctx, `SELECT agency_id FROM agency_vaults`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			rows.Close()
+			return err
+		}
+		own[a] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
 	var found []Finding
 	for _, k := range []struct{ kind, noun, table, nameCol, isVault string }{
 		// Each store's own question for "is this row Vault-backed".
@@ -471,7 +492,20 @@ func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
 				rows.Close()
 				return err
 			}
+			if own[owner] && len(prefixes[owner]) == 0 {
+				continue
+			}
 			if ok, perr := vaultpath.Allowed(ref, prefixes[owner]); perr == nil && ok {
+				continue
+			}
+			if own[owner] {
+				found = append(found, Finding{
+					AgencyID: owner,
+					Subject:  k.kind + ":" + id,
+					Detail: fmt.Sprintf("The %s %s reads the path %s in %s's own Vault, which is outside the prefixes %s set for itself (%s). "+
+						"It still works; it cannot be edited or moved until that is settled. Change the path, or the prefixes on Settings → Agency Vault.",
+						k.noun, name, mustPath(ref), ownerName, ownerName, strings.Join(prefixes[owner], ", ")),
+				})
 				continue
 			}
 			path, _ := vaultpath.Split(ref)
@@ -562,4 +596,10 @@ func checkLegacyPlacement(ctx context.Context, database *sql.DB) error {
 	}
 	rows.Close()
 	return Reconcile(ctx, database, KindLegacyPlacement, found)
+}
+
+// mustPath is a reference's path part, for a sentence.
+func mustPath(ref string) string {
+	path, _ := vaultpath.Split(ref)
+	return path
 }

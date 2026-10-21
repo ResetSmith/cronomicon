@@ -58,8 +58,8 @@ const openAgency = async (globalAdmin: boolean) => {
   );
   await waitFor(() => expect(screen.getByText("Tax")).toBeTruthy());
   fireEvent.click(screen.getByText("Tax").closest("tr")!);
-  await waitFor(() => expect(screen.getByText("Repository, access and alerts")).toBeTruthy());
-  return within(screen.getByText("Repository, access and alerts").parentElement!);
+  await waitFor(() => expect(screen.getByText("Repository, Vault, access and alerts")).toBeTruthy());
+  return within(screen.getByText("Repository, Vault, access and alerts").parentElement!);
 };
 
 describe("an agency's panel: what is edited elsewhere (C7.4)", () => {

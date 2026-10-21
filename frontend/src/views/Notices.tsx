@@ -50,6 +50,8 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   // 2.5.0 C5 (GA-2): its delegates delete it in Users & Access; a global
   // administrator lists the group on Scopes → Agencies.
   grant_group_unlisted: { title: "A grant names a group its agency does not list", to: "/settings?tab=users", toLabel: "Users & Access" },
+  // 2.5.1 SG-28: the agency's own Vault did not answer.
+  agency_vault_unreachable: { title: "An agency's own Vault cannot be reached", to: "/settings?tab=agencyvault", toLabel: "Agency Vault" },
   local_runner_served: { title: "The local runner no longer serves this agency", to: "/runners", toLabel: "Runners" },
   global_script_job: { title: "A job is built on a script of Global's repository", to: "/jobs", toLabel: "Jobs" },
   global_schedule_bound: { title: "A job or workflow is bound to a schedule of Global's", to: "/schedules", toLabel: "Schedules" },

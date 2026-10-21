@@ -22,6 +22,18 @@ func TestRedactionReportCoversEverySettingsColumn(t *testing.T) {
 	cfg := &config.Config{SecretKEKEnv: base64.StdEncoding.EncodeToString(kek), SecretKEKVersion: 1}
 	ctx := context.Background()
 
+	// 2.5.1 SG3: two agencies with a Vault of their own.
+	for _, ag := range []string{"ag-v1", "ag-v2"} {
+		if _, err := pool.ExecContext(ctx, `INSERT INTO agencies(id, name, created_at) VALUES(?, ?, 't')`, ag, ag); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedAgencyVault := func(agency, column, tok string) error {
+		_, err := pool.ExecContext(ctx, fmt.Sprintf(`INSERT INTO agency_vaults(agency_id, addr, role_id_enc, secret_id_enc, created_by, created_at, last_modified_by, last_modified_at)
+			VALUES(?, 'https://v', ?, ?, 't', 't', 't', 't') ON CONFLICT(agency_id) DO UPDATE SET %s=excluded.%s`, column, column), agency, tok, tok)
+		return err
+	}
+
 	want := map[string]string{}
 	for i, sc := range EncryptedSettingsColumns {
 		plain := fmt.Sprintf("settings-plaintext-%d-%s", i, sc.Label)
@@ -45,6 +57,12 @@ func TestRedactionReportCoversEverySettingsColumn(t *testing.T) {
 			q = fmt.Sprintf(`INSERT INTO log_storage_config(id, backend, %s, last_modified_by, last_modified_at) VALUES(1, 'local', ?, 't', '2026-01-01T00:00:00Z') ON CONFLICT(id) DO UPDATE SET %s=excluded.%s`, sc.Column, sc.Column, sc.Column)
 		case "alert_targets":
 			q = `INSERT INTO alert_targets(id, owner_agency, url, enabled, created_at) VALUES('t-sealed', 'global', ?, 1, '2026-01-01T00:00:00Z')`
+		case "agency_vaults":
+			if err := seedAgencyVault("ag-v1", sc.Column, tok); err != nil {
+				t.Fatalf("seed %s: %v", sc.Label, err)
+			}
+			want[sc.Label] = plain
+			continue
 		default:
 			t.Fatalf("no seeding rule for table %q — add one when adding a column", sc.Table)
 		}
@@ -72,6 +90,19 @@ func TestRedactionReportCoversEverySettingsColumn(t *testing.T) {
 			}
 			if _, err := pool.ExecContext(ctx, `INSERT INTO alert_targets(id, owner_agency, url, enabled, created_at) VALUES('t-second', 'global', ?, 1, 'now')`, tok); err != nil {
 				t.Fatalf("seed a second push target: %v", err)
+			}
+			second[sc.Label] = plain
+			continue
+		}
+		if sc.Table == "agency_vaults" {
+			// 2.5.1 SG3: a second agency's own Vault.
+			plain := "second-agency-vault-plaintext-" + sc.Label
+			tok, err := EncryptString(cfg, plain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := seedAgencyVault("ag-v2", sc.Column, tok); err != nil {
+				t.Fatalf("seed a second agency's Vault: %v", err)
 			}
 			second[sc.Label] = plain
 			continue

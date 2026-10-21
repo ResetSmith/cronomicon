@@ -934,19 +934,24 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 // requireVaultPath gates every write that names a Vault path (LR-80; GC-8 and
 // its SSH-key half until 2.3.0).
 //
-// There is ONE Vault connection for the installation, so a Vault-backed secret
-// or key can name any path that connection's credential can read, another
-// agency's included, and migrate-to-Vault can write to any path it can write.
-// From 2.2.2 that made every Vault path a global administrator's to name, which
-// closed the hole and left an agency unable to manage its own Vault-backed
-// secrets. Now the path is judged against the OWNER of the row:
+// An agency without a Vault of its own uses the installation's, so a
+// Vault-backed secret or key can name any path that connection's credential
+// can read, another agency's included, and migrate-to-Vault can write to any
+// path it can write. From 2.2.2 that made every Vault path a global
+// administrator's to name, which closed the hole and left an agency unable to
+// manage its own Vault-backed secrets. Now the path is judged against the
+// OWNER of the row:
 //
 //   - a row that is Global's: a global administrator, any path, as before;
-//   - a row that is an agency's: a path inside one of the prefixes a global
-//     administrator assigned to that agency (internal/vaultpath: whole segments,
-//     no "..", nothing a URL could decode into one). An agency with no prefix
-//     can name no path. This binds a global administrator too — the rule is
-//     about where an agency's secret may point, not about who is typing.
+//   - a row of an agency with no Vault of its own: a path inside one of the
+//     prefixes a global administrator assigned to that agency
+//     (internal/vaultpath: whole segments, no "..", nothing a URL could decode
+//     into one). An agency with no prefix can name no path. This binds a
+//     global administrator too — the rule is about where an agency's secret
+//     may point, not about who is typing;
+//   - a row of an agency with a Vault of its own (2.5.1, SG-26): any path when
+//     it has no prefixes, else a path inside them. The row resolves in that
+//     agency's Vault only (secrets.VaultForOwner).
 //
 // It also asks for the permission on the OWNER agency itself, before the path
 // is judged or the agency's prefixes are named in a refusal. The surrounding
@@ -977,10 +982,20 @@ func (s *Server) requireVaultPath(w http.ResponseWriter, r *http.Request, id aut
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
 	}
+	// 2.5.1 SG-26: in an agency's own Vault every path is its own, and its
+	// prefixes, if it set any, limit only itself.
+	own, err := settings.AgencyHasOwnVault(r.Context(), s.db, ownerAgencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if own && len(prefixes) == 0 {
+		return true
+	}
 	if len(prefixes) == 0 {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "vault_path_not_allowed",
-			"this "+label+"'s agency has no Vault paths assigned, so it cannot name one: a global administrator "+
-				"assigns an agency its Vault path prefixes")
+			"this "+label+"'s agency has no Vault paths assigned in the installation's Vault, so it cannot name one: "+
+				"a global administrator assigns an agency its Vault path prefixes, or the agency connects a Vault of its own")
 		return false
 	}
 	ok, err := vaultpath.Allowed(ref, prefixes)

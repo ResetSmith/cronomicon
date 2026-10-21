@@ -48,7 +48,10 @@ func (s *Server) mountAgencies(mux *http.ServeMux) {
 	// of it an agency may point at is the installation's decision); read by the
 	// agency's own administrators, who need to know where they may write.
 	mux.Handle("GET /api/v1/agencies/{agencyId}/vault-prefixes", s.auth.RequireSession(http.HandlerFunc(s.handleListVaultPrefixes)))
-	mux.Handle("PUT /api/v1/agencies/{agencyId}/vault-prefixes", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleSetVaultPrefixes)))
+	// 2.5.1 SG-26: an agency with a Vault of its own sets its own prefixes
+	// (they limit only itself there); otherwise a global administrator does,
+	// since they divide the installation's Vault between agencies.
+	mux.Handle("PUT /api/v1/agencies/{agencyId}/vault-prefixes", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleSetVaultPrefixes)))
 	// GA-1 (2.5.0 C5): the directory groups an agency's grants may name. Set by
 	// a global administrator; read by the agency's own administrators of access
 	// (question 82), whose grant form offers them (GA-3).
@@ -1175,6 +1178,19 @@ func (s *Server) requireVaultRowFits(w http.ResponseWriter, r *http.Request, id 
 type vaultPrefixesJSON struct {
 	AgencyID string   `json:"agencyId"`
 	Prefixes []string `json:"prefixes"`
+	// OwnVault: the agency has a Vault of its own (2.5.1 SG-26), where no
+	// prefix means any path.
+	OwnVault bool `json:"ownVault"`
+}
+
+// vaultPrefixesAnswer is the list with whether the agency has its own Vault.
+func (s *Server) vaultPrefixesAnswer(w http.ResponseWriter, r *http.Request, agencyID string, prefixes []string) {
+	own, err := settings.AgencyHasOwnVault(r.Context(), s.db, agencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes, OwnVault: own})
 }
 
 func (s *Server) handleListVaultPrefixes(w http.ResponseWriter, r *http.Request) {
@@ -1207,7 +1223,7 @@ func (s *Server) handleListVaultPrefixes(w http.ResponseWriter, r *http.Request)
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes})
+	s.vaultPrefixesAnswer(w, r, agencyID, prefixes)
 }
 
 func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) {
@@ -1217,6 +1233,19 @@ func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	agencyID := r.PathValue("agencyId")
+	if !id.GlobalAdmin(auth.PermConfigureApp) {
+		own, err := settings.AgencyHasOwnVault(r.Context(), s.db, agencyID)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if !own || !id.CanAgency(auth.PermConfigureApp, agencyID) {
+			s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
+				"an agency's Vault path prefixes divide the installation's Vault, so a global administrator sets them; "+
+					"an agency with a Vault of its own sets its own")
+			return
+		}
+	}
 	var body struct {
 		Prefixes *[]string `json:"prefixes"`
 	}
@@ -1242,7 +1271,7 @@ func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) 
 	case err != nil:
 		httpx.Fail500(w, s.log, "update_failed", err)
 	default:
-		httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes})
+		s.vaultPrefixesAnswer(w, r, agencyID, prefixes)
 	}
 }
 

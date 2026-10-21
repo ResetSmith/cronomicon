@@ -406,8 +406,10 @@ whenever the connection is saved. The rest are re-read closer to use.
 | GitLab repo URL / PAT | `CRONOMICON_GITLAB_BASE_URL` / `CRONOMICON_GITLAB_TOKEN` (Global's repository only) | `git_repos` (the row `global`) | when the connection is saved (its sync service is rebuilt and syncs); an env value at restart |
 | GitLab webhook secret | `CRONOMICON_GITLAB_WEBHOOK_SECRET` (Global's repository only; pins validation; **rotation API returns 409 while set**) | `git_repos` (+ rotation overlap pair) | the stored secret: at once (read per delivery); the env value: restart |
 | GitLab write branch | `CRONOMICON_GITLAB_WRITE_BRANCH` (Global's repository only) | `git_repos.branch` | next sync/publish (read per operation) |
-| Vault addr / AppRole | `CRONOMICON_VAULT_ADDR` / `CRONOMICON_VAULT_ROLE_ID[_FILE]` / `CRONOMICON_VAULT_SECRET_ID[_FILE]` | `vault_config` | restart |
-| Vault namespace | `CRONOMICON_VAULT_NAMESPACE` | `vault_config.namespace` | restart |
+| Vault addr / AppRole (the installation's, also Global's) | `CRONOMICON_VAULT_ADDR` / `CRONOMICON_VAULT_ROLE_ID[_FILE]` / `CRONOMICON_VAULT_SECRET_ID[_FILE]` | `vault_config` | next Vault operation (the client is keyed on the resolved config) |
+| Vault namespace | `CRONOMICON_VAULT_NAMESPACE` | `vault_config.namespace` | next Vault operation |
+| An agency's own Vault (2.5.1) | — (no env; an agency cannot set the server's environment) | `agency_vaults` (one row per agency; AppRole credentials sealed) | next Vault operation of that agency's rows |
+| Allowed hosts for an agency's own Vault (2.5.1) | — (no env) | settings KV `vaultAllowedHosts` | at once: asked on every save, test and client build |
 | Run-log dir | — (no env) | `log_storage_config.local_path` | **immediately** — pushed to every writer on save; in-flight runs finish in the old directory and existing files are not moved |
 | Retention windows | seeded from `CRONOMICON_RETENTION_*` on first boot only | `auditCompliance` settings blob | next nightly sweep |
 | Application timezone | `TZ` (fallback only) | settings KV `timezone` | **immediately** — the cron engine is rebuilt in the new zone |

@@ -3722,6 +3722,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/vault/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Log in to the installation's Vault (v2.5.1)
+         * @description An authenticated login with the stored connection; reads nothing. A
+         *     global administrator's. CSRF required.
+         */
+        post: operations["testInstallationVault"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/notifications": {
         parameters: {
             query?: never;
@@ -4459,12 +4480,14 @@ export interface paths {
         };
         /**
          * The Vault paths an agency may name (v2.3.0)
-         * @description The installation has one Vault connection: whatever its credential can
-         *     read, a secret or an SSH key that names the path can have delivered to a
-         *     run. An agency may therefore name Vault paths only inside the prefixes
-         *     listed here (LR-80). None means it can name no Vault path. Global has no
-         *     list: its Vault-backed secrets and keys are a global administrator's,
-         *     with no path limit.
+         * @description An agency without a Vault of its own uses the installation's: whatever
+         *     its credential can read, a secret or an SSH key that names the path can
+         *     have delivered to a run. Such an agency may therefore name Vault paths
+         *     only inside the prefixes listed here (LR-80), and none means it can name
+         *     no Vault path. An agency WITH a Vault of its own (v2.5.1, SG-26;
+         *     `ownVault`) names any path in it when it has no prefixes, and only
+         *     inside them when it has some. Global has no list: its Vault-backed
+         *     secrets and keys are a global administrator's, with no path limit.
          *
          *     A path is inside a prefix when the prefix's SEGMENTS are the path's
          *     first segments: `secret/data/tax` contains `secret/data/tax/db` and not
@@ -4477,9 +4500,12 @@ export interface paths {
         get: operations["getAgencyVaultPrefixes"];
         /**
          * Assign an agency its Vault path prefixes (v2.3.0)
-         * @description Replaces the list. A global administrator's (`configureApp` on every
-         *     agency): which part of the one Vault an agency may point at is the
-         *     installation's decision, not the agency's.
+         * @description Replaces the list. For an agency without a Vault of its own, a global
+         *     administrator's (`configureApp` on every agency): which part of the
+         *     installation's Vault an agency may point at is the installation's
+         *     decision, not the agency's. For an agency with a Vault of its own
+         *     (v2.5.1, SG-26), also `configureApp` on that agency: the prefixes then
+         *     limit only the agency, in its own Vault.
          *
          *     Each prefix is stored normalised (no slash at either end) and refused
          *     whole if its meaning to Vault would be in doubt: an empty, `.` or `..`
@@ -4647,6 +4673,93 @@ export interface paths {
         get: operations["agencySecretsReport"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/vault": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An agency's own Vault connection (v2.5.1)
+         * @description An agency may connect a Vault of its own (SG-20); one that does not
+         *     uses the installation's, which is also Global's. A Vault-backed secret
+         *     or SSH key resolves in its OWNER agency's Vault (SG-21), and an agency
+         *     whose own connection cannot be read or used fails: it is never given
+         *     the installation's instead. `configureApp` on the agency; Global is
+         *     422 `use_installation_vault`.
+         */
+        get: operations["getAgencyVault"];
+        /**
+         * Connect or change an agency's own Vault (v2.5.1)
+         * @description `configureApp` on the agency. The address is held to the installation's
+         *     `vaultAllowedHosts` (422 `validation_failed`). The server logs in first
+         *     (422 `vault_login_failed`), then reads each Vault-backed secret and SSH
+         *     key the agency owns in the new Vault (SG-25; each value discarded). When
+         *     any would not resolve the answer is 409 `references_unresolved` with
+         *     the list, and nothing is stored, unless `confirmUnresolved` is set.
+         *     Connecting moves every one of the agency's Vault references at once.
+         *     Logged as `vault-connected` or `vault-updated`. CSRF required.
+         */
+        put: operations["putAgencyVault"];
+        post?: never;
+        /**
+         * Disconnect an agency's own Vault (v2.5.1)
+         * @description `configureApp` on the agency. Refused while the agency owns any
+         *     Vault-backed secret or SSH key (409 `vault_in_use`, SG-27): they would
+         *     all move to the installation's Vault at once. Deleting the agency
+         *     deletes its connection. Logged as `vault-disconnected`. CSRF required.
+         */
+        delete: operations["deleteAgencyVault"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/vault/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Log in to a proposed agency Vault (v2.5.1)
+         * @description An AppRole login with the body's connection (blank credentials are the
+         *     stored ones). Reads nothing. `configureApp` on the agency. CSRF required.
+         */
+        post: operations["testAgencyVault"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/vault/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Would the agency's Vault references resolve in a proposed Vault (v2.5.1)
+         * @description SG-25: every Vault-backed secret and SSH key the agency owns, and
+         *     whether its path reads in the body's Vault. Each value read is
+         *     discarded; none is ever returned. `configureApp` on the agency. CSRF
+         *     required.
+         */
+        post: operations["previewAgencyVault"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8930,8 +9043,71 @@ export interface components {
         /** @description The Vault path prefixes assigned to one agency (v2.3.0, LR-80). */
         AgencyVaultPrefixes: {
             agencyId: string;
-            /** @description Normalised, sorted. Empty means the agency can name no Vault path. */
+            /**
+             * @description Normalised, sorted. Empty means the agency can name no Vault path,
+             *     unless it has a Vault of its own (`ownVault`), where it means any.
+             */
             prefixes: string[];
+            /**
+             * @description v2.5.1 (SG-26) — the agency has connected a Vault of its own
+             *     (`/agencies/{agencyId}/vault`). Its prefixes then limit only itself
+             *     in its own Vault and are optional, and its `configureApp` sets them.
+             */
+            ownVault?: boolean;
+        };
+        /**
+         * @description An agency's own Vault connection (v2.5.1, SG3). Never carries a
+         *     credential: whether each is set is all a read says.
+         */
+        AgencyVault: {
+            agencyId: string;
+            /** @description `https://` address, on `vaultAllowedHosts`. */
+            addr: string;
+            /** @description Vault Enterprise namespace */
+            namespace: string;
+            /** @description A CA bundle is stored for this Vault. */
+            caPresent: boolean;
+            roleIdSet: boolean;
+            secretIdSet: boolean;
+            lastModifiedBy: string;
+            lastModifiedAt: string;
+        };
+        AgencyVaultState: {
+            agencyId: string;
+            /** @description False when the agency uses the installation's Vault. */
+            connected: boolean;
+            vault?: components["schemas"]["AgencyVault"] | null;
+        };
+        /**
+         * @description AppRole only (SG-23). A blank `roleId` or `secretId` keeps the stored
+         *     one; a first connection needs both. `caPem` absent keeps the stored
+         *     bundle, an empty string clears it (PEM, 64 KiB at most).
+         */
+        AgencyVaultInput: {
+            addr: string;
+            namespace?: string;
+            roleId?: string;
+            secretId?: string;
+            caPem?: string;
+            /** @description On a save, store it even though some of the agency's Vault references would not resolve there. */
+            confirmUnresolved?: boolean;
+        };
+        /** @description One of the agency's Vault-backed secrets or SSH keys, and whether its path reads in the proposed Vault. The value read is discarded. */
+        AgencyVaultReference: {
+            /** @enum {string} */
+            kind: "secret" | "key";
+            id: string;
+            /** @description The secret's key or the SSH key's label. */
+            name: string;
+            /** @description The reference as written (`path#field`). */
+            path: string;
+            resolves: boolean;
+            /** @description Why it did not */
+            problem?: string;
+        };
+        VaultTestResult: {
+            ok: boolean;
+            problem?: string;
         };
         /** @description The directory groups one agency's grants may name (v2.5.0, GA-1). */
         AgencyGroups: {
@@ -9482,6 +9658,21 @@ export interface components {
              *     the list as it is; an empty list empties it.
              */
             gitAllowedHosts?: string[];
+            /**
+             * @description v2.5.1 (SG-22) — the hosts an AGENCY's own Vault may be on
+             *     (`PUT /agencies/{agencyId}/vault`). The address must be
+             *     `https://`, carry no user or password, and name a host on this
+             *     list; entries follow the rules of `gitAllowedHosts`. An EMPTY
+             *     list allows no agency to connect a Vault of its own. The list is
+             *     asked again every time a client is built, so a host taken off it
+             *     stops being reached, and that agency's Vault-backed secrets and
+             *     keys stop resolving (they never fall back to the installation's
+             *     Vault). The installation's own Vault is exempt.
+             *
+             *     Always present when read. On a write, OMITTING the field leaves
+             *     the list as it is; an empty list empties it.
+             */
+            vaultAllowedHosts?: string[];
         } & components["schemas"]["AuditFields"];
         GitlabConfig: {
             /** @description Bot PAT. Masked on read; omit on write to keep stored value. */
@@ -16853,6 +17044,31 @@ export interface operations {
             422: components["responses"]["Validation"];
         };
     };
+    testInstallationVault: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether the login succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultTestResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     getNotificationConfig: {
         parameters: {
             query?: never;
@@ -18483,6 +18699,178 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getAgencyVault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connection, or `connected` false. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgencyVaultState"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    putAgencyVault: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgencyVaultInput"];
+            };
+        };
+        responses: {
+            /** @description Stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgencyVaultState"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Some references would not resolve (`references_unresolved`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        message: string;
+                        references: components["schemas"]["AgencyVaultReference"][];
+                    };
+                };
+            };
+            422: components["responses"]["Validation"];
+        };
+    };
+    deleteAgencyVault: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The agency still has Vault-backed rows (`vault_in_use`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["Validation"];
+        };
+    };
+    testAgencyVault: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgencyVaultInput"];
+            };
+        };
+        responses: {
+            /** @description Whether the login succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultTestResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    previewAgencyVault: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgencyVaultInput"];
+            };
+        };
+        responses: {
+            /** @description One entry per reference. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        references: components["schemas"]["AgencyVaultReference"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
         };
     };
     getAgencyGroups: {

@@ -18,6 +18,7 @@ import { VaultSection, LogStorageSection, ObservabilitySection } from "./setting
 import { RepositoriesSection } from "./settings/Repositories";
 import { LocalRunnerSection } from "./settings/LocalRunner";
 import { BackupsSection } from "./settings/Backups";
+import { AgencyVaultSection } from "./settings/AgencyVault";
 import { TimezoneAlert } from "./settings/TimezoneAlert";
 
 // Settings — two groups since v2.3.0 (LR-86).
@@ -62,6 +63,9 @@ const SECTIONS = [
   // group's GitLab Connection (Global's alone, through a deprecated route).
   { group: "Agency", key: "repositories", label: "Repositories", requires: "configureApp", global: "configureAppGlobal" },
   { group: "Agency", key: "targets", label: "SSH Targets", requires: "configureApp", global: "configureAppGlobal" },
+  // 2.5.1 SG3: an agency's own Vault, its administrators' to connect; in
+  // Global, a pointer to the Installation group's Vault.
+  { group: "Agency", key: "agencyvault", label: "Agency Vault", requires: "configureApp", global: "configureAppGlobal" },
   // 2.5.0 C4 (AL-1 to AL-3): an agency's alert rules and push targets, its
   // administrators' to change. The relay they send through stays on
   // Notifications, in the Installation group.
@@ -187,6 +191,7 @@ export function Settings() {
           {section === "observability" && <ObservabilitySection canWrite={isGlobal} />}
           {section === "targets" && <SshTargetsSection canWrite={isGlobal} />}
           {section === "alerts" && <AlertsSection isGlobal={isGlobal} />}
+          {section === "agencyvault" && <AgencyVaultSection isGlobal={isGlobal} />}
           {section === "logstorage" && <LogStorageSection canWrite={isGlobal} />}
           {section === "users" && <UsersAccessSection />}
           {section === "serviceaccounts" && <ServiceAccountsSection canGrantEverywhere={isGlobal} />}

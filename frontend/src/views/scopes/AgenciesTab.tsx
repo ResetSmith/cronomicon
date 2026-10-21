@@ -756,6 +756,14 @@ function AgencyElsewhere({ agencyId }: { agencyId: string }) {
   const grantsQ = useGet<unknown>(() => api.GET("/access-grants"), []);
   const rulesQ = useGet<unknown>(() => api.GET("/alerts", { headers: allReadable }), []);
   const targetsQ = useGet<unknown>(() => api.GET("/alert-targets", { headers: allReadable }), []);
+  // 2.5.1 SG3: whose Vault the agency's Vault-backed rows resolve in.
+  const vaultQ = useGet<{ ownVault?: boolean }>(
+    () =>
+      agencyId === GLOBAL_AGENCY
+        ? Promise.resolve({ data: { ownVault: false } })
+        : api.GET("/agencies/{agencyId}/vault-prefixes", { params: { path: { agencyId } } }),
+    [agencyId],
+  );
   const there = (tab: string) => `/settings?tab=${tab}&agency=${encodeURIComponent(agencyId)}`;
   const notYours = <span style={{ color: c.textMuted }}>not yours to read</span>;
 
@@ -777,7 +785,7 @@ function AgencyElsewhere({ agencyId }: { agencyId: string }) {
   return (
     <div style={{ borderTop: `1px solid ${c.borderLight}`, paddingTop: 10 }}>
       <div style={{ fontSize: c.fontXs, fontFamily: c.sansCond, fontWeight: 700, color: c.textMuted, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 6 }}>
-        Repository, access and alerts
+        Repository, Vault, access and alerts
       </div>
       {line(
         "Repository",
@@ -798,6 +806,20 @@ function AgencyElsewhere({ agencyId }: { agencyId: string }) {
         ),
         "repositories",
         "Repositories →",
+      )}
+      {line(
+        "Vault",
+        vaultQ.loading ? (
+          <InlineLoading />
+        ) : vaultQ.error ? (
+          notYours
+        ) : vaultQ.data?.ownVault ? (
+          <span>its own</span>
+        ) : (
+          <span style={{ color: c.textSec }}>the installation's</span>
+        ),
+        "agencyvault",
+        "Vault →",
       )}
       {line(
         "Access",

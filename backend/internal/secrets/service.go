@@ -369,12 +369,12 @@ func (s *Service) Delete(ctx context.Context, id string) (bool, error) {
 // The caller MUST write a change_log row after a successful reveal.
 func (s *Service) Reveal(ctx context.Context, id string) (string, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT source, vault_ref, ciphertext, nonce, wrapped_dek, COALESCE(kek_version, 1), seal_format FROM secrets WHERE id=?`, id)
-	var source string
+		`SELECT source, vault_ref, ciphertext, nonce, wrapped_dek, COALESCE(kek_version, 1), seal_format, COALESCE(owner_agency, '') FROM secrets WHERE id=?`, id)
+	var source, owner string
 	var vaultRef sql.NullString
 	var ciphertext, nonce, wrappedDEK []byte
 	var kekVer, format int
-	if err := row.Scan(&source, &vaultRef, &ciphertext, &nonce, &wrappedDEK, &kekVer, &format); err != nil {
+	if err := row.Scan(&source, &vaultRef, &ciphertext, &nonce, &wrappedDEK, &kekVer, &format, &owner); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// L3: fail closed — a missing row must NOT resolve to an empty value (which
 			// the dispatch resolver would inject blindly, and the reveal API would hand
@@ -390,7 +390,7 @@ func (s *Service) Reveal(ctx context.Context, id string) (string, error) {
 		if !vaultRef.Valid || vaultRef.String == "" {
 			return "", fmt.Errorf("vault-source secret has no vault_ref")
 		}
-		return s.vault.Fetch(vaultRef.String)
+		return VaultForOwner(s.vault, owner).Fetch(vaultRef.String) // 2.5.1 SG-21: the owner's Vault
 	}
 	plain, err := s.sealer.Open(RowBinding("secrets", id), format, ciphertext, nonce, wrappedDEK, kekVer)
 	if err != nil {
@@ -414,7 +414,12 @@ func (s *Service) MigrateToVault(ctx context.Context, id, vaultPath, actor strin
 	if err != nil {
 		return nil, fmt.Errorf("decrypt for migration: %w", err)
 	}
-	if err := s.vault.Write(vaultPath, plaintext); err != nil {
+	var ownerID string
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(owner_agency, '') FROM secrets WHERE id = ?`, id).Scan(&ownerID); err != nil {
+		return nil, fmt.Errorf("read the secret's owner: %w", err)
+	}
+	// 2.5.1 SG-21: written to the owner's Vault, where its reads will look.
+	if err := VaultForOwner(s.vault, ownerID).Write(vaultPath, plaintext); err != nil {
 		return nil, fmt.Errorf("vault write: %w", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
