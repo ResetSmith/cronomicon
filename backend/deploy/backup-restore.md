@@ -7,6 +7,13 @@ cloned on the volume (since 2.4.0, one clone per repository); the clones are not
 in the snapshot, because the repositories are their source and the server
 rebuilds them (see [After a restore: runs and repositories](#after-a-restore-runs-and-repositories)).
 
+> **2.5.1 is a one-way upgrade: back up before you start it.** At its first
+> start 2.5.1 binds every sealed value (stored secrets, SSH keys, repository
+> tokens, Vault and other credentials) to its own row. After that **2.5.0
+> cannot open them**, and the down of migration 1620 does not undo it. The
+> backup taken before the upgrade is the only way back to 2.5.0; anything
+> changed since is lost. Restoring that backup and starting 2.5.0 on it works.
+
 ## How the nightly backup works
 
 The retention worker (`internal/db/retention.go`), started at boot, runs the
@@ -25,8 +32,16 @@ fire and the only durable backup could silently never run. The sweep:
    snapshot taken without locking out live traffic (WAL). The write is
    **idempotent**: a same-UTC-day re-run removes the prior snapshot first,
    so a second sweep can't abort on SQLite's overwrite refusal *after*
-   the prune already ran.
+   the prune already ran. Local snapshots are kept for 7 days.
+   **When backup keys are set (2.5.1, optional)**, the snapshot is written
+   into a private `.staging` directory, encrypted with
+   [age](https://age-encryption.org) to every key, kept as
+   `cronomicon-YYYYMMDD.db.age` (with a `.recipients` file naming the keys'
+   fingerprints), and the plaintext is removed on every path. If the
+   encryption fails, the backup fails: nothing is kept or uploaded
+   unencrypted in its place.
 3. Uploads the snapshot to `s3://<bucket>/cronomicon-backups/cronomicon-YYYYMMDD.db`
+   (or `….db.age`, with the key fingerprints in its metadata)
    when S3 is configured (`internal/backup`). If unconfigured, the snapshot is
    kept locally only (the step is skipped — the S3 upload is optional).
 4. On success, records the last-success time (flat-KV `settings.backupLastSuccessAt`)
@@ -47,6 +62,28 @@ Recommended alert (a backup is overdue / has been silently failing):
 time() - cronomicon_backup_last_success_timestamp_seconds > 129600   # 36h
 ```
 
+## Encrypted backups (2.5.1, optional)
+
+A global administrator adds age X25519 **public** keys (`age1…`) in **Settings →
+Backups**; `CRONOMICON_BACKUP_RECIPIENTS` seeds them once on a database that has
+none. From the next backup on, every snapshot is encrypted to all of them; with
+no key, backups are written unencrypted as before.
+
+- **The private keys never go to the server.** Make one with `age-keygen -o
+  cronomicon-backup.key` on a machine you control, paste the public key it
+  prints, and keep the file (and a copy) somewhere neither this server nor
+  the bucket can reach. **If every private key is lost, every encrypted
+  backup is unreadable**: nobody, including the server, can open them. Turning
+  encryption on asks you to confirm that in three statements. Adding a second
+  key (held by someone else) is the usual protection.
+- **The KEK is still needed.** A backup holds the stored secrets sealed with
+  the KEK; decrypting the backup does not decrypt them. Keep the KEK, the
+  backup keys and the bucket apart from each other.
+- **What it does not do:** turning encryption on does not encrypt or remove
+  the unencrypted snapshots already in the bucket or the backup directory.
+  Delete them yourself once an encrypted backup exists. Removing a key leaves
+  the snapshots made with it openable by it alone.
+
 ## Configuration (environment)
 
 | Var | Notes |
@@ -57,6 +94,7 @@ time() - cronomicon_backup_last_success_timestamp_seconds > 129600   # 36h
 | `CRONOMICON_BACKUP_S3_ACCESS_KEY` / `_SECRET_KEY` | static credentials (env, not the DB). **Omit both to use the ambient IAM credential chain** — see below |
 | `CRONOMICON_BACKUP_S3_USE_SSL` | default `true` |
 | `CRONOMICON_BACKUP_AT` | daily sweep time, `HH:MM` UTC; default `02:00` |
+| `CRONOMICON_BACKUP_RECIPIENTS` | age public keys, comma- or newline-separated; seeds Settings → Backups **once**, on a database with none (2.5.1). Optional |
 
 > **Credential resolution.** When both `_ACCESS_KEY` and
 > `_SECRET_KEY` are set, those static keys are used. When
@@ -84,11 +122,21 @@ server uses. **Stop the server first** — the swap replaces the live `.db` and 
 `-wal`/`-shm` sidecars.
 
 ```
-cronomicon restore --list                          # show available snapshots (newest first)
+cronomicon restore --list                          # show available snapshots (newest first; ENCRYPTED TO shows the keys)
 cronomicon restore                                 # restore the LATEST snapshot over CRONOMICON_DB_PATH
 cronomicon restore --from cronomicon-20260722.db      # restore a specific snapshot
 cronomicon restore --db /var/lib/cronomicon/cronomicon.db --yes   # non-interactive
+cronomicon restore --identity cronomicon-backup.key   # an encrypted snapshot (2.5.1; repeat --identity for several key files)
+cronomicon restore --file /var/lib/cronomicon/backups/cronomicon-20260722.db.age --identity cronomicon-backup.key
+                                                   # a local copy instead of the bucket
 ```
+
+An encrypted snapshot is recognised by its content, not its name. It is
+decrypted beside the target (`<db>.restore-decrypted`) and checked before the
+live database is touched; a missing or wrong key is refused with the live
+database untouched, and the decrypted copy is removed either way. A restore
+killed part-way can leave that copy behind: remove it. `--file` refuses the
+very database it would replace.
 
 It refuses an obviously-active DB (a best-effort write-lock probe — not a
 substitute for stopping the service), prompts for confirmation (skip with
@@ -101,7 +149,9 @@ apply migrations and re-supply the KEK/OIDC keys (step 5 below).
 1. **Stop** the container/process (so nothing holds the DB open).
 2. Fetch the snapshot:
    `aws s3 cp s3://<bucket>/cronomicon-backups/cronomicon-YYYYMMDD.db ./restore.db`
-   (or `mc cp` for MinIO).
+   (or `mc cp` for MinIO). An encrypted one (`….db.age`) is opened with the
+   `age` tool and a private key:
+   `age -d -i cronomicon-backup.key -o ./restore.db cronomicon-YYYYMMDD.db.age`.
 3. Replace the live DB and clear stale WAL/SHM sidecars:
    ```
    rm -f /var/lib/cronomicon/cronomicon.db /var/lib/cronomicon/cronomicon.db-wal /var/lib/cronomicon/cronomicon.db-shm
