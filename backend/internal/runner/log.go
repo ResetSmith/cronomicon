@@ -119,7 +119,7 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("ingest redaction: resolve failed; global dictionary still applies",
 			"trace_id", traceID, "error", injectErr)
 	}
-	redactor, err := NewRedactor(r.Context(), s.db, s.cfg, scope, injectRedact...)
+	redactor, err := NewRedactor(r.Context(), s.db, s.cfg, scope, RunAgencyIDs(r.Context(), s.db, traceID), injectRedact...)
 	redactorBroken := err != nil
 	if redactorBroken {
 		s.log.Error("build redactor", "trace_id", traceID, "error", err)

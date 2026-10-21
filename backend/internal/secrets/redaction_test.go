@@ -43,6 +43,8 @@ func TestRedactionReportCoversEverySettingsColumn(t *testing.T) {
 			q = fmt.Sprintf(`INSERT INTO notification_config(id, %s, last_modified_by, last_modified_at) VALUES(1, ?, 't', '2026-01-01T00:00:00Z') ON CONFLICT(id) DO UPDATE SET %s=excluded.%s`, sc.Column, sc.Column, sc.Column)
 		case "log_storage_config":
 			q = fmt.Sprintf(`INSERT INTO log_storage_config(id, backend, %s, last_modified_by, last_modified_at) VALUES(1, 'local', ?, 't', '2026-01-01T00:00:00Z') ON CONFLICT(id) DO UPDATE SET %s=excluded.%s`, sc.Column, sc.Column, sc.Column)
+		case "alert_targets":
+			q = `INSERT INTO alert_targets(id, owner_agency, url, enabled, created_at) VALUES('t-sealed', 'global', ?, 1, '2026-01-01T00:00:00Z')`
 		default:
 			t.Fatalf("no seeding rule for table %q — add one when adding a column", sc.Table)
 		}
@@ -61,6 +63,19 @@ func TestRedactionReportCoversEverySettingsColumn(t *testing.T) {
 	}
 	keyed := 0
 	for _, sc := range EncryptedSettingsColumns {
+		if sc.Table == "alert_targets" {
+			// 2.5.1 SG2.8: a second push target, of another agency.
+			plain := "second-target-plaintext-" + sc.Label
+			tok, err := EncryptString(cfg, plain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.ExecContext(ctx, `INSERT INTO alert_targets(id, owner_agency, url, enabled, created_at) VALUES('t-second', 'global', ?, 1, 'now')`, tok); err != nil {
+				t.Fatalf("seed a second push target: %v", err)
+			}
+			second[sc.Label] = plain
+			continue
+		}
 		if sc.Table != "git_repos" {
 			if sc.Key != "" {
 				t.Errorf("%s has a Key and no seeding rule for a second row — add one", sc.Label)

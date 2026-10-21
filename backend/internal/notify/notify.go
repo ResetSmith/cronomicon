@@ -818,9 +818,15 @@ func (d *Dispatcher) targetURLs(ctx context.Context, q string, args ...any) ([]s
 	var out []string
 	seen := map[string]bool{}
 	for rows.Next() {
-		var u string
-		if err := rows.Scan(&u); err != nil {
+		var stored string
+		if err := rows.Scan(&stored); err != nil {
 			return nil, err
+		}
+		// 2.5.1 SG2.8: sealed at rest; a plain URL from before reads as is.
+		u, err := secrets.OpenSetting(d.cfg, stored)
+		if err != nil {
+			d.log.Error("a push target's URL cannot be opened (is its KEK configured?); skipping it", "error", err)
+			continue
 		}
 		if !seen[u] {
 			seen[u] = true

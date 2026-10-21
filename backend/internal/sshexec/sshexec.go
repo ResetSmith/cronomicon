@@ -1335,7 +1335,7 @@ func (s *Service) openLog(ctx context.Context, r claimedRun, extraRedact []strin
 	// material (extraRedact, P1.3) so an injected secret can never surface
 	// un-masked in this executor's logs. Run override env values (prompt
 	// answers) are log-visible by design and are not fed in.
-	red, err := runner.NewRedactor(ctx, s.db, s.cfg, r.scope, extraRedact...)
+	red, err := runner.NewRedactor(ctx, s.db, s.cfg, r.scope, runner.RunAgencyIDs(ctx, s.db, r.traceID), extraRedact...)
 	if err != nil {
 		// FAIL CLOSED when we are holding injected secret values that MUST be
 		// masked: a broken redactor (e.g. a transient env_vars query error) would

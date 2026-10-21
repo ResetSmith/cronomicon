@@ -1651,7 +1651,7 @@ func alertTargetView(id auth.Identity, t settings.AlertTarget) settings.AlertTar
 
 func (s *Server) handleListAlertTargets(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.IdentityFrom(r.Context())
-	list, err := settings.ListAlertTargets(r.Context(), s.db)
+	list, err := settings.ListAlertTargets(r.Context(), s.db, s.cfg)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -1667,7 +1667,7 @@ func (s *Server) handleListAlertTargets(w http.ResponseWriter, r *http.Request) 
 // 404 to one who may not read it (question 72), 403 to one who reads it but
 // holds no configureApp on its agency (AL-3).
 func (s *Server) alertTargetFor(w http.ResponseWriter, r *http.Request, id auth.Identity) (*settings.AlertTarget, bool) {
-	t, err := settings.GetAlertTarget(r.Context(), s.db, r.PathValue("targetId"))
+	t, err := settings.GetAlertTarget(r.Context(), s.db, s.cfg, r.PathValue("targetId"))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return nil, false
@@ -1760,7 +1760,7 @@ func (s *Server) handleCreateAlertTarget(w http.ResponseWriter, r *http.Request)
 	if !pushTargetSchemeAllowed(w, id, owner, inp.URL) {
 		return
 	}
-	t, err := settings.CreateAlertTarget(r.Context(), s.db, *inp, id.Email)
+	t, err := settings.CreateAlertTarget(r.Context(), s.db, s.cfg, *inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "create_failed", err)
 		return
@@ -1787,7 +1787,7 @@ func (s *Server) handleUpdateAlertTarget(w http.ResponseWriter, r *http.Request)
 	if inp.URL != stored.URL && !pushTargetSchemeAllowed(w, id, stored.OwnerAgency, inp.URL) {
 		return
 	}
-	t, err := settings.UpdateAlertTarget(r.Context(), s.db, r.PathValue("targetId"), *inp, id.Email)
+	t, err := settings.UpdateAlertTarget(r.Context(), s.db, s.cfg, r.PathValue("targetId"), *inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "update_failed", err)
 		return

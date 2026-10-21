@@ -58,6 +58,10 @@ var EncryptedSettingsColumns = []SettingsColumn{
 	{Label: "vault.secretId", Table: "vault_config", Column: "secret_id_enc", Where: "id=1"},
 	{Label: "notifications.smtpPassword", Table: "notification_config", Column: "smtp_password_enc", Where: "id=1"},
 	{Label: "observability.bearerToken", Table: "settings", Column: "value", Where: "key='obs.bearerTokenEnc'"},
+	// 2.5.1 SG2.8: a push target's URL carries the service's token. Sealed at
+	// write and by settings.SealAlertTargetURLs at start; a plain URL from
+	// before (or with no KEK) is not a token, and is skipped by both consumers.
+	{Label: "alerts.targetURL", Table: "alert_targets", Column: "url", Where: "1=1", Key: "id"},
 }
 
 // ReadSettingsTokens returns every raw (still encrypted) token stored in one
@@ -119,6 +123,48 @@ func (sc SettingsColumn) RowLabel(key string) string {
 //
 // IMPORTANT: never log or persist the returned values (S7).
 func RedactionReport(ctx context.Context, database *sql.DB, cfg *config.Config) (values []string, undecryptable int, err error) {
+	return redactionReport(ctx, database, cfg, nil)
+}
+
+// RedactionValuesFor is the dictionary for ONE run of the given agencies (ids)
+// (2.5.1 SG2.8, SG-18): the stored secrets and SSH keys those agencies and
+// Global own, the installation's encrypted settings, and of the per-agency
+// settings (a repository's token, an agency's own Vault credentials) only
+// those agencies'. A run's log used to be masked with every agency's values,
+// so a run of one agency could test a guess at another's secret by echoing it.
+// The process-wide audit dictionary is RedactionReport's, unchanged.
+func RedactionValuesFor(ctx context.Context, database *sql.DB, cfg *config.Config, agencyIDs []string) ([]string, error) {
+	owners := map[string]bool{"global": true}
+	for _, a := range agencyIDs {
+		if a != "" {
+			owners[a] = true
+		}
+	}
+	values, _, err := redactionReport(ctx, database, cfg, owners)
+	return values, err
+}
+
+// settingsRowOwner is the agency a keyed settings row belongs to, or "" for an
+// installation-wide (singleton) column.
+func settingsRowOwner(ctx context.Context, database *sql.DB, sc SettingsColumn, key string) string {
+	var owner string
+	switch sc.Table {
+	case "git_repos":
+		_ = database.QueryRowContext(ctx, `SELECT agency_id FROM git_repos WHERE id = ?`, key).Scan(&owner)
+	case "agency_vaults":
+		owner = key
+	case "alert_targets":
+		_ = database.QueryRowContext(ctx, `SELECT owner_agency FROM alert_targets WHERE id = ?`, key).Scan(&owner)
+	}
+	if sc.Key != "" && owner == "" {
+		return "global"
+	}
+	return owner
+}
+
+// redactionReport is RedactionReport, limited to the rows owners own when
+// owners is not nil.
+func redactionReport(ctx context.Context, database *sql.DB, cfg *config.Config, owners map[string]bool) (values []string, undecryptable int, err error) {
 	kekCache := map[int][]byte{}
 	kekFor := func(ver int) []byte {
 		if k, ok := kekCache[ver]; ok {
@@ -138,7 +184,7 @@ func RedactionReport(ctx context.Context, database *sql.DB, cfg *config.Config) 
 	// table that private key would never enter the dictionary.
 	for _, table := range []string{"secrets", "ssh_credentials"} {
 		rows, qerr := database.QueryContext(ctx,
-			`SELECT ciphertext, nonce, wrapped_dek, COALESCE(kek_version, 1) FROM `+table+
+			`SELECT ciphertext, nonce, wrapped_dek, COALESCE(kek_version, 1), COALESCE(NULLIF(owner_agency, ''), 'global') FROM `+table+
 				` WHERE source='stored' AND ciphertext IS NOT NULL`)
 		if qerr != nil {
 			if table == "secrets" {
@@ -149,8 +195,12 @@ func RedactionReport(ctx context.Context, database *sql.DB, cfg *config.Config) 
 		for rows.Next() {
 			var ciphertext, nonce, wrappedDEK []byte
 			var kekVer int
-			if serr := rows.Scan(&ciphertext, &nonce, &wrappedDEK, &kekVer); serr != nil {
+			var owner string
+			if serr := rows.Scan(&ciphertext, &nonce, &wrappedDEK, &kekVer, &owner); serr != nil {
 				undecryptable++
+				continue
+			}
+			if owners != nil && !owners[owner] {
 				continue
 			}
 			kek := kekFor(kekVer)
@@ -185,6 +235,9 @@ func RedactionReport(ctx context.Context, database *sql.DB, cfg *config.Config) 
 		for _, t := range toks {
 			if _, isToken := TokenKEKVersion(t.Token); !isToken {
 				continue // an un-encrypted legacy value set by hand; not ours to count
+			}
+			if owners != nil && sc.Key != "" && !owners[settingsRowOwner(ctx, database, sc, t.Key)] {
+				continue
 			}
 			plain, derr := DecryptString(cfg, t.Token)
 			if derr != nil {

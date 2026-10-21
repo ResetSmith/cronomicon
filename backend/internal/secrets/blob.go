@@ -99,6 +99,17 @@ func DecryptString(cfg *config.Config, token string) (string, error) {
 	return string(plain), nil
 }
 
+// OpenSetting is a stored setting's plaintext: the decrypted value of a token
+// EncryptString wrote, or the value itself when it is not one (written before
+// it was sealed, or with no KEK configured). For a column that is sealed from
+// some release on and may still hold plain rows (2.5.1: push-target URLs).
+func OpenSetting(cfg *config.Config, v string) (string, error) {
+	if _, ok := TokenKEKVersion(v); !ok {
+		return v, nil
+	}
+	return DecryptString(cfg, v)
+}
+
 // ErrNoKEK is the exported sentinel for "no KEK configured", so callers (e.g.
 // notify) can distinguish a missing KEK from a real crypto failure.
 var ErrNoKEK = errNoKEK

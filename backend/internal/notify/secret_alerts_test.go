@@ -2,10 +2,37 @@ package notify
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/ResetSmith/cronomicon/internal/config"
+	"github.com/ResetSmith/cronomicon/internal/secrets"
 )
+
+// 2.5.1 SG2.8: a sealed push-target URL is pushed to as its plain URL.
+func TestSealedTargetURLIsOpenedForAPush(t *testing.T) {
+	d, pool := newDispatcherDB(t)
+	kek := make([]byte, 32)
+	_, _ = rand.Read(kek)
+	d.cfg = &config.Config{SecretKEKEnv: base64.StdEncoding.EncodeToString(kek), SecretKEKVersion: 1}
+	tok, err := secrets.EncryptString(d.cfg, "slack://SEALED")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTarget(t, pool, "t-sealed", "global", tok, true)
+	seedTarget(t, pool, "t-plain", "global", "slack://PLAIN", true)
+	urls, err := d.globalTargetURLs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(urls)
+	if strings.Join(urls, ",") != "slack://PLAIN,slack://SEALED" {
+		t.Errorf("pushed to %v", urls)
+	}
+}
 
 // 2.5.1 SG-17: an event about FIN's secret reaches FIN's rules and Global's,
 // not TAX's; a rule aimed at a job does not hear it; backup-key-changed is

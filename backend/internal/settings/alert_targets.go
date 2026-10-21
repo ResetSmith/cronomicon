@@ -3,9 +3,13 @@ package settings
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/ResetSmith/cronomicon/internal/config"
+	"github.com/ResetSmith/cronomicon/internal/secrets"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
 )
@@ -44,7 +48,7 @@ type AlertTargetInput struct {
 const alertTargetCols = `id, owner_agency, label, service, url, enabled,
 	COALESCE(created_by, ''), created_at, COALESCE(last_modified_by, ''), COALESCE(last_modified_at, '')`
 
-func scanAlertTarget(sc interface{ Scan(...any) error }) (*AlertTarget, error) {
+func scanAlertTarget(cfg *config.Config, sc interface{ Scan(...any) error }) (*AlertTarget, error) {
 	var t AlertTarget
 	var enabled int
 	if err := sc.Scan(&t.ID, &t.OwnerAgency, &t.Label, &t.Service, &t.URL, &enabled,
@@ -53,11 +57,79 @@ func scanAlertTarget(sc interface{ Scan(...any) error }) (*AlertTarget, error) {
 	}
 	t.Enabled = enabled == 1
 	t.URLSet = t.URL != ""
+	// 2.5.1 SG2.8: the URL is sealed at rest; a plain one from before reads as is.
+	url, err := secrets.OpenSetting(cfg, t.URL)
+	if err != nil {
+		return nil, fmt.Errorf("open push target %s's URL: %w", t.ID, err)
+	}
+	t.URL = url
 	return &t, nil
 }
 
+// sealTargetURL is what is stored for url: a token when a KEK is configured,
+// the URL itself when none is (SealAlertTargetURLs seals it once there is).
+func sealTargetURL(cfg *config.Config, url string) (string, error) {
+	if url == "" {
+		return "", nil
+	}
+	tok, err := secrets.EncryptString(cfg, url)
+	if errors.Is(err, secrets.ErrNoKEK) {
+		return url, nil
+	}
+	return tok, err
+}
+
+// SealAlertTargetURLs seals every push-target URL still stored in plain text
+// (2.5.1 SG2.8): those from before 2.5.1, and those written while no KEK was
+// configured. Run at start; a no-op once each is sealed, and when there is no
+// KEK. Each UPDATE is guarded on the value read, so a concurrent save wins.
+// Returns how many it sealed.
+func SealAlertTargetURLs(ctx context.Context, database *sql.DB, cfg *config.Config) (int, error) {
+	rows, err := database.QueryContext(ctx, `SELECT id, url FROM alert_targets WHERE url <> ''`)
+	if err != nil {
+		return 0, err
+	}
+	type plain struct{ id, url string }
+	var todo []plain
+	for rows.Next() {
+		var p plain
+		if err := rows.Scan(&p.id, &p.url); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if _, sealed := secrets.TokenKEKVersion(p.url); !sealed {
+			todo = append(todo, p)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, p := range todo {
+		tok, err := secrets.EncryptString(cfg, p.url)
+		if errors.Is(err, secrets.ErrNoKEK) {
+			return n, nil
+		}
+		if err != nil {
+			return n, err
+		}
+		res, err := database.ExecContext(ctx, `UPDATE alert_targets SET url = ? WHERE id = ? AND url = ?`, tok, p.id, p.url)
+		if err != nil {
+			return n, err
+		}
+		if k, _ := res.RowsAffected(); k > 0 {
+			n++
+		}
+	}
+	if n > 0 {
+		secrets.RedactionSourceChanged()
+	}
+	return n, nil
+}
+
 // ListAlertTargets returns every push target, each agency's in its order.
-func ListAlertTargets(ctx context.Context, database *sql.DB) ([]AlertTarget, error) {
+func ListAlertTargets(ctx context.Context, database *sql.DB, cfg *config.Config) ([]AlertTarget, error) {
 	rows, err := database.QueryContext(ctx, `SELECT `+alertTargetCols+` FROM alert_targets ORDER BY owner_agency, position, id`)
 	if err != nil {
 		return nil, fmt.Errorf("list push targets: %w", err)
@@ -65,7 +137,7 @@ func ListAlertTargets(ctx context.Context, database *sql.DB) ([]AlertTarget, err
 	defer rows.Close()
 	out := []AlertTarget{}
 	for rows.Next() {
-		t, err := scanAlertTarget(rows)
+		t, err := scanAlertTarget(cfg, rows)
 		if err != nil {
 			return nil, err
 		}
@@ -75,8 +147,8 @@ func ListAlertTargets(ctx context.Context, database *sql.DB) ([]AlertTarget, err
 }
 
 // GetAlertTarget fetches one push target; nil when there is none.
-func GetAlertTarget(ctx context.Context, database *sql.DB, id string) (*AlertTarget, error) {
-	t, err := scanAlertTarget(database.QueryRowContext(ctx, `SELECT `+alertTargetCols+` FROM alert_targets WHERE id=?`, id))
+func GetAlertTarget(ctx context.Context, database *sql.DB, cfg *config.Config, id string) (*AlertTarget, error) {
+	t, err := scanAlertTarget(cfg, database.QueryRowContext(ctx, `SELECT `+alertTargetCols+` FROM alert_targets WHERE id=?`, id))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -84,41 +156,56 @@ func GetAlertTarget(ctx context.Context, database *sql.DB, id string) (*AlertTar
 }
 
 // CreateAlertTarget adds a push target at the end of its agency's list.
-func CreateAlertTarget(ctx context.Context, database *sql.DB, inp AlertTargetInput, actor string) (*AlertTarget, error) {
+func CreateAlertTarget(ctx context.Context, database *sql.DB, cfg *config.Config, inp AlertTargetInput, actor string) (*AlertTarget, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
+	stored, err := sealTargetURL(cfg, inp.URL)
+	if err != nil {
+		return nil, fmt.Errorf("seal push target URL: %w", err)
+	}
 	id := db.NewID()
 	owner := ownerOrGlobalAgency(inp.OwnerAgency)
 	if _, err := database.ExecContext(ctx, `INSERT INTO alert_targets
 		(id, owner_agency, label, service, url, enabled, position, created_by, created_at, last_modified_by, last_modified_at)
 		VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM alert_targets WHERE owner_agency = ?), ?, ?, ?, ?)`,
-		id, owner, inp.Label, inp.Service, inp.URL, boolInt(inp.Enabled), owner, actor, now, actor, now); err != nil {
+		id, owner, inp.Label, inp.Service, stored, boolInt(inp.Enabled), owner, actor, now, actor, now); err != nil {
 		return nil, fmt.Errorf("create push target: %w", err)
 	}
+	secrets.RedactionSourceChanged()
 	audit(ctx, database, owner, actor, "Alerts", "created", alertTargetName(inp.Label, id), "")
-	return GetAlertTarget(ctx, database, id)
+	return GetAlertTarget(ctx, database, cfg, id)
 }
 
 // UpdateAlertTarget replaces a push target's label, service, URL and switch;
 // its agency stays. Nil when there is none.
-func UpdateAlertTarget(ctx context.Context, database *sql.DB, id string, inp AlertTargetInput, actor string) (*AlertTarget, error) {
+func UpdateAlertTarget(ctx context.Context, database *sql.DB, cfg *config.Config, id string, inp AlertTargetInput, actor string) (*AlertTarget, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
+	stored, err := sealTargetURL(cfg, inp.URL)
+	if err != nil {
+		return nil, fmt.Errorf("seal push target URL: %w", err)
+	}
 	res, err := database.ExecContext(ctx, `UPDATE alert_targets SET label=?, service=?, url=?, enabled=?,
 		last_modified_by=?, last_modified_at=? WHERE id=?`,
-		inp.Label, inp.Service, inp.URL, boolInt(inp.Enabled), actor, now, id)
+		inp.Label, inp.Service, stored, boolInt(inp.Enabled), actor, now, id)
 	if err != nil {
 		return nil, fmt.Errorf("update push target: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, nil
 	}
+	secrets.RedactionSourceChanged()
 	audit(ctx, database, RowAgency(ctx, database, "alert_targets", "owner_agency", id), actor, "Alerts", "updated", alertTargetName(inp.Label, id), "")
-	return GetAlertTarget(ctx, database, id)
+	return GetAlertTarget(ctx, database, cfg, id)
 }
 
 // DeleteAlertTarget removes a push target; the rules that named it stop
 // naming it (alert_rule_targets cascades).
 func DeleteAlertTarget(ctx context.Context, database *sql.DB, id, actor string) (bool, error) {
-	t, _ := GetAlertTarget(ctx, database, id)
+	// The label and owner only: a delete has no business opening the URL.
+	var t *AlertTarget
+	var label, owner string
+	if database.QueryRowContext(ctx, `SELECT label, owner_agency FROM alert_targets WHERE id=?`, id).Scan(&label, &owner) == nil {
+		t = &AlertTarget{Label: label, OwnerAgency: owner}
+	}
 	res, err := database.ExecContext(ctx, `DELETE FROM alert_targets WHERE id=?`, id)
 	if err != nil {
 		return false, fmt.Errorf("delete push target: %w", err)

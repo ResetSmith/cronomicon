@@ -302,6 +302,13 @@ func run() error {
 			"change_log_days", cfg.RetentionChangeLogDays,
 			"log_files_days", cfg.RetentionLogFilesDays)
 	}
+	// 2.5.1 SG2.8: push-target URLs carry their service's token; seal any still
+	// stored plain (from before 2.5.1, or written while no KEK was configured).
+	if n, serr := settings.SealAlertTargetURLs(ctx0, pool, cfg); serr != nil {
+		logger.Error("could not seal the push-target URLs; they stay as they are until the next start", "error", serr)
+	} else if n > 0 {
+		logger.Info("push-target URLs sealed", "count", n)
+	}
 	// 2.5.1 SG-3: CRONOMICON_BACKUP_RECIPIENTS seeds the backup keys once.
 	if seeded, serr := settings.SeedBackupRecipientsFromEnv(ctx0, pool, cfg.BackupRecipients); serr != nil {
 		logger.Error("could not seed the backup keys from CRONOMICON_BACKUP_RECIPIENTS; backups stay as Settings → Backups has them", "error", serr)
