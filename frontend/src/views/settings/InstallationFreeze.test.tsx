@@ -70,6 +70,13 @@ describe("the installation freeze (C11)", () => {
     expect((freeze as HTMLButtonElement).disabled).toBe(true); // no reason yet
     fireEvent.change(screen.getByLabelText("Reason for the freeze"), { target: { value: "Data-centre move" } });
     fireEvent.click(freeze);
+    // 2.5.1: a loud confirmation, with an acknowledgement, before anything is sent.
+    expect(await screen.findByText(/No run will start in any agency/)).toBeTruthy();
+    const confirm = screen.getByRole("button", { name: "Freeze the installation" }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    expect(puts).toEqual([]);
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(confirm);
     await waitFor(() => expect(puts).toEqual([{ path: "/settings/freeze", body: { on: true, reason: "Data-centre move" } }]));
     await waitFor(() => expect(screen.getByTestId("installation-freeze-banner").textContent).toContain("Data-centre move"));
     fireEvent.click(await screen.findByRole("button", { name: "Lift the freeze" }));
@@ -77,11 +84,23 @@ describe("the installation freeze (C11)", () => {
     await waitFor(() => expect(screen.queryByTestId("installation-freeze-banner")).toBeNull());
   });
 
-  it("is read, and not changed, by anyone but a global administrator", async () => {
+  it("cancelling the confirmation sends nothing", async () => {
+    render(<InstallationFreezeCard canWrite />);
+    fireEvent.change(await screen.findByLabelText("Reason for the freeze"), { target: { value: "Audit week" } });
+    fireEvent.click(screen.getByRole("button", { name: "Freeze every agency's schedules" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(puts).toEqual([]);
+    expect(screen.queryByText(/No run will start in any agency/)).toBeNull();
+  });
+
+  // 2.5.1 (the owner): the card is a global administrator's alone; anyone else
+  // sees only the banner.
+  it("is not shown to anyone but a global administrator", async () => {
     FREEZE = { on: true, reason: "Audit week" };
     render(<InstallationFreezeCard canWrite={false} />);
-    const lift = (await screen.findByRole("button", { name: "Lift the freeze" })) as HTMLButtonElement;
-    expect(lift.disabled).toBe(true);
-    expect(lift.title).toMatch(/global administrator/);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Installation freeze")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Lift the freeze" })).toBeNull();
   });
 });

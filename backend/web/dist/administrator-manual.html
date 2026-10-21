@@ -3161,7 +3161,9 @@
                     a global administrator turns on the installation-wide freeze, with a reason: the
                     <strong>Installation freeze</strong> card at the top of Settings &rarr; General (since 2.5.0;
                     the route is <code>PUT /api/v1/settings/freeze</code> with <code>{on, reason}</code>, and a
-                    reason is required to turn it on). While it is on, no run of any agency starts: a schedule's
+                    reason is required to turn it on). Since 2.5.1 the card is shown to global administrators only,
+                    and freezing opens a danger confirmation that says what stops and asks you to tick that every
+                    agency's runs stop until the freeze is lifted. While it is on, no run of any agency starts: a schedule's
                     fire, <strong>Run</strong>, a token's trigger, a reaction, a deferred run that comes due and a
                     file arrival are each recorded as skipped, with the reason (a freeze a click can walk through
                     is not a freeze); runs already going finish. A
