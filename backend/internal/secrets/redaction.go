@@ -50,18 +50,18 @@ type SettingsToken struct {
 // the PREVIOUS webhook secret, which a rotation keeps (and the webhook still
 // accepts) for an overlap: it was on neither side of this list until now.
 var EncryptedSettingsColumns = []SettingsColumn{
-	{Label: "gitlab.token", Table: "git_repos", Column: "token_enc", Where: "1=1", Key: "id"},
-	{Label: "gitlab.webhookSecret", Table: "git_repos", Column: "webhook_secret_enc", Where: "1=1", Key: "id"},
-	{Label: "gitlab.webhookSecretPrevious", Table: "git_repos", Column: "webhook_secret_prev_enc", Where: "1=1", Key: "id"},
-	{Label: "logStorage.s3SecretKey", Table: "log_storage_config", Column: "s3_secret_key_enc", Where: "id=1"},
-	{Label: "vault.roleId", Table: "vault_config", Column: "role_id", Where: "id=1"},
-	{Label: "vault.secretId", Table: "vault_config", Column: "secret_id_enc", Where: "id=1"},
-	{Label: "notifications.smtpPassword", Table: "notification_config", Column: "smtp_password_enc", Where: "id=1"},
-	{Label: "observability.bearerToken", Table: "settings", Column: "value", Where: "key='obs.bearerTokenEnc'"},
+	{Label: LabelGitToken, Table: "git_repos", Column: "token_enc", Where: "1=1", Key: "id"},
+	{Label: LabelGitWebhookSecret, Table: "git_repos", Column: "webhook_secret_enc", Where: "1=1", Key: "id"},
+	{Label: LabelGitWebhookSecretPrev, Table: "git_repos", Column: "webhook_secret_prev_enc", Where: "1=1", Key: "id"},
+	{Label: LabelLogStorageS3SecretKey, Table: "log_storage_config", Column: "s3_secret_key_enc", Where: "id=1"},
+	{Label: LabelVaultRoleID, Table: "vault_config", Column: "role_id", Where: "id=1"},
+	{Label: LabelVaultSecretID, Table: "vault_config", Column: "secret_id_enc", Where: "id=1"},
+	{Label: LabelSMTPPassword, Table: "notification_config", Column: "smtp_password_enc", Where: "id=1"},
+	{Label: LabelObservabilityBearer, Table: "settings", Column: "value", Where: "key='obs.bearerTokenEnc'"},
 	// 2.5.1 SG2.8: a push target's URL carries the service's token. Sealed at
 	// write and by settings.SealAlertTargetURLs at start; a plain URL from
 	// before (or with no KEK) is not a token, and is skipped by both consumers.
-	{Label: "alerts.targetURL", Table: "alert_targets", Column: "url", Where: "1=1", Key: "id"},
+	{Label: LabelAlertTargetURL, Table: "alert_targets", Column: "url", Where: "1=1", Key: "id"},
 }
 
 // ReadSettingsTokens returns every raw (still encrypted) token stored in one
@@ -184,7 +184,7 @@ func redactionReport(ctx context.Context, database *sql.DB, cfg *config.Config, 
 	// table that private key would never enter the dictionary.
 	for _, table := range []string{"secrets", "ssh_credentials"} {
 		rows, qerr := database.QueryContext(ctx,
-			`SELECT ciphertext, nonce, wrapped_dek, COALESCE(kek_version, 1), COALESCE(NULLIF(owner_agency, ''), 'global') FROM `+table+
+			`SELECT id, ciphertext, nonce, wrapped_dek, COALESCE(kek_version, 1), COALESCE(NULLIF(owner_agency, ''), 'global'), seal_format FROM `+table+
 				` WHERE source='stored' AND ciphertext IS NOT NULL`)
 		if qerr != nil {
 			if table == "secrets" {
@@ -194,9 +194,9 @@ func redactionReport(ctx context.Context, database *sql.DB, cfg *config.Config, 
 		}
 		for rows.Next() {
 			var ciphertext, nonce, wrappedDEK []byte
-			var kekVer int
-			var owner string
-			if serr := rows.Scan(&ciphertext, &nonce, &wrappedDEK, &kekVer, &owner); serr != nil {
+			var kekVer, format int
+			var id, owner string
+			if serr := rows.Scan(&id, &ciphertext, &nonce, &wrappedDEK, &kekVer, &owner, &format); serr != nil {
 				undecryptable++
 				continue
 			}
@@ -208,7 +208,14 @@ func redactionReport(ctx context.Context, database *sql.DB, cfg *config.Config, 
 				undecryptable++
 				continue
 			}
-			plain, derr := envelopeDecrypt(kek, ciphertext, nonce, wrappedDEK)
+			var ad []byte
+			if format == SealBound {
+				ad = []byte(RowBinding(table, id))
+			} else if UnboundSealsRefused() {
+				undecryptable++
+				continue
+			}
+			plain, derr := envelopeDecryptAD(kek, ciphertext, nonce, wrappedDEK, ad)
 			if derr != nil {
 				undecryptable++
 				continue
@@ -239,7 +246,7 @@ func redactionReport(ctx context.Context, database *sql.DB, cfg *config.Config, 
 			if owners != nil && sc.Key != "" && !owners[settingsRowOwner(ctx, database, sc, t.Key)] {
 				continue
 			}
-			plain, derr := DecryptString(cfg, t.Token)
+			plain, derr := DecryptSetting(cfg, sc.Binding(t.Key), t.Token)
 			if derr != nil {
 				undecryptable++
 				continue

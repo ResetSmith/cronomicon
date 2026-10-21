@@ -4539,10 +4539,36 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Secret is vault-source — value lives in Vault.
+          description: |
+            The secret is vault-source (`vault_source`: the value lives in
+            Vault), or its agency made it unrevealable (`reveal_locked`,
+            v2.5.1: nobody reveals it, global administrators included).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /env-secrets/{secretId}/lock-reveal:
+    post:
+      tags: [Secrets]
+      operationId: lockEnvSecretReveal
+      summary: Make a stored secret unrevealable
+      description: |
+        v2.5.1. One way: no route undoes it. From then on nobody reveals the
+        secret through Cronomicon (409 `reveal_locked`), global administrators
+        included; runs still use it, and it can still be rotated, moved and
+        migrated to Vault. manageEnvVars on the secret's own agency, as for a
+        reveal. Idempotent. Recorded in the change log (`reveal-locked`) and
+        raised as `secret-changed`.
+      parameters: [{ $ref: '#/components/parameters/secretId' }, { $ref: '#/components/parameters/csrf' }]
+      responses:
+        '200':
+          description: The secret, now unrevealable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvSecret' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /env-secrets/{secretId}/migrate-to-vault:
     post:
@@ -7497,6 +7523,7 @@ paths:
                         reveals: { type: integer }
                         outsideChanges: { type: integer }
                         lastOutsideActor: { type: string }
+                        revealLocked: { type: boolean, description: "Its agency made it unrevealable (secrets only)." }
             text/csv:
               schema: { type: string }
         '400':
@@ -12522,6 +12549,12 @@ components:
                 PUT /env-secret-tags/{secretId}; [] when none. Writable (carries
                 the ManageEnvVars permission).
               items: { type: string }
+            revealLocked:
+              type: boolean
+              readOnly: true
+              description: v2.5.1 — its agency made it unrevealable (POST /env-secrets/{secretId}/lock-reveal); one way.
+            revealLockedBy: { type: string, readOnly: true }
+            revealLockedAt: { type: string, format: date-time, readOnly: true }
             ownerAgency:
               type: string
               readOnly: true

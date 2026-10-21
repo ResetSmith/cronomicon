@@ -96,7 +96,7 @@ also held the plaintexts; the remediation is rotating the underlying credentials
 	// Refuse up front when the ACTIVE key is unusable. Proceeding would write rows
 	// nothing can decrypt, which is the one failure this command must never cause.
 	sealer := secrets.NewSealer(cfg)
-	if _, err := sealer.Seal([]byte("rewrap-preflight")); err != nil {
+	if _, err := sealer.Seal(secrets.RowBinding("rewrap", "preflight"), []byte("rewrap-preflight")); err != nil {
 		fmt.Fprintf(os.Stderr, "rewrap-secrets: the active KEK (version %d) is not usable: %v\n", active, err)
 		return 1
 	}
@@ -295,18 +295,21 @@ func rewrapEnvelopeTable(ctx context.Context, pool *sql.DB, sealer *secrets.Seal
 		ct, nonce  []byte
 		wrapped    []byte
 		kekVersion int
+		format     int
 	}
 	var todo []row
+	// 2.5.1 SG2.10: an unbound row is rewrapped (and so bound) whatever its KEK
+	// version, so the command finishes what the server's BindSeals pass does.
 	rows, err := pool.QueryContext(ctx, fmt.Sprintf(
-		`SELECT id, ciphertext, nonce, wrapped_dek, COALESCE(kek_version,1) FROM %s
-		  WHERE source='stored' AND ciphertext IS NOT NULL AND COALESCE(kek_version,1) <> ?`, table), active)
+		`SELECT id, ciphertext, nonce, wrapped_dek, COALESCE(kek_version,1), seal_format FROM %s
+		  WHERE source='stored' AND ciphertext IS NOT NULL AND (COALESCE(kek_version,1) <> ? OR seal_format <> ?)`, table), active, secrets.SealBound)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", table, err)
 		return 0, 1
 	}
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.id, &r.ct, &r.nonce, &r.wrapped, &r.kekVersion); err != nil {
+		if err := rows.Scan(&r.id, &r.ct, &r.nonce, &r.wrapped, &r.kekVersion, &r.format); err != nil {
 			rows.Close()
 			fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", table, err)
 			return moved, failed + 1
@@ -316,13 +319,13 @@ func rewrapEnvelopeTable(ctx context.Context, pool *sql.DB, sealer *secrets.Seal
 	rows.Close()
 
 	for _, r := range todo {
-		plain, err := sealer.Open(r.ct, r.nonce, r.wrapped, r.kekVersion)
+		plain, err := sealer.Open(secrets.RowBinding(table, r.id), r.format, r.ct, r.nonce, r.wrapped, r.kekVersion)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "rewrap %s %s: cannot open under KEK v%d: %v\n", table, r.id, r.kekVersion, err)
 			failed++
 			continue
 		}
-		sealed, err := sealer.Seal(plain)
+		sealed, err := sealer.Seal(secrets.RowBinding(table, r.id), plain)
 		zeroBytes(plain)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "rewrap %s %s: %v\n", table, r.id, err)
@@ -333,9 +336,9 @@ func rewrapEnvelopeTable(ctx context.Context, pool *sql.DB, sealer *secrets.Seal
 		// worked, it is already at the active version and our write must not clobber
 		// the newer ciphertext. RowsAffected 0 means exactly that — not an error.
 		res, err := pool.ExecContext(ctx, fmt.Sprintf(
-			`UPDATE %s SET ciphertext=?, nonce=?, wrapped_dek=?, kek_version=?
-			  WHERE id=? AND COALESCE(kek_version,1)=?`, table),
-			sealed.Ciphertext, sealed.Nonce, sealed.WrappedDEK, sealed.KEKVersion, r.id, r.kekVersion)
+			`UPDATE %s SET ciphertext=?, nonce=?, wrapped_dek=?, kek_version=?, seal_format=?
+			  WHERE id=? AND COALESCE(kek_version,1)=? AND ciphertext=?`, table),
+			sealed.Ciphertext, sealed.Nonce, sealed.WrappedDEK, sealed.KEKVersion, sealed.Format, r.id, r.kekVersion, r.ct)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "rewrap %s %s: %v\n", table, r.id, err)
 			failed++
@@ -353,17 +356,19 @@ func rewrapEnvelopeTable(ctx context.Context, pool *sql.DB, sealer *secrets.Seal
 func rewrapToken(ctx context.Context, pool *sql.DB, cfg *config.Config, tc tokenColumn, t secrets.SettingsToken, active int) rewrapOutcome {
 	label := tc.RowLabel(t.Key)
 	tok := t.Token
-	if v, ok := secrets.TokenKEKVersion(tok); !ok || v == active {
+	if v, ok := secrets.TokenKEKVersion(tok); !ok || (v == active && secrets.TokenBound(tok)) {
 		// Not a token (an un-encrypted legacy value someone set by hand), or
-		// already current. Neither is this command's business to rewrite.
+		// already current and bound (2.5.1 SG2.10). Neither is this command's
+		// business to rewrite.
 		return rewrapSkipped
 	}
-	plain, err := secrets.DecryptString(cfg, tok)
+	b := tc.Binding(t.Key)
+	plain, err := secrets.DecryptSetting(cfg, b, tok)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rewrap %s: cannot decrypt: %v\n", label, err)
 		return rewrapFailed
 	}
-	next, err := secrets.EncryptString(cfg, plain)
+	next, err := secrets.EncryptSetting(cfg, b, plain)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", label, err)
 		return rewrapFailed

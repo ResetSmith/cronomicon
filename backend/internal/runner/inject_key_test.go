@@ -16,7 +16,7 @@ import (
 // so a key binding resolves to material.
 func seedKeyCredential(t *testing.T, svc *Service, label, material string) {
 	t.Helper()
-	sealed, err := secrets.NewSealer(svc.cfg).Seal([]byte(material))
+	sealed, err := secrets.NewSealer(svc.cfg).SealLegacy([]byte(material))
 	if err != nil {
 		t.Fatalf("seal key %q: %v", label, err)
 	}

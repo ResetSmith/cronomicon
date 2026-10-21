@@ -84,13 +84,13 @@ func ResolveMaterialByID(ctx context.Context, database *sql.DB, cfg *config.Conf
 // key material by NAME across the secrets/env_vars fallback chain.)
 func decryptCredential(ctx context.Context, database *sql.DB, sealer *secrets.Sealer, vault secrets.VaultClient, id string) (string, error) {
 	row := database.QueryRowContext(ctx,
-		`SELECT source, ciphertext, nonce, wrapped_dek, COALESCE(kek_version, 1), vault_ref
+		`SELECT source, ciphertext, nonce, wrapped_dek, COALESCE(kek_version, 1), vault_ref, seal_format
 		 FROM ssh_credentials WHERE id = ?`, id)
 	var source string
 	var ciphertext, nonce, wrappedDEK []byte
-	var kekVer int
+	var kekVer, format int
 	var vaultRef sql.NullString
-	if err := row.Scan(&source, &ciphertext, &nonce, &wrappedDEK, &kekVer, &vaultRef); err != nil {
+	if err := row.Scan(&source, &ciphertext, &nonce, &wrappedDEK, &kekVer, &vaultRef, &format); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("ssh credential %q not found", id)
 		}
@@ -112,7 +112,7 @@ func decryptCredential(ctx context.Context, database *sql.DB, sealer *secrets.Se
 		}
 		return material, nil
 	}
-	plain, err := sealer.Open(ciphertext, nonce, wrappedDEK, kekVer)
+	plain, err := sealer.Open(secrets.RowBinding("ssh_credentials", id), format, ciphertext, nonce, wrappedDEK, kekVer)
 	if err != nil {
 		return "", fmt.Errorf("decrypt ssh credential: %w", err)
 	}

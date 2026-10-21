@@ -430,7 +430,7 @@ func (d *Dispatcher) loadConfig(ctx context.Context) (notifConfig, error) {
 		FromName:   fromName.String,
 	}
 	if pwEnc.Valid && pwEnc.String != "" {
-		pw, err := secrets.DecryptString(d.cfg, pwEnc.String)
+		pw, err := secrets.DecryptSetting(d.cfg, secrets.SettingsBinding(secrets.LabelSMTPPassword, ""), pwEnc.String)
 		if err != nil {
 			d.log.Error("decrypt SMTP password failed; sending unauthenticated", "error", err)
 		} else {
@@ -791,7 +791,7 @@ func (d *Dispatcher) ruleTargetURLs(ctx context.Context, ruleIDs []string) ([]st
 	if len(ruleIDs) == 0 {
 		return nil, nil
 	}
-	q := `SELECT t.url FROM alert_targets t
+	q := `SELECT t.id, t.url FROM alert_targets t
 		WHERE t.enabled = 1 AND t.url <> ''
 		  AND t.id IN (SELECT target_id FROM alert_rule_targets WHERE rule_id IN (?` +
 		strings.Repeat(",?", len(ruleIDs)-1) + `))
@@ -805,7 +805,7 @@ func (d *Dispatcher) ruleTargetURLs(ctx context.Context, ruleIDs []string) ([]st
 
 // globalTargetURLs is Global's enabled targets, for a test send.
 func (d *Dispatcher) globalTargetURLs(ctx context.Context) ([]string, error) {
-	return d.targetURLs(ctx, `SELECT url FROM alert_targets
+	return d.targetURLs(ctx, `SELECT id, url FROM alert_targets
 		WHERE owner_agency = ? AND enabled = 1 AND url <> '' ORDER BY position, id`, agencyid.Global)
 }
 
@@ -818,12 +818,13 @@ func (d *Dispatcher) targetURLs(ctx context.Context, q string, args ...any) ([]s
 	var out []string
 	seen := map[string]bool{}
 	for rows.Next() {
-		var stored string
-		if err := rows.Scan(&stored); err != nil {
+		var id, stored string
+		if err := rows.Scan(&id, &stored); err != nil {
 			return nil, err
 		}
-		// 2.5.1 SG2.8: sealed at rest; a plain URL from before reads as is.
-		u, err := secrets.OpenSetting(d.cfg, stored)
+		// 2.5.1 SG2.8: sealed at rest, bound to its row; a plain URL from
+		// before reads as is.
+		u, err := secrets.OpenSetting(d.cfg, secrets.SettingsBinding(secrets.LabelAlertTargetURL, id), stored)
 		if err != nil {
 			d.log.Error("a push target's URL cannot be opened (is its KEK configured?); skipping it", "error", err)
 			continue

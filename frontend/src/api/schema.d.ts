@@ -2681,6 +2681,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/env-secrets/{secretId}/lock-reveal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make a stored secret unrevealable
+         * @description v2.5.1. One way: no route undoes it. From then on nobody reveals the
+         *     secret through Cronomicon (409 `reveal_locked`), global administrators
+         *     included; runs still use it, and it can still be rotated, moved and
+         *     migrated to Vault. manageEnvVars on the secret's own agency, as for a
+         *     reveal. Idempotent. Recorded in the change log (`reveal-locked`) and
+         *     raised as `secret-changed`.
+         */
+        post: operations["lockEnvSecretReveal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/env-secrets/{secretId}/migrate-to-vault": {
         parameters: {
             query?: never;
@@ -8380,6 +8405,11 @@ export interface components {
              *     the ManageEnvVars permission).
              */
             tags?: string[];
+            /** @description v2.5.1 — its agency made it unrevealable (POST /env-secrets/{secretId}/lock-reveal); one way. */
+            readonly revealLocked?: boolean;
+            readonly revealLockedBy?: string;
+            /** Format: date-time */
+            readonly revealLockedAt?: string;
             /**
              * @description RA-15 (Phase E) — the NAME of the agency that OWNS this secret. Shared
              *     infrastructure is owned by `Global` (it was "" until v2.3.0). Ownership is what lets two departments hold the
@@ -15058,7 +15088,11 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description Secret is vault-source — value lives in Vault. */
+            /**
+             * @description The secret is vault-source (`vault_source`: the value lives in
+             *     Vault), or its agency made it unrevealable (`reveal_locked`,
+             *     v2.5.1: nobody reveals it, global administrators included).
+             */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -15067,6 +15101,34 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    lockEnvSecretReveal: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                secretId: components["parameters"]["secretId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The secret, now unrevealable. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvSecret"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     migrateSecretToVault: {
@@ -18403,6 +18465,8 @@ export interface operations {
                             reveals: number;
                             outsideChanges: number;
                             lastOutsideActor?: string;
+                            /** @description Its agency made it unrevealable (secrets only). */
+                            revealLocked?: boolean;
                         }[];
                     };
                     "text/csv": string;

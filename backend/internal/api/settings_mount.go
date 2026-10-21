@@ -373,6 +373,47 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		}
 		httpx.JSON(w, http.StatusOK, u)
 	})))
+	// 2.5.1 SG2.11 (SG-19, question 134(b)): an agency makes a stored secret
+	// unrevealable. One way: there is no route that undoes it. The same gate as
+	// a reveal (manageEnvVars on the secret's own agency); the change log and
+	// the secret-changed alert record who did it.
+	mux.Handle("POST /api/v1/env-secrets/{secretId}/lock-reveal", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := auth.IdentityFrom(r.Context())
+		if !ok {
+			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		sid := r.PathValue("secretId")
+		sc, ok := s.loadSecretInScope(w, r, sec, sid, id)
+		if !ok {
+			return
+		}
+		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
+			return
+		}
+		if sc.RevealLocked {
+			httpx.JSON(w, http.StatusOK, sc) // idempotent
+			return
+		}
+		found, err := sec.LockReveal(r.Context(), sid, id.Email)
+		if err != nil {
+			httpx.Fail500(w, s.log, "lock_failed", err)
+			return
+		}
+		if !found {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
+			return
+		}
+		agency := settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid)
+		s.mountWriteChangeLogID(r, agency, "Secrets", "reveal-locked", sc.Key, id.Email, "id="+sid)
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "Secret", sc.Key, agency, "made unrevealable")
+		out, err := sec.Get(r.Context(), sid)
+		if err != nil || out == nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, out)
+	})))
 	mux.Handle("POST /api/v1/env-secrets/{secretId}/reveal", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := auth.IdentityFrom(r.Context())
 		if !ok {
@@ -391,6 +432,12 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// trusted with any department's variables could read every department's
 		// credentials.
 		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
+			return
+		}
+		// 2.5.1 SG-19: an agency made it unrevealable. Refused before anything
+		// is decrypted, for everyone, and no reveal is recorded (none happened).
+		if sc.RevealLocked {
+			httpx.Fail(w, http.StatusConflict, "reveal_locked", "this secret was made unrevealable by its agency: it is used by runs, and nobody reveals it through Cronomicon")
 			return
 		}
 		if sc.Source == "vault" {

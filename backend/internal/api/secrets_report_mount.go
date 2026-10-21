@@ -126,6 +126,7 @@ type secretsReportRow struct {
 	Reveals          int    `json:"reveals"`
 	OutsideChanges   int    `json:"outsideChanges"`
 	LastOutsideActor string `json:"lastOutsideActor,omitempty"`
+	RevealLocked     bool   `json:"revealLocked"` // 2.5.1 SG-19
 }
 
 func (s *Server) handleSecretsReport(w http.ResponseWriter, r *http.Request) {
@@ -174,10 +175,11 @@ func (s *Server) handleSecretsReport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="secrets-report-%s-%s.csv"`, agency, time.Now().UTC().Format("20060102")))
 	cw := csv.NewWriter(w)
 	_ = cw.Write([]string{"kind", "id", "name", "scope", "source", "vault_path", "last_rotated", "last_used",
-		fmt.Sprintf("uses_%dd", days), "references", fmt.Sprintf("reveals_%dd", days), fmt.Sprintf("outside_changes_%dd", days), "last_outside_actor"})
+		fmt.Sprintf("uses_%dd", days), "references", fmt.Sprintf("reveals_%dd", days), fmt.Sprintf("outside_changes_%dd", days), "last_outside_actor", "reveal_locked"})
 	for _, row := range rows {
 		_ = cw.Write([]string{row.Kind, row.ID, csvSafe(row.Name), csvSafe(row.Scope), row.Source, csvSafe(row.VaultPath), row.LastRotated, row.LastUsed,
-			strconv.Itoa(row.Uses), strconv.Itoa(row.References), strconv.Itoa(row.Reveals), strconv.Itoa(row.OutsideChanges), csvSafe(row.LastOutsideActor)})
+			strconv.Itoa(row.Uses), strconv.Itoa(row.References), strconv.Itoa(row.Reveals), strconv.Itoa(row.OutsideChanges), csvSafe(row.LastOutsideActor),
+			strconv.FormatBool(row.RevealLocked)})
 	}
 	cw.Flush()
 }
@@ -200,10 +202,10 @@ func (s *Server) secretsReport(ctx context.Context, id auth.Identity, agency str
 	}
 	var items []item
 	q, err := s.db.QueryContext(ctx, `
-		SELECT 'secret', id, key, COALESCE(scope, ''), COALESCE(NULLIF(source, ''), 'stored'), COALESCE(vault_ref, ''), COALESCE(last_modified_at, created_at)
+		SELECT 'secret', id, key, COALESCE(scope, ''), COALESCE(NULLIF(source, ''), 'stored'), COALESCE(vault_ref, ''), COALESCE(last_modified_at, created_at), reveal_locked
 		  FROM secrets WHERE COALESCE(NULLIF(owner_agency, ''), 'global') = ?
 		UNION ALL
-		SELECT 'key', id, label, '', COALESCE(NULLIF(source, ''), 'stored'), COALESCE(vault_ref, ''), COALESCE(last_modified_at, created_at)
+		SELECT 'key', id, label, '', COALESCE(NULLIF(source, ''), 'stored'), COALESCE(vault_ref, ''), COALESCE(last_modified_at, created_at), 0
 		  FROM ssh_credentials WHERE COALESCE(NULLIF(owner_agency, ''), 'global') = ?
 		ORDER BY 1, 3`, agency, agency)
 	if err != nil {
@@ -212,7 +214,7 @@ func (s *Server) secretsReport(ctx context.Context, id auth.Identity, agency str
 	for q.Next() {
 		var it item
 		var kind string
-		if err := q.Scan(&kind, &it.row.ID, &it.row.Name, &it.row.Scope, &it.row.Source, &it.row.VaultPath, &it.row.LastRotated); err != nil {
+		if err := q.Scan(&kind, &it.row.ID, &it.row.Name, &it.row.Scope, &it.row.Source, &it.row.VaultPath, &it.row.LastRotated, &it.row.RevealLocked); err != nil {
 			q.Close()
 			return nil, err
 		}

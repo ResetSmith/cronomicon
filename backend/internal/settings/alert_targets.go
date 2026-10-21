@@ -58,7 +58,7 @@ func scanAlertTarget(cfg *config.Config, sc interface{ Scan(...any) error }) (*A
 	t.Enabled = enabled == 1
 	t.URLSet = t.URL != ""
 	// 2.5.1 SG2.8: the URL is sealed at rest; a plain one from before reads as is.
-	url, err := secrets.OpenSetting(cfg, t.URL)
+	url, err := secrets.OpenSetting(cfg, secrets.SettingsBinding(secrets.LabelAlertTargetURL, t.ID), t.URL)
 	if err != nil {
 		return nil, fmt.Errorf("open push target %s's URL: %w", t.ID, err)
 	}
@@ -68,11 +68,11 @@ func scanAlertTarget(cfg *config.Config, sc interface{ Scan(...any) error }) (*A
 
 // sealTargetURL is what is stored for url: a token when a KEK is configured,
 // the URL itself when none is (SealAlertTargetURLs seals it once there is).
-func sealTargetURL(cfg *config.Config, url string) (string, error) {
+func sealTargetURL(cfg *config.Config, id, url string) (string, error) {
 	if url == "" {
 		return "", nil
 	}
-	tok, err := secrets.EncryptString(cfg, url)
+	tok, err := secrets.EncryptSetting(cfg, secrets.SettingsBinding(secrets.LabelAlertTargetURL, id), url)
 	if errors.Is(err, secrets.ErrNoKEK) {
 		return url, nil
 	}
@@ -107,7 +107,7 @@ func SealAlertTargetURLs(ctx context.Context, database *sql.DB, cfg *config.Conf
 	}
 	n := 0
 	for _, p := range todo {
-		tok, err := secrets.EncryptString(cfg, p.url)
+		tok, err := secrets.EncryptSetting(cfg, secrets.SettingsBinding(secrets.LabelAlertTargetURL, p.id), p.url)
 		if errors.Is(err, secrets.ErrNoKEK) {
 			return n, nil
 		}
@@ -158,11 +158,11 @@ func GetAlertTarget(ctx context.Context, database *sql.DB, cfg *config.Config, i
 // CreateAlertTarget adds a push target at the end of its agency's list.
 func CreateAlertTarget(ctx context.Context, database *sql.DB, cfg *config.Config, inp AlertTargetInput, actor string) (*AlertTarget, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	stored, err := sealTargetURL(cfg, inp.URL)
+	id := db.NewID() // before the seal: the URL is bound to its row (2.5.1 SG2.10)
+	stored, err := sealTargetURL(cfg, id, inp.URL)
 	if err != nil {
 		return nil, fmt.Errorf("seal push target URL: %w", err)
 	}
-	id := db.NewID()
 	owner := ownerOrGlobalAgency(inp.OwnerAgency)
 	if _, err := database.ExecContext(ctx, `INSERT INTO alert_targets
 		(id, owner_agency, label, service, url, enabled, position, created_by, created_at, last_modified_by, last_modified_at)
@@ -179,7 +179,7 @@ func CreateAlertTarget(ctx context.Context, database *sql.DB, cfg *config.Config
 // its agency stays. Nil when there is none.
 func UpdateAlertTarget(ctx context.Context, database *sql.DB, cfg *config.Config, id string, inp AlertTargetInput, actor string) (*AlertTarget, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	stored, err := sealTargetURL(cfg, inp.URL)
+	stored, err := sealTargetURL(cfg, id, inp.URL)
 	if err != nil {
 		return nil, fmt.Errorf("seal push target URL: %w", err)
 	}

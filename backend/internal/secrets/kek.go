@@ -186,7 +186,7 @@ func loadKEKForVersion(cfg *config.Config, version int) ([]byte, error) {
 
 // encryptWithKey encrypts plaintext using AES-256-GCM and the provided 32-byte key.
 // Returns (ciphertext, nonce) where nonce is a fresh random 12-byte value.
-func encryptWithKey(key, plaintext []byte) (ciphertext, nonce []byte, err error) {
+func encryptWithKey(key, plaintext, ad []byte) (ciphertext, nonce []byte, err error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, nil, fmt.Errorf("new cipher: %w", err)
@@ -199,12 +199,12 @@ func encryptWithKey(key, plaintext []byte) (ciphertext, nonce []byte, err error)
 	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, nil, fmt.Errorf("random nonce: %w", err)
 	}
-	ciphertext = gcm.Seal(nil, nonce, plaintext, nil)
+	ciphertext = gcm.Seal(nil, nonce, plaintext, ad)
 	return ciphertext, nonce, nil
 }
 
 // decryptWithKey decrypts AES-256-GCM ciphertext using key and nonce.
-func decryptWithKey(key, ciphertext, nonce []byte) ([]byte, error) {
+func decryptWithKey(key, ciphertext, nonce, ad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("new cipher: %w", err)
@@ -213,7 +213,7 @@ func decryptWithKey(key, ciphertext, nonce []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("new GCM: %w", err)
 	}
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, ad)
 	if err != nil {
 		return nil, fmt.Errorf("GCM open: %w", err)
 	}
@@ -246,12 +246,21 @@ func zero(b []byte) {
 //
 // Returns (ciphertext, nonce, wrappedDEK) suitable for storing in the DB.
 func envelopeEncrypt(kek []byte, plaintext []byte) (ciphertext, nonce, wrappedDEK []byte, err error) {
+	return envelopeEncryptAD(kek, plaintext, nil)
+}
+
+// envelopeEncryptAD is envelopeEncrypt with additional data bound into both
+// GCM operations (the value under the DEK and the DEK under the KEK): 2.5.1
+// SG2.10 binds each sealed value to where it lives (Binding), so a value
+// copied into another row does not open there. nil is the unbound form every
+// value had before 2.5.1.
+func envelopeEncryptAD(kek []byte, plaintext, ad []byte) (ciphertext, nonce, wrappedDEK []byte, err error) {
 	dek, err := randomBytes(32)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	defer zero(dek) // SU-10: narrow the window the DEK sits in memory (best-effort)
-	ciphertext, nonce, err = encryptWithKey(dek, plaintext)
+	ciphertext, nonce, err = encryptWithKey(dek, plaintext, ad)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("encrypt with DEK: %w", err)
 	}
@@ -269,7 +278,7 @@ func envelopeEncrypt(kek []byte, plaintext []byte) (ciphertext, nonce, wrappedDE
 	if _, err = io.ReadFull(rand.Reader, dekNonce); err != nil {
 		return nil, nil, nil, fmt.Errorf("random DEK nonce: %w", err)
 	}
-	wrappedDEKCiphertext := gcm.Seal(nil, dekNonce, dek, nil)
+	wrappedDEKCiphertext := gcm.Seal(nil, dekNonce, dek, ad)
 	// Store as: dekNonce || wrappedDEKCiphertext
 	wrappedDEK = make([]byte, len(dekNonce)+len(wrappedDEKCiphertext))
 	copy(wrappedDEK, dekNonce)
@@ -280,6 +289,11 @@ func envelopeEncrypt(kek []byte, plaintext []byte) (ciphertext, nonce, wrappedDE
 
 // envelopeDecrypt reverses envelopeEncrypt.
 func envelopeDecrypt(kek, ciphertext, nonce, wrappedDEK []byte) ([]byte, error) {
+	return envelopeDecryptAD(kek, ciphertext, nonce, wrappedDEK, nil)
+}
+
+// envelopeDecryptAD reverses envelopeEncryptAD with the same additional data.
+func envelopeDecryptAD(kek, ciphertext, nonce, wrappedDEK, ad []byte) ([]byte, error) {
 	// Unwrap the DEK.
 	block, err := aes.NewCipher(kek)
 	if err != nil {
@@ -294,13 +308,13 @@ func envelopeDecrypt(kek, ciphertext, nonce, wrappedDEK []byte) ([]byte, error) 
 	}
 	dekNonce := wrappedDEK[:gcm.NonceSize()]
 	wrappedDEKBody := wrappedDEK[gcm.NonceSize():]
-	dek, err := gcm.Open(nil, dekNonce, wrappedDEKBody, nil)
+	dek, err := gcm.Open(nil, dekNonce, wrappedDEKBody, ad)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap DEK: %w", err)
 	}
 	defer zero(dek) // SU-10: wipe the unwrapped DEK on return (best-effort)
 	// Decrypt the plaintext with the DEK.
-	plaintext, err := decryptWithKey(dek, ciphertext, nonce)
+	plaintext, err := decryptWithKey(dek, ciphertext, nonce, ad)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt with DEK: %w", err)
 	}

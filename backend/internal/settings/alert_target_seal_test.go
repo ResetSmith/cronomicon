@@ -31,7 +31,7 @@ func TestPushTargetURLsAreSealed(t *testing.T) {
 	if err := pool.QueryRow(`SELECT url FROM alert_targets WHERE id = ?`, made.ID).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(stored, "TOKEN-A") || !strings.HasPrefix(stored, "v2:") {
+	if strings.Contains(stored, "TOKEN-A") || !strings.HasPrefix(stored, "v3:") {
 		t.Fatalf("stored %q, want a sealed token", stored)
 	}
 

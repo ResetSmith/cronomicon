@@ -51,7 +51,7 @@ func TestGR2_SavingTheConnectionBackKeepsTheToken(t *testing.T) {
 		if enc == "" {
 			return ""
 		}
-		plain, err := secrets.DecryptString(cfg, enc)
+		plain, err := secrets.DecryptSetting(cfg, secrets.SettingsBinding(secrets.LabelGitToken, "global"), enc)
 		if err != nil {
 			t.Fatalf("decrypt token_enc: %v", err)
 		}
@@ -133,7 +133,7 @@ func TestGR2_AMaskIsNeverStoredAsAToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	if enc != "" {
-		plain, _ := secrets.DecryptString(cfg, enc)
+		plain, _ := secrets.DecryptSetting(cfg, secrets.SettingsBinding(secrets.LabelGitToken, "global"), enc)
 		t.Errorf("a save of the form stored %q as the repository's token; want nothing stored (the token is the environment's)", plain)
 	}
 
@@ -174,7 +174,7 @@ func TestGR2_SavingObservabilityBackKeepsTheBearerToken(t *testing.T) {
 		if err := pool.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'obs.bearerTokenEnc'`).Scan(&enc); err != nil {
 			t.Fatalf("read the bearer token: %v", err)
 		}
-		plain, err := secrets.DecryptString(cfg, enc)
+		plain, err := secrets.DecryptSetting(cfg, secrets.SettingsBinding(secrets.LabelObservabilityBearer, ""), enc)
 		if err != nil {
 			t.Fatalf("decrypt the bearer token: %v", err)
 		}

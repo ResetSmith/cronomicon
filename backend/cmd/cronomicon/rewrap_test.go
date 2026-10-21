@@ -38,7 +38,7 @@ func seedV1(t *testing.T, cfgV1 *config.Config) (*sql.DB, string) {
 
 	sealer := secrets.NewSealer(cfgV1)
 	seal := func(plain string) secrets.Sealed {
-		s, err := sealer.Seal([]byte(plain))
+		s, err := sealer.SealLegacy([]byte(plain))
 		if err != nil {
 			t.Fatalf("seal: %v", err)
 		}
@@ -143,7 +143,7 @@ func TestRewrapCoversEveryRepository(t *testing.T) {
 		if v, _ := secrets.TokenKEKVersion(tok); v != 2 {
 			t.Errorf("%s of %s should be at v2, got v%d", c.col, c.id, v)
 		}
-		if plain, err := secrets.DecryptString(cfgV2, tok); err != nil || plain != c.want {
+		if plain, err := secrets.DecryptSetting(cfgV2, secrets.SettingsBinding(secrets.LabelGitToken, c.id), tok); err != nil || plain != c.want {
 			t.Errorf("%s of %s under the new key = %q (%v), want %q", c.col, c.id, plain, err, c.want)
 		}
 	}
@@ -194,16 +194,20 @@ func TestRewrapMovesEveryStoreAndPreservesPlaintext(t *testing.T) {
 	sealer2 := secrets.NewSealer(cfgV2)
 	openRow := func(table, id string) string {
 		var ct, nonce, wrapped []byte
-		var ver int
+		var ver, format int
 		if err := pool.QueryRow(
-			"SELECT ciphertext, nonce, wrapped_dek, COALESCE(kek_version,1) FROM "+table+" WHERE id=?", id,
-		).Scan(&ct, &nonce, &wrapped, &ver); err != nil {
+			"SELECT ciphertext, nonce, wrapped_dek, COALESCE(kek_version,1), seal_format FROM "+table+" WHERE id=?", id,
+		).Scan(&ct, &nonce, &wrapped, &ver, &format); err != nil {
 			t.Fatalf("read %s: %v", table, err)
 		}
 		if ver != 2 {
 			t.Errorf("%s %s should be at v2, got v%d", table, id, ver)
 		}
-		plain, err := sealer2.Open(ct, nonce, wrapped, ver)
+		// 2.5.1 SG2.10: a rewrapped row is bound to its row as well.
+		if format != secrets.SealBound {
+			t.Errorf("%s %s is not bound after the rewrap (seal_format %d)", table, id, format)
+		}
+		plain, err := sealer2.Open(secrets.RowBinding(table, id), format, ct, nonce, wrapped, ver)
 		if err != nil {
 			t.Fatalf("open %s under the new key: %v", table, err)
 		}
@@ -223,7 +227,7 @@ func TestRewrapMovesEveryStoreAndPreservesPlaintext(t *testing.T) {
 	if v, _ := secrets.TokenKEKVersion(tok); v != 2 {
 		t.Errorf("settings token should be at v2, got v%d", v)
 	}
-	plain, err := secrets.DecryptString(cfgV2, tok)
+	plain, err := secrets.DecryptSetting(cfgV2, secrets.SettingsBinding(secrets.LabelGitToken, "global"), tok)
 	if err != nil {
 		t.Fatalf("decrypt token under the new key: %v", err)
 	}

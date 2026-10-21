@@ -172,6 +172,7 @@ var writeRouteGates = map[string]routeGate{
 	"PUT /api/v1/env-secrets/{secretId}":                              {clsObject, "ScopeWritable and requireEntityAgency; requireVaultPath for the path the row will name (LR-80)"},
 	"DELETE /api/v1/env-secrets/{secretId}":                           {clsObject, "ScopeWritable and requireEntityAgency"},
 	"POST /api/v1/env-secrets/{secretId}/reveal":                      {clsObject, "requireEntityAgency"},
+	"POST /api/v1/env-secrets/{secretId}/lock-reveal":                 {clsObject, "requireEntityAgency: manageEnvVars on the secret's agency (2.5.1 SG-19)"},
 	"POST /api/v1/env-secrets/{secretId}/migrate-to-vault":            {clsObject, "requireEntityAgency, then requireVaultPath for the path written to (LR-80)"},
 	"PUT /api/v1/env-secret-tags/{secretId}":                          {clsObject, "requireEntityAgency"},
 	"POST /api/v1/scopes":                                             {clsObject, "requireCreationAgencies — born in the creator's agency (GC-6)"},

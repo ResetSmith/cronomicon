@@ -362,7 +362,7 @@ func UpdateNotificationConfig(ctx context.Context, database *sql.DB, appCfg *con
 // (so a blank password on update doesn't wipe the stored one).
 func resolveSMTPPassword(ctx context.Context, database *sql.DB, appCfg *config.Config, inp NotificationConfig) (*string, error) {
 	if inp.SMTP != nil && inp.SMTP.Password != "" {
-		token, err := secrets.EncryptString(appCfg, inp.SMTP.Password)
+		token, err := secrets.EncryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelSMTPPassword, ""), inp.SMTP.Password)
 		if err != nil {
 			return nil, fmt.Errorf("encrypt SMTP password (is a KEK configured?): %w", err)
 		}

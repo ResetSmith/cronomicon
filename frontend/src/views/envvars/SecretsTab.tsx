@@ -62,6 +62,10 @@ interface EnvSecretRow {
   canRepair?: boolean;
   createdBy?: string;
   lastModifiedAt?: string;
+  // 2.5.1 SG-19: its agency made it unrevealable (one way).
+  revealLocked?: boolean;
+  revealLockedBy?: string;
+  revealLockedAt?: string;
 }
 
 const MASK = "••••••••••••••••";
@@ -134,6 +138,24 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
   // Held only in component state — cleared on Hide, tab switch, or unmount.
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [revealBusy, setRevealBusy] = useState<string | null>(null);
+  const [locking, setLocking] = useState<EnvSecretRow | null>(null);
+  const [lockBusy, setLockBusy] = useState(false);
+  // 2.5.1 SG-19: one way — the dialog says so, and nothing in the app undoes it.
+  const lockReveal = async (row: EnvSecretRow) => {
+    if (!row.id) return;
+    setLockBusy(true);
+    const { error } = await api.POST("/env-secrets/{secretId}/lock-reveal", {
+      params: { path: { secretId: row.id }, header: csrfHeader },
+    });
+    setLockBusy(false);
+    setLocking(null);
+    if (error) {
+      setNotice({ kind: "error", text: errMsg(error) });
+      return;
+    }
+    setNotice({ kind: "info", text: `${row.key} can no longer be revealed by anyone. Runs still use it.` });
+    refetch();
+  };
   const cw = useColumnWidths("envvars-secrets");
   // RB-22 — each row shows its full agency membership; the matrix that used to
   // answer this is gone. `dep` reuses the row refetch, so a membership edit made
@@ -443,7 +465,14 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                           <div>
                             <DetailLabel
                               action={
-                                !isVault && canEdit ? (
+                                !isVault && v.revealLocked ? (
+                                  <span
+                                    title={`Made unrevealable${v.revealLockedBy ? ` by ${v.revealLockedBy}` : ""}${v.revealLockedAt ? ` on ${fmtDate(v.revealLockedAt)}` : ""}: runs still use it, and nobody reveals it.`}
+                                    style={{ color: c.textMuted, fontSize: c.fontSm, whiteSpace: "nowrap", flexShrink: 0 }}
+                                  >
+                                    Not revealable
+                                  </span>
+                                ) : !isVault && canEdit ? (
                                   <span
                                     onClick={() => toggleReveal(v)}
                                     style={{ cursor: "pointer", color: c.primary, fontSize: c.fontSm, whiteSpace: "nowrap", flexShrink: 0 }}
@@ -507,6 +536,14 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                                   }}
                                   onError={(text) => setNotice({ kind: "error", text })}
                                 />
+                              )}
+                              {!isVault && canEdit && !v.revealLocked && (
+                                <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
+                                  <Btn onClick={() => setLocking(v)}>Make unrevealable…</Btn>
+                                  <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+                                    Nobody can reveal it afterwards, global administrators included. Runs still use it.
+                                  </span>
+                                </div>
                               )}
                               {!isVault && vaultEnabled && (
                                 <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
@@ -572,6 +609,27 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
           busy={busy}
           onConfirm={doDelete}
           onCancel={() => setDeleting(null)}
+        />
+      )}
+
+      {locking && (
+        <ConfirmDialog
+          title="Make this secret unrevealable?"
+          confirmLabel="Make unrevealable"
+          busy={lockBusy}
+          message={
+            <>
+              <p style={{ marginTop: 0 }}>
+                From now on nobody can reveal <strong>{locking.key}</strong> through Cronomicon: not your agency, not a
+                global administrator. Runs still use it, and you can still rotate it or move it to Vault.
+              </p>
+              <p style={{ marginBottom: 0 }}>
+                <strong>This cannot be undone.</strong> If you need the value again, keep it where it came from.
+              </p>
+            </>
+          }
+          onConfirm={() => void lockReveal(locking)}
+          onCancel={() => setLocking(null)}
         />
       )}
 

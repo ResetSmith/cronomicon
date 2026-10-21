@@ -65,7 +65,7 @@ func GetVaultConfig(ctx context.Context, database *sql.DB, appCfg *config.Config
 		}
 
 		if roleId.Valid && roleId.String != "" {
-			decrypted, err := secrets.DecryptString(appCfg, roleId.String)
+			decrypted, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelVaultRoleID, ""), roleId.String)
 			if err == nil {
 				cfg.RoleId = decrypted
 				cfg.RoleIdSet = true
@@ -98,7 +98,7 @@ func GetVaultConfig(ctx context.Context, database *sql.DB, appCfg *config.Config
 	} else {
 		// Decrypt secret ID from DB if not overridden by env
 		if secretIdEnc.Valid && secretIdEnc.String != "" {
-			decrypted, err := secrets.DecryptString(appCfg, secretIdEnc.String)
+			decrypted, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelVaultSecretID, ""), secretIdEnc.String)
 			if err == nil {
 				finalSecretID = decrypted
 			}
@@ -146,7 +146,7 @@ func UpdateVaultConfig(ctx context.Context, database *sql.DB, appCfg *config.Con
 	// DEFAULT does not apply when a value is supplied explicitly).
 	var roleIdEnc string
 	if inp.RoleId != "" {
-		token, encErr := secrets.EncryptString(appCfg, inp.RoleId)
+		token, encErr := secrets.EncryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelVaultRoleID, ""), inp.RoleId)
 		if encErr != nil {
 			return nil, fmt.Errorf("encrypt RoleId: %w", encErr)
 		}
@@ -157,7 +157,7 @@ func UpdateVaultConfig(ctx context.Context, database *sql.DB, appCfg *config.Con
 
 	var secretIdEnc *string
 	if inp.SecretId != "" {
-		token, encErr := secrets.EncryptString(appCfg, inp.SecretId)
+		token, encErr := secrets.EncryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelVaultSecretID, ""), inp.SecretId)
 		if encErr != nil {
 			return nil, fmt.Errorf("encrypt SecretId: %w", encErr)
 		}
@@ -277,7 +277,7 @@ func ResolveVaultRuntime(ctx context.Context, database *sql.DB, appCfg *config.C
 		if !roleIDEnc.Valid || roleIDEnc.String == "" {
 			return VaultRuntime{}, false
 		}
-		decrypted, err := secrets.DecryptString(appCfg, roleIDEnc.String)
+		decrypted, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelVaultRoleID, ""), roleIDEnc.String)
 		if err != nil {
 			return VaultRuntime{}, false
 		}
@@ -286,7 +286,7 @@ func ResolveVaultRuntime(ctx context.Context, database *sql.DB, appCfg *config.C
 	if !secretIDEnc.Valid || secretIDEnc.String == "" {
 		return VaultRuntime{}, false
 	}
-	secret, err := secrets.DecryptString(appCfg, secretIDEnc.String)
+	secret, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelVaultSecretID, ""), secretIDEnc.String)
 	if err != nil {
 		return VaultRuntime{}, false
 	}

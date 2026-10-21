@@ -309,6 +309,23 @@ func run() error {
 	} else if n > 0 {
 		logger.Info("push-target URLs sealed", "count", n)
 	}
+	// 2.5.1 SG2.10: bind every sealed value to its row, once; from then on an
+	// unbound value is refused. This is what makes 2.5.1 one-way: 2.5.0 cannot
+	// open a bound value, so going back means restoring a backup from before.
+	if rep, berr := secrets.BindSeals(ctx0, pool, cfg); berr != nil {
+		logger.Error("could not bind the sealed values to their rows; unbound values stay readable and the next start tries again", "error", berr, "bound", rep.Bound)
+	} else {
+		switch {
+		case rep.NoKEK:
+			logger.Info("no KEK configured: no sealed value to bind")
+		case rep.Failed > 0:
+			logger.Warn("some sealed values could not be bound to their rows (a KEK version not configured?); they stay readable unbound and the next start tries again",
+				"bound", rep.Bound, "failed", rep.Failed)
+		case rep.Bound > 0:
+			logger.Warn("sealed values bound to their rows (2.5.1): this database can no longer be opened by 2.5.0; restoring a backup from before the upgrade is the only way back",
+				"bound", rep.Bound)
+		}
+	}
 	// 2.5.1 SG-3: CRONOMICON_BACKUP_RECIPIENTS seeds the backup keys once.
 	if seeded, serr := settings.SeedBackupRecipientsFromEnv(ctx0, pool, cfg.BackupRecipients); serr != nil {
 		logger.Error("could not seed the backup keys from CRONOMICON_BACKUP_RECIPIENTS; backups stay as Settings → Backups has them", "error", serr)
