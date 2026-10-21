@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 // A secret's Usage (2.5.1 SG2.4): references, runs that used it, and changes,
@@ -23,6 +23,14 @@ const USAGE = {
   ],
 };
 const paths: string[] = [];
+const HELD = [
+  { kind: "secret", id: "s-old", name: "OLD_SHARED", scope: "fin-hosts" },
+  { kind: "key", id: "k-old", name: "old-deploy" },
+];
+
+vi.mock("../../agency", () => ({
+  useAgencyOptional: () => ({ agency: "ag:FIN", agencyName: "Finance", onOverview: false }),
+}));
 
 vi.mock("../../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/client")>();
@@ -31,13 +39,14 @@ vi.mock("../../api/client", async (importOriginal) => {
     api: {
       GET: vi.fn(async (path: string) => {
         paths.push(path);
+        if (path === "/agencies/{agencyId}/held-by-global") return { data: { items: HELD } };
         return { data: USAGE };
       }),
     } as unknown as typeof actual.api,
   };
 });
 
-import { RowUsagePanel } from "./RowUsage";
+import { HeldByGlobal, RowUsagePanel } from "./RowUsage";
 
 afterEach(cleanup);
 
@@ -67,5 +76,20 @@ describe("RowUsagePanel", () => {
     );
     await screen.findAllByText("fin-deploy");
     expect(paths).toContain("/ssh/credentials/{credentialId}/usage");
+  });
+});
+
+describe("HeldByGlobal", () => {
+  it("lists the agency's former secrets Global holds, of the tab's kind only, and opens one's usage", async () => {
+    render(
+      <MemoryRouter>
+        <HeldByGlobal kind="secret" />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Held by Global")).toBeTruthy();
+    expect(screen.getByText(/only\s+Global's runs use them/)).toBeTruthy();
+    expect(screen.queryByText("old-deploy")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /OLD_SHARED/ }));
+    expect(await screen.findByLabelText("Usage")).toBeTruthy();
   });
 });

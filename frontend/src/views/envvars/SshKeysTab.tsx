@@ -5,7 +5,7 @@ import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../.
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
 import { MoveAgency } from "./MoveAgency";
-import { RowUsagePanel, SecretsReportButton } from "./RowUsage";
+import { HeldByGlobal, RowUsagePanel, SecretsReportButton } from "./RowUsage";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { pubKeyFilename, toOpenSSH, toRFC4716 } from "../../utils/sshpubkey";
@@ -304,6 +304,8 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
           </Btn>
         )}
       </div>
+
+      <HeldByGlobal kind="key" />
 
       <NamespaceHelp>
         Reference a key in a script or inventory as{" "}

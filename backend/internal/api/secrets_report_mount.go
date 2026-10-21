@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/runref"
@@ -24,6 +25,90 @@ import (
 // cannot read is left out, as it is from the secrets list.
 func (s *Server) mountSecretsReport(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/agencies/{agencyId}/secrets-report", s.auth.RequireSession(http.HandlerFunc(s.handleSecretsReport)))
+	mux.Handle("GET /api/v1/agencies/{agencyId}/held-by-global", s.auth.RequireSession(http.HandlerFunc(s.handleHeldByGlobal)))
+}
+
+// Rows Global holds that an agency is listed on (2.5.1 SG2.6, SG-16): the
+// secrets and SSH keys several agencies shared before 2.3.0, which stayed
+// Global's and, since 2.4.0 (IN-6), only Global's runs use. They are the
+// agency's former secrets that Global now uses, so the agency sees them, and
+// their Usage, read only. This is the one exception to the reading rule
+// (Global's rows are everywhere-readers'), and heldByGlobalFor is its one
+// statement.
+//
+//	GET /api/v1/agencies/{agencyId}/held-by-global  the agency's people; 404 otherwise
+
+// heldByGlobalItem is one such row.
+type heldByGlobalItem struct {
+	Kind  string `json:"kind"` // secret | key
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Scope string `json:"scope,omitempty"`
+}
+
+func (s *Server) handleHeldByGlobal(w http.ResponseWriter, r *http.Request) {
+	agency := r.PathValue("agencyId")
+	var known int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, agency).Scan(&known); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if known == 0 || !readsAgency(r, agency) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+		return
+	}
+	out := []heldByGlobalItem{}
+	if agency == agencyid.Global { // Global's own rows are on its lists already
+		httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+		return
+	}
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT 'secret', t.id, t.key, COALESCE(t.scope, '') FROM secrets t
+		 WHERE t.owner_agency = ? AND EXISTS (SELECT 1 FROM secret_agencies m WHERE m.secret_id = t.id AND m.agency_id = ?)
+		UNION ALL
+		SELECT 'key', t.id, t.label, '' FROM ssh_credentials t
+		 WHERE t.owner_agency = ? AND EXISTS (SELECT 1 FROM ssh_credential_agencies m WHERE m.credential_id = t.id AND m.agency_id = ?)
+		ORDER BY 1, 3`, agencyid.Global, agency, agencyid.Global, agency)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var it heldByGlobalItem
+		if err := rows.Scan(&it.Kind, &it.ID, &it.Name, &it.Scope); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		out = append(out, it)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// heldByGlobalFor reports whether the caller may read row id (of the secrets
+// or ssh_credentials table, with its membership table and column) as one of
+// its agencies' former secrets that Global now holds: the row is Global's and
+// lists an agency (not Global) whose rows the caller reads. Unreadable
+// membership is a no.
+func (s *Server) heldByGlobalFor(r *http.Request, table, memberTable, memberCol, id string) bool {
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT m.agency_id FROM `+memberTable+` m JOIN `+table+` t ON t.id = m.`+memberCol+`
+		 WHERE m.`+memberCol+` = ? AND t.owner_agency = ? AND m.agency_id <> ?`, id, agencyid.Global, agencyid.Global) //nolint:gosec // fixed identifiers
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var a string
+		if rows.Scan(&a) == nil && readsAgency(r, a) {
+			return true
+		}
+	}
+	return false
 }
 
 // secretsReportRow is one secret or key.

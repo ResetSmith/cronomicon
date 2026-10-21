@@ -4575,6 +4575,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agencies/{agencyId}/held-by-global": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Secrets and SSH keys Global holds that list this agency
+         * @description v2.5.1. What several agencies shared before 2.3.0 stayed Global's, and
+         *     since 2.4.0 only Global's runs use a row of Global's. These are the
+         *     agency's former secrets that Global now uses; the agency reads them
+         *     and their Usage (`/env-secrets/{secretId}/usage`,
+         *     `/ssh/credentials/{credentialId}/usage`), read only. A global
+         *     administrator gives one to the agency by repair. Empty for Global.
+         *     The agency's people and everywhere-readers; 404 otherwise.
+         */
+        get: operations["agencyHeldByGlobal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agencies/{agencyId}/secrets-report": {
         parameters: {
             query?: never;
@@ -18299,6 +18325,38 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["Validation"];
+        };
+    };
+    agencyHeldByGlobal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rows. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            /** @enum {string} */
+                            kind: "secret" | "key";
+                            id: string;
+                            name: string;
+                            scope?: string;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
         };
     };
     agencySecretsReport: {

@@ -334,16 +334,32 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			return
 		}
 		sid := r.PathValue("secretId")
-		sc, ok := s.loadSecretInScope(w, r, sec, sid, id)
-		if !ok {
-			return
+		var sc *secrets.Secret
+		if s.heldByGlobalFor(r, "secrets", "secret_agencies", "secret_id", sid) {
+			// SG-16: a member agency's former secret that Global holds.
+			got, err := sec.Get(r.Context(), sid)
+			if err != nil {
+				httpx.Fail500(w, s.log, "db_error", err)
+				return
+			}
+			if got == nil {
+				httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
+				return
+			}
+			sc = got
+		} else {
+			got, ok := s.loadSecretInScope(w, r, sec, sid, id)
+			if !ok {
+				return
+			}
+			sc = got
 		}
 		owner, err := s.rowOwnerOrGlobal(r.Context(), "secrets", sid)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		if !readsAgency(r, owner) {
+		if !readsAgency(r, owner) && !s.heldByGlobalFor(r, "secrets", "secret_agencies", "secret_id", sid) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
@@ -738,8 +754,10 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		// Whose it is (2.5.0 C2): its usage names hosts and bastions.
-		if c == nil || !readsAgency(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", cid)) {
+		// Whose it is (2.5.0 C2): its usage names hosts and bastions. A member
+		// agency reads a key Global holds for it (2.5.1 SG-16).
+		if c == nil || (!readsAgency(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", cid)) &&
+			!s.heldByGlobalFor(r, "ssh_credentials", "ssh_credential_agencies", "credential_id", cid)) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}

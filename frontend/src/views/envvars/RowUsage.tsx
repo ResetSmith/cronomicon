@@ -5,7 +5,7 @@ import { useAgencyOptional } from "../../agency";
 import type { components } from "../../api/schema";
 import { useGet } from "../../hooks";
 import { c } from "../../theme";
-import { Btn, InlineLoading, SectionLabel } from "../../components/ui";
+import { Btn, ExpandChevron, InlineLoading, SectionLabel } from "../../components/ui";
 import { detailBoxStyle, fmtDate } from "./ui";
 
 type RowUsage = components["schemas"]["RowUsage"];
@@ -69,6 +69,50 @@ export function SecretsReportButton() {
     <Btn onClick={() => void download()} disabled={busy} title={err ?? `Every secret and SSH key of ${ctx.agencyName}: references, uses, reveals and changes by anyone outside it. No values.`}>
       {busy ? "Working…" : "Download report"}
     </Btn>
+  );
+}
+
+type HeldItem = { kind: "secret" | "key"; id: string; name: string; scope?: string };
+
+// Held by Global (2.5.1 SG2.6, SG-16): the agency in use's former secrets or
+// keys that several agencies shared before 2.3.0 and Global still holds. Since
+// 2.4.0 only Global's runs use them, so the agency's runs do not; the agency
+// sees them, and their Usage, read only. Nothing renders when there are none,
+// on the overview, or outside the switcher.
+export function HeldByGlobal({ kind }: { kind: "secret" | "key" }) {
+  const ctx = useAgencyOptional();
+  const agency = ctx && !ctx.onOverview ? ctx.agency : "";
+  const q = useGet<{ items: HeldItem[] }>(
+    () => (agency ? api.GET("/agencies/{agencyId}/held-by-global", { params: { path: { agencyId: agency } } }) : Promise.resolve({ data: { items: [] } })),
+    [agency],
+  );
+  const [open, setOpen] = useState<string | null>(null);
+  const items = (q.data?.items ?? []).filter((i) => i.kind === kind);
+  if (!agency || items.length === 0) return null;
+  const noun = kind === "secret" ? "secret" : "SSH key";
+  return (
+    <div style={{ ...detailBoxStyle(), marginBottom: 16 }} aria-label="Held by Global">
+      <SectionLabel>Held by Global</SectionLabel>
+      <div style={{ color: c.textSec, fontSize: c.fontSm, lineHeight: 1.6, marginBottom: 8 }}>
+        These were shared with {ctx?.agencyName ?? "this agency"} before 2.3.0. Global holds them, and since 2.4.0 only
+        Global's runs use them: your agency's runs do not. A global administrator can give one to your agency; until then,
+        create your own {noun} if your jobs need one.
+      </div>
+      {items.map((it) => (
+        <div key={it.id} style={{ borderTop: `1px solid ${c.borderLight}`, padding: "6px 0" }}>
+          <button
+            type="button"
+            onClick={() => setOpen(open === it.id ? null : it.id)}
+            aria-expanded={open === it.id}
+            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: c.text, fontSize: c.fontSm, fontWeight: 600 }}
+          >
+            <ExpandChevron open={open === it.id} /> {it.name}
+            {it.scope ? <span style={{ color: c.textMuted, fontWeight: 400 }}> (scope {it.scope})</span> : null}
+          </button>
+          {open === it.id && <RowUsagePanel kind={kind} id={it.id} />}
+        </div>
+      ))}
+    </div>
   );
 }
 

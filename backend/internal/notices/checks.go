@@ -139,6 +139,12 @@ var ownedKinds = []struct {
 // is not what its member list suggests: a Global-owned row is a global
 // administrator's, and an agency-owned row's Vault path is its owner's alone.
 // Filed under Global, whose administrators can settle either kind.
+//
+// 2.5.1 (SG-16): a Global-owned row is ALSO filed under each agency it lists
+// as a member, subject "<kind>:<id>@<agency id>": these are an agency's former
+// secrets that Global now uses (since 2.4.0, IN-6, a row of Global's is
+// injected into Global's runs only), which the agency would otherwise never
+// see. The agency reads such a row, and its Usage, through heldByGlobalFor.
 func checkSharedOwnership(ctx context.Context, database *sql.DB) error {
 	var found []Finding
 	for _, k := range ownedKinds {
@@ -147,18 +153,20 @@ func checkSharedOwnership(ctx context.Context, database *sql.DB) error {
 			       COALESCE((SELECT name FROM agencies WHERE id = t.owner_agency), t.owner_agency),
 			       (SELECT group_concat(name, ', ') FROM (
 			            SELECT a.name AS name FROM `+k.join+` m JOIN agencies a ON a.id = m.agency_id
-			             WHERE m.`+k.col+` = t.id ORDER BY a.name))
+			             WHERE m.`+k.col+` = t.id ORDER BY a.name)),
+			       COALESCE((SELECT group_concat(agency_id, ',') FROM `+k.join+` m
+			                  WHERE m.`+k.col+` = t.id AND m.agency_id <> ?), '')
 			  FROM `+k.table+` t
 			 WHERE (t.owner_agency = ? AND EXISTS (SELECT 1 FROM `+k.join+` m WHERE m.`+k.col+` = t.id AND m.agency_id <> ?))
 			    OR (SELECT COUNT(*) FROM `+k.join+` m WHERE m.`+k.col+` = t.id) > 1
-			 ORDER BY t.id`, agencyid.Global, agencyid.Global)
+			 ORDER BY t.id`, agencyid.Global, agencyid.Global, agencyid.Global)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
-			var id, name, scope, owner, ownerName string
+			var id, name, scope, owner, ownerName, memberIDs string
 			var members sql.NullString
-			if err := rows.Scan(&id, &name, &scope, &owner, &ownerName, &members); err != nil {
+			if err := rows.Scan(&id, &name, &scope, &owner, &ownerName, &members, &memberIDs); err != nil {
 				rows.Close()
 				return err
 			}
@@ -166,14 +174,32 @@ func checkSharedOwnership(ctx context.Context, database *sql.DB) error {
 			if scope != "" {
 				where = " in scope " + scope
 			}
+			detail := fmt.Sprintf("The %s %s%s is owned by %s and listed for %s. ", k.noun, name, where, ownerName, members.String)
+			if owner == agencyid.Global {
+				detail += "Since 2.4.0 a row of Global's is used by Global's runs only, so those agencies' runs no longer use it. "
+			}
 			found = append(found, Finding{
 				AgencyID: agencyid.Global,
 				Subject:  k.kind + ":" + id,
-				Detail: fmt.Sprintf("The %s %s%s is owned by %s and usable by %s. It works as it did before 2.3.0. "+
-					"To settle it, give it to one agency (set its agencies to that one), or make it Global's for every "+
-					"agency to use; if several agencies need their own, create a copy in each first.",
-					k.noun, name, where, ownerName, members.String),
+				Detail: detail + "To settle it, give it to one agency (set its agencies to that one); if several agencies " +
+					"need their own, create a copy in each first.",
 			})
+			if owner != agencyid.Global {
+				continue
+			}
+			for _, member := range strings.Split(memberIDs, ",") {
+				if member == "" {
+					continue
+				}
+				found = append(found, Finding{
+					AgencyID: member,
+					Subject:  k.kind + ":" + id + "@" + member,
+					Detail: fmt.Sprintf("The %s %s%s was shared with your agency before 2.3.0. Global holds it, and since "+
+						"2.4.0 only Global's runs use it: your agency's runs do not. You can see it, and which runs used it, "+
+						"under Held by Global. A global administrator can give it to your agency; until then, create your "+
+						"own %s if your jobs need one.", k.noun, name, where, k.noun),
+				})
+			}
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()

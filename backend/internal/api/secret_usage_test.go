@@ -8,6 +8,43 @@ import (
 	"time"
 )
 
+// 2.5.1 SG2.6 (SG-16): a secret Global holds that lists FIN (shared before
+// 2.3.0) is FIN's to see, and its Usage; not TAX's, which it does not list.
+func TestHeldByGlobal(t *testing.T) {
+	h, pool := gateServer(t)
+	for _, q := range []string{
+		`INSERT INTO secrets (id, key, scope, source, created_by, created_at, last_modified_by, last_modified_at) VALUES ('s-held', 'OLD_SHARED', 'fin-hosts', 'stored', 'old@x', '2026-01-01T00:00:00Z', 'old@x', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO secret_agencies (secret_id, agency_id) VALUES ('s-held', 'ag:FIN')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("%v\n%s", err, q)
+		}
+	}
+	var owner string
+	if err := pool.QueryRow(`SELECT owner_agency FROM secrets WHERE id='s-held'`).Scan(&owner); err != nil || owner != "global" {
+		t.Fatalf("precondition: the row is Global's (owner %q, %v)", owner, err)
+	}
+
+	rec := gateReq(t, h, http.MethodGet, "/api/v1/agencies/ag:FIN/held-by-global", gFinAdmin, "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"OLD_SHARED"`) {
+		t.Fatalf("FIN's held-by-global = %d %s", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodGet, "/api/v1/agencies/ag:TAX/held-by-global", gTaxAdmin, ""); strings.Contains(rec.Body.String(), "OLD_SHARED") {
+		t.Errorf("TAX's list names FIN's held row: %s", rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodGet, "/api/v1/env-secrets/s-held/usage", gFinViewer, ""); rec.Code != http.StatusOK {
+		t.Errorf("FIN's viewer reading the held row's usage = %d %s", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodGet, "/api/v1/env-secrets/s-held/usage", gTaxAdmin, ""); rec.Code != http.StatusNotFound {
+		t.Errorf("TAX reading it = %d, want 404", rec.Code)
+	}
+	// The exception is the usage and the list only: the secret itself is
+	// still not on FIN's secrets list (it is Global's).
+	if rec := gateReq(t, h, http.MethodGet, "/api/v1/env-secrets", gFinAdmin, ""); strings.Contains(rec.Body.String(), "OLD_SHARED") {
+		t.Errorf("the held row is on FIN's secrets list: %s", rec.Body)
+	}
+}
+
 // 2.5.1 SG2.5: an agency's secrets report — its own rows only, the uses and
 // reveals counted, a global administrator's reveal counted as an outside
 // change; CSV with a header row; another agency's administrator gets 404.

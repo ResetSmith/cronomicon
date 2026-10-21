@@ -7414,6 +7414,41 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Validation' }
 
+  /agencies/{agencyId}/held-by-global:
+    get:
+      tags: [Secrets]
+      operationId: agencyHeldByGlobal
+      summary: Secrets and SSH keys Global holds that list this agency
+      description: |
+        v2.5.1. What several agencies shared before 2.3.0 stayed Global's, and
+        since 2.4.0 only Global's runs use a row of Global's. These are the
+        agency's former secrets that Global now uses; the agency reads them
+        and their Usage (`/env-secrets/{secretId}/usage`,
+        `/ssh/credentials/{credentialId}/usage`), read only. A global
+        administrator gives one to the agency by repair. Empty for Global.
+        The agency's people and everywhere-readers; 404 otherwise.
+      parameters: [{ $ref: '#/components/parameters/agencyId' }]
+      responses:
+        '200':
+          description: The rows.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [kind, id, name]
+                      properties:
+                        kind: { type: string, enum: [secret, key] }
+                        id: { type: string }
+                        name: { type: string }
+                        scope: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /agencies/{agencyId}/secrets-report:
     get:
       tags: [Secrets]

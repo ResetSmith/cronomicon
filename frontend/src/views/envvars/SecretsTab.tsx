@@ -4,7 +4,7 @@ import { VAULT_SECRET_GLOBAL_ONLY, globalOnly } from "../../api/globalAdmin";
 import { GLOBAL_AGENCY, useAgencyIdByName } from "../../api/access";
 import { useVaultPrefixes, vaultPathWhy } from "../../api/vaultPaths";
 import { MoveAgency } from "./MoveAgency";
-import { RowUsagePanel, SecretsReportButton } from "./RowUsage";
+import { HeldByGlobal, RowUsagePanel, SecretsReportButton } from "./RowUsage";
 import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
@@ -363,6 +363,8 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
           </Btn>
         )}
       </div>
+
+      <HeldByGlobal kind="secret" />
 
       <NamespaceHelp>
         Reference a secret in a script or inventory as{" "}
