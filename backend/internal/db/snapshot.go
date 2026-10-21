@@ -22,13 +22,13 @@ import (
 // every path (SG-6). The names are spelled here and in internal/backup
 // (SealedSuffix, RecipientsSuffix), which this package must not import.
 const (
-	defaultBackupDir   = "/var/lib/cronomicon/backups"
+	DefaultBackupDir   = "/var/lib/cronomicon/backups"
 	stagingDirName     = ".staging"
 	snapshotPrefix     = "cronomicon-"
 	plainSuffix        = ".db"
 	sealedSuffix       = ".db.age"
 	recipientsSuffix   = ".db.age.recipients"
-	snapshotKeepDays   = 7
+	SnapshotKeepDays   = 7
 	lastSnapshotKey    = "backupLastSnapshot"
 	snapshotDateLength = len("20060102")
 )
@@ -37,7 +37,7 @@ func backupDir(p RetentionPolicy) string {
 	if p.BackupDir != "" {
 		return p.BackupDir
 	}
-	return defaultBackupDir
+	return DefaultBackupDir
 }
 
 // clearStaging removes whatever a crash left in the staging directory: a
@@ -136,7 +136,7 @@ func pruneSnapshots(dir string, log *slog.Logger) {
 	if err != nil {
 		return
 	}
-	cutoff := nowUTC().AddDate(0, 0, -snapshotKeepDays).Format("20060102")
+	cutoff := nowUTC().AddDate(0, 0, -SnapshotKeepDays).Format("20060102")
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() {
@@ -172,6 +172,42 @@ func persistLastSnapshot(ctx context.Context, pool *sql.DB, s LastSnapshot) {
 	_, _ = pool.ExecContext(ctx, `
 		INSERT INTO settings(key, value) VALUES(?, ?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, lastSnapshotKey, string(b))
+}
+
+// LocalSnapshot is one snapshot kept in the backup directory, and the
+// fingerprints it was sealed to (none: unencrypted). Settings → Backups uses
+// it to say which local backups only one key opens.
+type LocalSnapshot struct {
+	File       string   `json:"file"`
+	Recipients []string `json:"recipients"`
+}
+
+// ListLocalSnapshots lists the snapshots in dir, newest first. A sealed one's
+// fingerprints come from its recipients file; one whose file is missing is
+// listed with none.
+func ListLocalSnapshots(dir string) ([]LocalSnapshot, error) {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return []LocalSnapshot{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := []LocalSnapshot{}
+	for i := len(entries) - 1; i >= 0; i-- {
+		name := entries[i].Name()
+		if entries[i].IsDir() || snapshotDate(name) == "" || strings.HasSuffix(name, recipientsSuffix) {
+			continue
+		}
+		s := LocalSnapshot{File: name, Recipients: []string{}}
+		if strings.HasSuffix(name, sealedSuffix) {
+			if raw, rerr := os.ReadFile(filepath.Join(dir, name+".recipients")); rerr == nil {
+				s.Recipients = strings.Fields(string(raw))
+			}
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 // ReadLastSnapshot returns the last successful backup, or nil when none has

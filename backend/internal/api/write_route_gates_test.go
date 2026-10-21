@@ -91,6 +91,7 @@ var writeRouteGates = map[string]routeGate{
 	"POST /api/v1/references/validate":                                {clsOpen, "validates reference names for the caller; writes nothing"},
 	"POST /api/v1/calendars":                                          {clsObject, "compose on the calendar's owner (ownerAgency; §0a)"},
 	"PUT /api/v1/settings/freeze":                                     {clsGlobal, "the installation-wide freeze is an installation setting (§0a, open point 2)"},
+	"PUT /api/v1/settings/backup":                                     {clsGlobal, "the backup keys are the installation's (2.5.1 SG1)"},
 	"PUT /api/v1/calendars/{name}":                                    {clsObject, "compose on the calendar's owner (§0a)"},
 	"DELETE /api/v1/calendars/{name}":                                 {clsObject, "compose on the calendar's owner (§0a)"},
 	"PUT /api/v1/calendars/{name}/days":                               {clsObject, "compose on the calendar's owner (§0a)"},

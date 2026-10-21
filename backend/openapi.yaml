@@ -5947,6 +5947,62 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Validation' }
+  /settings/backup:
+    get:
+      tags: [Settings]
+      operationId: getBackupSettings
+      summary: The backup keys and what the backups have been
+      description: |
+        Settings → Backups (v2.5.1). The age public keys every nightly snapshot
+        is encrypted to (none: backups are unencrypted; encryption is optional),
+        the last backup and the keys it was sealed to, the local copies, the
+        bucket and the schedule. A global administrator's.
+      responses:
+        '200':
+          description: The backup settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [Settings]
+      operationId: setBackupKeys
+      summary: Replace the backup keys
+      description: |
+        A global administrator's. Each key is an age X25519 public key
+        (`age1…`); a private key, an SSH key or a post-quantum key is 422
+        `invalid_recipient`. Adding the FIRST key turns encryption on and needs
+        `acknowledgedKeyCustody: true` (422 `acknowledgement_required`): the
+        private keys never reach the server, and if every one is lost every
+        encrypted backup is unreadable. Removing the last key turns it off and
+        needs `confirmUnencrypted: true` (422 `confirmation_required`). The
+        change applies to the next backup and is in the change log with the
+        keys' fingerprints.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recipients]
+              properties:
+                recipients:
+                  type: array
+                  items: { type: string }
+                  description: The whole list; empty turns encryption off.
+                acknowledgedKeyCustody: { type: boolean }
+                confirmUnencrypted: { type: boolean }
+      responses:
+        '200':
+          description: The backup settings as written.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
   /settings/general:
     get:
       tags: [Settings]
@@ -10387,6 +10443,46 @@ components:
         scheduleName: { type: string }
         polarity: { type: string, enum: [skip, only] }
 
+    BackupRecipient:
+      type: object
+      required: [key, fingerprint]
+      properties:
+        key: { type: string, description: "An age X25519 public key (age1…)." }
+        fingerprint: { type: string, description: "The first 16 hex characters of the key's SHA-256, as the card, the change log and each backup name it." }
+    BackupSnapshot:
+      type: object
+      required: [file, recipients]
+      properties:
+        file: { type: string }
+        at: { type: string, format: date-time }
+        recipients:
+          type: array
+          items: { type: string }
+          description: The fingerprints it was sealed to; empty when it is unencrypted.
+    BackupSettings:
+      type: object
+      required: [recipients, encrypted, lastBackup, localBackups, localDirectory, localKeepDays, bucket, schedule]
+      properties:
+        recipients:
+          type: array
+          items: { $ref: '#/components/schemas/BackupRecipient' }
+        lastModifiedBy: { type: string }
+        lastModifiedAt: { type: string, format: date-time }
+        encrypted: { type: boolean, description: "Whether the next backup is encrypted (a key is set)." }
+        lastBackup:
+          description: The last successful backup since v2.5.1; null before the first.
+          oneOf:
+            - $ref: '#/components/schemas/BackupSnapshot'
+            - type: 'null'
+        lastSuccessAt: { type: string, format: date-time }
+        localBackups:
+          type: array
+          items: { $ref: '#/components/schemas/BackupSnapshot' }
+          description: The snapshots kept on the server's volume, newest first.
+        localDirectory: { type: string }
+        localKeepDays: { type: integer }
+        bucket: { type: string, description: "The S3 bucket backups are uploaded to; empty when they are kept locally only." }
+        schedule: { type: string, description: "The daily UTC time of the backup (CRONOMICON_BACKUP_AT)." }
     InstallationFreeze:
       type: object
       required: [on, reason]

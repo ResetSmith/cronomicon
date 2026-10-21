@@ -120,6 +120,7 @@ var routeClasses = map[string]routeClass{
 	"/api/v1/rbac-preflight":         {"installation", ""},
 	"/api/v1/settings/log-storage":   {"installation", ""},
 	"/api/v1/settings/observability": {"installation", ""},
+	"/api/v1/settings/backup":        {"installation", ""},
 
 	// ── any-session ──
 	"/api/v1/me":                        {"any-session", ""},
