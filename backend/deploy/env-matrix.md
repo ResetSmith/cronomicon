@@ -321,6 +321,7 @@ it. `CRONOMICON_BACKUP_AT` therefore also decides when retention runs.
 | Var | Default | Notes |
 |---|---|---|
 | `CRONOMICON_BACKUP_AT` | `02:00` | Daily **wall-clock UTC** `HH:MM` for the retention + backup sweep. Always UTC — *not* the application timezone from Settings → General, which governs scheduling and display only. An unset or unparseable value falls back to `02:00` rather than failing to boot. Wall-clock anchoring (rather than a 24h-from-boot ticker) is deliberate: a process restarted more often than daily would never have reached the end of a 24h ticker, so a frequently-redeployed deployment could go indefinitely without a durable backup. A **boot catch-up** sweep also runs immediately when the last recorded success is more than 24h old, gated on that persisted timestamp so a crash-loop still backs up at most about once a day. |
+| `CRONOMICON_BACKUP_RECIPIENTS` | _(empty)_ | Seeds Settings → Backups' keys **once**, on the first boot that finds none stored (2.5.1): age X25519 public keys (`age1…`), separated by commas or newlines. With keys, every snapshot is encrypted to them (`cronomicon-YYYYMMDD.db.age`, locally and in the bucket); without, backups stay unencrypted. Encryption is optional. Public keys only: the private keys that open a backup never go to the server, and **losing all of them makes every encrypted backup unreadable**. Afterwards the stored list is the one in force and this is not read. |
 | `CRONOMICON_BACKUP_S3_BUCKET` | _(empty)_ | Empty ⇒ local snapshots only (no upload). |
 | `CRONOMICON_BACKUP_S3_ENDPOINT` | _(empty)_ | `host:port`; empty ⇒ AWS S3. Set for MinIO. |
 | `CRONOMICON_BACKUP_S3_REGION` | `us-east-1` | |
@@ -405,8 +406,10 @@ whenever the connection is saved. The rest are re-read closer to use.
 | GitLab repo URL / PAT | `CRONOMICON_GITLAB_BASE_URL` / `CRONOMICON_GITLAB_TOKEN` (Global's repository only) | `git_repos` (the row `global`) | when the connection is saved (its sync service is rebuilt and syncs); an env value at restart |
 | GitLab webhook secret | `CRONOMICON_GITLAB_WEBHOOK_SECRET` (Global's repository only; pins validation; **rotation API returns 409 while set**) | `git_repos` (+ rotation overlap pair) | the stored secret: at once (read per delivery); the env value: restart |
 | GitLab write branch | `CRONOMICON_GITLAB_WRITE_BRANCH` (Global's repository only) | `git_repos.branch` | next sync/publish (read per operation) |
-| Vault addr / AppRole | `CRONOMICON_VAULT_ADDR` / `CRONOMICON_VAULT_ROLE_ID[_FILE]` / `CRONOMICON_VAULT_SECRET_ID[_FILE]` | `vault_config` | restart |
-| Vault namespace | `CRONOMICON_VAULT_NAMESPACE` | `vault_config.namespace` | restart |
+| Vault addr / AppRole (the installation's, also Global's) | `CRONOMICON_VAULT_ADDR` / `CRONOMICON_VAULT_ROLE_ID[_FILE]` / `CRONOMICON_VAULT_SECRET_ID[_FILE]` | `vault_config` | next Vault operation (the client is keyed on the resolved config) |
+| Vault namespace | `CRONOMICON_VAULT_NAMESPACE` | `vault_config.namespace` | next Vault operation |
+| An agency's own Vault (2.5.1) | — (no env; an agency cannot set the server's environment) | `agency_vaults` (one row per agency; AppRole credentials sealed) | next Vault operation of that agency's rows |
+| Allowed hosts for an agency's own Vault (2.5.1) | — (no env) | settings KV `vaultAllowedHosts` | at once: asked on every save, test and client build |
 | Run-log dir | — (no env) | `log_storage_config.local_path` | **immediately** — pushed to every writer on save; in-flight runs finish in the old directory and existing files are not moved |
 | Retention windows | seeded from `CRONOMICON_RETENTION_*` on first boot only | `auditCompliance` settings blob | next nightly sweep |
 | Application timezone | `TZ` (fallback only) | settings KV `timezone` | **immediately** — the cron engine is rebuilt in the new zone |

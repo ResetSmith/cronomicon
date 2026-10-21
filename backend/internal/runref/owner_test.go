@@ -280,7 +280,7 @@ func TestKeyLabelsGetTheSameTiers(t *testing.T) {
 	// then patched into place is the kind of setup that passes for the wrong reason.
 	mkKey := func(id, owner, material string) {
 		t.Helper()
-		sealed, err := secrets.NewSealer(f.cfg).Seal([]byte(material))
+		sealed, err := secrets.NewSealer(f.cfg).SealLegacy([]byte(material))
 		if err != nil {
 			t.Fatalf("seal %s: %v", id, err)
 		}

@@ -3,7 +3,9 @@ import { api, fetchCapabilities } from "../../api/client";
 import { VAULT_SECRET_GLOBAL_ONLY, globalOnly } from "../../api/globalAdmin";
 import { GLOBAL_AGENCY, useAgencyIdByName } from "../../api/access";
 import { useVaultPrefixes, vaultPathWhy } from "../../api/vaultPaths";
+import { useAgencyOptional } from "../../agency";
 import { MoveAgency } from "./MoveAgency";
+import { HeldByGlobal, RowUsagePanel, SecretsReportButton } from "./RowUsage";
 import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
@@ -61,6 +63,10 @@ interface EnvSecretRow {
   canRepair?: boolean;
   createdBy?: string;
   lastModifiedAt?: string;
+  // 2.5.1 SG-19: its agency made it unrevealable (one way).
+  revealLocked?: boolean;
+  revealLockedBy?: string;
+  revealLockedAt?: string;
 }
 
 const MASK = "••••••••••••••••";
@@ -86,11 +92,16 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
 
   // Vault-source secrets are only offered when Vault is actually configured
   // (C.3); otherwise the local-KEK "stored" path is the only active option.
-  const [vaultEnabled, setVaultEnabled] = useState(false);
-  // There is ONE Vault connection for the installation. Since v2.3.0 (LR-80) it
-  // is divided by agency: a global administrator assigns each agency its path
-  // prefixes, and an agency's administrators name paths inside them for the
-  // rows their agency owns. A row that is GLOBAL's has no path limit and stays a
+  // The installation's Vault, or (2.5.1 SG3) the agency in use's own.
+  const [installationVault, setVaultEnabled] = useState(false);
+  const inUse = useAgencyOptional()?.agency;
+  const inUseVault = useVaultPrefixes(inUse && inUse !== GLOBAL_AGENCY ? inUse : undefined, canEdit);
+  const vaultEnabled = installationVault || (inUseVault.kind === "prefixes" && inUseVault.ownVault);
+  // The installation's Vault is divided by agency since v2.3.0 (LR-80): a
+  // global administrator assigns each agency its path prefixes, and an
+  // agency's administrators name paths inside them for the rows their agency
+  // owns. An agency with a Vault of its own (2.5.1) names any path in it, or
+  // inside the prefixes it set itself. A row that is GLOBAL's has no path limit and stays a
   // global administrator's: `vaultWhy` is "" for them and the explanation for
   // anyone else, and it applies to Global's rows only (rowVaultWhy).
   const [vaultGlobal, setVaultGlobal] = useState(false);
@@ -133,6 +144,24 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
   // Held only in component state — cleared on Hide, tab switch, or unmount.
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [revealBusy, setRevealBusy] = useState<string | null>(null);
+  const [locking, setLocking] = useState<EnvSecretRow | null>(null);
+  const [lockBusy, setLockBusy] = useState(false);
+  // 2.5.1 SG-19: one way — the dialog says so, and nothing in the app undoes it.
+  const lockReveal = async (row: EnvSecretRow) => {
+    if (!row.id) return;
+    setLockBusy(true);
+    const { error } = await api.POST("/env-secrets/{secretId}/lock-reveal", {
+      params: { path: { secretId: row.id }, header: csrfHeader },
+    });
+    setLockBusy(false);
+    setLocking(null);
+    if (error) {
+      setNotice({ kind: "error", text: errMsg(error) });
+      return;
+    }
+    setNotice({ kind: "info", text: `${row.key} can no longer be revealed by anyone. Runs still use it.` });
+    refetch();
+  };
   const cw = useColumnWidths("envvars-secrets");
   // RB-22 — each row shows its full agency membership; the matrix that used to
   // answer this is gone. `dep` reuses the row refetch, so a membership edit made
@@ -355,12 +384,15 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         <ScopeFilterSelect scopes={scopeNames.filter((s) => s !== ALL_SCOPE_OPTION)} value={scopeFilter} onChange={setScopeFilter} />
         <TagFilterSelect items={items} selected={tagFilter} onChange={setTagFilter} getTags={(v) => tagState.tagsFor(v)} matchMode={tagMatch} onMatchModeChange={setTagMatch} />
         <ColumnsMenu cols={cols} cw={cw} />
+        <SecretsReportButton />
         {canEdit && (
           <Btn primary onClick={() => setAdding(true)}>
             + Add Secret
           </Btn>
         )}
       </div>
+
+      <HeldByGlobal kind="secret" />
 
       <NamespaceHelp>
         Reference a secret in a script or inventory as{" "}
@@ -439,7 +471,14 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                           <div>
                             <DetailLabel
                               action={
-                                !isVault && canEdit ? (
+                                !isVault && v.revealLocked ? (
+                                  <span
+                                    title={`Made unrevealable${v.revealLockedBy ? ` by ${v.revealLockedBy}` : ""}${v.revealLockedAt ? ` on ${fmtDate(v.revealLockedAt)}` : ""}: runs still use it, and nobody reveals it.`}
+                                    style={{ color: c.textMuted, fontSize: c.fontSm, whiteSpace: "nowrap", flexShrink: 0 }}
+                                  >
+                                    Not revealable
+                                  </span>
+                                ) : !isVault && canEdit ? (
                                   <span
                                     onClick={() => toggleReveal(v)}
                                     style={{ cursor: "pointer", color: c.primary, fontSize: c.fontSm, whiteSpace: "nowrap", flexShrink: 0 }}
@@ -504,6 +543,14 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                                   onError={(text) => setNotice({ kind: "error", text })}
                                 />
                               )}
+                              {!isVault && canEdit && !v.revealLocked && (
+                                <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
+                                  <Btn onClick={() => setLocking(v)}>Make unrevealable…</Btn>
+                                  <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+                                    Nobody can reveal it afterwards, global administrators included. Runs still use it.
+                                  </span>
+                                </div>
+                              )}
                               {!isVault && vaultEnabled && (
                                 <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
                                   <Btn onClick={() => setMigrating(v)} disabled={!!rowVaultWhy(v)} title={rowVaultWhy(v) || undefined}>
@@ -517,6 +564,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                             </div>
                           </div>
                         </DetailGrid>
+                        {v.id && <RowUsagePanel kind="secret" id={v.id} />}
                         </DetailPanel>
                         <ReferenceField reference={v.reference} semantics="Resolves to the secret value at run time (always redacted in logs)." />
                         <div style={{ marginTop: 12 }}>
@@ -567,6 +615,27 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
           busy={busy}
           onConfirm={doDelete}
           onCancel={() => setDeleting(null)}
+        />
+      )}
+
+      {locking && (
+        <ConfirmDialog
+          title="Make this secret unrevealable?"
+          confirmLabel="Make unrevealable"
+          busy={lockBusy}
+          message={
+            <>
+              <p style={{ marginTop: 0 }}>
+                From now on nobody can reveal <strong>{locking.key}</strong> through Cronomicon: not your agency, not a
+                global administrator. Runs still use it, and you can still rotate it or move it to Vault.
+              </p>
+              <p style={{ marginBottom: 0 }}>
+                <strong>This cannot be undone.</strong> If you need the value again, keep it where it came from.
+              </p>
+            </>
+          }
+          onConfirm={() => void lockReveal(locking)}
+          onCancel={() => setLocking(null)}
         />
       )}
 
@@ -625,7 +694,9 @@ function SecretFormModal({
   const ownerName = isEdit
     ? initial?.ownerAgency || "Global"
     : agencyPick.agencies.find((a) => a.id === agencyPick.selected)?.name || "the agency";
-  const prefixes = useVaultPrefixes(ownerId, vaultEnabled);
+  const prefixes = useVaultPrefixes(ownerId);
+  // The owner's own Vault offers the source even where the installation has none.
+  const offerVault = vaultEnabled || (prefixes.kind === "prefixes" && prefixes.ownVault);
   // Why the Vault SOURCE cannot be chosen at all, and why this PATH cannot be.
   const vaultWhy = ownerId === GLOBAL_AGENCY ? globalVaultWhy : vaultPathWhy(prefixes, ownerName);
   const pathWhy = source === "vault" && ownerId !== GLOBAL_AGENCY ? vaultPathWhy(prefixes, ownerName, vaultPath) : "";
@@ -744,7 +815,7 @@ function SecretFormModal({
                 [
                   { v: "stored", l: "Stored in Cronomicon" },
                   // Vault option only appears when Vault is configured (C.3).
-                  ...(vaultEnabled ? [{ v: "vault", l: "Vault reference" }] : []),
+                  ...(offerVault ? [{ v: "vault", l: "Vault reference" }] : []),
                 ] as { v: SecretSource; l: string }[]
               ).map((opt, i) => {
                 // Vault is configured (so the option is relevant) but this row's
@@ -783,7 +854,7 @@ function SecretFormModal({
                 );
               })}
             </div>
-            {vaultEnabled && vaultWhy && (
+            {offerVault && vaultWhy && (
               <span role="note" style={{ fontSize: c.fontXs, color: c.textMuted, flex: 1, minWidth: 200 }}>{vaultWhy}</span>
             )}
           </div>

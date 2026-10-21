@@ -9,13 +9,13 @@ import (
 )
 
 // KindAgencyNoRepository — an agency has no repository connected (2.4.0
-// Phase I3; §0a, IN-2; the owner's answer to question 39). Every agency has
-// one, Global included: it is where the agency's definitions live, and where
-// its publishes, and from 2.5.0 the assignments it is given, are committed.
-// An agency created since I3 is created with its repository and cannot lose
-// it; this is an agency from before, or Global's repository with no URL.
-// Nothing is refused while it is so: the agency works as it did, and cannot
-// receive an assignment.
+// Phase I3; §0a, IN-2; the owner's answer to question 39). A repository is
+// where the agency's definitions live, and where its publishes, and from
+// 2.5.0 the assignments it is given, are committed. Since 2.5.1 (SG-40) an
+// agency connects it at creation or later, and a connected one is never
+// disconnected; so this is an agency created without it, one from before
+// 2.4.0, or Global's repository with no URL. Nothing else is refused while it
+// is so: the agency cannot receive an assignment or be published to.
 //
 // Subject: the agency's id. Filed under the agency. It clears when the
 // agency's repository is connected (for Global: a URL in its connection, or
@@ -62,11 +62,11 @@ func checkAgencyNoRepository(ctx context.Context, database *sql.DB) error {
 		found = append(found, Finding{
 			AgencyID: id,
 			Subject:  id,
-			Detail: "The agency " + name + " has no repository connected. Since 2.4.0 every agency has one: it is where its " +
-				"definitions live, and where its publishes and the assignments it is given are committed. An agency is now " +
-				"created with its repository; this one is from before. Until it is connected the agency works as it did, and " +
-				"cannot receive an assignment. Connect it (a URL on the allowed hosts, and a token that can push) under " +
-				"Settings → Repositories; this notice clears when it is done.",
+			Detail: "The agency " + name + " has no repository connected. A repository is where an agency's definitions " +
+				"live, and where its publishes and the assignments it is given are committed. Until it is connected the agency " +
+				"works as it does now, and cannot receive an assignment or be published to. Its administrator (configureApp on " +
+				name + ") connects it (a URL on the allowed hosts, and a token that can push) under Settings → Repositories; " +
+				"this notice clears when it is done.",
 		})
 	}
 	rows.Close()

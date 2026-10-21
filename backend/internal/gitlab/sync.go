@@ -203,7 +203,7 @@ func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
 
 	// 3. Decrypt and check active secret
 	if secretEnc.Valid && secretEnc.String != "" && s.Cfg != nil {
-		decrypted, err := secrets.DecryptString(s.Cfg, secretEnc.String)
+		decrypted, err := secrets.DecryptSetting(s.Cfg, secrets.SettingsBinding(secrets.LabelGitWebhookSecret, s.repo()), secretEnc.String)
 		if err == nil && ctEq(token, decrypted) {
 			return true
 		}
@@ -216,7 +216,7 @@ func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
 	if prevEnc.Valid && prevEnc.String != "" && overlapUntil.Valid && overlapUntil.String != "" && s.Cfg != nil {
 		expiry, err := time.Parse(time.RFC3339, overlapUntil.String)
 		if err == nil && time.Now().UTC().Before(expiry) {
-			decryptedPrev, err := secrets.DecryptString(s.Cfg, prevEnc.String)
+			decryptedPrev, err := secrets.DecryptSetting(s.Cfg, secrets.SettingsBinding(secrets.LabelGitWebhookSecretPrev, s.repo()), prevEnc.String)
 			if err == nil && ctEq(token, decryptedPrev) {
 				return true
 			}

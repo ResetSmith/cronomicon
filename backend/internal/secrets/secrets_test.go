@@ -290,7 +290,7 @@ func TestRedactionValuesIncludesSshCredentials(t *testing.T) {
 	ctx := context.Background()
 
 	material := "CRONOMICON-TEST-SSH-PRIVATE-KEY-7f3a9c2e"
-	sealed, err := NewSealer(cfg).Seal([]byte(material))
+	sealed, err := NewSealer(cfg).SealLegacy([]byte(material))
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}

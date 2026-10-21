@@ -43,12 +43,30 @@ const redactMask = redactdict.Mask
 func redactSkip(v string) bool                           { return redactdict.Skip(v) }
 func addRedactionValue(vals []string, v string) []string { return redactdict.AddValue(vals, v) }
 
+// RunAgencyIDs is the run's owner agency, as NewRedactor takes it (2.5.1
+// SG2.8). nil when it cannot be read: the dictionary then keeps every
+// agency's values, which masks more, never less.
+func RunAgencyIDs(ctx context.Context, db *sql.DB, traceID string) []string {
+	var owner sql.NullString
+	if err := db.QueryRowContext(ctx, `SELECT owner_agency FROM runs WHERE id = ?`, traceID).Scan(&owner); err != nil {
+		return nil
+	}
+	if owner.String == "" {
+		return []string{"global"}
+	}
+	return []string{owner.String}
+}
+
 // NewRedactor builds a Redactor for a run: all stored-secret plaintext values
 // (B6's secrets.RedactionValues, which decrypts via the KEK) plus any MULTI-LINE
 // env_var value for the run's scope — key material referenced by name, per the
 // type comment. Single-line Variables stay visible in logs (D7). cfg may be nil
 // in tests, in which case stored secrets contribute nothing.
-func NewRedactor(ctx context.Context, db *sql.DB, cfg *config.Config, scope string, extra ...string) (*Redactor, error) {
+//
+// agencies are the run's (agency ids): only those agencies' and Global's
+// stored values are in its dictionary (2.5.1 SG2.8). nil keeps every agency's,
+// for a caller that cannot say whose the run is.
+func NewRedactor(ctx context.Context, db *sql.DB, cfg *config.Config, scope string, agencies []string, extra ...string) (*Redactor, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT value FROM env_vars WHERE scope = ? OR scope = '*'`, scope)
 	if err != nil {
@@ -76,7 +94,13 @@ func NewRedactor(ctx context.Context, db *sql.DB, cfg *config.Config, scope stri
 	// Append stored-secret plaintext values (S14 envelope-decrypted by B6) so
 	// they're masked too (S7). Best-effort: a nil cfg or missing KEK yields none.
 	if cfg != nil {
-		secretVals, err := secrets.RedactionValues(ctx, db, cfg)
+		var secretVals []string
+		var err error
+		if agencies != nil {
+			secretVals, err = secrets.RedactionValuesFor(ctx, db, cfg, agencies)
+		} else {
+			secretVals, err = secrets.RedactionValues(ctx, db, cfg)
+		}
 		if err != nil {
 			return nil, err
 		}

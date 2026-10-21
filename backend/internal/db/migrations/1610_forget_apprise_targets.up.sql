@@ -1,0 +1,12 @@
+-- 1610_forget_apprise_targets (2.5.1 SG2.8, SG-18).
+--
+-- 1540 moved Global's push targets into alert_targets and left the old list on
+-- notification_config "as it was, read by nothing". Those are push-service
+-- URLs, which carry their tokens, in plaintext: they outlived any change made
+-- since in Settings → Alerts, and every backup held them. Emptied here rather
+-- than dropped: the column stays in the schema (many test fixtures and the
+-- older migrations' tests name it), and nothing reads it.
+--
+-- alert_targets.url itself is sealed by the server at start once a KEK is
+-- configured (settings.SealAlertTargetURLs): a migration cannot reach the KEK.
+UPDATE notification_config SET apprise_targets = '[]' WHERE apprise_targets <> '[]';

@@ -1,9 +1,11 @@
 // An agency names Vault paths inside the prefixes assigned to it (LR-80, v2.3.0).
 //
-// A global administrator assigns each agency a list of path prefixes on the
-// installation's one Vault connection (Scopes → Agencies). A Vault-backed
-// secret or SSH key that the agency owns must lie inside one of them; Global's
-// rows are a global administrator's and have no path limit.
+// A global administrator assigns each agency without a Vault of its own a list
+// of path prefixes on the installation's Vault (Scopes → Agencies). A
+// Vault-backed secret or SSH key that the agency owns must lie inside one of
+// them; Global's rows are a global administrator's and have no path limit.
+// Since 2.5.1 (SG-26) an agency may connect a Vault of its own: its prefixes
+// are then optional and its own, and none means any path in its Vault.
 //
 // What is here is the form's side of that: read the owner's prefixes, and say
 // before submit whether a path is inside one. The check mirrors the server's
@@ -53,8 +55,9 @@ export type VaultPrefixState =
   /** Global's row, or no owner chosen yet: nothing to check here. */
   | { kind: "unlimited" }
   | { kind: "loading" }
-  /** The owner agency's prefixes. Empty means it can name no Vault path. */
-  | { kind: "prefixes"; prefixes: string[] }
+  /** The owner agency's prefixes. Empty means it can name no Vault path,
+   *  unless it has a Vault of its own (`ownVault`), where it means any. */
+  | { kind: "prefixes"; prefixes: string[]; ownVault: boolean }
   /** The list could not be read (not the caller's agency, or an older server). */
   | { kind: "unknown" };
 
@@ -74,8 +77,9 @@ export function useVaultPrefixes(agencyId: string | undefined, enabled: boolean 
     setState({ kind: "loading" });
     api.GET("/agencies/{agencyId}/vault-prefixes", { params: { path: { agencyId } } }).then((res) => {
       if (cancelled) return;
-      const prefixes = (res.data as { prefixes?: string[] } | undefined)?.prefixes;
-      setState(res.error || !prefixes ? { kind: "unknown" } : { kind: "prefixes", prefixes });
+      const body = res.data as { prefixes?: string[]; ownVault?: boolean } | undefined;
+      const prefixes = body?.prefixes;
+      setState(res.error || !prefixes ? { kind: "unknown" } : { kind: "prefixes", prefixes, ownVault: !!body?.ownVault });
     });
     return () => {
       cancelled = true;
@@ -90,11 +94,14 @@ export function useVaultPrefixes(agencyId: string | undefined, enabled: boolean 
  */
 export function vaultPathWhy(state: VaultPrefixState, agencyName: string, ref?: string): string {
   if (state.kind !== "prefixes") return "";
+  if (state.ownVault && state.prefixes.length === 0) return "";
   if (state.prefixes.length === 0) {
     return `${agencyName} has no Vault paths assigned, so it cannot hold a Vault-backed row. A global administrator assigns them on Scopes → Agencies.`;
   }
   if (ref && ref.trim() && !vaultPathAllowed(ref, state.prefixes)) {
-    return `That path is outside the Vault paths assigned to ${agencyName}: ${state.prefixes.join(", ")}.`;
+    return state.ownVault
+      ? `That path is outside the prefixes ${agencyName} set for its own Vault: ${state.prefixes.join(", ")}.`
+      : `That path is outside the Vault paths assigned to ${agencyName}: ${state.prefixes.join(", ")}.`;
   }
   return "";
 }

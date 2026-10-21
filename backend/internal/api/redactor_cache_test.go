@@ -66,9 +66,9 @@ func TestRunsListBuildsOneRedactorPerScope(t *testing.T) {
 
 	builds := 0
 	orig := newRunRedactor
-	newRunRedactor = func(ctx context.Context, d *sql.DB, cfg *config.Config, scope string, extra ...string) (*runner.Redactor, error) {
+	newRunRedactor = func(ctx context.Context, d *sql.DB, cfg *config.Config, scope string, agencies []string, extra ...string) (*runner.Redactor, error) {
 		builds++
-		return orig(ctx, d, cfg, scope, extra...)
+		return orig(ctx, d, cfg, scope, agencies, extra...)
 	}
 	t.Cleanup(func() { newRunRedactor = orig })
 

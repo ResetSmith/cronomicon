@@ -25,6 +25,7 @@ const DEFAULT_DAYS: RetentionDays = {
   runnerPlacementHistory: 30,
   archivedLogFiles: 0,
   hostKeyLedger: 365,
+  secretUses: 365,
 };
 
 // Ordered runs → audit → disk, which is roughly increasing blast radius.
@@ -73,6 +74,11 @@ const RETENTION_FIELDS: { k: keyof RetentionDays; label: string; hint: string }[
     k: "hostKeyLedger",
     label: "Host Key History",
     hint: "How long a rejected, removed or replaced runner host key stays on record. A key a runner currently trusts is never pruned, whatever this is set to.",
+  },
+  {
+    k: "secretUses",
+    label: "Secret Use Records",
+    hint: "How long the record of which runs used which stored secret and SSH key is kept: what each agency's Usage view and secrets report show. Its own window, so an agency can review who used a secret long after the runs themselves are gone.",
   },
 ];
 

@@ -66,6 +66,10 @@ type VaultOptions struct {
 	// CAFile is a path to a PEM CA bundle; when set the client trusts only it
 	// (plus is pinned via a custom transport) instead of the system roots.
 	CAFile string
+	// CAPEM is a PEM CA bundle given as bytes rather than a path (2.5.1 SG3:
+	// an agency's own Vault, whose bundle is stored with its connection). It
+	// wins over CAFile.
+	CAPEM []byte
 	// SecretIDWrapped marks secretID as a response-wrapping token to be unwrapped
 	// via sys/wrapping/unwrap before the first AppRole login.
 	SecretIDWrapped bool
@@ -108,7 +112,13 @@ func NewVaultClientWithOptions(addr, roleID, secretID string, opts VaultOptions)
 	// SU-7: guard egress against SSRF. The CA path wraps the private-CA transport so
 	// pinning and the guard compose; the no-CA path guards a clone of the default
 	// transport. Blocks cloud-metadata/loopback/link-local (private per opts.Egress).
-	if opts.CAFile != "" {
+	if len(opts.CAPEM) > 0 {
+		tr, err := CATransportPEM(opts.CAPEM)
+		if err != nil {
+			return nil, err
+		}
+		client.Transport = httpx.SafeTransport(tr, opts.Egress)
+	} else if opts.CAFile != "" {
 		tr, err := CATransport(opts.CAFile)
 		if err != nil {
 			return nil, err
@@ -145,6 +155,39 @@ func CATransport(caFile string) (*http.Transport, error) {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	return tr, nil
+}
+
+// CATransportPEM is CATransport for a bundle given as bytes.
+func CATransportPEM(pem []byte) (*http.Transport, error) {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("vault CA bundle: no valid PEM certificates")
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	return tr, nil
+}
+
+// Login checks the connection without reading a secret: the connection test
+// of a Vault's settings and the health check of an agency's own (2.5.1 SG3).
+// It always reaches the server. With AppRole it is a fresh login (the cached
+// token is dropped first), which needs no capability beyond the role itself;
+// asking about the token instead (lookup-self) would fail for a role whose
+// tokens do not carry Vault's default policy, and report a working Vault as
+// unreachable. A static token has no login, so it is asked about instead.
+func (v *httpVaultClient) Login() error {
+	if v.tokenAuth {
+		token, err := v.ensureToken()
+		if err != nil {
+			return err
+		}
+		return v.do(http.MethodGet, "/v1/auth/token/lookup-self", token, nil, nil)
+	}
+	v.mu.Lock()
+	v.token = ""
+	v.mu.Unlock()
+	_, err := v.ensureToken()
+	return err
 }
 
 // Fetch reads the field from the KV v2 secret named by vaultRef.

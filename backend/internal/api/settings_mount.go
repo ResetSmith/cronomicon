@@ -196,7 +196,8 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				return
 			}
 		}
-		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "created", inp.Key, id.Email)
+		s.mountWriteChangeLogID(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "created", inp.Key, id.Email, "id="+sc.ID)
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "Secret", inp.Key, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "created") // SG-17
 		httpx.JSON(w, http.StatusCreated, sc)
 	})))
 	mux.Handle("PUT /api/v1/env-secrets/{secretId}", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -285,7 +286,14 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
-		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "updated", inp.Key, id.Email)
+		// SG-12: a new value, or a new Vault path that supplies it, is a
+		// rotation; anything else (description, scope, source alone) an update.
+		action := "updated"
+		if inp.Value != "" || inp.VaultPath != "" {
+			action = "rotated"
+		}
+		s.mountWriteChangeLogDetails(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", action, sc.Key, "id="+sc.ID, id.Email)
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "Secret", sc.Key, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), action) // SG-17
 		httpx.JSON(w, http.StatusOK, sc)
 	})))
 	mux.Handle("DELETE /api/v1/env-secrets/{secretId}", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -297,7 +305,8 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		sid := r.PathValue("secretId")
 		// D3/H3: enforce write-scope before deleting (404 out-of-scope; 403 on a global
 		// row — a restricted manager must not delete a secret every scope binds).
-		if _, ok := s.loadSecretWritable(w, r, sec, sid, id); !ok {
+		existing, ok := s.loadSecretWritable(w, r, sec, sid, id)
+		if !ok {
 			return
 		}
 		// RB-32: and the agency that owns it (RB-Q2/RB-Q14).
@@ -314,8 +323,96 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
-		s.mountWriteChangeLog(r, secretAgency, "Secrets", "deleted", sid, id.Email)
+		s.mountWriteChangeLogDetails(r, secretAgency, "Secrets", "deleted", existing.Key, "id="+sid, id.Email) // SG-12: by key
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "Secret", existing.Key, secretAgency, "deleted")    // SG-17
 		w.WriteHeader(http.StatusNoContent)
+	})))
+	// 2.5.1 SG2.4: a secret's Usage — what refers to it, which runs used it,
+	// what was done to it and by whom. Read by those who read the secret
+	// (its scope and its agency; 404 otherwise). Never a value.
+	mux.Handle("GET /api/v1/env-secrets/{secretId}/usage", s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := auth.IdentityFrom(r.Context())
+		if !ok {
+			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		sid := r.PathValue("secretId")
+		var sc *secrets.Secret
+		if s.heldByGlobalFor(r, "secrets", "secret_agencies", "secret_id", sid) {
+			// SG-16: a member agency's former secret that Global holds.
+			got, err := sec.Get(r.Context(), sid)
+			if err != nil {
+				httpx.Fail500(w, s.log, "db_error", err)
+				return
+			}
+			if got == nil {
+				httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
+				return
+			}
+			sc = got
+		} else {
+			got, ok := s.loadSecretInScope(w, r, sec, sid, id)
+			if !ok {
+				return
+			}
+			sc = got
+		}
+		owner, err := s.rowOwnerOrGlobal(r.Context(), "secrets", sid)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if !readsAgency(r, owner) && !s.heldByGlobalFor(r, "secrets", "secret_agencies", "secret_id", sid) {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
+			return
+		}
+		u, err := s.computeRowUsage(r.Context(), runref.KindSecret, sid, sc.Key, owner)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, u)
+	})))
+	// 2.5.1 SG2.11 (SG-19, question 134(b)): an agency makes a stored secret
+	// unrevealable. One way: there is no route that undoes it. The same gate as
+	// a reveal (manageEnvVars on the secret's own agency); the change log and
+	// the secret-changed alert record who did it.
+	mux.Handle("POST /api/v1/env-secrets/{secretId}/lock-reveal", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := auth.IdentityFrom(r.Context())
+		if !ok {
+			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		sid := r.PathValue("secretId")
+		sc, ok := s.loadSecretInScope(w, r, sec, sid, id)
+		if !ok {
+			return
+		}
+		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
+			return
+		}
+		if sc.RevealLocked {
+			httpx.JSON(w, http.StatusOK, sc) // idempotent
+			return
+		}
+		found, err := sec.LockReveal(r.Context(), sid, id.Email)
+		if err != nil {
+			httpx.Fail500(w, s.log, "lock_failed", err)
+			return
+		}
+		if !found {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
+			return
+		}
+		agency := settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid)
+		s.mountWriteChangeLogID(r, agency, "Secrets", "reveal-locked", sc.Key, id.Email, "id="+sid)
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "Secret", sc.Key, agency, "made unrevealable")
+		out, err := sec.Get(r.Context(), sid)
+		if err != nil || out == nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, out)
 	})))
 	mux.Handle("POST /api/v1/env-secrets/{secretId}/reveal", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := auth.IdentityFrom(r.Context())
@@ -337,6 +434,12 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
 			return
 		}
+		// 2.5.1 SG-19: an agency made it unrevealable. Refused before anything
+		// is decrypted, for everyone, and no reveal is recorded (none happened).
+		if sc.RevealLocked {
+			httpx.Fail(w, http.StatusConflict, "reveal_locked", "this secret was made unrevealable by its agency: it is used by runs, and nobody reveals it through Cronomicon")
+			return
+		}
 		if sc.Source == "vault" {
 			httpx.Fail(w, http.StatusConflict, "vault_source", "vault-source secrets cannot be revealed through Cronomicon")
 			return
@@ -355,11 +458,12 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// S1 / PP-B4b: the reveal MUST be audited. Write the change_log row BEFORE
 		// returning the plaintext and fail closed (500, no value) if the audit
 		// write errors — never hand back a secret with no audit trail.
-		if auditErr := settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid), id.Email, "Secrets", "revealed", sc.Key, ""); auditErr != nil {
+		if auditErr := settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid), id.Email, "Secrets", "revealed", sc.Key, "id="+sid); auditErr != nil {
 			s.log.Error("secret reveal audit write failed — withholding value", "key", sc.Key, "error", auditErr)
 			httpx.Fail(w, http.StatusInternalServerError, "audit_failed", "could not record the reveal; value withheld")
 			return
 		}
+		s.raiseSecretAlert(r, notify.TriggerSecretRevealed, "Secret", sc.Key, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid), "revealed") // SG-17
 		httpx.JSON(w, http.StatusOK, map[string]string{"value": value})
 	})))
 	mux.Handle("POST /api/v1/env-secrets/{secretId}/migrate-to-vault", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -413,7 +517,8 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 			return
 		}
-		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "migrated-to-vault", sc.Key, id.Email)
+		s.mountWriteChangeLogID(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "migrated-to-vault", sc.Key, id.Email, "id="+sc.ID)
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "Secret", sc.Key, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "migrated to Vault") // SG-17
 		httpx.JSON(w, http.StatusOK, sc)
 	})))
 	// Tags (migration 470): operator-authored, SQLite-only labels on a secret —
@@ -570,7 +675,8 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				return
 			}
 		}
-		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", "created", c.Label, id.Email)
+		s.mountWriteChangeLogID(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", "created", c.Label, id.Email, "id="+c.ID)
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "SSH key", c.Label, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "created") // SG-17
 		httpx.JSON(w, http.StatusCreated, c)
 	})))
 	mux.Handle("GET /api/v1/ssh/credentials/{credentialId}", s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -641,7 +747,13 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
-		s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", "updated", c.Label, id.Email)
+		// SG-12: new material, or a new Vault path for it, is a rotation.
+		keyAction := "updated"
+		if inp.Material != "" || inp.VaultRef != "" {
+			keyAction = "rotated"
+		}
+		s.mountWriteChangeLogDetails(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), "SSH Keys", keyAction, c.Label, "id="+c.ID, id.Email)
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "SSH key", c.Label, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", c.ID), keyAction) // SG-17
 		httpx.JSON(w, http.StatusOK, c)
 	})))
 	mux.Handle("DELETE /api/v1/ssh/credentials/{credentialId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -662,6 +774,11 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		cid := r.PathValue("credentialId")
 		force := r.URL.Query().Get("force") == "true"
 		keyAgency := settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", cid) // read while the row is there
+		var keyLabel string
+		_ = s.db.QueryRowContext(r.Context(), `SELECT label FROM ssh_credentials WHERE id = ?`, cid).Scan(&keyLabel)
+		if keyLabel == "" {
+			keyLabel = cid
+		}
 		found, err := keys.Delete(r.Context(), cid, force)
 		if err != nil {
 			if errors.Is(err, sshkeys.ErrCredentialInUse) {
@@ -681,7 +798,8 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
-		s.mountWriteChangeLog(r, keyAgency, "SSH Keys", "deleted", cid, id.Email)
+		s.mountWriteChangeLogDetails(r, keyAgency, "SSH Keys", "deleted", keyLabel, "id="+cid+fmt.Sprintf(" force=%t", force), id.Email) // SG-12: by label
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "SSH key", keyLabel, keyAgency, "deleted")                                    // SG-17
 		w.WriteHeader(http.StatusNoContent)
 	})))
 	mux.Handle("GET /api/v1/ssh/credentials/{credentialId}/usage", s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -691,8 +809,10 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		// Whose it is (2.5.0 C2): its usage names hosts and bastions.
-		if c == nil || !readsAgency(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", cid)) {
+		// Whose it is (2.5.0 C2): its usage names hosts and bastions. A member
+		// agency reads a key Global holds for it (2.5.1 SG-16).
+		if c == nil || (!readsAgency(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", cid)) &&
+			!s.heldByGlobalFor(r, "ssh_credentials", "ssh_credential_agencies", "credential_id", cid)) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 			return
 		}
@@ -701,7 +821,20 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		httpx.JSON(w, http.StatusOK, usage)
+		// 2.5.1 SG2.4: the key's whole Usage, with the hosts and bastions the
+		// route has always answered with kept beside it.
+		owner, err := s.rowOwnerOrGlobal(r.Context(), "ssh_credentials", cid)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		u, err := s.computeRowUsage(r.Context(), runref.KindKey, cid, c.Label, owner)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		u.Hosts, u.Bastions = usage.Hosts, usage.Bastions
+		httpx.JSON(w, http.StatusOK, u)
 	})))
 	// Tags (migration 470): operator-authored, SQLite-only labels on an SSH key
 	// credential — plaintext metadata beside the sealed key; ConfigureApp gate to
@@ -747,6 +880,19 @@ func (s *Server) mountWriteChangeLog(r *http.Request, agency, category, action, 
 	_ = settings.WriteChangeLog(r.Context(), s.db, agency, actor, category, action, target, "")
 }
 
+// mountWriteChangeLogID is mountWriteChangeLog naming the row's id in details
+// ("id=<id>"), which a secret's or key's Usage view matches its rows by (2.5.1
+// SG2.4): a key or label is unique only within an agency and a scope.
+func (s *Server) mountWriteChangeLogID(r *http.Request, agency, category, action, target, actor, idDetail string) {
+	_ = settings.WriteChangeLog(r.Context(), s.db, agency, actor, category, action, target, idDetail)
+}
+
+// mountWriteChangeLogDetails is mountWriteChangeLog with details (an id, a
+// flag): never a value.
+func (s *Server) mountWriteChangeLogDetails(r *http.Request, agency, category, action, target, details, actor string) {
+	_ = settings.WriteChangeLog(r.Context(), s.db, agency, actor, category, action, target, details)
+}
+
 // loadSecretInScope loads a secret by id and enforces the actor's scope grants
 // (P1.7 / D3). On a DB error it writes 500; on missing OR out-of-scope it writes
 // 404 and returns false — deliberately NOT 403, so a scope-restricted operator can
@@ -788,19 +934,24 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 // requireVaultPath gates every write that names a Vault path (LR-80; GC-8 and
 // its SSH-key half until 2.3.0).
 //
-// There is ONE Vault connection for the installation, so a Vault-backed secret
-// or key can name any path that connection's credential can read, another
-// agency's included, and migrate-to-Vault can write to any path it can write.
-// From 2.2.2 that made every Vault path a global administrator's to name, which
-// closed the hole and left an agency unable to manage its own Vault-backed
-// secrets. Now the path is judged against the OWNER of the row:
+// An agency without a Vault of its own uses the installation's, so a
+// Vault-backed secret or key can name any path that connection's credential
+// can read, another agency's included, and migrate-to-Vault can write to any
+// path it can write. From 2.2.2 that made every Vault path a global
+// administrator's to name, which closed the hole and left an agency unable to
+// manage its own Vault-backed secrets. Now the path is judged against the
+// OWNER of the row:
 //
 //   - a row that is Global's: a global administrator, any path, as before;
-//   - a row that is an agency's: a path inside one of the prefixes a global
-//     administrator assigned to that agency (internal/vaultpath: whole segments,
-//     no "..", nothing a URL could decode into one). An agency with no prefix
-//     can name no path. This binds a global administrator too — the rule is
-//     about where an agency's secret may point, not about who is typing.
+//   - a row of an agency with no Vault of its own: a path inside one of the
+//     prefixes a global administrator assigned to that agency
+//     (internal/vaultpath: whole segments, no "..", nothing a URL could decode
+//     into one). An agency with no prefix can name no path. This binds a
+//     global administrator too — the rule is about where an agency's secret
+//     may point, not about who is typing;
+//   - a row of an agency with a Vault of its own (2.5.1, SG-26): any path when
+//     it has no prefixes, else a path inside them. The row resolves in that
+//     agency's Vault only (secrets.VaultForOwner).
 //
 // It also asks for the permission on the OWNER agency itself, before the path
 // is judged or the agency's prefixes are named in a refusal. The surrounding
@@ -831,10 +982,20 @@ func (s *Server) requireVaultPath(w http.ResponseWriter, r *http.Request, id aut
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
 	}
+	// 2.5.1 SG-26: in an agency's own Vault every path is its own, and its
+	// prefixes, if it set any, limit only itself.
+	own, err := settings.AgencyHasOwnVault(r.Context(), s.db, ownerAgencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if own && len(prefixes) == 0 {
+		return true
+	}
 	if len(prefixes) == 0 {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "vault_path_not_allowed",
-			"this "+label+"'s agency has no Vault paths assigned, so it cannot name one: a global administrator "+
-				"assigns an agency its Vault path prefixes")
+			"this "+label+"'s agency has no Vault paths assigned in the installation's Vault, so it cannot name one: "+
+				"a global administrator assigns an agency its Vault path prefixes, or the agency connects a Vault of its own")
 		return false
 	}
 	ok, err := vaultpath.Allowed(ref, prefixes)
@@ -1552,7 +1713,7 @@ func alertTargetView(id auth.Identity, t settings.AlertTarget) settings.AlertTar
 
 func (s *Server) handleListAlertTargets(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.IdentityFrom(r.Context())
-	list, err := settings.ListAlertTargets(r.Context(), s.db)
+	list, err := settings.ListAlertTargets(r.Context(), s.db, s.cfg)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -1568,7 +1729,7 @@ func (s *Server) handleListAlertTargets(w http.ResponseWriter, r *http.Request) 
 // 404 to one who may not read it (question 72), 403 to one who reads it but
 // holds no configureApp on its agency (AL-3).
 func (s *Server) alertTargetFor(w http.ResponseWriter, r *http.Request, id auth.Identity) (*settings.AlertTarget, bool) {
-	t, err := settings.GetAlertTarget(r.Context(), s.db, r.PathValue("targetId"))
+	t, err := settings.GetAlertTarget(r.Context(), s.db, s.cfg, r.PathValue("targetId"))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return nil, false
@@ -1661,7 +1822,7 @@ func (s *Server) handleCreateAlertTarget(w http.ResponseWriter, r *http.Request)
 	if !pushTargetSchemeAllowed(w, id, owner, inp.URL) {
 		return
 	}
-	t, err := settings.CreateAlertTarget(r.Context(), s.db, *inp, id.Email)
+	t, err := settings.CreateAlertTarget(r.Context(), s.db, s.cfg, *inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "create_failed", err)
 		return
@@ -1688,7 +1849,7 @@ func (s *Server) handleUpdateAlertTarget(w http.ResponseWriter, r *http.Request)
 	if inp.URL != stored.URL && !pushTargetSchemeAllowed(w, id, stored.OwnerAgency, inp.URL) {
 		return
 	}
-	t, err := settings.UpdateAlertTarget(r.Context(), s.db, r.PathValue("targetId"), *inp, id.Email)
+	t, err := settings.UpdateAlertTarget(r.Context(), s.db, s.cfg, r.PathValue("targetId"), *inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "update_failed", err)
 		return
@@ -1761,7 +1922,7 @@ func (s *Server) handleCreateAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inp.OwnerAgency = owner
-	if !s.alertJobInAgency(w, r, *inp, owner) || !s.alertTargetsInAgency(w, r, *inp, owner) {
+	if !alertTriggerFitsOwner(w, *inp, owner) || !s.alertJobInAgency(w, r, *inp, owner) || !s.alertTargetsInAgency(w, r, *inp, owner) {
 		return
 	}
 	ar, err := settings.CreateAlertRule(r.Context(), s.db, *inp, id.Email)
@@ -1792,7 +1953,7 @@ func (s *Server) handleUpdateAlert(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, code, msg)
 		return
 	}
-	if !s.alertJobInAgency(w, r, *inp, agencyOrGlobal(cur.OwnerAgency)) ||
+	if !alertTriggerFitsOwner(w, *inp, cur.OwnerAgency) || !s.alertJobInAgency(w, r, *inp, agencyOrGlobal(cur.OwnerAgency)) ||
 		!s.alertTargetsInAgency(w, r, *inp, agencyOrGlobal(cur.OwnerAgency)) {
 		return
 	}
@@ -1881,7 +2042,34 @@ func validateAlertRuleInput(inp settings.AlertRuleInput) (code, msg string) {
 				"channel %q has no delivery transport — use \"email\" or \"apprise\". Apprise fans out to Slack, Discord and webhooks.", ch)
 		}
 	}
+	// 2.5.1 SG-17: a secret's or the backup keys' event is no job's, so a rule
+	// aimed at a job would never hear it.
+	if notJobTrigger(inp.Trigger) && strings.EqualFold(inp.TargetMode, "job") {
+		return "invalid_target_mode", fmt.Sprintf("trigger %q is not about a job: its rule's target must be \"all\"", inp.Trigger)
+	}
 	return "", ""
+}
+
+// notJobTrigger reports whether trigger names an event that is no job's
+// (2.5.1 SG-17).
+func notJobTrigger(trigger string) bool {
+	switch strings.ToLower(trigger) {
+	case notify.TriggerSecretRevealed, notify.TriggerSecretChanged, notify.TriggerBackupKeyChanged:
+		return true
+	}
+	return false
+}
+
+// alertTriggerFitsOwner refuses a rule that could never fire because of
+// whose it is: the backup keys are the installation's, so only a Global
+// rule hears backup-key-changed (2.5.1 SG-17).
+func alertTriggerFitsOwner(w http.ResponseWriter, inp settings.AlertRuleInput, owner string) bool {
+	if strings.EqualFold(inp.Trigger, notify.TriggerBackupKeyChanged) && agencyOrGlobal(owner) != agencyid.Global {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "trigger_global_only",
+			"backup-key-changed is about the installation's backup keys: only a rule of Global's hears it")
+		return false
+	}
+	return true
 }
 
 // ── SSH Host handlers ────────────────────────────────────────────────────────

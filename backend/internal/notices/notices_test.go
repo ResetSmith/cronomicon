@@ -177,8 +177,16 @@ func TestChecksFindAndResolveTheirConditions(t *testing.T) {
 		t.Fatalf("RunChecks: %v", err)
 	}
 	shared := openOf(t, pool, notices.KindSharedOwnership)
-	if len(shared) != 2 {
-		t.Fatalf("shared_ownership = %v, want the secret two agencies use and the key held back", shared)
+	// Two for Global (the secret two agencies were listed for, and the key held
+	// back), and since 2.5.1 (SG-16) one for each member agency of a row Global
+	// holds: Finance and Tax for the secret, Tax for the key.
+	if len(shared) != 5 {
+		t.Fatalf("shared_ownership = %v, want two for Global and three for the member agencies", shared)
+	}
+	for subject, agency := range map[string]string{"secret:s-both@ag-fin": "ag-fin", "secret:s-both@ag-tax": "ag-tax", "ssh-credential:k-held@ag-tax": "ag-tax"} {
+		if got := shared[subject]; got.AgencyID != agency {
+			t.Errorf("%s is filed under %q, want %q", subject, got.AgencyID, agency)
+		}
 	}
 	n := shared["secret:s-both"]
 	if n.AgencyID != "global" {
@@ -204,8 +212,9 @@ func TestChecksFindAndResolveTheirConditions(t *testing.T) {
 	if err := notices.RunChecks(ctx, pool); err != nil {
 		t.Fatalf("RunChecks: %v", err)
 	}
-	if shared := openOf(t, pool, notices.KindSharedOwnership); len(shared) != 1 || shared["ssh-credential:k-held"].Subject == "" {
-		t.Errorf("shared_ownership after settling the secret = %v, want only the key", shared)
+	// The secret's three findings resolve; the key's two (Global's and Tax's) stay.
+	if shared := openOf(t, pool, notices.KindSharedOwnership); len(shared) != 2 || shared["ssh-credential:k-held"].Subject == "" || shared["ssh-credential:k-held@ag-tax"].Subject == "" {
+		t.Errorf("shared_ownership after settling the secret = %v, want only the key's", shared)
 	}
 	orphans := openOf(t, pool, notices.KindOrphaned)
 	if len(orphans) != 2 || !strings.Contains(orphans["runner:r1"].Detail, "runner-one") || !strings.Contains(orphans["scope:sc1"].Detail, "prod") {

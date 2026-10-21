@@ -399,14 +399,29 @@ const EMPTY_RULE: RuleForm = {
 // spec, and until FX-D4 nothing could ever emit one — so offering it here before
 // would have been the FIRST half of the VF-15 defect (a rule that can be created
 // and can never fire) exactly as omitting it now is the second.
-const OFFERED_TRIGGERS = ["failure", "success", "skipped", "sla-breach", "missed-run"] as const;
+const OFFERED_TRIGGERS = [
+  "failure",
+  "success",
+  "skipped",
+  "sla-breach",
+  "missed-run",
+  "secret-revealed",
+  "secret-changed",
+  "backup-key-changed",
+] as const;
 const TRIGGER_LABELS: Record<string, string> = {
   failure: "Job fails",
   success: "Job succeeds",
   skipped: "Run suppressed (calendar, pause, or concurrency)",
   "sla-breach": "Job runs late (past its deadline)",
   "missed-run": "Scheduled run never happened",
+  "secret-revealed": "A secret is revealed",
+  "secret-changed": "A secret or SSH key changes",
+  "backup-key-changed": "The backup keys change",
 };
+// 2.5.1 SG-17: not about a job, so their rule's target is "all"; and the
+// backup keys are the installation's, so only a Global rule offers that one.
+const NOT_JOB_TRIGGERS = new Set(["secret-revealed", "secret-changed", "backup-key-changed"]);
 // G-1 (A-19) — a rule's trigger is matched against the run STATUS
 // (notify.go's triggerMatches), so a STORED trigger can be any status word, and
 // the seeded `warning` rule is real and does fire. The offered set is narrower,
@@ -528,10 +543,13 @@ function RuleFormFields(props: {
         <div style={lblStyle()}>When</div>
         <select
           value={form.trigger}
-          onChange={(e) => onChange({ trigger: e.target.value as RuleForm["trigger"] })}
+          onChange={(e) => {
+            const trigger = e.target.value as RuleForm["trigger"];
+            onChange(NOT_JOB_TRIGGERS.has(trigger) ? { trigger, targetMode: "all" } : { trigger });
+          }}
           style={{ ...inputStyle(), width: "100%", cursor: "pointer" }}
         >
-          {OFFERED_TRIGGERS.map((t) => (
+          {OFFERED_TRIGGERS.filter((t) => t !== "backup-key-changed" || isGlobalRule || form.trigger === t).map((t) => (
             <option key={t} value={t}>
               {TRIGGER_LABELS[t]}
             </option>

@@ -1,12 +1,14 @@
 // Package vaultpath is the one rule for whether a Vault path lies inside a
 // prefix (LR-80).
 //
-// The installation has ONE Vault connection, with one credential, and a path on
-// it is not divided by agency: whatever that credential can read, any secret or
-// SSH key that names the path can have delivered to a run. So an agency may
-// name Vault paths only inside prefixes a global administrator has assigned to
-// it, and "inside" has to mean what Vault will make of the path, not what a
-// string comparison makes of it:
+// An agency without a Vault of its own uses the installation's, with one
+// credential, and a path on it is not divided by agency: whatever that
+// credential can read, any secret or SSH key that names the path can have
+// delivered to a run. So such an agency may name Vault paths only inside
+// prefixes a global administrator has assigned to it. (Since 2.5.1 an agency
+// may connect a Vault of its own, where its prefixes are optional and its
+// own; SG-26.) "Inside" has to mean what Vault will make of the path, not what
+// a string comparison makes of it:
 //
 //   - whole SEGMENTS. "secret/data/tax" does not contain
 //     "secret/data/tax-audit/db", which shares its characters and not its

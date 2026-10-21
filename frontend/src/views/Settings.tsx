@@ -17,6 +17,8 @@ import { RecycleBinSection } from "./settings/RecycleBin";
 import { VaultSection, LogStorageSection, ObservabilitySection } from "./settings/Integrations";
 import { RepositoriesSection } from "./settings/Repositories";
 import { LocalRunnerSection } from "./settings/LocalRunner";
+import { BackupsSection } from "./settings/Backups";
+import { AgencyVaultSection } from "./settings/AgencyVault";
 import { TimezoneAlert } from "./settings/TimezoneAlert";
 
 // Settings — two groups since v2.3.0 (LR-86).
@@ -47,6 +49,8 @@ const SECTIONS = [
   { group: "Installation", key: "observability", label: "Observability", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "logstorage", label: "Log Storage", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "audit", label: "Audit & Compliance", requires: "configureAppGlobal", global: "configureAppGlobal" },
+  // 2.5.1 SG1: the nightly backup and the keys it is encrypted to (optional).
+  { group: "Installation", key: "backups", label: "Backups", requires: "configureAppGlobal", global: "configureAppGlobal" },
   // This server running shell jobs itself: its switch, its concurrency and the
   // agencies it serves (LR-1, LR-43).
   { group: "Installation", key: "localrunner", label: "Local runner", requires: "configureAppGlobal", global: "configureAppGlobal" },
@@ -59,6 +63,9 @@ const SECTIONS = [
   // group's GitLab Connection (Global's alone, through a deprecated route).
   { group: "Agency", key: "repositories", label: "Repositories", requires: "configureApp", global: "configureAppGlobal" },
   { group: "Agency", key: "targets", label: "SSH Targets", requires: "configureApp", global: "configureAppGlobal" },
+  // 2.5.1 SG3: an agency's own Vault, its administrators' to connect; in
+  // Global, a pointer to the Installation group's Vault.
+  { group: "Agency", key: "agencyvault", label: "Agency Vault", requires: "configureApp", global: "configureAppGlobal" },
   // 2.5.0 C4 (AL-1 to AL-3): an agency's alert rules and push targets, its
   // administrators' to change. The relay they send through stays on
   // Notifications, in the Installation group.
@@ -184,12 +191,14 @@ export function Settings() {
           {section === "observability" && <ObservabilitySection canWrite={isGlobal} />}
           {section === "targets" && <SshTargetsSection canWrite={isGlobal} />}
           {section === "alerts" && <AlertsSection isGlobal={isGlobal} />}
+          {section === "agencyvault" && <AgencyVaultSection isGlobal={isGlobal} />}
           {section === "logstorage" && <LogStorageSection canWrite={isGlobal} />}
           {section === "users" && <UsersAccessSection />}
           {section === "serviceaccounts" && <ServiceAccountsSection canGrantEverywhere={isGlobal} />}
           {section === "audit" && <AuditComplianceSection canWrite={isGlobal} />}
           {section === "auditexport" && <AuditExportSection />}
           {section === "localrunner" && <LocalRunnerSection canWrite={isGlobal} />}
+          {section === "backups" && <BackupsSection canWrite={isGlobal} />}
           {section === "recyclebin" && <RecycleBinSection />}
         </div>
       </div>

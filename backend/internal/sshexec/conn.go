@@ -65,7 +65,14 @@ func loadSigner(ctx context.Context, db *sql.DB, cfg *config.Config, sec *secret
 				return nil, errKeyNotUsable
 			}
 		}
-		return sshkeys.ResolveSigner(ctx, db, cfg, vault, credID)
+		signer, err := sshkeys.ResolveSigner(ctx, db, cfg, vault, credID)
+		if err != nil {
+			return nil, err
+		}
+		if err := noteKeyUse(ctx, db, runref.KindKey, credID, ""); err != nil {
+			return nil, fmt.Errorf("record the key's use: %w", err)
+		}
+		return signer, nil
 	}
 	if key == "" {
 		return nil, errNoAuth
@@ -169,7 +176,13 @@ func loadSignerChecked(ctx context.Context, db *sql.DB, cfg *config.Config, sec 
 			return nil, false, nil
 		}
 		signer, perr := ssh.ParsePrivateKey([]byte(pem))
-		return signer, true, perr
+		if perr != nil {
+			return nil, true, perr
+		}
+		if nerr := noteKeyUse(ctx, db, runref.KindSecret, id, name); nerr != nil {
+			return nil, true, fmt.Errorf("record the key's use: %w", nerr)
+		}
+		return signer, true, nil
 	}
 	fromVar := func(name string) (ssh.Signer, bool, error) {
 		id, found, err := lookup(runref.KindVar, name)
@@ -194,7 +207,14 @@ func loadSignerChecked(ctx context.Context, db *sql.DB, cfg *config.Config, sec 
 			if !found {
 				return nil, errKeyNotUsable
 			}
-			return sshkeys.ResolveSigner(ctx, db, cfg, vault, id)
+			signer, err := sshkeys.ResolveSigner(ctx, db, cfg, vault, id)
+			if err != nil {
+				return nil, err
+			}
+			if err := noteKeyUse(ctx, db, runref.KindKey, id, bare); err != nil {
+				return nil, fmt.Errorf("record the key's use: %w", err)
+			}
+			return signer, nil
 		case envref.SectionSecret:
 			signer, found, err := fromSecret(bare)
 			if err != nil {
@@ -391,7 +411,7 @@ func (s *Service) dial(ctx context.Context, t target, signer ssh.Signer) (*ssh.C
 		if gerr != nil {
 			return nil, nil, fmt.Errorf("dial bastion %s: %w", t.Via, gerr)
 		}
-		bSigner, err = loadSigner(ctx, s.db, s.cfg, s.sec, b.AuthCredentialID, b.AuthKeyEnvVar, guard)
+		bSigner, err = loadSigner(withKeyVia(ctx, "bastion_auth"), s.db, s.cfg, s.sec, b.AuthCredentialID, b.AuthKeyEnvVar, guard)
 		if err != nil {
 			return nil, nil, fmt.Errorf("dial bastion %s: %w", t.Via, err)
 		}

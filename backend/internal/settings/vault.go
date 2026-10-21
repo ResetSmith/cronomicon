@@ -65,7 +65,7 @@ func GetVaultConfig(ctx context.Context, database *sql.DB, appCfg *config.Config
 		}
 
 		if roleId.Valid && roleId.String != "" {
-			decrypted, err := secrets.DecryptString(appCfg, roleId.String)
+			decrypted, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelVaultRoleID, ""), roleId.String)
 			if err == nil {
 				cfg.RoleId = decrypted
 				cfg.RoleIdSet = true
@@ -98,7 +98,7 @@ func GetVaultConfig(ctx context.Context, database *sql.DB, appCfg *config.Config
 	} else {
 		// Decrypt secret ID from DB if not overridden by env
 		if secretIdEnc.Valid && secretIdEnc.String != "" {
-			decrypted, err := secrets.DecryptString(appCfg, secretIdEnc.String)
+			decrypted, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelVaultSecretID, ""), secretIdEnc.String)
 			if err == nil {
 				finalSecretID = decrypted
 			}
@@ -146,7 +146,7 @@ func UpdateVaultConfig(ctx context.Context, database *sql.DB, appCfg *config.Con
 	// DEFAULT does not apply when a value is supplied explicitly).
 	var roleIdEnc string
 	if inp.RoleId != "" {
-		token, encErr := secrets.EncryptString(appCfg, inp.RoleId)
+		token, encErr := secrets.EncryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelVaultRoleID, ""), inp.RoleId)
 		if encErr != nil {
 			return nil, fmt.Errorf("encrypt RoleId: %w", encErr)
 		}
@@ -157,7 +157,7 @@ func UpdateVaultConfig(ctx context.Context, database *sql.DB, appCfg *config.Con
 
 	var secretIdEnc *string
 	if inp.SecretId != "" {
-		token, encErr := secrets.EncryptString(appCfg, inp.SecretId)
+		token, encErr := secrets.EncryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelVaultSecretID, ""), inp.SecretId)
 		if encErr != nil {
 			return nil, fmt.Errorf("encrypt SecretId: %w", encErr)
 		}
@@ -277,7 +277,7 @@ func ResolveVaultRuntime(ctx context.Context, database *sql.DB, appCfg *config.C
 		if !roleIDEnc.Valid || roleIDEnc.String == "" {
 			return VaultRuntime{}, false
 		}
-		decrypted, err := secrets.DecryptString(appCfg, roleIDEnc.String)
+		decrypted, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelVaultRoleID, ""), roleIDEnc.String)
 		if err != nil {
 			return VaultRuntime{}, false
 		}
@@ -286,7 +286,7 @@ func ResolveVaultRuntime(ctx context.Context, database *sql.DB, appCfg *config.C
 	if !secretIDEnc.Valid || secretIDEnc.String == "" {
 		return VaultRuntime{}, false
 	}
-	secret, err := secrets.DecryptString(appCfg, secretIDEnc.String)
+	secret, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelVaultSecretID, ""), secretIDEnc.String)
 	if err != nil {
 		return VaultRuntime{}, false
 	}
@@ -332,7 +332,24 @@ var (
 	// resolution. The build is still retried every time — the CA FILE may be fixed
 	// in place without the key (its path) changing — only the logging is once-per-key.
 	vaultClientErrKeys = map[string]bool{}
+	// vaultClientSlots is the key each connection last used (2.5.1 SG3.2):
+	// "installation", and "agency:<id>" for each agency's own Vault. When a
+	// slot's key changes (a rotated secret id, another address), the client
+	// built for the old key is dropped, so the cache holds one client per
+	// connection instead of one per configuration it has ever seen.
+	vaultClientSlots = map[string]string{}
 )
+
+// cacheVaultClientLocked records vc under key for slot and drops the client
+// the slot held before. vaultClientMu must be held.
+func cacheVaultClientLocked(slot, key string, vc secrets.VaultClient) {
+	if old, ok := vaultClientSlots[slot]; ok && old != key {
+		delete(vaultClientCache, old)
+		delete(vaultClientErrKeys, old)
+	}
+	vaultClientSlots[slot] = key
+	vaultClientCache[key] = vc
+}
 
 // WireVaultClient attaches the app's Vault client to sec: a dynamic client that
 // resolves the CURRENT env-or-DB credentials (ResolveVaultRuntime: AppRole, or a
@@ -371,7 +388,25 @@ type dynamicVaultClient struct {
 	db  *sql.DB
 	cfg *config.Config
 	log *slog.Logger
+	// agency, when set, is the agency whose rows this client answers for
+	// (2.5.1 SG-21): its own Vault when it has connected one, the
+	// installation's when it has not, and an error, never the installation's,
+	// when its own cannot be read or used.
+	agency string
 }
+
+// ForAgency is the client for owner's rows (secrets.AgencyVault).
+func (d *dynamicVaultClient) ForAgency(owner string) secrets.VaultClient {
+	return &dynamicVaultClient{db: d.db, cfg: d.cfg, log: d.log, agency: owner}
+}
+
+// failedVaultClient answers every operation with why the agency's own Vault
+// cannot be used: the installation's is never offered in its place.
+type failedVaultClient struct{ err error }
+
+func (f failedVaultClient) Fetch(string) (string, error) { return "", f.err }
+func (f failedVaultClient) Write(string, string) error   { return f.err }
+func (f failedVaultClient) Configured() bool             { return false }
 
 // resolve returns the client for the config as of now, or nil when Vault is
 // unconfigured/misconfigured. Operations arrive without a context (the
@@ -381,7 +416,54 @@ type dynamicVaultClient struct {
 func (d *dynamicVaultClient) resolve() secrets.VaultClient {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if d.agency != "" && d.agency != agencyid.Global {
+		rt, found, err := ReadAgencyVaultRuntime(ctx, d.db, d.cfg, d.agency)
+		if err != nil {
+			return failedVaultClient{fmt.Errorf("%w: the agency's own Vault cannot be read: %v", secrets.ErrVaultUnavailable, err)}
+		}
+		if found {
+			vc, err := AgencyVaultClient(ctx, d.db, d.cfg, rt)
+			if err != nil {
+				return failedVaultClient{fmt.Errorf("%w: the agency's own Vault: %v", secrets.ErrVaultUnavailable, err)}
+			}
+			return vc
+		}
+	}
 	return sharedVaultClient(ctx, d.db, d.cfg, d.log)
+}
+
+// InstallationVaultClient is the installation's Vault client as configured
+// now, or nil when none is (the connection test, 2.5.1 SG3).
+func InstallationVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Config, log *slog.Logger) secrets.VaultClient {
+	return sharedVaultClient(ctx, database, appCfg, log)
+}
+
+// AgencyVaultClient builds (or reuses, from the process cache) the client for
+// an agency's own Vault. The address is held to the allowed hosts here as
+// well as on write, so a host taken off the list stops being reached.
+func AgencyVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Config, rt AgencyVaultRuntime) (secrets.VaultClient, error) {
+	if err := CheckVaultURL(ctx, database, rt.Addr); err != nil {
+		return nil, err
+	}
+	opts := secrets.VaultOptions{
+		AuthMethod: "approle",
+		Namespace:  rt.Namespace,
+		CAPEM:      rt.CAPEM,
+		Egress:     httpx.EgressPolicy{AllowPrivate: appCfg.OutboundAllowPrivate, AllowLoopback: appCfg.OutboundAllowLoopback},
+	}
+	key := strings.Join([]string{"agency", rt.Agency, rt.Addr, rt.RoleID, rt.SecretID, rt.Namespace, string(rt.CAPEM),
+		fmt.Sprintf("%t/%t", opts.Egress.AllowPrivate, opts.Egress.AllowLoopback)}, "\x00")
+	vaultClientMu.Lock()
+	defer vaultClientMu.Unlock()
+	if vc, ok := vaultClientCache[key]; ok {
+		return vc, nil
+	}
+	vc, err := secrets.NewVaultClientWithOptions(rt.Addr, rt.RoleID, rt.SecretID, opts)
+	if err != nil {
+		return nil, err
+	}
+	cacheVaultClientLocked("agency:"+rt.Agency, key, vc)
+	return vc, nil
 }
 
 func (d *dynamicVaultClient) Fetch(vaultRef string) (string, error) {
@@ -441,7 +523,7 @@ func sharedVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Con
 		}
 		return nil
 	}
-	vaultClientCache[key] = vc
+	cacheVaultClientLocked("installation", key, vc)
 	if log != nil {
 		log.Info("vault client enabled", "authMethod", rt.AuthMethod, "addr", rt.Addr,
 			"namespace", opts.Namespace != "", "customCA", opts.CAFile != "", "wrappedSecretID", opts.SecretIDWrapped)

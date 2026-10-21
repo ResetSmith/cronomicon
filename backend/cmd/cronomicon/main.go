@@ -63,7 +63,7 @@ var errIdentityNotReady = errors.New("identity provider not ready")
 // tags); a release build still overrides all three via -ldflags. Kept in sync with
 // the top CHANGELOG.md entry.
 var (
-	version   = "2.5.0"
+	version   = "2.5.1"
 	commit    = "none"
 	buildDate = "unknown"
 )
@@ -302,6 +302,36 @@ func run() error {
 			"change_log_days", cfg.RetentionChangeLogDays,
 			"log_files_days", cfg.RetentionLogFilesDays)
 	}
+	// 2.5.1 SG2.8: push-target URLs carry their service's token; seal any still
+	// stored plain (from before 2.5.1, or written while no KEK was configured).
+	if n, serr := settings.SealAlertTargetURLs(ctx0, pool, cfg); serr != nil {
+		logger.Error("could not seal the push-target URLs; they stay as they are until the next start", "error", serr)
+	} else if n > 0 {
+		logger.Info("push-target URLs sealed", "count", n)
+	}
+	// 2.5.1 SG2.10: bind every sealed value to its row, once; from then on an
+	// unbound value is refused. This is what makes 2.5.1 one-way: 2.5.0 cannot
+	// open a bound value, so going back means restoring a backup from before.
+	if rep, berr := secrets.BindSeals(ctx0, pool, cfg); berr != nil {
+		logger.Error("could not bind the sealed values to their rows; unbound values stay readable and the next start tries again", "error", berr, "bound", rep.Bound)
+	} else {
+		switch {
+		case rep.NoKEK:
+			logger.Info("no KEK configured: no sealed value to bind")
+		case rep.Failed > 0:
+			logger.Warn("some sealed values could not be bound to their rows (a KEK version not configured?); they stay readable unbound and the next start tries again",
+				"bound", rep.Bound, "failed", rep.Failed)
+		case rep.Bound > 0:
+			logger.Warn("sealed values bound to their rows (2.5.1): this database can no longer be opened by 2.5.0; restoring a backup from before the upgrade is the only way back",
+				"bound", rep.Bound)
+		}
+	}
+	// 2.5.1 SG-3: CRONOMICON_BACKUP_RECIPIENTS seeds the backup keys once.
+	if seeded, serr := settings.SeedBackupRecipientsFromEnv(ctx0, pool, cfg.BackupRecipients); serr != nil {
+		logger.Error("could not seed the backup keys from CRONOMICON_BACKUP_RECIPIENTS; backups stay as Settings → Backups has them", "error", serr)
+	} else if seeded {
+		logger.Info("backup keys seeded from CRONOMICON_BACKUP_RECIPIENTS")
+	}
 	db.StartRetention(ctx0, pool, db.RetentionPolicy{
 		// Boot values, used only if the very first Reload fails.
 		RunsDays:           cfg.RetentionRunsDays,
@@ -325,7 +355,20 @@ func run() error {
 		},
 		BackupAt: cfg.BackupAt, // PP-H6: wall-clock daily sweep
 		Upload:   uploader,     // nil when unconfigured ⇒ snapshot kept locally only
-		WG:       &bg,          // PP-L15: drained on shutdown before pool.Close()
+		// 2.5.1 SG1: sealed to the keys in Settings → Backups, read per sweep so
+		// a change applies to the next backup. A read error fails the backup
+		// rather than writing it unencrypted.
+		Seal: func(ctx context.Context, src, dst string) ([]string, error) {
+			keys, err := settings.BackupRecipients(ctx, pool)
+			if err != nil {
+				return nil, err
+			}
+			if len(keys) == 0 {
+				return nil, nil
+			}
+			return backup.EncryptFile(src, dst, keys)
+		},
+		WG: &bg, // PP-L15: drained on shutdown before pool.Close()
 		// Re-read the authoritative knobs at the top of every sweep so a settings
 		// change takes effect on the next nightly run rather than the next restart
 		// (LU-2). The closure lives here, not in internal/db, so that package keeps
@@ -349,6 +392,7 @@ func run() error {
 			p.DefinitionRevisionsDays = ac.RetentionDays.DefinitionRevisions
 			p.RunnerPlacementHistoryDays = ac.RetentionDays.RunnerPlacementHistory
 			p.HostKeyLedgerDays = ac.RetentionDays.HostKeyLedger
+			p.SecretUsesDays = ac.RetentionDays.SecretUses
 			// Resolved per sweep too: the operator can re-point the log dir, and
 			// the reaper must sweep the tree that is actually being written to.
 			p.LogDir = settings.ResolveLogDir(ctx, pool)

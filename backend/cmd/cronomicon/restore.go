@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"filippo.io/age"
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/ResetSmith/cronomicon/internal/backup"
@@ -28,6 +29,12 @@ import (
 //	cronomicon restore --list                 # show available snapshots
 //	cronomicon restore                        # restore the latest over CRONOMICON_DB_PATH
 //	cronomicon restore --from cronomicon-20260722.db --db /var/lib/cronomicon/cronomicon.db
+//	cronomicon restore --from cronomicon-20261021.db.age --identity backup-key.txt
+//	cronomicon restore --file /var/lib/cronomicon/backups/cronomicon-20261021.db.age --identity backup-key.txt
+//
+// An encrypted snapshot (2.5.1 SG1) is recognised by its header and needs
+// --identity: a private key of one of the keys it was sealed to. It is
+// decrypted and verified before the live DB is touched.
 //
 // It reads the same CRONOMICON_BACKUP_S3_* / CRONOMICON_DB_PATH env the server uses.
 // The server must be STOPPED first — the swap replaces the live .db and its
@@ -37,12 +44,22 @@ import (
 func runRestore(args []string) int {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	from := fs.String("from", "", "snapshot object key or filename to restore (default: the latest snapshot)")
+	file := fs.String("file", "", "restore from this local snapshot file instead of the bucket (e.g. one of the 7-day copies in the backup directory)")
+	var identities []string
+	fs.Func("identity", "an age identity file (private key) for an encrypted snapshot; repeatable, any one that opens it will do", func(v string) error {
+		identities = append(identities, v)
+		return nil
+	})
 	dbPath := fs.String("db", "", "target DB path (default: CRONOMICON_DB_PATH from config)")
 	list := fs.Bool("list", false, "list available snapshots and exit")
 	yes := fs.Bool("yes", false, "skip the interactive confirmation prompt")
 	downloadTo := fs.String("download-to", "", "keep the downloaded snapshot at this path (default: a temp file next to the target, removed after swap)")
 	timeout := fs.Duration("timeout", 10*time.Minute, "overall timeout for the download")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *file != "" && (*from != "" || *list || *downloadTo != "") {
+		fmt.Fprintln(os.Stderr, "restore: --file restores a local file; it does not combine with --from, --list or --download-to")
 		return 2
 	}
 
@@ -56,14 +73,26 @@ func runRestore(args []string) int {
 	log, sink := newLogger(cfg)
 	defer sink.Close()
 
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+
+	target := *dbPath
+	if target == "" {
+		target = cfg.DBPath
+	}
+	if *file != "" {
+		if target == "" {
+			fmt.Fprintln(os.Stderr, "restore: no target DB path (set CRONOMICON_DB_PATH or pass --db)")
+			return 1
+		}
+		return restoreLocalFile(*file, target, identities, *yes)
+	}
+
 	dl, err := backup.NewDownloader(cfg, log)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "restore:", err)
 		return 1
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
 
 	if *list {
 		snaps, err := dl.List(ctx)
@@ -76,9 +105,16 @@ func runRestore(args []string) int {
 			return 0
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "KEY\tSIZE\tLAST MODIFIED")
+		fmt.Fprintln(tw, "KEY\tSIZE\tLAST MODIFIED\tENCRYPTED TO")
 		for _, s := range snaps {
-			fmt.Fprintf(tw, "%s\t%d\t%s\n", s.Key, s.Size, s.LastModified.UTC().Format(time.RFC3339))
+			enc := "not encrypted"
+			if s.Encrypted {
+				enc = "keys not recorded"
+				if len(s.Recipients) > 0 {
+					enc = strings.Join(s.Recipients, ", ")
+				}
+			}
+			fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n", s.Key, s.Size, s.LastModified.UTC().Format(time.RFC3339), enc)
 		}
 		tw.Flush()
 		return 0
@@ -92,34 +128,12 @@ func runRestore(args []string) int {
 			return 1
 		}
 	}
-
-	target := *dbPath
-	if target == "" {
-		target = cfg.DBPath
-	}
 	if target == "" {
 		fmt.Fprintln(os.Stderr, "restore: no target DB path (set CRONOMICON_DB_PATH or pass --db)")
 		return 1
 	}
-
-	// Best-effort guard: refuse if the target DB is actively being written (a
-	// running server). Not a full liveness check — the operator must still stop
-	// cronomicon first (the swap replaces the WAL). See dbLooksInUse.
-	if why := dbLooksInUse(target); why != "" {
-		fmt.Fprintf(os.Stderr, "restore: refusing — target DB %q looks in use (%s). Stop cronomicon first.\n", target, why)
-		return 1
-	}
-
-	if !*yes {
-		fmt.Printf("Restore snapshot %q OVER %q?\n", key, target)
-		fmt.Printf("  The existing DB and its -wal/-shm sidecars will be REPLACED. Ensure cronomicon is stopped.\n")
-		fmt.Print("Continue? [y/N] ")
-		var resp string
-		_, _ = fmt.Scanln(&resp)
-		if !strings.EqualFold(strings.TrimSpace(resp), "y") {
-			fmt.Println("aborted")
-			return 1
-		}
+	if code := checkTargetAndConfirm(key, target, *yes); code != 0 {
+		return code
 	}
 
 	dlPath := *downloadTo
@@ -132,34 +146,110 @@ func runRestore(args []string) int {
 		fmt.Fprintln(os.Stderr, "restore:", err)
 		return 1
 	}
+	if tempDownload {
+		defer os.Remove(dlPath)
+	}
+	return installSnapshot(dlPath, key, target, identities)
+}
 
-	// Verify the DOWNLOADED snapshot BEFORE touching the live DB. A corrupt or
-	// truncated snapshot (e.g. a partial prior upload) must not destroy the
-	// working database and then fail — the live DB is the only copy. If the
-	// download is bad, abort here with the original untouched.
-	if err := verifyRestoredDB(dlPath); err != nil {
-		fmt.Fprintf(os.Stderr, "restore: downloaded snapshot failed verification — live DB left untouched: %v\n", err)
-		if tempDownload {
-			_ = os.Remove(dlPath)
+// restoreLocalFile restores a local snapshot file (--file): the in-use guard
+// and the confirmation, then the same install as a download.
+func restoreLocalFile(src, target string, identities []string, yes bool) int {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "restore:", err)
+		return 1
+	}
+	// The swap removes the target before it copies: a --file that IS the
+	// target would delete the only copy (2.5.1 review).
+	if tgtInfo, err := os.Stat(target); err == nil && os.SameFile(srcInfo, tgtInfo) {
+		fmt.Fprintf(os.Stderr, "restore: %q is the database it would replace; copy the snapshot somewhere else first\n", src)
+		return 1
+	}
+	if code := checkTargetAndConfirm(src, target, yes); code != 0 {
+		return code
+	}
+	return installSnapshot(src, src, target, identities)
+}
+
+// checkTargetAndConfirm refuses an obviously-active target and asks before the
+// swap. Zero means go on.
+func checkTargetAndConfirm(label, target string, yes bool) int {
+	// Best-effort guard: refuse if the target DB is actively being written (a
+	// running server). Not a full liveness check — the operator must still stop
+	// cronomicon first (the swap replaces the WAL). See dbLooksInUse.
+	if why := dbLooksInUse(target); why != "" {
+		fmt.Fprintf(os.Stderr, "restore: refusing — target DB %q looks in use (%s). Stop cronomicon first.\n", target, why)
+		return 1
+	}
+	if !yes {
+		fmt.Printf("Restore snapshot %q OVER %q?\n", label, target)
+		fmt.Printf("  The existing DB and its -wal/-shm sidecars will be REPLACED. Ensure cronomicon is stopped.\n")
+		fmt.Print("Continue? [y/N] ")
+		var resp string
+		_, _ = fmt.Scanln(&resp)
+		if !strings.EqualFold(strings.TrimSpace(resp), "y") {
+			fmt.Println("aborted")
+			return 1
 		}
+	}
+	return 0
+}
+
+// installSnapshot decrypts src when it is encrypted (2.5.1 SG1.5), verifies the
+// plaintext, and only then swaps it in. Nothing touches the live DB until the
+// snapshot has been opened with a key and has passed the integrity check: the
+// live DB is the only copy. src itself is never modified.
+func installSnapshot(src, label, target string, identityFiles []string) int {
+	plain := src
+	encrypted, err := backup.IsEncrypted(src)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "restore:", err)
+		return 1
+	}
+	if encrypted {
+		if len(identityFiles) == 0 {
+			fmt.Fprintf(os.Stderr, "restore: %q is encrypted — pass --identity with the private key file of one of the keys it was sealed to (Settings → Backups names them). Live DB left untouched.\n", label)
+			return 1
+		}
+		var ids []age.Identity
+		for _, f := range identityFiles {
+			got, err := backup.ReadIdentities(f)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "restore:", err)
+				return 1
+			}
+			ids = append(ids, got...)
+		}
+		plain = target + ".restore-decrypted"
+		if err := backup.DecryptFile(src, plain, ids); err != nil {
+			fmt.Fprintf(os.Stderr, "restore: %v — live DB left untouched\n", err)
+			return 1
+		}
+		defer os.Remove(plain)
+		fmt.Printf("decrypted %q\n", label)
+	}
+
+	// Verify the snapshot BEFORE touching the live DB. A corrupt or truncated
+	// snapshot (e.g. a partial prior upload) must not destroy the working
+	// database and then fail — the live DB is the only copy.
+	if err := verifyRestoredDB(plain); err != nil {
+		fmt.Fprintf(os.Stderr, "restore: snapshot failed verification — live DB left untouched: %v\n", err)
 		return 1
 	}
 
 	// Swap: remove the live DB + WAL/SHM sidecars, then install the snapshot. The
-	// snapshot is copied (not moved) so a `--download-to` path is preserved
-	// regardless of filesystem; the temp download is removed after.
+	// snapshot is copied (not moved) so a `--download-to` or `--file` path is
+	// preserved regardless of filesystem.
 	for _, suffix := range []string{"-wal", "-shm", ""} {
 		if err := os.Remove(target + suffix); err != nil && !os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "restore: remove %s: %v\n", target+suffix, err)
 			return 1
 		}
 	}
-	if err := copyFileContents(dlPath, target); err != nil {
+	if err := copyFileContents(plain, target); err != nil {
 		fmt.Fprintf(os.Stderr, "restore: install snapshot: %v\n", err)
 		return 1
-	}
-	if tempDownload {
-		_ = os.Remove(dlPath)
 	}
 
 	// Re-verify the installed copy (cheap; catches a swap-time write error).
@@ -168,7 +258,7 @@ func runRestore(args []string) int {
 		return 1
 	}
 
-	fmt.Printf("restore: OK — %q restored from %q; PRAGMA integrity_check passed.\n", target, key)
+	fmt.Printf("restore: OK — %q restored from %q; PRAGMA integrity_check passed.\n", target, label)
 	fmt.Println("Start cronomicon to apply migrations, then re-supply the KEK/OIDC keys out-of-band.")
 	return 0
 }

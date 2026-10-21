@@ -1604,7 +1604,9 @@ export interface paths {
          *     agency's approver could publish there a job file in a scope they held
          *     the permission on; an agency now publishes to its own repository, and
          *     one that has none asks a global publisher. Whether a job's name is
-         *     already taken is asked of the repository published to.
+         *     already taken is asked of the repository published to. A repository
+         *     with no connection yet (an agency created without one, v2.5.1 SG-40,
+         *     or Global's with no URL) is 422 `no_repository`.
          *
          *     A push that delivers nothing is a failure (503), where it was answered
          *     as a success. The fetch and the push are each given up after
@@ -2132,13 +2134,19 @@ export interface paths {
          *     The name `Global` is reserved in every letter case for the built-in agency
          *     (422 `name_reserved`, v2.3.0). CSRF required.
          *
-         *     **An agency is created together with its repository (v2.4.0, IN-2).**
-         *     `repository` is required (422 `repository_required`); its connection is
-         *     held to `gitAllowedHosts` (422 `repo_url_not_allowed`) and tested before
+         *     **An agency connects its repository at creation or later (v2.5.1,
+         *     SG-40; until then IN-2 required it here).** Given, `repository` needs
+         *     its `repoUrl` (422 `validation_failed`); its connection is held to
+         *     `gitAllowedHosts` (422 `repo_url_not_allowed`) and tested before
          *     anything is written, as `PUT /agencies/{agencyId}/git-repo` tests it
-         *     (422 `connection_failed`, 422 `token_cannot_push`). The answer is the
-         *     agency with the repository it was created with, whose sync starts at
-         *     once. A repository is changed afterwards, never disconnected.
+         *     (422 `connection_failed`, 422 `token_cannot_push`), and the answer is
+         *     the agency with its repository, whose sync starts at once. Left out,
+         *     the agency is created alone (`repository` null): until its
+         *     administrator (`configureApp` on it) connects one with
+         *     `PUT /agencies/{agencyId}/git-repo`, it cannot receive an assignment
+         *     (422 `no_repository`) or be published to, and the notice
+         *     `agency_no_repository` says so. A repository is changed afterwards,
+         *     never disconnected.
          */
         post: operations["createAgency"];
         delete?: never;
@@ -2634,6 +2642,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/env-secrets/{secretId}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A stored secret's Usage
+         * @description v2.5.1. What refers to the secret (each job binding, become password
+         *     or script binding the dispatch resolver would give THIS row, not
+         *     another agency's or scope's of the same name), which runs used it
+         *     (counts over 7, 30 and 90 days and the latest 25), and what was done
+         *     to it and by whom, with the actor's relation to its agency. Read by
+         *     those who read the secret (404 otherwise). Never a value.
+         */
+        get: operations["envSecretUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/env-secrets/{secretId}/reveal": {
         parameters: {
             query?: never;
@@ -2650,6 +2683,31 @@ export interface paths {
          *     vault-source secrets cannot be revealed through Cronomicon. CSRF required.
          */
         post: operations["revealEnvSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/env-secrets/{secretId}/lock-reveal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make a stored secret unrevealable
+         * @description v2.5.1. One way: no route undoes it. From then on nobody reveals the
+         *     secret through Cronomicon (409 `reveal_locked`), global administrators
+         *     included; runs still use it, and it can still be rotated, moved and
+         *     migrated to Vault. manageEnvVars on the secret's own agency, as for a
+         *     reveal. Idempotent. Recorded in the change log (`reveal-locked`) and
+         *     raised as `secret-changed`.
+         */
+        post: operations["lockEnvSecretReveal"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3601,6 +3659,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The backup keys and what the backups have been
+         * @description Settings → Backups (v2.5.1). The age public keys every nightly snapshot
+         *     is encrypted to (none: backups are unencrypted; encryption is optional),
+         *     the last backup and the keys it was sealed to, the local copies, the
+         *     bucket and the schedule. A global administrator's.
+         */
+        get: operations["getBackupSettings"];
+        /**
+         * Replace the backup keys
+         * @description A global administrator's. Each key is an age X25519 public key
+         *     (`age1…`); a private key, an SSH key or a post-quantum key is 422
+         *     `invalid_recipient`. Adding the FIRST key turns encryption on and needs
+         *     `acknowledgedKeyCustody: true` (422 `acknowledgement_required`): the
+         *     private keys never reach the server, and if every one is lost every
+         *     encrypted backup is unreadable. Removing the last key turns it off and
+         *     needs `confirmUnencrypted: true` (422 `confirmation_required`). The
+         *     change applies to the next backup and is in the change log with the
+         *     keys' fingerprints.
+         */
+        put: operations["setBackupKeys"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/general": {
         parameters: {
             query?: never;
@@ -3631,6 +3724,27 @@ export interface paths {
         /** Update Vault connection config */
         put: operations["updateVaultConfig"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/vault/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Log in to the installation's Vault (v2.5.1)
+         * @description An authenticated login with the stored connection; reads nothing. A
+         *     global administrator's. CSRF required.
+         */
+        post: operations["testInstallationVault"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4081,7 +4195,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List hosts and bastions that reference a credential */
+        /**
+         * An SSH key's Usage
+         * @description v2.5.1: the key's Usage, as for a secret (references, runs that used
+         *     it, changes and who made them), with the host records and bastions
+         *     that name it by id in `hosts` and `bastions` as before.
+         */
         get: operations["sshCredentialUsage"];
         put?: never;
         post?: never;
@@ -4369,12 +4488,14 @@ export interface paths {
         };
         /**
          * The Vault paths an agency may name (v2.3.0)
-         * @description The installation has one Vault connection: whatever its credential can
-         *     read, a secret or an SSH key that names the path can have delivered to a
-         *     run. An agency may therefore name Vault paths only inside the prefixes
-         *     listed here (LR-80). None means it can name no Vault path. Global has no
-         *     list: its Vault-backed secrets and keys are a global administrator's,
-         *     with no path limit.
+         * @description An agency without a Vault of its own uses the installation's: whatever
+         *     its credential can read, a secret or an SSH key that names the path can
+         *     have delivered to a run. Such an agency may therefore name Vault paths
+         *     only inside the prefixes listed here (LR-80), and none means it can name
+         *     no Vault path. An agency WITH a Vault of its own (v2.5.1, SG-26;
+         *     `ownVault`) names any path in it when it has no prefixes, and only
+         *     inside them when it has some. Global has no list: its Vault-backed
+         *     secrets and keys are a global administrator's, with no path limit.
          *
          *     A path is inside a prefix when the prefix's SEGMENTS are the path's
          *     first segments: `secret/data/tax` contains `secret/data/tax/db` and not
@@ -4387,9 +4508,12 @@ export interface paths {
         get: operations["getAgencyVaultPrefixes"];
         /**
          * Assign an agency its Vault path prefixes (v2.3.0)
-         * @description Replaces the list. A global administrator's (`configureApp` on every
-         *     agency): which part of the one Vault an agency may point at is the
-         *     installation's decision, not the agency's.
+         * @description Replaces the list. For an agency without a Vault of its own, a global
+         *     administrator's (`configureApp` on every agency): which part of the
+         *     installation's Vault an agency may point at is the installation's
+         *     decision, not the agency's. For an agency with a Vault of its own
+         *     (v2.5.1, SG-26), also `configureApp` on that agency: the prefixes then
+         *     limit only the agency, in its own Vault.
          *
          *     Each prefix is stored normalised (no slash at either end) and refused
          *     whole if its meaning to Vault would be in doubt: an empty, `.` or `..`
@@ -4504,6 +4628,146 @@ export interface paths {
          *     409 `origin_unsynced`, 409 `branch_protected` (as a publish answers it). CSRF required.
          */
         post: operations["assignToAgency"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/held-by-global": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Secrets and SSH keys Global holds that list this agency
+         * @description v2.5.1. What several agencies shared before 2.3.0 stayed Global's, and
+         *     since 2.4.0 only Global's runs use a row of Global's. These are the
+         *     agency's former secrets that Global now uses; the agency reads them
+         *     and their Usage (`/env-secrets/{secretId}/usage`,
+         *     `/ssh/credentials/{credentialId}/usage`), read only. A global
+         *     administrator gives one to the agency by repair. Empty for Global.
+         *     The agency's people and everywhere-readers; 404 otherwise.
+         */
+        get: operations["agencyHeldByGlobal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/secrets-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An agency's secrets report
+         * @description v2.5.1. One row per stored secret and SSH key the agency owns: its
+         *     source and Vault path, when it was last rotated and last used, its
+         *     uses and reveals in the window, how many definitions refer to it, and
+         *     how many changes someone outside the agency (a global administrator
+         *     included) made, with the latest such actor. Never a value. Read by the
+         *     agency's people and those who reach every agency (Global's by the
+         *     latter only; 404 otherwise); a secret in a scope the caller cannot read
+         *     is left out, as in the secrets list.
+         */
+        get: operations["agencySecretsReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/vault": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An agency's own Vault connection (v2.5.1)
+         * @description An agency may connect a Vault of its own (SG-20); one that does not
+         *     uses the installation's, which is also Global's. A Vault-backed secret
+         *     or SSH key resolves in its OWNER agency's Vault (SG-21), and an agency
+         *     whose own connection cannot be read or used fails: it is never given
+         *     the installation's instead. `configureApp` on the agency; Global is
+         *     422 `use_installation_vault`.
+         */
+        get: operations["getAgencyVault"];
+        /**
+         * Connect or change an agency's own Vault (v2.5.1)
+         * @description `configureApp` on the agency. The address is held to the installation's
+         *     `vaultAllowedHosts` (422 `validation_failed`). The server logs in first
+         *     (422 `vault_login_failed`), then reads each Vault-backed secret and SSH
+         *     key the agency owns in the new Vault (SG-25; each value discarded). When
+         *     any would not resolve the answer is 409 `references_unresolved` with
+         *     the list, and nothing is stored, unless `confirmUnresolved` is set.
+         *     Connecting moves every one of the agency's Vault references at once.
+         *     Logged as `vault-connected` or `vault-updated`. CSRF required.
+         */
+        put: operations["putAgencyVault"];
+        post?: never;
+        /**
+         * Disconnect an agency's own Vault (v2.5.1)
+         * @description `configureApp` on the agency. Refused while the agency owns any
+         *     Vault-backed secret or SSH key (409 `vault_in_use`, SG-27): they would
+         *     all move to the installation's Vault at once. Deleting the agency
+         *     deletes its connection. Logged as `vault-disconnected`. CSRF required.
+         */
+        delete: operations["deleteAgencyVault"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/vault/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Log in to a proposed agency Vault (v2.5.1)
+         * @description An AppRole login with the body's connection (blank credentials are the
+         *     stored ones). Reads nothing. `configureApp` on the agency. CSRF required.
+         */
+        post: operations["testAgencyVault"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/vault/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Would the agency's Vault references resolve in a proposed Vault (v2.5.1)
+         * @description SG-25: every Vault-backed secret and SSH key the agency owns, and
+         *     whether its path reads in the body's Vault. Each value read is
+         *     discarded; none is ever returned. `configureApp` on the agency. CSRF
+         *     required.
+         */
+        post: operations["previewAgencyVault"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6641,6 +6905,39 @@ export interface components {
             /** @enum {string} */
             polarity?: "skip" | "only";
         };
+        BackupRecipient: {
+            /** @description An age X25519 public key (age1…). */
+            key: string;
+            /** @description The first 16 hex characters of the key's SHA-256, as the card, the change log and each backup name it. */
+            fingerprint: string;
+        };
+        BackupSnapshot: {
+            file: string;
+            /** Format: date-time */
+            at?: string;
+            /** @description The fingerprints it was sealed to; empty when it is unencrypted. */
+            recipients: string[];
+        };
+        BackupSettings: {
+            recipients: components["schemas"]["BackupRecipient"][];
+            lastModifiedBy?: string;
+            /** Format: date-time */
+            lastModifiedAt?: string;
+            /** @description Whether the next backup is encrypted (a key is set). */
+            encrypted: boolean;
+            /** @description The last successful backup since v2.5.1; null before the first. */
+            lastBackup: components["schemas"]["BackupSnapshot"] | null;
+            /** Format: date-time */
+            lastSuccessAt?: string;
+            /** @description The snapshots kept on the server's volume, newest first. */
+            localBackups: components["schemas"]["BackupSnapshot"][];
+            localDirectory: string;
+            localKeepDays: number;
+            /** @description The S3 bucket backups are uploaded to; empty when they are kept locally only. */
+            bucket: string;
+            /** @description The daily UTC time of the backup (CRONOMICON_BACKUP_AT). */
+            schedule: string;
+        };
         InstallationFreeze: {
             on: boolean;
             reason: string;
@@ -7244,9 +7541,31 @@ export interface components {
             /** @description Authenticated session identity (S6) — never client-supplied. */
             readonly user?: string;
             category?: string;
+            /**
+             * @description What was done. For a stored secret or SSH key (v2.5.1): `created`,
+             *     `rotated` (a new value or key material, or a new Vault path for
+             *     it), `updated` (anything else: description, scope, tags), `moved`
+             *     (written once in the agency it left and once in the one it
+             *     reached), `deleted` (the target is the key or label, the id is in
+             *     details), `revealed`, `injected` (a run's references; the target
+             *     is the run's trace id), `migrated-to-vault`.
+             */
             action?: string;
             target?: string;
             details?: string;
+            /** @description The agency of what was changed (v2.5.0 C1; `global` for an installation-wide change). */
+            readonly agency?: string;
+            /** @description The agency a global administrator was working in when they made the change (v2.4.4), when it was not Global. */
+            readonly actingAgency?: string;
+            /**
+             * @description How the actor stood to the row's agency when the change was made
+             *     (v2.5.1): a member (a grant names the agency; for Global, a grant
+             *     that reaches every agency), a global administrator with no grant
+             *     on it, someone outside it, or the system (no person). Absent on
+             *     rows from before v2.5.1.
+             * @enum {string}
+             */
+            readonly actorRelation?: "member" | "global_admin" | "outside" | "system";
         };
         SchedulePush: {
             readonly id?: string;
@@ -7509,7 +7828,9 @@ export interface components {
              *       assigned to that agency (every such row, until an upgraded
              *       installation assigns prefixes). It keeps working and cannot be
              *       edited until a prefix covers it. Subject `<kind>:<id>`. Filed
-             *       under Global.
+             *       under Global. Since v2.5.1 an agency with a Vault of its own and
+             *       no prefixes is never listed, and one whose own prefixes leave a
+             *       path out is listed under that agency.
              *     - `may_run_on_agent`, `mixed_scope`, `may_run_on_server` — after the
              *       upgrade to v2.3.0, an unbound scope whose shell jobs ran from the
              *       server, in both places, or on agents, and which the other kind of
@@ -7627,13 +7948,14 @@ export interface components {
              *       clears when the agency has a record for the host, by hand or
              *       imported for the scope, or no scope of its lists the host.
              *     - `agency_no_repository` — an agency has no repository connected
-             *       (v2.4.0). Every agency has one, Global included: an agency is
-             *       created with it and cannot disconnect it, so this is an agency
-             *       from before, or Global's repository with no URL in its
-             *       connection and none in CRONOMICON_GITLAB_BASE_URL. Nothing is
-             *       refused; the agency cannot receive an assignment. Subject: the
-             *       agency's id. Filed under the agency. It clears when the
-             *       repository is connected.
+             *       (v2.4.0): one created without it (v2.5.1, SG-40), one from before
+             *       v2.4.0, or Global's repository with no URL in its connection and
+             *       none in CRONOMICON_GITLAB_BASE_URL. A connected repository is
+             *       never disconnected. Nothing else is refused; the agency cannot
+             *       receive an assignment or be published to. Its administrator
+             *       (`configureApp` on it) connects it. Subject: the agency's id.
+             *       Filed under the agency. It clears when the repository is
+             *       connected.
              *     - `global_calendar_scope` — a calendar of Global's is global. Until
              *       v2.4.0 it froze every agency's fires; now it freezes Global's only
              *       (the whole installation is /settings/freeze). Raised while there
@@ -7706,6 +8028,12 @@ export interface components {
              *       administrators may delete it but not change it. Subject: the
              *       grant's id. Filed under the grant's agency. It clears when the
              *       group is listed or the grant is deleted.
+             *     - `agency_vault_unreachable` — an agency's own Vault did not
+             *       answer a login within three seconds, or refused it (v2.5.1,
+             *       SG-28). Its Vault-backed secrets and SSH keys fail until it
+             *       does; they are never read from the installation's Vault instead.
+             *       Subject: the agency's id. Filed under that agency. It clears
+             *       when the Vault answers or the connection is removed.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.
@@ -8182,7 +8510,7 @@ export interface components {
         AgencyInput: {
             name: string;
             description?: string | null;
-            /** @description The agency's repository connection. Required on create (v2.4.0, IN-2); not read by an update. */
+            /** @description The agency's repository connection. Optional on create (v2.5.1, SG-40; required from v2.4.0); not read by an update. */
             repository?: components["schemas"]["GitlabConfig"];
         };
         EnvSecret: components["schemas"]["RowFlags"] & {
@@ -8207,6 +8535,11 @@ export interface components {
              *     the ManageEnvVars permission).
              */
             tags?: string[];
+            /** @description v2.5.1 — its agency made it unrevealable (POST /env-secrets/{secretId}/lock-reveal); one way. */
+            readonly revealLocked?: boolean;
+            readonly revealLockedBy?: string;
+            /** Format: date-time */
+            readonly revealLockedAt?: string;
             /**
              * @description RA-15 (Phase E) — the NAME of the agency that OWNS this secret. Shared
              *     infrastructure is owned by `Global` (it was "" until v2.3.0). Ownership is what lets two departments hold the
@@ -8727,8 +9060,71 @@ export interface components {
         /** @description The Vault path prefixes assigned to one agency (v2.3.0, LR-80). */
         AgencyVaultPrefixes: {
             agencyId: string;
-            /** @description Normalised, sorted. Empty means the agency can name no Vault path. */
+            /**
+             * @description Normalised, sorted. Empty means the agency can name no Vault path,
+             *     unless it has a Vault of its own (`ownVault`), where it means any.
+             */
             prefixes: string[];
+            /**
+             * @description v2.5.1 (SG-26) — the agency has connected a Vault of its own
+             *     (`/agencies/{agencyId}/vault`). Its prefixes then limit only itself
+             *     in its own Vault and are optional, and its `configureApp` sets them.
+             */
+            ownVault?: boolean;
+        };
+        /**
+         * @description An agency's own Vault connection (v2.5.1, SG3). Never carries a
+         *     credential: whether each is set is all a read says.
+         */
+        AgencyVault: {
+            agencyId: string;
+            /** @description `https://` address, on `vaultAllowedHosts`. */
+            addr: string;
+            /** @description Vault Enterprise namespace */
+            namespace: string;
+            /** @description A CA bundle is stored for this Vault. */
+            caPresent: boolean;
+            roleIdSet: boolean;
+            secretIdSet: boolean;
+            lastModifiedBy: string;
+            lastModifiedAt: string;
+        };
+        AgencyVaultState: {
+            agencyId: string;
+            /** @description False when the agency uses the installation's Vault. */
+            connected: boolean;
+            vault?: components["schemas"]["AgencyVault"] | null;
+        };
+        /**
+         * @description AppRole only (SG-23). A blank `roleId` or `secretId` keeps the stored
+         *     one; a first connection needs both. `caPem` absent keeps the stored
+         *     bundle, an empty string clears it (PEM, 64 KiB at most).
+         */
+        AgencyVaultInput: {
+            addr: string;
+            namespace?: string;
+            roleId?: string;
+            secretId?: string;
+            caPem?: string;
+            /** @description On a save, store it even though some of the agency's Vault references would not resolve there. */
+            confirmUnresolved?: boolean;
+        };
+        /** @description One of the agency's Vault-backed secrets or SSH keys, and whether its path reads in the proposed Vault. The value read is discarded. */
+        AgencyVaultReference: {
+            /** @enum {string} */
+            kind: "secret" | "key";
+            id: string;
+            /** @description The secret's key or the SSH key's label. */
+            name: string;
+            /** @description The reference as written (`path#field`). */
+            path: string;
+            resolves: boolean;
+            /** @description Why it did not */
+            problem?: string;
+        };
+        VaultTestResult: {
+            ok: boolean;
+            problem?: string;
         };
         /** @description The directory groups one agency's grants may name (v2.5.0, GA-1). */
         AgencyGroups: {
@@ -9279,6 +9675,21 @@ export interface components {
              *     the list as it is; an empty list empties it.
              */
             gitAllowedHosts?: string[];
+            /**
+             * @description v2.5.1 (SG-22) — the hosts an AGENCY's own Vault may be on
+             *     (`PUT /agencies/{agencyId}/vault`). The address must be
+             *     `https://`, carry no user or password, and name a host on this
+             *     list; entries follow the rules of `gitAllowedHosts`. An EMPTY
+             *     list allows no agency to connect a Vault of its own. The list is
+             *     asked again every time a client is built, so a host taken off it
+             *     stops being reached, and that agency's Vault-backed secrets and
+             *     keys stop resolving (they never fall back to the installation's
+             *     Vault). The installation's own Vault is exempt.
+             *
+             *     Always present when read. On a write, OMITTING the field leaves
+             *     the list as it is; an empty list empties it.
+             */
+            vaultAllowedHosts?: string[];
         } & components["schemas"]["AuditFields"];
         GitlabConfig: {
             /** @description Bot PAT. Masked on read; omit on write to keep stored value. */
@@ -9366,14 +9777,15 @@ export interface components {
         } & components["schemas"]["AuditFields"];
         AuditComplianceSettings: {
             /**
-             * @description The twelve retention knobs (A4 defaults shown): five row windows
+             * @description The thirteen retention knobs (A4 defaults shown): five row windows
              *     (`runs`, `activity`, `workflowRuns`, `changeLog`,
              *     `schedulePushes`), two on-disk file windows (`logFiles`,
              *     `auditLogFiles`), the two RH windows (`recycleBin`,
              *     `definitionRevisions`), the DR-7 window
              *     (`runnerPlacementHistory`), the S3 archive window
              *     (`archivedLogFiles`, SL-4), and the host-key history window
-             *     (`hostKeyLedger`, SB). `0` on any of them means keep forever. This blob
+             *     (`hostKeyLedger`, SB), and the secret-use window (`secretUses`,
+             *     v2.5.1). `0` on any of them means keep forever. This blob
              *     is authoritative — the `CRONOMICON_RETENTION_*` env vars only seed it
              *     on the first boot that finds it unset (LU-2), and a change here
              *     applies on the next nightly sweep rather than at the next restart.
@@ -9441,6 +9853,15 @@ export interface components {
                  * @default 365
                  */
                 hostKeyLedger: number;
+                /**
+                 * @description How long the record of which runs used which stored secret
+                 *     and SSH key is kept (v2.5.1): what an agency's Usage view and
+                 *     secrets report read. Its own window, not the runs window: an
+                 *     agency reviews who used a secret long after the runs are
+                 *     pruned.
+                 * @default 365
+                 */
+                secretUses: number;
                 /**
                  * @description On-disk **audit stream** window — `audit.log` and its dated
                  *     `audit.log.YYYYMMDD` generations (`CRONOMICON_AUDIT_LOG`), not the
@@ -9571,9 +9992,11 @@ export interface components {
              * @description Matched case-insensitively against the run's terminal status; `any` matches every run. `n-failures-window` was removed in v0.52.23 — nothing implemented the window.
              *
              *     `sla-breach` and `missed-run` (SL) are NOT run outcomes: one fires mid-run when a job passes its `warnAfterSeconds` or `mustFinishBy` deadline, the other when a schedule expected a fire and none appeared. `any` deliberately does NOT cover them — an operator with an "any run" rule asked about run outcomes, and silently widening it would have turned every such rule into a pager the day SL shipped.
+             *
+             *     `secret-revealed`, `secret-changed` and `backup-key-changed` (v2.5.1) are not about runs either: a stored secret was revealed; a secret or SSH key was created, rotated, updated, moved, deleted or migrated to Vault; the installation's backup keys changed. They are matched by a rule whose target is `all` only. An agency's rule hears of its own agency's secrets, Global's of every agency's, and `backup-key-changed` is Global's alone. The message names the actor and says when they are outside the agency.
              * @enum {string}
              */
-            trigger: "failure" | "success" | "warning" | "killed" | "skipped" | "any" | "sla-breach" | "missed-run";
+            trigger: "failure" | "success" | "warning" | "killed" | "skipped" | "any" | "sla-breach" | "missed-run" | "secret-revealed" | "secret-changed" | "backup-key-changed";
             channels: ("email" | "apprise")[];
             recipients?: string;
             owner?: string | null;
@@ -9790,9 +10213,62 @@ export interface components {
             id?: string;
             name?: string;
         };
-        /** @description Hosts and bastions that reference a credential by id. */
+        /** @description Hosts and bastions that reference a credential by id (the refusal of a delete names them). */
         SshCredentialUsage: {
             hosts?: components["schemas"]["SshCredentialRef"][];
+            bastions?: components["schemas"]["SshCredentialRef"][];
+        };
+        /** @description A stored secret's or SSH key's Usage (v2.5.1). */
+        RowUsage: {
+            /** @enum {string} */
+            kind: "secret" | "key";
+            id: string;
+            /** @description The secret's key or the key's label. */
+            name: string;
+            /** @description The owner agency's id. */
+            owner: string;
+            references: {
+                /** @enum {string} */
+                via: "binding" | "become" | "connectAs" | "host" | "bastion";
+                /** @enum {string} */
+                ownerKind: "job" | "script" | "host" | "bastion";
+                /** @description A job's or script's uid, a host record's or bastion's id. */
+                ownerId: string;
+                name: string;
+                scope?: string;
+                /** @description The alias the binding injects it under. */
+                as?: string;
+            }[];
+            uses: {
+                days7: number;
+                days30: number;
+                days90: number;
+            };
+            /** @description The latest 25 uses, newest first. */
+            recent: {
+                /** Format: date-time */
+                at: string;
+                traceId: string;
+                /** @enum {string} */
+                via: "binding" | "become" | "override" | "connect_as" | "host_auth" | "bastion_auth";
+                jobUid?: string;
+                jobName?: string;
+                runnerName?: string;
+            }[];
+            /** @description The latest 100 change-log rows about it, newest first (a run's injection is in `recent`). */
+            changes: {
+                /** Format: date-time */
+                at: string;
+                actor: string;
+                action: string;
+                details?: string;
+                /** @enum {string} */
+                actorRelation?: "member" | "global_admin" | "outside" | "system";
+                actingAgency?: string;
+            }[];
+            /** @description For a key, the host records that name it by id. */
+            hosts?: components["schemas"]["SshCredentialRef"][];
+            /** @description For a key, the bastions that name it by id. */
             bastions?: components["schemas"]["SshCredentialRef"][];
         };
         /**
@@ -13998,14 +14474,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created, with its repository. */
+            /** @description Created, with its repository when one was given. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["Agency"] & {
-                        repository: components["schemas"]["GitRepo"];
+                        repository: components["schemas"]["GitRepo"] | null;
                     };
                 };
             };
@@ -14768,6 +15244,30 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    envSecretUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                secretId: components["parameters"]["secretId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The secret's usage. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RowUsage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     revealEnvSecret: {
         parameters: {
             query?: never;
@@ -14796,7 +15296,11 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description Secret is vault-source — value lives in Vault. */
+            /**
+             * @description The secret is vault-source (`vault_source`: the value lives in
+             *     Vault), or its agency made it unrevealable (`reveal_locked`,
+             *     v2.5.1: nobody reveals it, global administrators included).
+             */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -14805,6 +15309,34 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    lockEnvSecretReveal: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                secretId: components["parameters"]["secretId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The secret, now unrevealable. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvSecret"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     migrateSecretToVault: {
@@ -16369,6 +16901,63 @@ export interface operations {
             422: components["responses"]["Validation"];
         };
     };
+    getBackupSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The backup settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupSettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    setBackupKeys: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The whole list; empty turns encryption off. */
+                    recipients: string[];
+                    acknowledgedKeyCustody?: boolean;
+                    confirmUnencrypted?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The backup settings as written. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupSettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
     getGeneralSettings: {
         parameters: {
             query?: never;
@@ -16470,6 +17059,31 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["Validation"];
+        };
+    };
+    testInstallationVault: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether the login succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultTestResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     getNotificationConfig: {
@@ -17446,13 +18060,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Referencing hosts and bastions. */
+            /** @description The key's usage. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SshCredentialUsage"];
+                    "application/json": components["schemas"]["RowUsage"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -18007,6 +18621,272 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    agencyHeldByGlobal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rows. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            /** @enum {string} */
+                            kind: "secret" | "key";
+                            id: string;
+                            name: string;
+                            scope?: string;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    agencySecretsReport: {
+        parameters: {
+            query?: {
+                format?: "json" | "csv";
+                /** @description The window for uses, reveals and outside changes (default 90). */
+                days?: number;
+            };
+            header?: never;
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report (CSV when format=csv). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agency: string;
+                        days: number;
+                        items: {
+                            /** @enum {string} */
+                            kind: "secret" | "key";
+                            id: string;
+                            name: string;
+                            scope: string;
+                            /** @enum {string} */
+                            source: "stored" | "vault";
+                            vaultPath?: string;
+                            /** Format: date-time */
+                            lastRotated?: string;
+                            /** Format: date-time */
+                            lastUsed?: string;
+                            uses: number;
+                            references: number;
+                            reveals: number;
+                            outsideChanges: number;
+                            lastOutsideActor?: string;
+                            /** @description Its agency made it unrevealable (secrets only). */
+                            revealLocked?: boolean;
+                        }[];
+                    };
+                    "text/csv": string;
+                };
+            };
+            /** @description A format other than csv or json (`bad_format`), or days outside 1 to 3650 (`bad_days`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getAgencyVault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connection, or `connected` false. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgencyVaultState"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    putAgencyVault: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgencyVaultInput"];
+            };
+        };
+        responses: {
+            /** @description Stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgencyVaultState"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Some references would not resolve (`references_unresolved`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        message: string;
+                        references: components["schemas"]["AgencyVaultReference"][];
+                    };
+                };
+            };
+            422: components["responses"]["Validation"];
+        };
+    };
+    deleteAgencyVault: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The agency still has Vault-backed rows (`vault_in_use`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["Validation"];
+        };
+    };
+    testAgencyVault: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgencyVaultInput"];
+            };
+        };
+        responses: {
+            /** @description Whether the login succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultTestResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    previewAgencyVault: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgencyVaultInput"];
+            };
+        };
+        responses: {
+            /** @description One entry per reference. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        references: components["schemas"]["AgencyVaultReference"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             422: components["responses"]["Validation"];
         };
     };

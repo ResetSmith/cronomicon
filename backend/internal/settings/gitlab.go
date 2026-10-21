@@ -243,7 +243,7 @@ func GetGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Confi
 
 		if patEnc.Valid && patEnc.String != "" {
 			cfg.PatSet = true
-			decrypted, err := secrets.DecryptString(appCfg, patEnc.String)
+			decrypted, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelGitToken, repoID), patEnc.String)
 			if err == nil {
 				cfg.Pat = maskSecret(decrypted)
 			}
@@ -275,7 +275,7 @@ func UpdateGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Co
 
 	var patEnc *string
 	if inp.Pat != "" && !isMaskedSecret(inp.Pat) {
-		token, err := secrets.EncryptString(appCfg, inp.Pat)
+		token, err := secrets.EncryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelGitToken, repoID), inp.Pat)
 		if err != nil {
 			return nil, fmt.Errorf("encrypt PAT: %w", err)
 		}
@@ -360,7 +360,7 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 	}
 	newSecret := hex.EncodeToString(newSecretBytes)
 
-	newSecretEnc, err := secrets.EncryptString(appCfg, newSecret)
+	newSecretEnc, err := secrets.EncryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelGitWebhookSecret, repoID), newSecret)
 	if err != nil {
 		return "", false, time.Time{}, fmt.Errorf("encrypt webhook secret: %w", err)
 	}
@@ -405,7 +405,7 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 		} else if gitlabCfg.PatSet {
 			var patEnc sql.NullString
 			if err := database.QueryRowContext(ctx, `SELECT token_enc FROM git_repos WHERE id=?`, repoID).Scan(&patEnc); err == nil && patEnc.Valid {
-				decrypted, err := secrets.DecryptString(appCfg, patEnc.String)
+				decrypted, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelGitToken, repoID), patEnc.String)
 				if err == nil {
 					pat = decrypted
 				}
@@ -553,7 +553,7 @@ func ResolveRepoRuntime(ctx context.Context, database *sql.DB, appCfg *config.Co
 		repoURL = dbRepoURL.String
 	}
 	if pat == "" && patEnc.Valid && patEnc.String != "" {
-		if decrypted, err := secrets.DecryptString(appCfg, patEnc.String); err == nil {
+		if decrypted, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelGitToken, repoID), patEnc.String); err == nil {
 			pat = decrypted
 		}
 	}

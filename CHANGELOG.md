@@ -13,6 +13,151 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.5.1] - 2026-10-21
+
+Secrets guarded. Backups can be encrypted to keys whose private halves never
+reach the server; an agency can see which runs used each of its secrets and
+keys, who changed them and who revealed them, and be alerted when that
+happens; each sealed value is bound to the row it belongs to; a secret can be
+made unrevealable; an agency may connect a Vault of its own; and an agency may
+be created before it has a repository. Four migrations (1600 to 1630, schema
+v1630); runner protocol 14 is unchanged.
+
+> [!CAUTION]
+> **2.5.1 is a one-way upgrade. Take a backup before you start it.** At its
+> first start 2.5.1 re-seals every stored secret, SSH key and sealed setting so
+> that each value is bound to its own row (it logs when it does). From then on
+> **2.5.0 cannot open those values**: starting 2.5.0 again on the same database
+> leaves every secret, key, repository token and Vault credential unreadable.
+> Rolling back means restoring the backup taken before the upgrade, and losing
+> what changed since. Reversing the migrations does not undo the binding
+> either (the down of migration 1620 leaves bound values unreadable).
+
+### Upgrading from 2.5.0
+
+From 2.2.3 or a release before 2.5.0, follow the steps of 2.5.0 below with the
+2.5.1 binary; the backup of its step 2 is the one meant here.
+
+1. **Take a backup** of the database (or the volume) and keep it apart. It is
+   the only way back to 2.5.0 (above).
+2. **Start 2.5.1.** The first start binds the sealed values, seals the push
+   targets' URLs, and empties the unread list of Apprise URLs that 2.5.0 left
+   in `notification_config`. With no encryption key (KEK) configured there is
+   nothing to bind. If a value cannot be opened (a KEK version that is not
+   configured), the start leaves it readable, writes no marker, and tries again
+   at the next start: configure the missing KEK version.
+3. **Upgrade the agents with the server**, as for every release (protocol 14
+   is unchanged).
+4. **Optionally**, add backup keys (Settings → Backups), list the hosts an
+   agency's own Vault may be on (Settings → Vault, Installation), and review
+   the Notices inbox: each agency now also sees the former secrets of its own
+   that Global holds.
+
+### Added
+
+- **Encrypted backups** (Settings → Backups, a global administrator's).
+  Optional: with one or more [age](https://age-encryption.org) X25519 public
+  keys stored, every nightly snapshot is encrypted to them before it is kept
+  or uploaded (`cronomicon-YYYYMMDD.db.age`); with none, backups are written as
+  before. Turning encryption on is a deliberate step: the card says, in a
+  danger banner, that **losing every private key makes every encrypted backup
+  unreadable**, shows the whole key to compare, and asks for three
+  confirmations. `cronomicon restore --identity <file>` opens an encrypted
+  backup (the live database is untouched if the key is wrong), and
+  `restore --file <path>` restores a local copy. `CRONOMICON_BACKUP_RECIPIENTS`
+  seeds the keys once.
+- **A secret's and an SSH key's Usage** (Env Vars → Secrets and SSH Keys, in
+  each row's detail): what refers to it, which runs used it (counts over 7, 30
+  and 90 days, and the latest 25), and every change, reveal and move with who
+  did it, marked when that person was a global administrator or outside the
+  agency.
+- **An agency's secrets report**: a CSV or JSON download, per agency, of every
+  secret and key it owns, with last rotated, last used, uses and reveals in the
+  window, references, and changes made from outside the agency. No values.
+- **Held by Global**: an agency sees its former secrets and keys that Global
+  holds since 2.4.0 (shared before 2.3.0), read only, each with its Usage; the
+  `shared_ownership` notice is filed under each such agency too.
+- **Alerts on secrets and the backup keys**: three triggers that are not about
+  runs: a secret revealed, a secret changed (created, rotated, updated, moved,
+  deleted, migrated to Vault), and the backup keys changed (Global's rules
+  only). An agency's rule hears its own agency's secrets; a Global rule hears
+  every agency's.
+- **Unrevealable secrets**: *Make unrevealable…* on a stored secret (one way,
+  `manageEnvVars` on its agency). Nobody can reveal it afterwards, global
+  administrators included; runs still use it, and it can still be rotated,
+  moved and migrated.
+- **A Vault per agency** (Settings → Agency Vault): an agency may connect a
+  Vault of its own (AppRole, with an optional namespace and CA bundle), on a
+  host a global administrator lists (Settings → Vault, Installation). Its
+  Vault-backed secrets and keys are then read there and only there: if it
+  cannot be reached they fail, and are never read from the installation's
+  Vault instead. Saving first reads each of the agency's Vault references in
+  the new Vault (no value is shown) and asks before saving when any would not
+  resolve. With its own Vault, an agency's path prefixes are optional and its
+  own. A *Test* button on both Vault cards. The notice
+  `agency_vault_unreachable` says when an agency's own Vault does not answer.
+- **Change log**: every row records the actor's relation to the row's agency
+  (member, global administrator, outside, system), and History's change log
+  marks it. A secret's and key's rotations are told apart from other updates,
+  and a move is written in both agencies.
+- A thirteenth retention window in Audit & Compliance: secret uses (365 days).
+
+### Changed
+
+- **Each sealed value is bound to its row.** A stored secret, an SSH key and
+  every sealed setting (repository tokens and webhook secrets, the Vault,
+  S3, SMTP and metrics credentials, push-target URLs, an agency's Vault
+  credentials) carries the row it belongs to in its encryption, so a value
+  copied into another row, another agency's or another repository's, no
+  longer opens there, even with the key. This is what makes the upgrade
+  one-way (above).
+- **A run's log is masked with its own agency's and Global's secrets**, not
+  every agency's: a run could otherwise test a guess at another agency's
+  secret by printing it. The audit stream is still masked with every agency's.
+- **Push-target URLs are encrypted at rest**, and the plaintext Apprise list
+  2.5.0 no longer read is emptied.
+- **An agency may be created without a repository**: the repository fields
+  of the form are an optional section. Its administrator connects one later
+  in Settings → Repositories; until then it cannot be given a job or published
+  to (422 `no_repository`), and the `agency_no_repository` notice says so.
+- An agency with its own Vault sets its own Vault path prefixes; any other's
+  are still a global administrator's.
+
+### Known, and worth knowing
+
+- The record that the values were bound lives in the database: someone who
+  can write the database can delete it, and the next start then accepts
+  unbound values once more until it binds them again.
+- Turning backup encryption on does not encrypt or remove the unencrypted
+  backups already in the bucket or on disk; delete them yourself once an
+  encrypted backup exists.
+- A restore that is killed part-way can leave its decrypted copy beside the
+  database; remove it by hand.
+- Sync and scope resync of a repository with no URL still answer with a
+  recorded "not configured" result rather than 422.
+
+### For developers
+
+- `secrets.Binding`/`RowBinding`/`SettingsBinding` are the GCM additional data
+  of every seal; `TestProductionSealsAreBound` fails on an unbound seal or
+  open in production code (`Sealer.SealLegacy` is for tests).
+  `secrets.BindSeals` runs at start and `rewrap-secrets` honours its marker.
+- `secrets.VaultForOwner` is the one place a caller asks for a row's Vault;
+  `settings.CheckAgencyVaults` is the notices refresher's health check.
+- `runref.RecordUses` writes `secret_uses` beside the injection audit;
+  `auditlog.WithActorRelation` carries the relation from `auth.withIdentity`.
+- New routes: `GET/PUT /settings/backup`, `GET /env-secrets/{id}/usage`,
+  `POST /env-secrets/{id}/lock-reveal`, `GET /agencies/{id}/secrets-report`,
+  `GET /agencies/{id}/held-by-global`, `GET/PUT/DELETE /agencies/{id}/vault`
+  with `…/vault/test` and `…/vault/preview`, `POST /settings/vault/test`.
+  `POST /agencies` takes `repository` optionally; `GET
+  /agencies/{id}/vault-prefixes` says `ownVault`.
+- Migrations: 1600 `secret_uses` and `change_log.actor_relation`, 1610
+  (`notification_config.apprise_targets` emptied), 1620 `seal_format` and the
+  reveal lock on `secrets` and `ssh_credentials` (its down does not unbind),
+  1630 `agency_vaults`. Numbered in build order.
+- `filippo.io/age` v1.3.2.
+
 ## [2.5.0] - 2026-10-19
 
 Confidential reads, and agencies that stand on their own: an agency's rows are

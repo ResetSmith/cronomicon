@@ -46,10 +46,13 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   global_job_on_agency_scope: { title: "A job of Global's repository names an agency's scope", to: "/jobs", toLabel: "Jobs" },
   global_credential_bound: { title: "A job binds a secret, variable or key only Global has", to: "/env-vars", toLabel: "Env Vars" },
   global_host_record: { title: "A host only Global has a record for", to: "/settings?tab=targets", toLabel: "SSH Targets" },
+  // 2.5.1 SG-40: an agency may be created without one; its administrator connects it.
   agency_no_repository: { title: "An agency has no repository connected", to: "/settings?tab=repositories", toLabel: "Repositories" },
   // 2.5.0 C5 (GA-2): its delegates delete it in Users & Access; a global
   // administrator lists the group on Scopes → Agencies.
   grant_group_unlisted: { title: "A grant names a group its agency does not list", to: "/settings?tab=users", toLabel: "Users & Access" },
+  // 2.5.1 SG-28: the agency's own Vault did not answer.
+  agency_vault_unreachable: { title: "An agency's own Vault cannot be reached", to: "/settings?tab=agencyvault", toLabel: "Agency Vault" },
   local_runner_served: { title: "The local runner no longer serves this agency", to: "/runners", toLabel: "Runners" },
   global_script_job: { title: "A job is built on a script of Global's repository", to: "/jobs", toLabel: "Jobs" },
   global_schedule_bound: { title: "A job or workflow is bound to a schedule of Global's", to: "/schedules", toLabel: "Schedules" },

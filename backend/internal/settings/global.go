@@ -47,6 +47,10 @@ type GlobalSettings struct {
 	// "leave it as it is": the form that writes the other fields was built
 	// before this one existed, and a write from it must not empty the list.
 	GitAllowedHosts *[]string `json:"gitAllowedHosts,omitempty"`
+	// VaultAllowedHosts is the hosts an agency's own Vault may be on (2.5.1
+	// SG-22; agency_vaults.go). Same rules as GitAllowedHosts, absent on a
+	// write leaves it as it is.
+	VaultAllowedHosts *[]string `json:"vaultAllowedHosts,omitempty"`
 }
 
 // SessionPolicy is a nested object within GeneralSettings.
@@ -91,10 +95,16 @@ func UpdateGlobalSettings(ctx context.Context, database *sql.DB, inp GlobalSetti
 		}
 	}
 
-	var allowedHosts []string
+	var allowedHosts, vaultHosts []string
 	if inp.GitAllowedHosts != nil {
 		var err error
 		if allowedHosts, err = normalizeGitAllowedHosts(*inp.GitAllowedHosts); err != nil {
+			return nil, err
+		}
+	}
+	if inp.VaultAllowedHosts != nil {
+		var err error
+		if vaultHosts, err = normalizeGitAllowedHosts(*inp.VaultAllowedHosts); err != nil {
 			return nil, err
 		}
 	}
@@ -114,6 +124,11 @@ func UpdateGlobalSettings(ctx context.Context, database *sql.DB, inp GlobalSetti
 	}
 	if inp.GitAllowedHosts != nil {
 		if err := writeGitAllowedHosts(ctx, database, allowedHosts, actor, now); err != nil {
+			return nil, err
+		}
+	}
+	if inp.VaultAllowedHosts != nil {
+		if err := writeVaultAllowedHosts(ctx, database, vaultHosts, actor, now); err != nil {
 			return nil, err
 		}
 	}
@@ -150,6 +165,8 @@ func assembleGlobalSettings(kv map[string]string) *GlobalSettings {
 	}
 	hosts := parseGitAllowedHosts(kv[gitAllowedHostsKey])
 	s.GitAllowedHosts = &hosts
+	vhosts := parseGitAllowedHosts(kv[vaultAllowedHostsKey])
+	s.VaultAllowedHosts = &vhosts
 	return s
 }
 
@@ -362,7 +379,7 @@ func UpdateNotificationConfig(ctx context.Context, database *sql.DB, appCfg *con
 // (so a blank password on update doesn't wipe the stored one).
 func resolveSMTPPassword(ctx context.Context, database *sql.DB, appCfg *config.Config, inp NotificationConfig) (*string, error) {
 	if inp.SMTP != nil && inp.SMTP.Password != "" {
-		token, err := secrets.EncryptString(appCfg, inp.SMTP.Password)
+		token, err := secrets.EncryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelSMTPPassword, ""), inp.SMTP.Password)
 		if err != nil {
 			return nil, fmt.Errorf("encrypt SMTP password (is a KEK configured?): %w", err)
 		}

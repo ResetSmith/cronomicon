@@ -47,7 +47,7 @@ func OverrideBindings(overrideJSON string) []Binding {
 		if alias != "" && ValidateName(k, alias) != nil {
 			alias = ""
 		}
-		b := Binding{Kind: k, Name: r.Name, As: alias, Reference: k.Reference(r.Name)}
+		b := Binding{Kind: k, Name: r.Name, As: alias, Reference: k.Reference(r.Name), Origin: OriginOverride}
 		key := DedupeKey(b)
 		if seen[key] {
 			continue

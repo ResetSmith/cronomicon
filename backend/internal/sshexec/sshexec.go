@@ -228,7 +228,6 @@ func (s *Service) Start(ctx context.Context) {
 			"hosts it has no approved key for will fail host_key_unverified until this succeeds at a later start", "error", cerr)
 	}
 
-
 	// The periodic orphan reaper runs whether or not the local runner is on: a
 	// run it started can outlive the switch being turned off.
 	s.track(func() { s.reapOrphansLoop(ctx) })
@@ -725,7 +724,9 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	guard := keyGuard{checked: true, scope: r.scope, agencies: runAgencies}
 
 	cmd := remoteCommand(interp, body, r.envJSON, s.injectedEnv(r, resolved))
-	results := s.fanOut(execCtx, targets, cmd, sink, guard)
+	// 2.5.1 SG2.2: the keys this run connects with (each host's, each
+	// bastion's) are recorded as the run's uses of them.
+	results := s.fanOut(withKeyUse(execCtx, r.traceID, "host_auth"), targets, cmd, sink, guard)
 
 	// H2/DEC-2 parity with the runner log-ingest path (runner/log.go): an
 	// ::cronomicon-output:: value that carries an injected secret would propagate that
@@ -1333,7 +1334,7 @@ func (s *Service) openLog(ctx context.Context, r claimedRun, extraRedact []strin
 	// material (extraRedact, P1.3) so an injected secret can never surface
 	// un-masked in this executor's logs. Run override env values (prompt
 	// answers) are log-visible by design and are not fed in.
-	red, err := runner.NewRedactor(ctx, s.db, s.cfg, r.scope, extraRedact...)
+	red, err := runner.NewRedactor(ctx, s.db, s.cfg, r.scope, runner.RunAgencyIDs(ctx, s.db, r.traceID), extraRedact...)
 	if err != nil {
 		// FAIL CLOSED when we are holding injected secret values that MUST be
 		// masked: a broken redactor (e.g. a transient env_vars query error) would

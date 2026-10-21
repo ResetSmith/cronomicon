@@ -245,6 +245,11 @@ type Config struct {
 	// BackupAt is the daily wall-clock UTC time ("HH:MM") for the retention/backup
 	// sweep (PP-H6). Default 02:00.
 	BackupAt string
+	// BackupRecipients seeds Settings → Backups' keys once, on the first boot
+	// that finds none stored (2.5.1 SG-3): age X25519 public keys (age1…),
+	// separated by commas or newlines. Afterwards the stored list is the one
+	// in force and this is not read.
+	BackupRecipients string
 }
 
 // OIDCConfig holds the OIDC relying-party settings.
@@ -345,6 +350,7 @@ func Load() (*Config, error) {
 		BackupS3UseSSL:          envBool("CRONOMICON_BACKUP_S3_USE_SSL", true),
 		BackupS3CAFile:          env("CRONOMICON_BACKUP_S3_CA_FILE", ""),
 		BackupAt:                env("CRONOMICON_BACKUP_AT", "02:00"),
+		BackupRecipients:        env("CRONOMICON_BACKUP_RECIPIENTS", ""),
 	}
 
 	if c.SecretKEKVersion < 1 {

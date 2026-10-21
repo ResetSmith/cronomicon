@@ -160,7 +160,7 @@ func losses(p perms) []string {
 		out = append(out, "author reusable schedules, calendars or reactions, or use revisions and the recycle bin")
 	}
 	if p.manageEnvVars {
-		out = append(out, "create, edit or migrate Vault-backed secrets")
+		out = append(out, "create, edit or migrate Vault-backed secrets outside the Vault paths their agency is given")
 	}
 	if p.manageRoles {
 		out = append(out, "mint or revoke a service account outside this agency, for every agency, or with a role above their own")

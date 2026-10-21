@@ -36,11 +36,18 @@ describe("vault path hint (LR-80)", () => {
   it("explains an agency with no prefixes, and a path outside them", () => {
     expect(vaultPathWhy({ kind: "unlimited" }, "Tax", "anything")).toBe("");
     expect(vaultPathWhy({ kind: "unknown" }, "Tax", "anything")).toBe("");
-    expect(vaultPathWhy({ kind: "prefixes", prefixes: [] }, "Tax")).toMatch(/Tax has no Vault paths assigned/);
-    expect(vaultPathWhy({ kind: "prefixes", prefixes }, "Tax", "secret/data/hr/db#x")).toMatch(
+    expect(vaultPathWhy({ kind: "prefixes", prefixes: [], ownVault: false }, "Tax")).toMatch(/Tax has no Vault paths assigned/);
+    expect(vaultPathWhy({ kind: "prefixes", prefixes, ownVault: false }, "Tax", "secret/data/hr/db#x")).toMatch(
       /outside the Vault paths assigned to Tax: secret\/data\/tax, kv\/fin\./,
     );
-    expect(vaultPathWhy({ kind: "prefixes", prefixes }, "Tax", "secret/data/tax/db#x")).toBe("");
-    expect(vaultPathWhy({ kind: "prefixes", prefixes }, "Tax", "")).toBe("");
+    expect(vaultPathWhy({ kind: "prefixes", prefixes, ownVault: false }, "Tax", "secret/data/tax/db#x")).toBe("");
+    expect(vaultPathWhy({ kind: "prefixes", prefixes, ownVault: false }, "Tax", "")).toBe("");
+  });
+
+  it("lets an agency with its own Vault and no prefixes name any path (2.5.1 SG-26)", () => {
+    expect(vaultPathWhy({ kind: "prefixes", prefixes: [], ownVault: true }, "Tax", "kv/anything#x")).toBe("");
+    expect(vaultPathWhy({ kind: "prefixes", prefixes, ownVault: true }, "Tax", "kv/elsewhere#x")).toMatch(
+      /outside the prefixes Tax set for its own Vault/,
+    );
   });
 });

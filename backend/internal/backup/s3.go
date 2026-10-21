@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -84,6 +85,10 @@ func New(cfg *config.Config, log *slog.Logger) (up Uploader, enabled bool, err e
 	bucket := cfg.BackupS3Bucket
 	up = func(ctx context.Context, localPath string) error {
 		key := backupPrefix + filepath.Base(localPath)
+		opts, err := putOptions(localPath)
+		if err != nil {
+			return err
+		}
 		// Retry with exponential backoff (PP-M4): transient network errors should
 		// not silently fail the nightly backup. Three attempts: immediate, 30s, 2m.
 		delays := []time.Duration{0, 30 * time.Second, 2 * time.Minute}
@@ -96,9 +101,7 @@ func New(cfg *config.Config, log *slog.Logger) (up Uploader, enabled bool, err e
 				case <-time.After(delay):
 				}
 			}
-			info, err := client.FPutObject(ctx, bucket, key, localPath, minio.PutObjectOptions{
-				ContentType: "application/x-sqlite3",
-			})
+			info, err := client.FPutObject(ctx, bucket, key, localPath, opts)
 			if err == nil {
 				log.Info("backup uploaded to S3", "bucket", bucket, "key", key, "bytes", info.Size)
 				return nil
@@ -109,6 +112,27 @@ func New(cfg *config.Config, log *slog.Logger) (up Uploader, enabled bool, err e
 		return fmt.Errorf("upload %s to s3://%s/%s after %d attempts: %w", localPath, bucket, key, len(delays), lastErr)
 	}
 	return up, true, nil
+}
+
+// recipientsMetadata is the object metadata that names the keys an encrypted
+// snapshot was sealed to (SG-7), read back by `cronomicon restore --list`.
+const recipientsMetadata = "Cronomicon-Recipients"
+
+// putOptions are an object's type and, for an encrypted snapshot, the
+// fingerprints its recipients file beside it lists.
+func putOptions(localPath string) (minio.PutObjectOptions, error) {
+	if !strings.HasSuffix(localPath, SealedSuffix) {
+		return minio.PutObjectOptions{ContentType: "application/x-sqlite3"}, nil
+	}
+	raw, err := os.ReadFile(localPath + RecipientsSuffix)
+	if err != nil {
+		return minio.PutObjectOptions{}, fmt.Errorf("read the keys %s was sealed to: %w", filepath.Base(localPath), err)
+	}
+	fps := strings.Fields(string(raw))
+	return minio.PutObjectOptions{
+		ContentType:  "application/octet-stream",
+		UserMetadata: map[string]string{recipientsMetadata: strings.Join(fps, ",")},
+	}, nil
 }
 
 // resolveS3Creds picks static V4 credentials when both keys are configured,

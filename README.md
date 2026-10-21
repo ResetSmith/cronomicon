@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.5.0-blue" alt="Version 2.5.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.5.1-blue" alt="Version 2.5.1"></a>
   <a href="https://cronomicon.io/docs/"><img src="https://img.shields.io/badge/docs-cronomicon.io-blue" alt="Documentation"></a>
   <a href="https://github.com/ResetSmith/cronomicon/pkgs/container/cronomicon"><img src="https://img.shields.io/badge/image-ghcr.io-blue" alt="Container image"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
@@ -57,7 +57,7 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e CRONOMICON_DEV_AUTH=true \
   -e CRONOMICON_DEV_SEED=true \
   -e CRONOMICON_COOKIE_SECURE=false \
-  ghcr.io/resetsmith/cronomicon:2.5.0
+  ghcr.io/resetsmith/cronomicon:2.5.1
 ```
 
 Open <http://localhost:8080> and choose **Developer login**. The data disappears when the container stops.
@@ -98,7 +98,7 @@ Every release publishes four images to the GitHub Container Registry. They are p
 | `ghcr.io/resetsmith/cronomicon-runner-fat` | Runner agent with Ansible and Git installed |
 | `ghcr.io/resetsmith/cronomicon-validate` | `cronomicon validate` for a CI pipeline that checks a definitions repository ([`backend/deploy/ci-validate-template.yml`](backend/deploy/ci-validate-template.yml)) |
 
-Each image is tagged with its full version (`2.5.0`), its minor version (`2.5`) and `latest`. **Pin the full version** in production so that upgrades happen only when you choose.
+Each image is tagged with its full version (`2.5.1`), its minor version (`2.5`) and `latest`. **Pin the full version** in production so that upgrades happen only when you choose.
 
 #### Step 1: Prepare the host
 
@@ -158,14 +158,14 @@ docker run -d --name cronomicon --restart unless-stopped \
   -v cronomicon-data:/var/lib/cronomicon \
   -v /etc/cronomicon/kek:/run/secrets/cronomicon_kek:ro \
   --env-file /etc/cronomicon/cronomicon.env \
-  ghcr.io/resetsmith/cronomicon:2.5.0
+  ghcr.io/resetsmith/cronomicon:2.5.1
 ```
 
 Database migrations run automatically at startup. Confirm the server is ready:
 
 ```bash
 curl -s http://localhost:8080/readyz     # 200 once the database is ready
-curl -s http://localhost:8080/version    # {"version":"2.5.0", ...}
+curl -s http://localhost:8080/version    # {"version":"2.5.1", ...}
 ```
 
 <details>
@@ -174,7 +174,7 @@ curl -s http://localhost:8080/version    # {"version":"2.5.0", ...}
 ```yaml
 services:
   cronomicon:
-    image: ghcr.io/resetsmith/cronomicon:2.5.0
+    image: ghcr.io/resetsmith/cronomicon:2.5.1
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -210,7 +210,7 @@ Cronomicon grants nothing by default, so the first step is to make someone an ad
 
 ```bash
 docker stop cronomicon
-docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.5.0 \
+docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.5.1 \
   grant-admin -db /var/lib/cronomicon/cronomicon.db cronomicon-admins
 docker start cronomicon
 ```
@@ -241,7 +241,7 @@ Check out the release you want to run:
 ```bash
 git clone https://github.com/ResetSmith/cronomicon.git
 cd cronomicon
-git checkout v2.5.0
+git checkout v2.5.1
 ```
 
 #### Step 2: Build the server image
@@ -250,10 +250,10 @@ Run the build from the repository root, since the Dockerfile uses both `frontend
 
 ```bash
 docker build -f backend/Dockerfile \
-  --build-arg VERSION=2.5.0 \
+  --build-arg VERSION=2.5.1 \
   --build-arg COMMIT=$(git rev-parse --short HEAD) \
   --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-  -t cronomicon:2.5.0 .
+  -t cronomicon:2.5.1 .
 ```
 
 The version arguments are optional. They appear in the interface and at `/version`.
@@ -263,15 +263,15 @@ The version arguments are optional. They appear in the interface and at `/versio
 These are only needed if you run runners as containers:
 
 ```bash
-docker build -f backend/Dockerfile.runner     --build-arg VERSION=2.5.0 -t cronomicon-runner:2.5.0 .
-docker build -f backend/Dockerfile.runner.fat --build-arg VERSION=2.5.0 -t cronomicon-runner-fat:2.5.0 .
+docker build -f backend/Dockerfile.runner     --build-arg VERSION=2.5.1 -t cronomicon-runner:2.5.1 .
+docker build -f backend/Dockerfile.runner.fat --build-arg VERSION=2.5.1 -t cronomicon-runner-fat:2.5.1 .
 ```
 
 The fat image's Ansible version is a build argument (`ANSIBLE_VERSION`). To add Ansible collections or other tools, build a derived image from it.
 
 #### Step 4: Deploy
 
-Follow [Option 1](#option-1-deploy-the-published-image) from Step 1, replacing `ghcr.io/resetsmith/cronomicon:2.5.0` with `cronomicon:2.5.0`. To run the image on another host, push it to your own registry first.
+Follow [Option 1](#option-1-deploy-the-published-image) from Step 1, replacing `ghcr.io/resetsmith/cronomicon:2.5.1` with `cronomicon:2.5.1`. To run the image on another host, push it to your own registry first.
 
 ### Adding runners
 
@@ -291,7 +291,10 @@ To run an agent as a container instead, the same page generates a `docker run` c
 
 ### Upgrading
 
-Migrations run automatically when a new version starts, and they cannot be rolled back. Read the [CHANGELOG](CHANGELOG.md)'s **Upgrading** section for the version you go to first: from 2.2.3 to 2.5.0 it is seven steps, some of them before you stop the old server. Then take a snapshot:
+> [!CAUTION]
+> **2.5.1 is a one-way upgrade: back up before you start it.** At its first start, 2.5.1 re-encrypts every stored secret, SSH key and sealed setting so that each value is bound to its own row. After that, **2.5.0 cannot open them**: starting 2.5.0 again on the same data leaves every secret, key, repository token and Vault credential unreadable. The only way back is the snapshot you take in step 1 below, and anything changed since is lost.
+
+Migrations run automatically when a new version starts, and they cannot be rolled back. Read the [CHANGELOG](CHANGELOG.md)'s **Upgrading** section for each version you pass: from 2.2.3 to 2.5.0 it is seven steps, some of them before you stop the old server, and from 2.5.0 to 2.5.1 it is the snapshot. Then take a snapshot:
 
 1. **Snapshot the data.** Stop the container and archive the volume:
 
@@ -308,7 +311,7 @@ Migrations run automatically when a new version starts, and they cannot be rolle
 To roll back, restore the volume from the archive and start the previous version. The [CHANGELOG](CHANGELOG.md) lists what changes in each release.
 
 > [!NOTE]
-> **Upgrading from 2.2.3 to 2.5.0.** Before you stop the old server, run the report with the new image against the existing database: `docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.5.0 preflight -db /var/lib/cronomicon/cronomicon.db` (read-only). It lists, for this installation, what stops or moves at the first start: Git jobs on an agency's scope stop running until each agency has its own repository, and an agency's shell jobs need an agent of that agency. Lines marked `!!` need action first. After the upgrade, a global administrator reads the **Notices** page, which lists each item by agency.
+> **Upgrading from 2.2.3.** Before you stop the old server, run the report with the new image against the existing database: `docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.5.1 preflight -db /var/lib/cronomicon/cronomicon.db` (read-only). It lists, for this installation, what stops or moves at the first start: Git jobs on an agency's scope stop running until each agency has its own repository, and an agency's shell jobs need an agent of that agency. Lines marked `!!` need action first. After the upgrade, a global administrator reads the **Notices** page, which lists each item by agency.
 
 ## How Cronomicon works
 
@@ -365,7 +368,10 @@ Jobs, workflows, schedules and scopes can be **defined in Git** and synchronized
 - **Directory-driven access.** Grants pair a directory group with a role and a department. Roles are editable, and a department can administer its own access. A change to a grant takes effect within seconds, with no need to sign in again, and **My access** shows each user which permissions they hold in which agency.
 - **Self-sufficient departments.** An agency's administrators manage its scopes, host records, bastions, Vault-backed secrets, agents, Git repository, alerts, recycle bin and the access grants of the directory groups listed for it. What belongs to the whole installation is kept apart in the Global agency and changed only by a global administrator, who can also hand a job or workflow to an agency as one commit into its repository.
 - **Same name, different departments.** Two departments can each own a job called `monthly-close` without conflict.
-- **Secrets by reference.** Jobs name the secrets they need; the values are injected at run time, masked in logs and audited. With HashiCorp Vault, each agency may point only at the Vault paths assigned to it.
+- **Secrets by reference.** Jobs name the secrets they need; the values are injected at run time, masked in logs and audited. With HashiCorp Vault, each agency may point only at the Vault paths assigned to it, or connect a Vault of its own.
+- **Secrets an agency can review.** Each secret and key shows which runs used it, what refers to it, and who changed or revealed it, marked when that was someone outside the agency. An agency can download a report of its secrets, be alerted when one is revealed or changed, and make a secret unrevealable for everyone, global administrators included.
+- **Sealed at rest, bound to their place.** Stored secrets, keys and credentials are encrypted with a key kept apart from the database, and each value is bound to its own row, so a copy moved elsewhere in the database does not open.
+- **Encrypted backups.** Optionally, nightly backups are encrypted to public keys whose private halves never reach the server.
 - **Key rotation.** Rotate the encryption key and re-encrypt every stored secret with `cronomicon rewrap-secrets`.
 - **Service accounts.** Machine identities with their own tokens and permissions, for triggering runs from CI or other tools.
 
@@ -457,7 +463,7 @@ The other step types are `branch` (choose a path from an earlier step's result),
 **4. Validate before you push.** The `cronomicon` binary checks syntax and cross-references with the same parser the server uses. You can run it from the image without installing anything:
 
 ```bash
-docker run --rm -v "$PWD":/repo:ro ghcr.io/resetsmith/cronomicon:2.5.0 validate /repo
+docker run --rm -v "$PWD":/repo:ro ghcr.io/resetsmith/cronomicon:2.5.1 validate /repo
 ```
 
 **5. Push.** A GitLab webhook triggers a sync automatically, or choose **Resync** on the repository under **Settings → Repositories**. Definitions from Git are read-only in the app; change them in Git.

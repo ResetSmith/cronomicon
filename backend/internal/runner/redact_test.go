@@ -125,7 +125,7 @@ func TestNewRedactorVariablesVisible(t *testing.T) {
 		}
 	}
 
-	r, err := NewRedactor(context.Background(), pool, nil, "prod")
+	r, err := NewRedactor(context.Background(), pool, nil, "prod", nil)
 	if err != nil {
 		t.Fatalf("NewRedactor: %v", err)
 	}

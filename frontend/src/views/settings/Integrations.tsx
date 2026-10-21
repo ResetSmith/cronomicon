@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import type { components } from "../../api/schema";
 import { c } from "../../theme";
@@ -38,8 +38,8 @@ function GlobalOnlyCard({ title }: { title: string }) {
   return (
     <Card title={title}>
       <div role="note" style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-        {GLOBAL_ADMIN_VIEW_ONLY} The connection is shared by every agency, and its settings are not shown to an
-        administrator of one.
+        {GLOBAL_ADMIN_VIEW_ONLY} The connection is used by Global and by every agency without one of its own, and
+        its settings are not shown to an administrator of one agency.
       </div>
     </Card>
   );
@@ -47,7 +47,50 @@ function GlobalOnlyCard({ title }: { title: string }) {
 
 // ── Vault ────────────────────────────────────────────────────────────────────
 export function VaultSection({ canWrite }: { canWrite: boolean }) {
-  return canWrite ? <VaultForm /> : <GlobalOnlyCard title="Vault" />;
+  if (!canWrite) return <GlobalOnlyCard title="Vault" />;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
+        The installation's Vault, used by Global and by every agency without a Vault of its own (each inside the path
+        prefixes assigned on Scopes → Agencies). An agency connects its own on Settings → Agency Vault, on
+        a host listed below.
+      </div>
+      <VaultForm />
+      <VaultAllowedHostsCard />
+    </div>
+  );
+}
+
+// The hosts an agency's own Vault may be on (2.5.1 SG-22): a global
+// administrator's, in the general settings, as the allowed Git hosts are.
+function VaultAllowedHostsCard() {
+  const [general, setGeneral] = useState<Record<string, unknown> | null>(null);
+  const [text, setText] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    api.GET("/settings/general").then(({ data }) => {
+      if (!data) return;
+      setGeneral(data as Record<string, unknown>);
+      setText(((data as { vaultAllowedHosts?: string[] }).vaultAllowedHosts ?? []).join("\n"));
+    });
+  }, []);
+  async function save() {
+    if (!general) return;
+    const hosts = text.split("\n").map((h) => h.trim()).filter(Boolean);
+    const { error } = await api.PUT("/settings/general", { params: { header: csrfHeader }, body: { ...general, vaultAllowedHosts: hosts } as never });
+    setMsg(error ? { ok: false, text: errMsg(error) } : { ok: true, text: "Saved." });
+  }
+  return (
+    <Card title="Allowed hosts for an agency's own Vault" action={<Btn small onClick={save} disabled={!general}>Save</Btn>}>
+      <div style={{ fontSize: c.fontSm, color: c.textSec, marginBottom: 8, lineHeight: 1.6 }}>
+        One per line: a host name (any port) or <code style={{ fontFamily: c.mono }}>host:port</code>. With none, no agency
+        can connect a Vault of its own. Taking a host off the list stops that agency's Vault being reached, and its
+        Vault-backed secrets and keys fail rather than being read from this Vault. The installation's own is exempt.
+      </div>
+      <textarea aria-label="Allowed Vault hosts" value={text} onChange={(e) => setText(e.target.value)} rows={3} style={{ ...inputStyle(), width: 300, fontFamily: c.mono }} />
+      {msg && <div role={msg.ok ? "status" : "alert"} style={{ color: msg.ok ? c.success : c.danger }}>{msg.text}</div>}
+    </Card>
+  );
 }
 
 function VaultForm() {
@@ -55,11 +98,32 @@ function VaultForm() {
     api.PUT("/settings/vault", { params: { header: csrfHeader }, body }),
   );
   const [newSecretId, setNewSecretId] = useState("");
+  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const { form, patch } = s;
+  // 2.5.1 SG3: an authenticated login with the STORED connection (save first).
+  async function test() {
+    setTestMsg(null);
+    const { data, error } = await api.POST("/settings/vault/test", { params: { header: csrfHeader } });
+    if (error) setTestMsg({ ok: false, text: errMsg(error) });
+    else setTestMsg(data?.ok ? { ok: true, text: "The Vault accepted the login." } : { ok: false, text: `The login failed: ${data?.problem ?? "no answer"}` });
+  }
   const statusColor = form?.status === "ok" ? c.success : form?.status === "degraded" ? c.warning : c.textMuted;
 
   return (
-    <Card title="Vault" action={<SaveBtn onClick={() => s.save({ ...form!, ...(newSecretId ? { secretId: newSecretId } : {}) })} saving={s.saving} saved={s.saved} disabled={!form} />}>
+    <Card
+      title="Vault"
+      action={
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn small onClick={test} disabled={!form} title="Logs in with the saved connection">Test</Btn>
+          <SaveBtn onClick={() => s.save({ ...form!, ...(newSecretId ? { secretId: newSecretId } : {}) })} saving={s.saving} saved={s.saved} disabled={!form} />
+        </div>
+      }
+    >
+      {testMsg && (
+        <div role={testMsg.ok ? "status" : "alert"} style={{ marginBottom: 10, fontSize: c.fontSm, color: testMsg.ok ? c.success : c.danger }}>
+          {testMsg.text}
+        </div>
+      )}
       <Status loading={s.loading} error={s.error} saveErr={s.saveErr} />
       {form && (
         <div style={{ fontSize: c.fontSm }}>

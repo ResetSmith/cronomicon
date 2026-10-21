@@ -58,6 +58,10 @@ type noticeJSON struct {
 
 func (s *Server) mountNotices(mux *http.ServeMux) {
 	s.noticeRefresh.Interval = noticeRefreshInterval
+	// 2.5.1 SG-28: each agency's own Vault is asked whether it answers.
+	s.noticeRefresh.Extra = append(s.noticeRefresh.Extra, func(ctx context.Context) error {
+		return settings.CheckAgencyVaults(ctx, s.db, s.cfg)
+	})
 	mux.Handle("GET /api/v1/notices", s.auth.RequireSession(http.HandlerFunc(s.handleListNotices)))
 	// The outer gate is "configureApp held somewhere" — the floor every write
 	// route has, so a session that administers nothing is refused outright

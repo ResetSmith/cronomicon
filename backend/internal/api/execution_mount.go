@@ -3861,13 +3861,15 @@ func (s *Server) loadWorkflowChildRuns(r *http.Request, wfTraceID string) ([]wfC
 // the child trace id (so the UI fetches GET /runs/{id}/log — no new endpoint, WB-O1
 // /O4), and a redacted resolved-context snapshot (WB-O1/D5).
 func (s *Server) workflowRunSteps(r *http.Request, children []wfChildRun, containers map[string]string) []map[string]any {
-	redactors := map[string]*runner.Redactor{} // one per scope, built lazily
-	getRedactor := func(scope string) *runner.Redactor {
-		if red, ok := redactors[scope]; ok {
+	redactors := map[string]*runner.Redactor{} // one per scope and agency, built lazily
+	getRedactor := func(scope, owner string) *runner.Redactor {
+		k := scope + "\x00" + owner
+		if red, ok := redactors[k]; ok {
 			return red
 		}
-		red, _ := runner.NewRedactor(r.Context(), s.db, s.cfg, scope)
-		redactors[scope] = red
+		// 2.5.1 SG2.8: the step's own agency's values and Global's only.
+		red, _ := runner.NewRedactor(r.Context(), s.db, s.cfg, scope, runAgencyIDs(owner))
+		redactors[k] = red
 		return red
 	}
 	steps := make([]map[string]any, 0, len(children))
@@ -3898,13 +3900,13 @@ func (s *Server) workflowRunSteps(r *http.Request, children []wfChildRun, contai
 // /D5): the child run's resolved env plus its captured A12 outputs, both run
 // through the existing redaction path (outputs win on key collision). Returns nil
 // when there's nothing to show, so the redactor is built only when needed.
-func runContextSnapshot(cr wfChildRun, getRedactor func(string) *runner.Redactor) map[string]string {
+func runContextSnapshot(cr wfChildRun, getRedactor func(scope, owner string) *runner.Redactor) map[string]string {
 	env := parseEnvMap(cr.envJSON)
 	outputs := parseOutputsJSON(cr.outputsJSON)
 	if len(env) == 0 && len(outputs) == 0 {
 		return nil
 	}
-	red := getRedactor(cr.scope)
+	red := getRedactor(cr.scope, cr.scopeOwner)
 	redact := func(v string) string {
 		if red == nil {
 			return "[REDACTED]" // fail-closed, matching redactOutputs
@@ -4450,6 +4452,15 @@ type runMapCaches struct {
 // builds per request.
 var newRunRedactor = runner.NewRedactor
 
+// runAgencyIDs is a run's owner agency as runner.NewRedactor takes it (2.5.1
+// SG2.8): Global's for none.
+func runAgencyIDs(owner string) []string {
+	if owner == "" {
+		return []string{agencyid.Global}
+	}
+	return []string{owner}
+}
+
 func runJobKey(source, name, owner string) string { return source + "\x00" + name + "\x00" + owner }
 
 // newRunMapCaches batch-loads the jobs-rowid maps for a drained page of runs.
@@ -4508,16 +4519,17 @@ func (s *Server) newRunMapCaches(ctx context.Context, raws []runRaw) *runMapCach
 // row's outputs, fail-closed) but is NOT cached, so the next row retries —
 // matching the old per-row build, where a transient error masked only the
 // row that hit it rather than the whole page.
-func (c *runMapCaches) redactor(scope string) *runner.Redactor {
-	if red, ok := c.redactors[scope]; ok {
+func (c *runMapCaches) redactor(scope, owner string) *runner.Redactor {
+	k := scope + "\x00" + owner
+	if red, ok := c.redactors[k]; ok {
 		return red
 	}
-	red, err := newRunRedactor(c.ctx, c.s.db, c.s.cfg, scope)
+	red, err := newRunRedactor(c.ctx, c.s.db, c.s.cfg, scope, runAgencyIDs(owner))
 	if err != nil || red == nil {
 		c.s.log.Warn("runs list: redactor build failed; masking this row's outputs", "scope", scope, "error", err)
 		return nil
 	}
-	c.redactors[scope] = red
+	c.redactors[k] = red
 	return red
 }
 
@@ -4734,11 +4746,11 @@ func (c *runMapCaches) redactOutputs(rr runRaw, outputs map[string]string) map[s
 	// redactor.
 	var red *runner.Redactor
 	if len(injected) > 0 {
-		if r, err := newRunRedactor(c.ctx, c.s.db, c.s.cfg, scope, injected...); err == nil {
+		if r, err := newRunRedactor(c.ctx, c.s.db, c.s.cfg, scope, runAgencyIDs(rr.ownerAgency.String), injected...); err == nil {
 			red = r
 		}
 	} else {
-		red = c.redactor(scope)
+		red = c.redactor(scope, rr.ownerAgency.String)
 	}
 
 	// Fail closed: a failed redactor build OR an unresolved injected dictionary
@@ -5163,7 +5175,11 @@ func (s *Server) listChangeLog(w http.ResponseWriter, r *http.Request) {
 	var total int
 	_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) "+base, args...).Scan(&total)
 
-	query := `SELECT id, at, actor, category, action, target, details ` +
+	// 2.5.1 SG-13: the row's agency, the agency a global administrator was
+	// acting in, and the actor's relation to the row's agency (SG-11) — the
+	// export had the first two since 2.5.0; the in-app log now has all three.
+	query := `SELECT id, at, actor, category, action, target, details,
+	                 COALESCE(agency_id, ''), COALESCE(acting_agency, ''), COALESCE(actor_relation, '') ` +
 		base + orderBy + " LIMIT ? OFFSET ?"
 	args = append(args, pageSize, (page-1)*pageSize)
 
@@ -5177,12 +5193,15 @@ func (s *Server) listChangeLog(w http.ResponseWriter, r *http.Request) {
 	var items []map[string]any
 	for rows.Next() {
 		var id int64
-		var at, actor, category, action string
+		var at, actor, category, action, agency, acting, relation string
 		var target, details sql.NullString
-		if err := rows.Scan(&id, &at, &actor, &category, &action, &target, &details); err != nil {
+		if err := rows.Scan(&id, &at, &actor, &category, &action, &target, &details, &agency, &acting, &relation); err != nil {
 			continue
 		}
-		items = append(items, map[string]any{
+		if agency == "" {
+			agency = agencyid.Global // an owner that names no agency reads as Global's
+		}
+		item := map[string]any{
 			"id":        id,
 			"timestamp": at,
 			"user":      actor,
@@ -5190,7 +5209,15 @@ func (s *Server) listChangeLog(w http.ResponseWriter, r *http.Request) {
 			"action":    action,
 			"target":    nullStrVal(target),
 			"details":   nullStrVal(details),
-		})
+			"agency":    agency,
+		}
+		if acting != "" {
+			item["actingAgency"] = acting
+		}
+		if relation != "" {
+			item["actorRelation"] = relation
+		}
+		items = append(items, item)
 	}
 	if items == nil {
 		items = []map[string]any{}

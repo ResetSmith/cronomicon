@@ -7,7 +7,7 @@ import { useGet, rows, useTableSort } from "../../hooks";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { DOC_LINKS } from "../../components/docLinks";
-import { DetailPanel, InlineLoading, SkeletonRows, SortableLabel, DocLink } from "../../components/ui";
+import { DetailPanel, ExpandChevron, InlineLoading, SkeletonRows, SortableLabel, DocLink } from "../../components/ui";
 import { RefreshScope } from "../../components/RefreshScope";
 import { REPAIR_HINT, RepairDialog, type RepairBody } from "../../components/RepairDialog";
 import {
@@ -328,8 +328,11 @@ function AgencyFormModal({
   const isEdit = initial != null;
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
-  // An agency is created with its repository (2.4.0, IN-2): tested — it
-  // answers, and its token may push — before anything is written.
+  // An agency connects its repository now or later (2.5.1, SG-40): given
+  // here, it is tested — it answers, and its token may push — before anything
+  // is written; left out, the agency's administrator connects it in
+  // Settings → Repositories.
+  const [withRepo, setWithRepo] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");
   const [pat, setPat] = useState("");
   const [branch, setBranch] = useState("main");
@@ -341,8 +344,8 @@ function AgencyFormModal({
       setFormError("Name is required");
       return;
     }
-    if (!isEdit && (!repoUrl.trim() || !pat)) {
-      setFormError("An agency is created with its repository: give its URL and a token that can push.");
+    if (!isEdit && withRepo && (!repoUrl.trim() || !pat)) {
+      setFormError("Give the repository's URL and a token that can push, or close the repository section to connect it later.");
       return;
     }
     setBusy(true);
@@ -354,12 +357,20 @@ function AgencyFormModal({
             params: { header: csrfHeader },
             body: {
               ...body,
-              repository: { repoUrl: repoUrl.trim(), pat, writeBranch: branch.trim() || "main", webhookEnabled: true, webhookEvents: { push: true, mr: true, tag: true } },
+              ...(withRepo
+                ? { repository: { repoUrl: repoUrl.trim(), pat, writeBranch: branch.trim() || "main", webhookEnabled: true, webhookEvents: { push: true, mr: true, tag: true } } }
+                : {}),
             },
           });
     setBusy(false);
     if (res.error) setFormError(errMsg(res.error));
-    else onSaved(`Agency ${isEdit ? "updated" : "created"}: ${name.trim()}`);
+    else if (isEdit) onSaved(`Agency updated: ${name.trim()}`);
+    else if (withRepo) onSaved(`Agency created: ${name.trim()}`);
+    else
+      onSaved(
+        `Agency created: ${name.trim()}. It has no repository yet: its administrator connects one in Settings → Repositories. ` +
+          "Until then it cannot be given a job or published to.",
+      );
   };
 
   return (
@@ -403,6 +414,23 @@ function AgencyFormModal({
           />
         </div>
         {!isEdit && (
+          <button
+            type="button"
+            aria-expanded={withRepo}
+            onClick={() => setWithRepo((v) => !v)}
+            style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: "pointer", color: c.text, fontSize: c.fontSm, fontWeight: 600, textAlign: "left" }}
+          >
+            <ExpandChevron open={withRepo} />
+            Connect its repository now (optional)
+          </button>
+        )}
+        {!isEdit && !withRepo && (
+          <div style={{ fontSize: c.fontSm, color: c.textSec }}>
+            Its administrator can connect it later, with the agency's own token, in Settings → Repositories. Until then the
+            agency cannot be given a job or published to.
+          </div>
+        )}
+        {!isEdit && withRepo && (
           <>
             <div style={{ fontSize: c.fontSm, color: c.textSec }}>
               Its repository: where its definitions live, and where its publishes are committed. The host must be on the
@@ -756,6 +784,14 @@ function AgencyElsewhere({ agencyId }: { agencyId: string }) {
   const grantsQ = useGet<unknown>(() => api.GET("/access-grants"), []);
   const rulesQ = useGet<unknown>(() => api.GET("/alerts", { headers: allReadable }), []);
   const targetsQ = useGet<unknown>(() => api.GET("/alert-targets", { headers: allReadable }), []);
+  // 2.5.1 SG3: whose Vault the agency's Vault-backed rows resolve in.
+  const vaultQ = useGet<{ ownVault?: boolean }>(
+    () =>
+      agencyId === GLOBAL_AGENCY
+        ? Promise.resolve({ data: { ownVault: false } })
+        : api.GET("/agencies/{agencyId}/vault-prefixes", { params: { path: { agencyId } } }),
+    [agencyId],
+  );
   const there = (tab: string) => `/settings?tab=${tab}&agency=${encodeURIComponent(agencyId)}`;
   const notYours = <span style={{ color: c.textMuted }}>not yours to read</span>;
 
@@ -777,7 +813,7 @@ function AgencyElsewhere({ agencyId }: { agencyId: string }) {
   return (
     <div style={{ borderTop: `1px solid ${c.borderLight}`, paddingTop: 10 }}>
       <div style={{ fontSize: c.fontXs, fontFamily: c.sansCond, fontWeight: 700, color: c.textMuted, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 6 }}>
-        Repository, access and alerts
+        Repository, Vault, access and alerts
       </div>
       {line(
         "Repository",
@@ -798,6 +834,20 @@ function AgencyElsewhere({ agencyId }: { agencyId: string }) {
         ),
         "repositories",
         "Repositories →",
+      )}
+      {line(
+        "Vault",
+        vaultQ.loading ? (
+          <InlineLoading />
+        ) : vaultQ.error ? (
+          notYours
+        ) : vaultQ.data?.ownVault ? (
+          <span>its own</span>
+        ) : (
+          <span style={{ color: c.textSec }}>the installation's</span>
+        ),
+        "agencyvault",
+        "Vault →",
       )}
       {line(
         "Access",

@@ -70,6 +70,7 @@ frontend generates a client (`npm run gen`).
 | `CRONOMICON_RETENTION_RUNS_DAYS` / `_CHANGELOG_DAYS` / `_LOG_FILES_DAYS` | `90` / `365` / `90` | Retention **bootstrap defaults only** — they seed the `auditCompliance` settings blob on the first boot that finds it unset; afterwards the twelve per-table knobs in Settings → Audit & Compliance are authoritative (the knobs with no env var — `auditLogFiles`, `recycleBin`, `definitionRevisions`, `runnerPlacementHistory`, `archivedLogFiles`, `hostKeyLedger` — start at their own defaults). `_LOG_FILES_DAYS` reaps **on-disk run logs**. |
 | `CRONOMICON_BACKUP_S3_BUCKET` | — | nightly VACUUM-INTO upload target; empty disables upload |
 | `CRONOMICON_BACKUP_S3_ENDPOINT` / `_REGION` / `_ACCESS_KEY` / `_SECRET_KEY` / `_USE_SSL` | — / `us-east-1` / — / — / `true` | S3-compatible target (AWS/MinIO/Ceph/R2). See `deploy/backup-restore.md` |
+| `CRONOMICON_BACKUP_RECIPIENTS` | — | 2.5.1, optional: age public keys that seed Settings → Backups once; every backup is then encrypted to them. Losing every private key loses every encrypted backup |
 
 > **Namespace note.** Names under the reserved prefixes `CRONOMICON_VAR_`,
 > `CRONOMICON_SECRET_`, `CRONOMICON_KEY_`, and `CRONOMICON_RUN_` are **not** configuration —
@@ -109,7 +110,7 @@ volume at `/var/lib/cronomicon` (the `Dockerfile` declares it as a `VOLUME`):
 | `/var/lib/cronomicon/logs/<code>/<traceId>.log` | per-run log files (redacted at ingest), grouped into one folder per job/workflow. `<code>` is an opaque 8-hex-character code from the `entity_codes` registry; runs owned by no definition (the SSH connection test) use `_system`. Each folder carries a `_meta.json` sidecar naming the owning entity. |
 | `/var/lib/cronomicon/logs/cronomicon.log` (+ `cronomicon.log.1` … `.N`) | **process log** — the same slog stream written to stdout, teed to disk so a crash is diagnosable where nothing collects stdout (`CRONOMICON_LOG_FILE`). Mode `0640` in a `0750` directory. Rotated by size, not date; the generations don't end in `.log` and the live file is excluded by name, so the run-log reaper touches neither. **Not redacted** — see `deploy/security-review.md`. |
 | `/var/lib/cronomicon/logs/audit.log` (+ `audit.log.YYYYMMDD`) | compliance **audit stream** — JSON Lines, one record per audited event, rotated daily by UTC date (`CRONOMICON_AUDIT_LOG`). Mode `0640` in a `0750` directory. The dated generations don't end in `.log`, so the run-log reaper skips them; the live file is excluded from it by name. Governed by the `auditLogFiles` retention knob (730 days), not `logFiles`. Masked by the process-wide redaction dictionary before each row is stored. |
-| `/var/lib/cronomicon/backups/` | nightly `VACUUM INTO` snapshots before S3 upload |
+| `/var/lib/cronomicon/backups/` | nightly `VACUUM INTO` snapshots before S3 upload, kept 7 days (`cronomicon-YYYYMMDD.db`, or `.db.age` when backup keys are set; the plaintext of an encrypted one exists only in `.staging/` while it is sealed) |
 | `/var/lib/cronomicon/git-cache/job-definitions/` | cached clone of the job-definitions repo (`CRONOMICON_GIT_CACHE_DIR`) |
 
 The three log paths above are the **defaults**. The run-log directory is
@@ -129,8 +130,11 @@ degrade gracefully — the server boots and serves with them absent.
 ### Backups & CI
 
 - **Backups:** nightly `VACUUM INTO` snapshot + S3 upload (`internal/backup`,
-  minio-go — AWS or any S3-compatible endpoint). Restore runbook:
-  `deploy/backup-restore.md`.
+  minio-go — AWS or any S3-compatible endpoint), optionally encrypted with age
+  to the keys in Settings → Backups (2.5.1). Restore runbook, with
+  `cronomicon restore --identity`: `deploy/backup-restore.md`.
+- **2.5.1 is a one-way upgrade:** its first start binds every sealed value to
+  its row, and 2.5.0 cannot open them afterwards. Back up before upgrading.
 - **CI-time validation:** `deploy/ci-validate-template.yml` is the
   drop-in `.gitlab-ci.yml` snippet for the job-definitions repo that runs
   `cronomicon validate` on every MR (fail-fast, line-numbered; opt-in MR-comment

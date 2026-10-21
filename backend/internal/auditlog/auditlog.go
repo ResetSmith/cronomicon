@@ -114,6 +114,35 @@ func ActingAgency(ctx context.Context) string {
 	return a
 }
 
+// relationKey carries the request's judge of who the actor is to an agency.
+type relationKey struct{}
+
+// Actor relations recorded on change_log rows (2.5.1 SG-11).
+const (
+	RelationMember      = "member"       // holds a grant on the row's agency (for Global: reaches every agency)
+	RelationGlobalAdmin = "global_admin" // a global administrator with no grant on that agency
+	RelationOutside     = "outside"      // anyone else
+	RelationSystem      = "system"       // no request identity: a background writer
+)
+
+// WithActorRelation gives ctx the request's judge: for an agency id it says
+// how the actor stands to that agency (one of the Relation constants). auth
+// sets it when it attaches the identity, beside WithActingAgency; this package
+// stays a leaf. Each change_log row records the answer for ITS agency, when it
+// is written, because nothing afterwards can say who the actor was then.
+func WithActorRelation(ctx context.Context, judge func(agencyID string) string) context.Context {
+	return context.WithValue(ctx, relationKey{}, judge)
+}
+
+// ActorRelation is the judge's answer for agencyID, or RelationSystem when ctx
+// carries no judge.
+func ActorRelation(ctx context.Context, agencyID string) string {
+	if judge, ok := ctx.Value(relationKey{}).(func(string) string); ok && judge != nil {
+		return judge(agencyID)
+	}
+	return RelationSystem
+}
+
 // WriteChangeLog inserts one change_log row (S6). Optional columns (target,
 // details) are stored verbatim — empty string, never NULL (CC-D2).
 //
@@ -142,10 +171,11 @@ func WriteChangeLogAt(ctx context.Context, db Execer, at, agency, actor, categor
 	target = TrimForAudit(mask(target))
 	details = TrimForAudit(mask(details))
 	acting := ActingAgency(ctx)
+	relation := ActorRelation(ctx, agency)
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO change_log (at, actor, category, action, target, details, created_at, acting_agency, agency_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		now, actor, category, action, target, details, now, nullStr(acting), nullStr(agency))
+		`INSERT INTO change_log (at, actor, category, action, target, details, created_at, acting_agency, agency_id, actor_relation)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		now, actor, category, action, target, details, now, nullStr(acting), nullStr(agency), relation)
 	if err != nil {
 		return fmt.Errorf("write change_log: %w", err)
 	}

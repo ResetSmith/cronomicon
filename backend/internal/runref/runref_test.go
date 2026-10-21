@@ -54,7 +54,7 @@ func nilLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil
 // decrypted material, it doesn't parse it.
 func seedKey(t *testing.T, pool *sql.DB, cfg *config.Config, label, material string) {
 	t.Helper()
-	sealed, err := secrets.NewSealer(cfg).Seal([]byte(material))
+	sealed, err := secrets.NewSealer(cfg).SealLegacy([]byte(material))
 	if err != nil {
 		t.Fatalf("seal key %q: %v", label, err)
 	}

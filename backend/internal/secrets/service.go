@@ -83,6 +83,12 @@ type Secret struct {
 	// OwnerAgency is the NAME of the department that owns this row (RA-15, Phase E),
 	// or "" for shared infrastructure. See settings.EnvVar.OwnerAgency.
 	OwnerAgency string `json:"ownerAgency"`
+	// RevealLocked: the agency made it unrevealable (2.5.1 SG-19). One way:
+	// nobody reveals it through Cronomicon from then on, global administrators
+	// included. It is still rotated, injected, moved and migrated as before.
+	RevealLocked   bool   `json:"revealLocked"`
+	RevealLockedBy string `json:"revealLockedBy,omitempty"`
+	RevealLockedAt string `json:"revealLockedAt,omitempty"`
 }
 
 // parseTags decodes the secrets.tags JSON-array column into a non-nil slice:
@@ -138,7 +144,8 @@ func (s *Service) List(ctx context.Context, canRead func(agency, scope string) b
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT s.id, s.key, s.source, s.scope, s.description, s.vault_ref, s.created_by, s.created_at,
-		        s.last_modified_by, s.last_modified_at, s.tags, COALESCE(ag.name,''), s.owner_agency
+		        s.last_modified_by, s.last_modified_at, s.tags, COALESCE(ag.name,''), s.owner_agency,
+		        s.reveal_locked, COALESCE(s.reveal_locked_by, ''), COALESCE(s.reveal_locked_at, '')
 		 FROM secrets s LEFT JOIN agencies ag ON ag.id = s.owner_agency
 		 ORDER BY s.created_at`)
 	if err != nil {
@@ -152,7 +159,8 @@ func (s *Service) List(ctx context.Context, canRead func(agency, scope string) b
 		var scope, desc, tags sql.NullString
 		var ownerID string
 		if err := rows.Scan(&sc.ID, &sc.Key, &sc.Source, &scope, &desc, &vaultRef,
-			&sc.CreatedBy, &sc.CreatedAt, &sc.LastModifiedBy, &sc.LastModifiedAt, &tags, &sc.OwnerAgency, &ownerID); err != nil {
+			&sc.CreatedBy, &sc.CreatedAt, &sc.LastModifiedBy, &sc.LastModifiedAt, &tags, &sc.OwnerAgency, &ownerID,
+			&sc.RevealLocked, &sc.RevealLockedBy, &sc.RevealLockedAt); err != nil {
 			return nil, err
 		}
 		// Scope filter — the decision (incl. global-always-readable) is the caller's.
@@ -179,12 +187,14 @@ func (s *Service) List(ctx context.Context, canRead func(agency, scope string) b
 func (s *Service) Get(ctx context.Context, id string) (*Secret, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT s.id, s.key, s.source, s.scope, s.description, s.vault_ref, s.created_by, s.created_at,
-		        s.last_modified_by, s.last_modified_at, s.tags, COALESCE(ag.name,'')
+		        s.last_modified_by, s.last_modified_at, s.tags, COALESCE(ag.name,''),
+		        s.reveal_locked, COALESCE(s.reveal_locked_by, ''), COALESCE(s.reveal_locked_at, '')
 		 FROM secrets s LEFT JOIN agencies ag ON ag.id = s.owner_agency WHERE s.id = ?`, id)
 	var sc Secret
 	var vaultRef, scope, desc, tags sql.NullString
 	if err := row.Scan(&sc.ID, &sc.Key, &sc.Source, &scope, &desc, &vaultRef,
-		&sc.CreatedBy, &sc.CreatedAt, &sc.LastModifiedBy, &sc.LastModifiedAt, &tags, &sc.OwnerAgency); err != nil {
+		&sc.CreatedBy, &sc.CreatedAt, &sc.LastModifiedBy, &sc.LastModifiedAt, &tags, &sc.OwnerAgency,
+		&sc.RevealLocked, &sc.RevealLockedBy, &sc.RevealLockedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -256,15 +266,15 @@ func (s *Service) Create(ctx context.Context, inp CreateInput, actor string) (*S
 }
 
 func (s *Service) createStored(ctx context.Context, id string, inp CreateInput, actor, now string) (*Secret, error) {
-	sealed, err := s.sealer.Seal([]byte(inp.Value))
+	sealed, err := s.sealer.Seal(RowBinding("secrets", id), []byte(inp.Value)) // 2.5.1 SG2.10: bound to its row
 	if err != nil {
 		return nil, fmt.Errorf("encrypt secret: %w", err)
 	}
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO secrets (id, key, scope, description, source, ciphertext, nonce, wrapped_dek, kek_version,
+		`INSERT INTO secrets (id, key, scope, description, source, ciphertext, nonce, wrapped_dek, kek_version, seal_format,
 		                      created_by, created_at, last_modified_by, last_modified_at, owner_agency)
-		 VALUES (?, ?, ?, ?, 'stored', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, inp.Key, inp.Scope, inp.Description, sealed.Ciphertext, sealed.Nonce, sealed.WrappedDEK, sealed.KEKVersion, actor, now, actor, now, inp.OwnerAgency)
+		 VALUES (?, ?, ?, ?, 'stored', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, inp.Key, inp.Scope, inp.Description, sealed.Ciphertext, sealed.Nonce, sealed.WrappedDEK, sealed.KEKVersion, sealed.Format, actor, now, actor, now, inp.OwnerAgency)
 	if err != nil {
 		return nil, fmt.Errorf("insert secret: %w", err)
 	}
@@ -310,16 +320,16 @@ func (s *Service) Update(ctx context.Context, id string, inp UpdateInput, actor 
 	}
 
 	if inp.Source == "stored" {
-		sealed, err := s.sealer.Seal([]byte(inp.Value))
+		sealed, err := s.sealer.Seal(RowBinding("secrets", id), []byte(inp.Value))
 		if err != nil {
 			return nil, fmt.Errorf("encrypt secret: %w", err)
 		}
 		_, err = s.db.ExecContext(ctx,
 			`UPDATE secrets SET key=?, scope=?, description=?, source='stored', vault_ref=NULL,
-			  ciphertext=?, nonce=?, wrapped_dek=?, kek_version=?,
+			  ciphertext=?, nonce=?, wrapped_dek=?, kek_version=?, seal_format=?,
 			  last_modified_by=?, last_modified_at=?
 			 WHERE id=?`,
-			inp.Key, inp.Scope, inp.Description, sealed.Ciphertext, sealed.Nonce, sealed.WrappedDEK, sealed.KEKVersion, actor, now, id)
+			inp.Key, inp.Scope, inp.Description, sealed.Ciphertext, sealed.Nonce, sealed.WrappedDEK, sealed.KEKVersion, sealed.Format, actor, now, id)
 		if err != nil {
 			return nil, fmt.Errorf("update secret: %w", err)
 		}
@@ -359,12 +369,12 @@ func (s *Service) Delete(ctx context.Context, id string) (bool, error) {
 // The caller MUST write a change_log row after a successful reveal.
 func (s *Service) Reveal(ctx context.Context, id string) (string, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT source, vault_ref, ciphertext, nonce, wrapped_dek, COALESCE(kek_version, 1) FROM secrets WHERE id=?`, id)
-	var source string
+		`SELECT source, vault_ref, ciphertext, nonce, wrapped_dek, COALESCE(kek_version, 1), seal_format, COALESCE(owner_agency, '') FROM secrets WHERE id=?`, id)
+	var source, owner string
 	var vaultRef sql.NullString
 	var ciphertext, nonce, wrappedDEK []byte
-	var kekVer int
-	if err := row.Scan(&source, &vaultRef, &ciphertext, &nonce, &wrappedDEK, &kekVer); err != nil {
+	var kekVer, format int
+	if err := row.Scan(&source, &vaultRef, &ciphertext, &nonce, &wrappedDEK, &kekVer, &format, &owner); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// L3: fail closed — a missing row must NOT resolve to an empty value (which
 			// the dispatch resolver would inject blindly, and the reveal API would hand
@@ -380,9 +390,9 @@ func (s *Service) Reveal(ctx context.Context, id string) (string, error) {
 		if !vaultRef.Valid || vaultRef.String == "" {
 			return "", fmt.Errorf("vault-source secret has no vault_ref")
 		}
-		return s.vault.Fetch(vaultRef.String)
+		return VaultForOwner(s.vault, owner).Fetch(vaultRef.String) // 2.5.1 SG-21: the owner's Vault
 	}
-	plain, err := s.sealer.Open(ciphertext, nonce, wrappedDEK, kekVer)
+	plain, err := s.sealer.Open(RowBinding("secrets", id), format, ciphertext, nonce, wrappedDEK, kekVer)
 	if err != nil {
 		return "", fmt.Errorf("decrypt secret: %w", err)
 	}
@@ -404,7 +414,12 @@ func (s *Service) MigrateToVault(ctx context.Context, id, vaultPath, actor strin
 	if err != nil {
 		return nil, fmt.Errorf("decrypt for migration: %w", err)
 	}
-	if err := s.vault.Write(vaultPath, plaintext); err != nil {
+	var ownerID string
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(owner_agency, '') FROM secrets WHERE id = ?`, id).Scan(&ownerID); err != nil {
+		return nil, fmt.Errorf("read the secret's owner: %w", err)
+	}
+	// 2.5.1 SG-21: written to the owner's Vault, where its reads will look.
+	if err := VaultForOwner(s.vault, ownerID).Write(vaultPath, plaintext); err != nil {
 		return nil, fmt.Errorf("vault write: %w", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -430,4 +445,33 @@ func (s *Service) MigrateToVault(ctx context.Context, id, vaultPath, actor strin
 func RedactionValues(ctx context.Context, database *sql.DB, cfg *config.Config) ([]string, error) {
 	values, _, err := RedactionReport(ctx, database, cfg)
 	return values, err
+}
+
+// LockReveal makes a secret unrevealable (2.5.1 SG-19): one way, idempotent.
+// Reports whether the row exists.
+func (s *Service) LockReveal(ctx context.Context, id, actor string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE secrets SET reveal_locked = 1, reveal_locked_by = ?, reveal_locked_at = ?
+		 WHERE id = ? AND reveal_locked = 0`, actor, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return false, fmt.Errorf("lock reveal: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return true, nil
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM secrets WHERE id = ?`, id).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists > 0, nil
+}
+
+// RevealLocked reports whether a secret was made unrevealable.
+func (s *Service) RevealLocked(ctx context.Context, id string) (bool, error) {
+	var locked bool
+	err := s.db.QueryRowContext(ctx, `SELECT reveal_locked FROM secrets WHERE id = ?`, id).Scan(&locked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return locked, err
 }

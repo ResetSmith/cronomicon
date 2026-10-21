@@ -1,6 +1,6 @@
 # Security review
 
-As of 2.5.0. Each control, how it's enforced, and how it's verified. "Automated" = a Go test
+As of 2.5.1. Each control, how it's enforced, and how it's verified. "Automated" = a Go test
 that fails `make test` if the control regresses. "Operator" = a check you run
 against your live deployment from outside the trust boundary; the probes are in
 the administrator manual, section 8.4 ("Health, persistence & verification").
@@ -10,7 +10,7 @@ the administrator manual, section 8.4 ("Health, persistence & verification").
 | D.1.1 | **Trusted-proxy enforcement** — Remote-* honored only from an allowlisted peer; spoofed headers from elsewhere are stripped ⇒ unauthenticated | `auth.StripUntrustedHeaders` (global middleware) + `CRONOMICON_TRUSTED_PROXIES`; default-deny boot if unset | **Automated:** `TestSpoofedHeaderRejectedAtServer`, `auth.TestTrustedProxyStripsSpoofedHeaders`. **Operator:** manual §8.4 check 2 — send spoofed `Remote-User`/`Remote-Groups` headers straight to the app port; expect 401/403, never 200. |
 | D.1.2 | **CSRF** double-submit on state-changing operator routes; runner bearer routes excluded | `auth.RequireCSRF` on POST/PUT/PATCH/DELETE; runner routes use `RequireRunner` (no CSRF) | **Automated:** `auth.TestRequireCSRF`, `auth.TestRequireRunner`. |
 | D.1.3 | **Cookies** — CSRF cookie attrs; `CRONOMICON_COOKIE_SECURE=true` behind TLS; (OIDC mode) session cookie HttpOnly/Secure/SameSite | `auth.issueCSRF`, `session.go` codec; `CRONOMICON_COOKIE_SECURE` | **Automated:** session round-trip tests. **Operator:** inspect `Set-Cookie` on a live response. |
-| D.1.4 | **Secrets at rest** — stored-secret values + SMTP password envelope-encrypted (AES-256-GCM) under a KEK; KEK mounted, backed up separately from the DB | `secrets` envelope scheme; `CRONOMICON_KEK_FILE` | **Automated:** `secrets` round-trip + `TestEncryptDecryptStringRoundTrip`. **Operator:** confirm KEK not in image/repo/S3 backup bucket. |
+| D.1.4 | **Secrets at rest** — stored-secret values, SSH keys and every sealed setting (`secrets.EncryptedSettingsColumns`) envelope-encrypted (AES-256-GCM) under a KEK; KEK mounted, backed up separately from the DB. **2.5.1:** each value is bound to its row (SG-a below) | `secrets` envelope scheme; `CRONOMICON_KEK_FILE` | **Automated:** `secrets` round-trip + `TestEncryptDecryptStringRoundTrip`, `TestProductionSealsAreBound`. **Operator:** confirm KEK not in image/repo/S3 backup bucket. |
 | D.1.5 | **Dev bypass off** — `/api/v1/auth/dev-login` not mounted unless `CRONOMICON_DEV_AUTH` | route mounted conditionally in `auth_mount.go` | **Automated:** `TestDevLoginMountedOnlyWhenEnabled`. **Operator:** `curl -s -o /dev/null -w '%{http_code}' https://<public-host>/api/v1/auth/dev-login` returns 404. |
 | D.1.6 | **Surface check** — only `/healthz`, `/readyz`, `/version`, `/metrics`, `/auth/providers` (+ OIDC `/login`,`/callback` in oidc mode; token-gated `/webhooks/gitlab` and, from 2.4.0, `/webhooks/gitlab/{repoId}`, each checked against its own repository's secret) are unauthenticated | per-route middleware in the mount files | **Automated:** `TestUnauthenticatedSurface`. |
 | D.1.7 | **`/metrics` not public** | your reverse proxy does not route `/metrics`; scrape it on the internal network only | **Operator:** manual §8.4 check 3 — `/metrics` through the public hostname returns 404. |
@@ -638,7 +638,7 @@ dictionary. The process log is not (see the durable-log note above).
 | AM-1 | **Mask before trim** — the masker runs before the 4096-byte length bound on every audit writer, so a secret straddling the cut cannot survive as a prefix | `auditlog.WriteChangeLogAt` / `WriteActivity` / `WriteAuthEvent` | **Automated:** `auditlog.TestMaskRunsBeforeTrim`. |
 | AM-2 | **Every caller-supplied text column is masked** — `target` on all three writers and `reason` on auth events, not only `details`/`summary`; before the INSERT, so row, stream line and CSV export agree | same writers | **Automated:** `auditlog.TestRedactorMasksTheDatabaseRowAndNotOnlyTheStream` (eight columns). |
 | AM-3 | **One writer per audit table** — no raw `INSERT INTO activity/change_log/auth_events` outside `internal/auditlog` (including the break-glass `grant-admin` CLI) | source scan | **Automated:** `auditlog.TestAuditWriterConformance_OnlyThisPackageInserts`. |
-| AM-4 | **Process-wide redaction dictionary** — stored secrets + SSH credentials + the eight encrypted settings entries (ONE table, `secrets.EncryptedSettingsColumns`, shared with `rewrap-secrets`; since 2.4.0 three of them — a repository's token, its webhook secret and its previous webhook secret — cover every row of `git_repos`, one per agency) + multi-line env_vars, every scope; rebuilt lazily after each source write, 5-minute TTL backstop, last-good kept on a failed rebuild, partial-with-error on undecryptable rows | `internal/redactdict`; `secrets.RedactionReport`; `secrets.RedactionSourceChanged` at every source write site | **Automated:** `redactdict.TestBuildUnionsEverySourceAndKeepsVariablesVisible`, `TestBuildReportsUndecryptableAsPartial`, `TestStoreLifecycle`, `TestStoreConcurrentReadersNeverBlockOnRebuild` (`-race`), `TestEveryRedactionSourceWriterNotifies`, `secrets.TestRedactionReportCoversEverySettingsColumn`. |
+| AM-4 | **Process-wide redaction dictionary** — stored secrets + SSH credentials + the encrypted settings entries (ONE table, `secrets.EncryptedSettingsColumns`, shared with `rewrap-secrets`; since 2.4.0 three of them — a repository's token, its webhook secret and its previous webhook secret — cover every row of `git_repos`, one per agency; since 2.5.1 a push target's URL covers every row of `alert_targets` and an agency's Vault role and secret ids every row of `agency_vaults`) + multi-line env_vars, every scope; rebuilt lazily after each source write, 5-minute TTL backstop, last-good kept on a failed rebuild, partial-with-error on undecryptable rows | `internal/redactdict`; `secrets.RedactionReport`; `secrets.RedactionSourceChanged` at every source write site | **Automated:** `redactdict.TestBuildUnionsEverySourceAndKeepsVariablesVisible`, `TestBuildReportsUndecryptableAsPartial`, `TestStoreLifecycle`, `TestStoreConcurrentReadersNeverBlockOnRebuild` (`-race`), `TestEveryRedactionSourceWriterNotifies`, `secrets.TestRedactionReportCoversEverySettingsColumn`. |
 | AM-5 | **Installed at boot, degraded builds audited** — `redactdict.Install` after migrate and before the first audit write; the healthy→degraded transition writes one `system / Audit / redactor-unavailable` row (+ WARN), recovery one `redactor-restored` row; unconditional, no knob | `cmd/cronomicon/main.go`; `redactdict.Install` | **Automated:** `redactdict.TestInstallMasksAuditRowsEndToEnd`, `TestInstallReportsAnOutageOnceAndItsRecoveryOnce`. |
 
 Accepted notes:
@@ -651,11 +651,44 @@ Accepted notes:
 - **Fail-open before the first build.** An audit row written between boot and
   the first successful or partial build is unmasked. `Install` runs before every
   boot-time writer, so in practice that window is the first `Get`, which blocks.
-- **Run logs and the audit stream mask the same settings columns.** Both
-  consumers read the one `secrets.EncryptedSettingsColumns` table, so every
-  repository's token and webhook secrets, the S3 log-storage key, Vault role id
-  and observability bearer token are masked in both places.
+- **Run logs and the audit stream mask the same settings columns, but not the
+  same agencies' values** (2.5.1). Both consumers read the one
+  `secrets.EncryptedSettingsColumns` table. The audit stream is masked with
+  every agency's values; a run's log with its own agency's and Global's
+  secrets and keys, the installation's settings, and of the per-agency
+  settings only its own agency's (SG-c below).
 - **The process log is not masked** (deferred; see the durable-log note above).
+
+## Secrets guarded (2.5.1)
+
+An agency can review what happens to its secrets, and the stored values are
+harder to take or move. The decisions are SG-1 to SG-40 in the plan.
+
+| # | Control | Enforced by | Verification |
+|---|---|---|---|
+| SG-a | **Each sealed value is bound to its row** — a secret's and an SSH key's row (table and id), a sealed setting's row (table and key) are the AES-GCM additional data of both envelope operations, so a value copied into another row (another agency's secret, another repository's token) does not open there, even with the KEK. Values from before are re-sealed at the first start; once every one is bound, unbound values are refused. **This makes 2.5.1 one-way** (2.5.0 cannot open a bound value) | `secrets.Binding`, `RowBinding`, `SettingsBinding`; `secrets.BindSeals` (marker `upgrade.2.5.1.bindSeals`), `RefuseUnboundSeals`; `rewrap-secrets` honours the marker | **Automated:** `TestProductionSealsAreBound` (no unbound seal or open in production code), `secrets.TestBindSeals` (a copied value does not open; an unbound one is refused after the pass), `TestBindSealsCountsAnUnreadableColumn`, `TestBindSealsLeavesWhatItCannotOpen`, `TestRewrapRefusesUnboundAfterTheMarker` |
+| SG-b | **Backups can be encrypted to keys the server never holds** — optional; age X25519 public keys in Settings → Backups; the plaintext snapshot lives only in a 0700 staging directory and is removed on every path; a failed encryption keeps and uploads nothing; turning it on needs the custody acknowledgement | `internal/backup/seal.go`; `db.writeSnapshot`; `settings.SetBackupRecipients`; `cronomicon restore --identity` | **Automated:** `TestSnapshotSealedWhenAKeyIsSet`, `TestSnapshotSealFailureKeepsNothing`, `TestSnapshotUploadFailureLeavesNoPlaintext`, `TestStagingClearedAtStart`, `TestDecryptWrongKeyRefusedWritesNothing`, `TestParseRecipientRefusals`, `TestInstallEncryptedSnapshot`, `TestBackupSettingsRoutes`. **Operator:** after the first encrypted backup, confirm the bucket object ends in `.db.age` and delete the unencrypted ones from before |
+| SG-c | **A run's log is masked with its own agency's secrets** — and Global's and the installation's settings; not another agency's, which a run could otherwise probe by printing a guess | `secrets.RedactionValuesFor`; `runner.NewRedactor` with the run's agencies | **Automated:** `secrets.TestRedactionValuesForKeepsOtherAgenciesOut`, `runner.TestRedactMasksRealSecrets` |
+| SG-d | **Push-target URLs are sealed** — the URL is the push service's credential | `settings.SealAlertTargetURLs`, the `alert_targets` entry of `EncryptedSettingsColumns`; migration 1610 empties the unread plaintext list | **Automated:** `settings.TestPushTargetURLsAreSealed`, `TestRedactionReportCoversEverySettingsColumn` |
+| SG-e | **Every use of a stored secret or SSH key is recorded** — written with the injection audit under the same one-time slot (a failure writes neither and the run does not start); the local runner records the key it connects each host and bastion with; read by the row's agency as its Usage and its secrets report | `runref.RecordUses`; `sshexec` `withKeyUse`; `secret_uses` (migration 1600, retention knob `secretUses`) | **Automated:** `runref.TestAuditInjectionRecordsUses`, `TestAuditInjectionFailsClosedWhenUsesCannotBeRecorded`, `sshexec.TestTheLocalRunnerRecordsTheKeysARunConnectsWith`, `api.TestSecretUsage`, `TestSecretsReport` |
+| SG-f | **Who acted is recorded against the agency** — every change-log row says whether the actor was a member of the row's agency, a global administrator with no grant there, someone outside it, or the system; alerts on a secret revealed or changed go to its own agency's rules | `auth.Identity.RelationTo`, `auditlog.WithActorRelation`; `notify` secret triggers | **Automated:** `auth.TestRelationTo`, `TestSecretAlertRulesAreRefusedWhenTheyCouldNeverFire`, `notify.TestSecretAlertsReachTheirAgency` |
+| SG-g | **A secret can be made unrevealable** — one way; nobody may reveal it afterwards, global administrators included, before anything is decrypted; runs still use it | `POST /env-secrets/{secretId}/lock-reveal`; `secrets.Service.Reveal` (409 `reveal_locked`) | **Automated:** `api.TestUnrevealableSecrets` |
+| SG-h | **An agency's own Vault, and no fallback** — a Vault-backed secret or key resolves in its OWNER's Vault; an agency whose own connection cannot be read or used fails, and is never given the installation's Vault, where its paths could name another agency's secret. The address must be `https` and on the installation's allowed Vault hosts (on save, test and every client build; an empty list allows none). Disconnecting is refused while the agency has Vault-backed rows. A preview reads each reference and returns no value | `secrets.VaultForOwner`; `settings.dynamicVaultClient.resolve`, `CheckVaultURL`; `api/agency_vault_mount.go` (configureApp on the agency) | **Automated:** `settings.TestSG3_ARowResolvesInItsOwnersVault`, `TestSG3_AKeyResolvesInItsOwnersVault`, `TestSG3_AnUnreadableConnectionNeverFallsBack`, `TestSG3_AllowedHostsOnSaveAndOnUse`, `TestSG3_DisconnectRefusedWhileInUse`, `api.TestSG3_AgencyVaultRoutes` (the two-agency cast; no value or credential in any answer) |
+
+Accepted notes:
+
+- **The bind marker is a database row.** Whoever can write the database can
+  delete it; the next start then accepts unbound values until it has bound
+  them again. Such a writer can already do worse.
+- **Encryption of backups is not retroactive.** Snapshots written before keys
+  were added stay unencrypted, locally and in the bucket, until deleted.
+- **A killed restore** can leave its decrypted copy (`<db>.restore-decrypted`)
+  beside the database.
+- **An agency's own Vault is reached from the server.** Its AppRole
+  credentials are sealed like any other setting, and the allowed-hosts list is
+  what keeps an agency's administrator from pointing the server at an
+  arbitrary address. Runners still receive the value from the server; they do
+  not reach the agency's Vault themselves (declined in the plan, option 1).
 
 ## Install-wide and cross-agency gates
 

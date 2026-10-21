@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 
 // Vault-backed secrets, by owner (GC-8 in v2.2.2; LR-80 in v2.3.0).
 //
@@ -88,7 +89,11 @@ beforeEach(() => {
 afterEach(cleanup);
 
 const open = async () => {
-  render(<SecretsTab scopeNames={["All", "Prod"]} canEdit />);
+  render(
+    <MemoryRouter>
+      <SecretsTab scopeNames={["All", "Prod"]} canEdit />
+    </MemoryRouter>,
+  );
   await waitFor(() => expect(screen.getByText("DB_PASS")).toBeTruthy());
   // Let the capabilities read land before judging what is disabled.
   await new Promise((r) => setTimeout(r, 20));

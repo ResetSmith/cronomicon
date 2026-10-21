@@ -15,6 +15,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/notify"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
@@ -47,7 +48,10 @@ func (s *Server) mountAgencies(mux *http.ServeMux) {
 	// of it an agency may point at is the installation's decision); read by the
 	// agency's own administrators, who need to know where they may write.
 	mux.Handle("GET /api/v1/agencies/{agencyId}/vault-prefixes", s.auth.RequireSession(http.HandlerFunc(s.handleListVaultPrefixes)))
-	mux.Handle("PUT /api/v1/agencies/{agencyId}/vault-prefixes", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleSetVaultPrefixes)))
+	// 2.5.1 SG-26: an agency with a Vault of its own sets its own prefixes
+	// (they limit only itself there); otherwise a global administrator does,
+	// since they divide the installation's Vault between agencies.
+	mux.Handle("PUT /api/v1/agencies/{agencyId}/vault-prefixes", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleSetVaultPrefixes)))
 	// GA-1 (2.5.0 C5): the directory groups an agency's grants may name. Set by
 	// a global administrator; read by the agency's own administrators of access
 	// (question 82), whose grant form offers them (GA-3).
@@ -389,6 +393,23 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
+	// 2.5.1 SG-17: a secret or key that changes hands is told to the alert
+	// rules of the agency it leaves and of the one it reaches.
+	movedTable, movedNoun := "", ""
+	switch kind {
+	case settings.MemberSecret:
+		movedTable, movedNoun = "secrets", "Secret"
+	case settings.MemberSSHCredential:
+		movedTable, movedNoun = "ssh_credentials", "SSH key"
+	}
+	ownersBefore := map[string]string{}
+	if movedTable != "" {
+		for _, m := range body {
+			if o, err := s.rowOwnerOrGlobal(r.Context(), movedTable, m.ID); err == nil {
+				ownersBefore[m.ID] = o
+			}
+		}
+	}
 	if err := settings.SetAgencyMembership(r.Context(), s.db, kind, body, id.Email); err != nil {
 		switch {
 		case errors.Is(err, settings.ErrUnknownAgency):
@@ -410,6 +431,20 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 	}
 	for _, m := range repaired {
 		s.auditRepair(r.Context(), s.memberAgency(r.Context(), string(kind), m.ID), id.Email, string(kind)+" "+m.ID, agencySet(m.AgencyIDs), rep)
+	}
+	for rowID, before := range ownersBefore {
+		after, err := s.rowOwnerOrGlobal(r.Context(), movedTable, rowID)
+		if err != nil || after == before {
+			continue
+		}
+		nameCol := "key"
+		if movedTable == "ssh_credentials" {
+			nameCol = "label"
+		}
+		var name string
+		_ = s.db.QueryRowContext(r.Context(), `SELECT `+nameCol+` FROM `+movedTable+` WHERE id = ?`, rowID).Scan(&name) //nolint:gosec // fixed identifiers
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, movedNoun, name, before, "moved to "+s.agencyNameOr(r, after))
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, movedNoun, name, after, "moved in from "+s.agencyNameOr(r, before))
 	}
 	// Scope membership decides what an agency grant reaches. Since LR-78 that is
 	// resolved per request from the grant snapshot, which the setter itself
@@ -683,15 +718,18 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusConflict, "conflict", "an agency with this name already exists")
 		return
 	}
-	// An agency is created together with its repository (§0a, IN-2; Phase
-	// I3): the connection is tested — it answers, and its token may push —
-	// before anything is written, and written with the agency.
-	if inp.Repository == nil || strings.TrimSpace(inp.Repository.RepoUrl) == "" {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "repository_required",
-			"an agency is created together with its repository: give `repository` with at least its repoUrl and a token that can push")
+	// An agency connects its repository at creation or later (SG-40, 2.5.1;
+	// IN-2 as reworded): without one it cannot receive an assignment or
+	// publish, and its administrator connects it in Settings → Repositories.
+	// Given, the connection is tested — it answers, and its token may push —
+	// before anything is written, and written with the agency (§0a, Phase I3).
+	withRepo := inp.Repository != nil
+	if withRepo && strings.TrimSpace(inp.Repository.RepoUrl) == "" {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
+			"give the repository's repoUrl and a token that can push, or leave `repository` out to create the agency without one")
 		return
 	}
-	if !s.requirePushableConnection(w, r, "repo-untested", false, *inp.Repository) {
+	if withRepo && !s.requirePushableConnection(w, r, "repo-untested", false, *inp.Repository) {
 		return
 	}
 	a, err := settings.CreateAgency(r.Context(), s.db, settings.AgencyInput{Name: inp.Name, Description: inp.Description}, id.Email)
@@ -704,6 +742,10 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		httpx.Fail500(w, s.log, "create_failed", err)
+		return
+	}
+	if !withRepo {
+		httpx.JSON(w, http.StatusCreated, agencyCreated{Agency: a})
 		return
 	}
 	repo, _, err := settings.PutAgencyRepo(r.Context(), s.db, s.cfg, a.ID, *inp.Repository, id.Email)
@@ -1143,6 +1185,19 @@ func (s *Server) requireVaultRowFits(w http.ResponseWriter, r *http.Request, id 
 type vaultPrefixesJSON struct {
 	AgencyID string   `json:"agencyId"`
 	Prefixes []string `json:"prefixes"`
+	// OwnVault: the agency has a Vault of its own (2.5.1 SG-26), where no
+	// prefix means any path.
+	OwnVault bool `json:"ownVault"`
+}
+
+// vaultPrefixesAnswer is the list with whether the agency has its own Vault.
+func (s *Server) vaultPrefixesAnswer(w http.ResponseWriter, r *http.Request, agencyID string, prefixes []string) {
+	own, err := settings.AgencyHasOwnVault(r.Context(), s.db, agencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes, OwnVault: own})
 }
 
 func (s *Server) handleListVaultPrefixes(w http.ResponseWriter, r *http.Request) {
@@ -1175,7 +1230,7 @@ func (s *Server) handleListVaultPrefixes(w http.ResponseWriter, r *http.Request)
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes})
+	s.vaultPrefixesAnswer(w, r, agencyID, prefixes)
 }
 
 func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) {
@@ -1185,6 +1240,19 @@ func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	agencyID := r.PathValue("agencyId")
+	if !id.GlobalAdmin(auth.PermConfigureApp) {
+		own, err := settings.AgencyHasOwnVault(r.Context(), s.db, agencyID)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if !own || !id.CanAgency(auth.PermConfigureApp, agencyID) {
+			s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
+				"an agency's Vault path prefixes divide the installation's Vault, so a global administrator sets them; "+
+					"an agency with a Vault of its own sets its own")
+			return
+		}
+	}
 	var body struct {
 		Prefixes *[]string `json:"prefixes"`
 	}
@@ -1210,7 +1278,7 @@ func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) 
 	case err != nil:
 		httpx.Fail500(w, s.log, "update_failed", err)
 	default:
-		httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes})
+		s.vaultPrefixesAnswer(w, r, agencyID, prefixes)
 	}
 }
 
