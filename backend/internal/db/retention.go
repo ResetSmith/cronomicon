@@ -109,6 +109,14 @@ type RetentionPolicy struct {
 	// Upload, if non-nil, ships each nightly snapshot to S3 (A4). main wires it
 	// from internal/backup so this package needs no S3/settings dependency.
 	Upload func(ctx context.Context, localPath string) error
+	// Seal, if non-nil, encrypts each snapshot before it is kept or shipped
+	// (2.5.1 SG1). It is given the plaintext in the 0700 staging directory and
+	// the path the sealed file must be written to, and returns the fingerprints
+	// of the keys it sealed to: none means no key is set, and the snapshot is
+	// then kept and shipped unencrypted as before (SG-4: encryption is
+	// optional). An error fails the backup with nothing kept or uploaded
+	// (SG-5). main supplies it from internal/backup and internal/settings.
+	Seal func(ctx context.Context, src, dst string) (fingerprints []string, err error)
 	// Reload, if non-nil, is called at the top of every sweep to refresh the
 	// day knobs and LogDir from their authoritative source (LU-2/LU-Q3(a): the
 	// DB settings blob, with env as the bootstrap default). It takes and returns
@@ -142,6 +150,9 @@ func StartRetention(ctx context.Context, pool *sql.DB, p RetentionPolicy, log *s
 		if p.WG != nil {
 			defer p.WG.Done()
 		}
+		// SG-6: a plaintext snapshot a crash left in staging goes at start, not
+		// at the next sweep up to a day later.
+		clearStaging(backupDir(p), log)
 		// Boot catch-up: back up now iff overdue (gated on persisted last-success
 		// so a crash-loop doesn't back up on every restart).
 		if backupOverdue(ctx, pool, backupInterval) {
@@ -352,26 +363,14 @@ func runSweep(ctx context.Context, pool *sql.DB, p RetentionPolicy, log *slog.Lo
 	// LU-10: the audit stream ages out on its own, longer window.
 	reapAuditLog(p.AuditLogPath, p.AuditLogDays, log)
 
-	// A4 nightly backup: VACUUM INTO a consistent snapshot, then upload to S3.
-	dir := p.BackupDir
-	if dir == "" {
-		dir = "/var/lib/cronomicon/backups"
+	// A4 nightly backup: VACUUM INTO a consistent snapshot, sealed when a backup
+	// key is set (2.5.1 SG1), then upload to S3.
+	dir := backupDir(p)
+	snapshot, fingerprints, err := writeSnapshot(ctx, pool, p, dir, log)
+	if err != nil {
+		return err
 	}
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return fmt.Errorf("create backup dir %s: %w", dir, err)
-	}
-	snapshot := filepath.Join(dir, fmt.Sprintf("cronomicon-%s.db", nowUTC().Format("20060102")))
-	// PP-M2: SQLite's VACUUM INTO refuses to overwrite an existing file, so a
-	// second sweep on the same UTC day (boot catch-up, clock change, manual run)
-	// would error AFTER the prune already ran — pruning rows but producing no
-	// backup. Remove any prior same-day snapshot first so the write is idempotent.
-	if err := os.Remove(snapshot); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove stale snapshot %s: %w", snapshot, err)
-	}
-	if _, err := pool.ExecContext(ctx, "VACUUM INTO ?", snapshot); err != nil {
-		return fmt.Errorf("vacuum into %s: %w", snapshot, err)
-	}
-	log.Info("retention snapshot written", "path", snapshot)
+	log.Info("retention snapshot written", "path", snapshot, "encrypted", len(fingerprints) > 0)
 
 	// Ship it offsite (A4). Optional: skipped when no uploader is configured.
 	// The KEK for stored secrets must NOT live in this same bucket (S14).
@@ -381,27 +380,13 @@ func runSweep(ctx context.Context, pool *sql.DB, p RetentionPolicy, log *slog.Lo
 		}
 	}
 
-	// Prune local snapshot files older than 7 days so they don't accumulate
-	// on the volume indefinitely (PP-M5). Only removes *.db files matching
-	// the cronomicon-YYYYMMDD.db pattern to avoid touching anything unexpected.
-	if entries, err := os.ReadDir(dir); err == nil {
-		cutoffFile := fmt.Sprintf("cronomicon-%s.db", nowUTC().AddDate(0, 0, -7).Format("20060102"))
-		for _, e := range entries {
-			name := e.Name()
-			if !e.IsDir() && strings.HasPrefix(name, "cronomicon-") && strings.HasSuffix(name, ".db") && name < cutoffFile {
-				if rerr := os.Remove(filepath.Join(dir, name)); rerr != nil {
-					log.Warn("retention: failed to remove old snapshot", "file", name, "error", rerr)
-				} else {
-					log.Info("retention: removed old snapshot", "file", name)
-				}
-			}
-		}
-	}
+	pruneSnapshots(dir, log)
 
 	// Success: record the durable artifact's time so monitoring can alert on a
 	// stale/never-run backup, and the boot catch-up can gate on it (PP-H6).
 	now := nowUTC()
 	persistLastSuccess(ctx, pool, now)
+	persistLastSnapshot(ctx, pool, LastSnapshot{File: filepath.Base(snapshot), At: now.Format(time.RFC3339), Recipients: fingerprints})
 	metrics.BackupSucceeded(now)
 	return nil
 }

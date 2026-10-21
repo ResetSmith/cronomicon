@@ -302,6 +302,12 @@ func run() error {
 			"change_log_days", cfg.RetentionChangeLogDays,
 			"log_files_days", cfg.RetentionLogFilesDays)
 	}
+	// 2.5.1 SG-3: CRONOMICON_BACKUP_RECIPIENTS seeds the backup keys once.
+	if seeded, serr := settings.SeedBackupRecipientsFromEnv(ctx0, pool, cfg.BackupRecipients); serr != nil {
+		logger.Error("could not seed the backup keys from CRONOMICON_BACKUP_RECIPIENTS; backups stay as Settings → Backups has them", "error", serr)
+	} else if seeded {
+		logger.Info("backup keys seeded from CRONOMICON_BACKUP_RECIPIENTS")
+	}
 	db.StartRetention(ctx0, pool, db.RetentionPolicy{
 		// Boot values, used only if the very first Reload fails.
 		RunsDays:           cfg.RetentionRunsDays,
@@ -325,7 +331,20 @@ func run() error {
 		},
 		BackupAt: cfg.BackupAt, // PP-H6: wall-clock daily sweep
 		Upload:   uploader,     // nil when unconfigured ⇒ snapshot kept locally only
-		WG:       &bg,          // PP-L15: drained on shutdown before pool.Close()
+		// 2.5.1 SG1: sealed to the keys in Settings → Backups, read per sweep so
+		// a change applies to the next backup. A read error fails the backup
+		// rather than writing it unencrypted.
+		Seal: func(ctx context.Context, src, dst string) ([]string, error) {
+			keys, err := settings.BackupRecipients(ctx, pool)
+			if err != nil {
+				return nil, err
+			}
+			if len(keys) == 0 {
+				return nil, nil
+			}
+			return backup.EncryptFile(src, dst, keys)
+		},
+		WG: &bg, // PP-L15: drained on shutdown before pool.Close()
 		// Re-read the authoritative knobs at the top of every sweep so a settings
 		// change takes effect on the next nightly run rather than the next restart
 		// (LU-2). The closure lives here, not in internal/db, so that package keeps
