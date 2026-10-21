@@ -6,6 +6,7 @@ package auth
 import (
 	"context"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"slices"
 	"time"
 )
@@ -387,9 +388,39 @@ const (
 	runnerIDKey
 )
 
-// withIdentity returns a context carrying the authenticated operator.
+// withIdentity returns a context carrying the authenticated operator, and the
+// judge each change_log row asks how that operator stands to the row's agency
+// (2.5.1 SG-11). Every way an identity is attached comes through here, so no
+// request's change is recorded as a system one.
 func withIdentity(ctx context.Context, id Identity) context.Context {
-	return context.WithValue(ctx, identityKey, id)
+	ctx = context.WithValue(ctx, identityKey, id)
+	return auditlog.WithActorRelation(ctx, id.RelationTo)
+}
+
+// RelationTo is how the actor stands to an agency, as a change_log row records
+// it (2.5.1 SG-11): a member (a grant names the agency; for Global, whose rows
+// are the global administrators', a grant that reaches every agency), a global
+// administrator who holds no grant on it, or someone outside it. An empty id is
+// Global's (an owner that names no agency reads as Global's).
+func (i Identity) RelationTo(agencyID string) string {
+	everywhere := false
+	for _, g := range i.RoleGrants() {
+		if g.Unrestricted() {
+			everywhere = true
+			continue
+		}
+		if agencyID != "" && agencyID != agencyid.Global && g.Agency == agencyID {
+			return auditlog.RelationMember
+		}
+	}
+	switch {
+	case (agencyID == "" || agencyID == agencyid.Global) && everywhere:
+		return auditlog.RelationMember
+	case everywhere && i.GlobalAdmin(PermConfigureApp):
+		return auditlog.RelationGlobalAdmin
+	default:
+		return auditlog.RelationOutside
+	}
 }
 
 // WithIdentity returns a context carrying id, exactly as the auth middleware does

@@ -688,7 +688,7 @@ func (s *Service) collectReferenceBindings(ctx context.Context, runID, jobName, 
 	// redactor too — lockstep masking of the value if a playbook ever echoes it.
 	// Exactly the CA-3b reasoning for the connect-as key.
 	if bs := becomeSecretFor(ctx, s.db, jobName, js, jobUID.String); bs != "" {
-		sets = append(sets, []runref.Binding{{Kind: runref.KindSecret, Name: bs, File: true}})
+		sets = append(sets, []runref.Binding{{Kind: runref.KindSecret, Name: bs, File: true, Origin: runref.OriginBecome}})
 	}
 	sets = append(sets, runref.OverrideBindings(overrideJSON.String))
 	// CA-3b — a per-run "connect as" credential is an implicit key binding: going
@@ -697,7 +697,7 @@ func (s *Service) collectReferenceBindings(ctx context.Context, runID, jobName, 
 	// is the SHARED collect pass (manifest injection + ingest redaction), so the
 	// redactor sees the delivered material too.
 	if sshCred.String != "" {
-		sets = append(sets, []runref.Binding{{Kind: runref.KindKey, Name: sshCred.String}})
+		sets = append(sets, []runref.Binding{{Kind: runref.KindKey, Name: sshCred.String, Origin: runref.OriginConnectAs}})
 	}
 	seen := map[string]bool{}
 	var bindings []runref.Binding

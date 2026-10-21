@@ -57,6 +57,9 @@ type RetentionPolicy struct {
 	// HostKeyLedgerDays bounds the host-key ledger's history (SB). In-force
 	// keys are out of its reach: see the row in runSweep.
 	HostKeyLedgerDays int
+	// SecretUsesDays bounds the record of which runs used which secret and key
+	// (2.5.1 SG2.1).
+	SecretUsesDays int
 	// PurgeDefinition hard-deletes one binned definition, wired to the API's
 	// purgeDefinition so the reaper and the manual "Purge now" button cannot
 	// disagree about what permanent deletion means (trigger cascades, the entity
@@ -253,6 +256,8 @@ func runSweep(ctx context.Context, pool *sql.DB, p RetentionPolicy, log *slog.Lo
 		// longer, independent window (LU-Q4(c)).
 		{"auth_events", "created_at", p.ChangeLogDays},
 		{"schedule_pushes", "created_at", p.SchedulePushesDays},
+		// 2.5.1 SG2.1: which runs used which secret and key, on its own window.
+		{"secret_uses", "at", p.SecretUsesDays},
 		// RX — the reaction delivery log is a delivery log, not a permanent
 		// record: History owns the permanent trail, and a fired reaction's run
 		// carries reacted_to_run_id on the run row precisely so the because-of

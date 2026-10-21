@@ -108,7 +108,19 @@ type Binding struct {
 	// an operator who echoes it into `sudo -S` puts it in the process table. A file
 	// the agent wipes at run end is a materially smaller window.
 	File bool `json:"file,omitempty"`
+	// Origin is how the run came to carry this binding, for the record of
+	// which runs used which secret and key (2.5.1 SG2.2): "" (a binding the job
+	// or its script declares), OriginBecome, OriginOverride or OriginConnectAs.
+	// Set where the run's bindings are put together; never stored or sent.
+	Origin string `json:"-"`
 }
+
+// The origins of a binding that is not one a job or script declares (SG2.2).
+const (
+	OriginBecome    = "become"     // the job's become password (RA-12)
+	OriginOverride  = "override"   // an operator's per-run reference (V2-11)
+	OriginConnectAs = "connect_as" // a run's connect-as SSH key (CA-3b)
+)
 
 // InjectName is the bare name this binding's value is injected under: the alias
 // when one is declared, the row's own name otherwise.

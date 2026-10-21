@@ -74,6 +74,12 @@ type ResolvedRef struct {
 	Name   string
 	As     string
 	Source string
+	// RowID and Owner are the secret's or key's row and its owner agency id,
+	// and Origin how the run came to carry it (2.5.1 SG2.2): what secret_uses
+	// records. Empty for a variable.
+	RowID  string
+	Owner  string
+	Origin string
 }
 
 // ErrOutOfScope is returned when a binding names a row that exists but is not
@@ -248,12 +254,12 @@ func (r *Resolver) resolveSecret(ctx context.Context, runScope string, runAgenci
 	// any OTHER error is logged so a mislabel isn't fully silent (matters once
 	// vault-source rows exist — a transient fault must not quietly record a vault
 	// secret as stored). Resolution itself is unaffected by this read.
-	source := "stored"
-	if serr := r.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(source,''),'stored') FROM secrets WHERE id = ?`, id).Scan(&source); serr != nil && !errors.Is(serr, sql.ErrNoRows) {
+	source, owner := "stored", ""
+	if serr := r.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(source,''),'stored'), COALESCE(owner_agency, '') FROM secrets WHERE id = ?`, id).Scan(&source, &owner); serr != nil && !errors.Is(serr, sql.ErrNoRows) {
 		r.log.Warn("audit: could not read secret source; recording as 'stored'", "reference", b.Kind.Reference(b.Name), "error", serr)
 		source = "stored"
 	}
-	out.Refs = append(out.Refs, ResolvedRef{Kind: KindSecret, Name: b.Name, As: b.As, Source: source})
+	out.Refs = append(out.Refs, ResolvedRef{Kind: KindSecret, Name: b.Name, As: b.As, Source: source, RowID: id, Owner: owner, Origin: b.Origin})
 	return nil
 }
 
@@ -348,13 +354,13 @@ func (r *Resolver) resolveKey(ctx context.Context, runAgencies []string, b Bindi
 	// Best-effort backing source (stored|vault) from ssh_credentials for provenance;
 	// never the material. A legacy/fallback-resolved key with no credential row keeps
 	// the "stored" default.
-	source := "stored"
+	source, owner := "stored", ""
 	if serr := r.db.QueryRowContext(ctx,
-		`SELECT COALESCE(NULLIF(source,''),'stored') FROM ssh_credentials WHERE id = ?`, id).Scan(&source); serr != nil && !errors.Is(serr, sql.ErrNoRows) {
+		`SELECT COALESCE(NULLIF(source,''),'stored'), COALESCE(owner_agency, '') FROM ssh_credentials WHERE id = ?`, id).Scan(&source, &owner); serr != nil && !errors.Is(serr, sql.ErrNoRows) {
 		r.log.Warn("audit: could not read key source; recording as 'stored'", "reference", b.Kind.Reference(b.Name), "error", serr)
 		source = "stored"
 	}
-	out.Refs = append(out.Refs, ResolvedRef{Kind: KindKey, Name: b.Name, As: b.As, Source: source})
+	out.Refs = append(out.Refs, ResolvedRef{Kind: KindKey, Name: b.Name, As: b.As, Source: source, RowID: id, Owner: owner, Origin: b.Origin})
 	return nil
 }
 

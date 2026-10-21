@@ -725,7 +725,9 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	guard := keyGuard{checked: true, scope: r.scope, agencies: runAgencies}
 
 	cmd := remoteCommand(interp, body, r.envJSON, s.injectedEnv(r, resolved))
-	results := s.fanOut(execCtx, targets, cmd, sink, guard)
+	// 2.5.1 SG2.2: the keys this run connects with (each host's, each
+	// bastion's) are recorded as the run's uses of them.
+	results := s.fanOut(withKeyUse(execCtx, r.traceID, "host_auth"), targets, cmd, sink, guard)
 
 	// H2/DEC-2 parity with the runner log-ingest path (runner/log.go): an
 	// ::cronomicon-output:: value that carries an injected secret would propagate that

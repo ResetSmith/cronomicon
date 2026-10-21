@@ -9434,14 +9434,15 @@ export interface components {
         } & components["schemas"]["AuditFields"];
         AuditComplianceSettings: {
             /**
-             * @description The twelve retention knobs (A4 defaults shown): five row windows
+             * @description The thirteen retention knobs (A4 defaults shown): five row windows
              *     (`runs`, `activity`, `workflowRuns`, `changeLog`,
              *     `schedulePushes`), two on-disk file windows (`logFiles`,
              *     `auditLogFiles`), the two RH windows (`recycleBin`,
              *     `definitionRevisions`), the DR-7 window
              *     (`runnerPlacementHistory`), the S3 archive window
              *     (`archivedLogFiles`, SL-4), and the host-key history window
-             *     (`hostKeyLedger`, SB). `0` on any of them means keep forever. This blob
+             *     (`hostKeyLedger`, SB), and the secret-use window (`secretUses`,
+             *     v2.5.1). `0` on any of them means keep forever. This blob
              *     is authoritative — the `CRONOMICON_RETENTION_*` env vars only seed it
              *     on the first boot that finds it unset (LU-2), and a change here
              *     applies on the next nightly sweep rather than at the next restart.
@@ -9509,6 +9510,15 @@ export interface components {
                  * @default 365
                  */
                 hostKeyLedger: number;
+                /**
+                 * @description How long the record of which runs used which stored secret
+                 *     and SSH key is kept (v2.5.1): what an agency's Usage view and
+                 *     secrets report read. Its own window, not the runs window: an
+                 *     agency reviews who used a secret long after the runs are
+                 *     pruned.
+                 * @default 365
+                 */
+                secretUses: number;
                 /**
                  * @description On-disk **audit stream** window — `audit.log` and its dated
                  *     `audit.log.YYYYMMDD` generations (`CRONOMICON_AUDIT_LOG`), not the
