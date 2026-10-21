@@ -168,26 +168,26 @@ func CATransportPEM(pem []byte) (*http.Transport, error) {
 	return tr, nil
 }
 
-// Login authenticates and asks Vault about the token (lookup-self) without
-// reading a secret: the connection test of a Vault's settings and the health
-// check of an agency's own (2.5.1 SG3). It always reaches the server: a cached
-// token that Vault no longer accepts is dropped and a fresh login tried once.
+// Login checks the connection without reading a secret: the connection test
+// of a Vault's settings and the health check of an agency's own (2.5.1 SG3).
+// It always reaches the server. With AppRole it is a fresh login (the cached
+// token is dropped first), which needs no capability beyond the role itself;
+// asking about the token instead (lookup-self) would fail for a role whose
+// tokens do not carry Vault's default policy, and report a working Vault as
+// unreachable. A static token has no login, so it is asked about instead.
 func (v *httpVaultClient) Login() error {
-	for attempt := 0; ; attempt++ {
+	if v.tokenAuth {
 		token, err := v.ensureToken()
 		if err != nil {
 			return err
 		}
-		err = v.do(http.MethodGet, "/v1/auth/token/lookup-self", token, nil, nil)
-		if err == nil || v.tokenAuth || attempt > 0 {
-			return err
-		}
-		v.mu.Lock()
-		if v.token == token {
-			v.token = ""
-		}
-		v.mu.Unlock()
+		return v.do(http.MethodGet, "/v1/auth/token/lookup-self", token, nil, nil)
 	}
+	v.mu.Lock()
+	v.token = ""
+	v.mu.Unlock()
+	_, err := v.ensureToken()
+	return err
 }
 
 // Fetch reads the field from the KV v2 secret named by vaultRef.
