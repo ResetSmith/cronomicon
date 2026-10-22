@@ -5,6 +5,7 @@ import { c } from "../theme";
 import { useTheme } from "../theme-context";
 import { useAuth } from "../auth";
 import { api, fetchCapabilities, fetchVersion, type BuildInfo } from "../api/client";
+import { useOfferAlertLinkAddress } from "../alertLink";
 import { UserMenu } from "./UserMenu";
 import { AgencySwitcher } from "./AgencySwitcher";
 import { useAgencyOptional } from "../agency";
@@ -94,6 +95,9 @@ export function Shell() {
   useEffect(() => {
     void fetchVersion().then(setBuild);
   }, []);
+  // 2.5.2 OP2.1 — a global administrator's visit tells the server the address
+  // alerts link to, the first time (alertLink.ts).
+  useOfferAlertLinkAddress();
 
   // Shared top-bar control style (Refresh + theme toggle). Defined in render so
   // it reads the live, mutable theme tokens in `c` rather than freezing them at

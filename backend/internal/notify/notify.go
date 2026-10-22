@@ -26,6 +26,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
 // RunEvent is the terminal-run signal the runner hands the dispatcher.
@@ -331,7 +332,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, ev dispatchEvent) error {
 	//
 	// Below the rules check on purpose: an event nobody subscribed to returns
 	// above, so an un-alerted job never pays for these lookups.
-	subject, body := ev.render(msgContext{agencyName: d.agencyName(ctx, ev.agency), link: d.runLink(ev)})
+	subject, body := ev.render(msgContext{agencyName: d.agencyName(ctx, ev.agency), link: d.runLink(ctx, ev)})
 	body += d.annotationLines(ctx, ev)
 
 	if wantEmail {
@@ -914,10 +915,20 @@ func (d *Dispatcher) agencyName(ctx context.Context, id string) string {
 }
 
 // runLink is where a person opens the event's run (2.5.2 OP-6): History in the
-// run's agency, on the workflow-runs tab for a workflow's. "" without the
-// app's address (CRONOMICON_PUBLIC_URL) or a run to open.
-func (d *Dispatcher) runLink(ev dispatchEvent) string {
-	if d.cfg == nil || d.cfg.PublicURL == "" || !ev.linkable {
+// run's agency, on the workflow-runs tab for a workflow's, under the address
+// the app recorded from a global administrator's browser or was given on
+// Settings → Notifications (OP2.1). "" without that address or a run to open;
+// a failed read sends the message without the link.
+func (d *Dispatcher) runLink(ctx context.Context, ev dispatchEvent) string {
+	if !ev.linkable {
+		return ""
+	}
+	a, err := settings.ReadAlertLinkAddress(ctx, d.db)
+	if err != nil {
+		d.log.Warn("alert link address lookup failed; sending without a link", "trace_id", ev.traceID, "error", err)
+		return ""
+	}
+	if a.Address == "" {
 		return ""
 	}
 	q := url.Values{}
@@ -926,7 +937,7 @@ func (d *Dispatcher) runLink(ev dispatchEvent) string {
 	if strings.EqualFold(ev.ownerKind, "workflow") {
 		q.Set("tab", "workflow-runs")
 	}
-	return d.cfg.PublicURL + "/runs?" + q.Encode()
+	return a.Address + "/runs?" + q.Encode()
 }
 
 // annotationLines returns the operator-annotation tail appended to a

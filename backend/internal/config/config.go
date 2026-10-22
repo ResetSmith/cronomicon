@@ -8,7 +8,6 @@ package config
 import (
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -81,9 +80,6 @@ type Config struct {
 	TrustedHeaderGroups string
 	BootstrapAdminGroup string
 	LogoutRedirectURL   string // identity-provider logout endpoint the SPA navigates to on sign-out
-	// PublicURL is the address people reach the app at (2.5.2 OP-7), trailing
-	// slash trimmed: an alert links to its run under it. Empty: no link.
-	PublicURL string
 
 	// Identity — OIDC relying party (A3.1/T8). Optional mode.
 	OIDC OIDCConfig
@@ -304,7 +300,6 @@ func Load() (*Config, error) {
 		TrustedHeaderGroups: env("CRONOMICON_TRUSTED_HEADER_GROUPS", "Remote-Groups"),
 		BootstrapAdminGroup: env("CRONOMICON_BOOTSTRAP_ADMIN_GROUP", ""),
 		LogoutRedirectURL:   env("CRONOMICON_LOGOUT_REDIRECT_URL", ""),
-		PublicURL:           strings.TrimRight(strings.TrimSpace(env("CRONOMICON_PUBLIC_URL", "")), "/"),
 		OIDC: OIDCConfig{
 			Issuer:       env("CRONOMICON_OIDC_ISSUER", ""),
 			ClientID:     env("CRONOMICON_OIDC_CLIENT_ID", ""),
@@ -393,11 +388,6 @@ func Load() (*Config, error) {
 	if c.AuditLogPath != "" && !filepath.IsAbs(c.AuditLogPath) {
 		return nil, fmt.Errorf("invalid CRONOMICON_AUDIT_LOG %q (must be an absolute path)", c.AuditLogPath)
 	}
-	// An alert's link is built under this, so a value that is not an absolute
-	// web address would send every link somewhere wrong, quietly (2.5.2 OP-7).
-	if c.PublicURL != "" && !validPublicURL(c.PublicURL) {
-		return nil, fmt.Errorf("invalid CRONOMICON_PUBLIC_URL %q (must be an http:// or https:// address with a host, no query or fragment)", c.PublicURL)
-	}
 
 	switch c.AuthMode {
 	case AuthModeTrustedHeader, AuthModeOIDC:
@@ -475,17 +465,6 @@ func (c *Config) TrustedProxyNets() []*net.IPNet {
 		}
 	}
 	return nets
-}
-
-// validPublicURL: an absolute http(s) address with a host, and nothing a link
-// could not be appended to (a query or a fragment). A path is allowed, for an
-// app served under one.
-func validPublicURL(s string) bool {
-	u, err := url.Parse(s)
-	if err != nil || u.Host == "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-		return false
-	}
-	return u.Scheme == "http" || u.Scheme == "https"
 }
 
 func validLogLevel(s string) bool {

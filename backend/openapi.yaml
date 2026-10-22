@@ -5966,6 +5966,86 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
 
   # ── Settings (DB-backed config per §2.2) ───────────────────────────────────
+  /settings/alert-link-address:
+    get:
+      tags: [Settings]
+      operationId: getAlertLinkAddress
+      summary: The address alerts link to (v2.5.2)
+      description: |
+        2.5.2 (OP2.1). A run alert ends with an `Open:` link to the run under this
+        address. Recorded from the first global administrator's browser
+        (POST …/detect), shown on Settings → Notifications, and changed there.
+        Empty: alerts carry no link. A global administrator's.
+      responses:
+        '200':
+          description: The stored address (all fields empty when none is).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertLinkAddress' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [Settings]
+      operationId: setAlertLinkAddress
+      summary: Set the address alerts link to (v2.5.2)
+      description: |
+        A global administrator's. An absolute http:// or https:// address with a
+        host and no query, fragment or user; a path is kept; a trailing slash is
+        trimmed. "" clears it: alerts carry no link, and nothing records one over
+        it again. The field is required. In Global's change log
+        (`alert-link-address-set`). CSRF required.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: { type: string }
+      responses:
+        '200':
+          description: The address as stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertLinkAddress' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /settings/alert-link-address/detect:
+    post:
+      tags: [Settings]
+      operationId: detectAlertLinkAddress
+      summary: Record the address a global administrator's browser is at (v2.5.2)
+      description: |
+        Sent by the app when a global administrator opens it: the page's own
+        address. Stored only when no address is (detected, set or cleared), so
+        the first visit decides and a later one through another name changes
+        nothing. Answers with the address stored after the call. Validated as
+        PUT is. In Global's change log when it records
+        (`alert-link-address-detected`). CSRF required.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: { type: string }
+      responses:
+        '200':
+          description: The address stored after the call.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertLinkAddress' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
   /settings/freeze:
     get:
       tags: [Settings]
@@ -10938,6 +11018,17 @@ components:
         localKeepDays: { type: integer }
         bucket: { type: string, description: "The S3 bucket backups are uploaded to; empty when they are kept locally only." }
         schedule: { type: string, description: "The daily UTC time of the backup (CRONOMICON_BACKUP_AT)." }
+    AlertLinkAddress:
+      type: object
+      readOnly: true
+      description: 2.5.2 (OP2.1) — the address alerts link to, and how it got there.
+      required: [address]
+      properties:
+        address: { type: string, description: Empty when none is stored, or when it was cleared. }
+        source: { type: string, enum: [detected, set], description: Absent when nothing was ever stored. }
+        by: { type: string, description: Whose browser it was recorded from, or who set it. }
+        at: { type: string, format: date-time }
+
     InstallationFreeze:
       type: object
       required: [on, reason]

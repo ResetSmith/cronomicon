@@ -3,16 +3,27 @@ package notify
 import (
 	"strings"
 	"testing"
+
+	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
 // 2.5.2 OP2 — an alert says whose the run is and links to it (OP-5, OP-6), and
 // falls back to the agency's contact when the job names none (OP-5a). Driven
 // through the real dispatch and captured at the transport, like AN-4's tests.
 
+// setAlertLink stores the address alerts link to, as Settings → Notifications
+// does ("" is cleared: no links).
+func setAlertLink(t *testing.T, e annEnv, address string) {
+	t.Helper()
+	if _, err := settings.SetAlertLinkAddress(t.Context(), e.pool, address, "root@example.gov"); err != nil {
+		t.Fatalf("set the alert link address: %v", err)
+	}
+}
+
 func newOP2Env(t *testing.T) annEnv {
 	t.Helper()
 	e := newAnnEnv(t)
-	e.d.cfg.PublicURL = "https://cron.example.gov"
+	setAlertLink(t, e, "https://cron.example.gov")
 	e.exec(`INSERT INTO agencies (id, name, created_at, contact) VALUES ('ag-pay', 'Payroll', 'now', 'Payroll desk, ext. 4410')`)
 	e.exec(`INSERT INTO jobs(name, source, uid, run_type, owner_agency, synced_at) VALUES('export','git','uid-export','bash','ag-pay','t')`)
 	e.exec(`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, created_at, owner_agency)
@@ -54,16 +65,16 @@ func TestOP2AWorkflowRunLinksToTheWorkflowRunsTab(t *testing.T) {
 
 func TestOP2NoLinkWithoutTheAddressOrARun(t *testing.T) {
 	e := newOP2Env(t)
-	e.d.cfg.PublicURL = ""
+	setAlertLink(t, e, "")
 	if err := e.d.dispatch(t.Context(), runDispatchEvent(RunEvent{TraceID: "t-pay", JobName: "export", Status: "failure"})); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(*e.body, "Open:") || !strings.Contains(*e.body, "Agency: Payroll") {
-		t.Errorf("without CRONOMICON_PUBLIC_URL: want the agency and no link:\n%s", *e.body)
+		t.Errorf("without an alert link address: want the agency and no link:\n%s", *e.body)
 	}
 
 	// A suppression did not run: the agency, and nothing to open.
-	e.d.cfg.PublicURL = "https://cron.example.gov"
+	setAlertLink(t, e, "https://cron.example.gov")
 	e.exec(`INSERT INTO alert_config (id, target_mode, job_name, trigger, channels, recipients, enabled, created_at)
 	        VALUES ('r-skip','all',NULL,'skipped','["email"]','ops@example.com',1,'now')`)
 	if err := e.d.dispatch(t.Context(), runDispatchEvent(RunEvent{TraceID: "t-pay", JobName: "export", Status: "skipped", Reason: "Skipped: the job is paused"})); err != nil {
@@ -79,6 +90,20 @@ func TestOP2NoLinkWithoutTheAddressOrARun(t *testing.T) {
 	}
 	if strings.Contains(*e.body, "Open:") || !strings.Contains(*e.body, "Agency: Payroll") {
 		t.Errorf("a missed run: want the agency and no link:\n%s", *e.body)
+	}
+}
+
+// OP2.1: with no address stored at all (nobody has opened the app yet), an
+// alert carries no link, and nothing else is missing.
+func TestOP2NoLinkBeforeAnyAddressIsKnown(t *testing.T) {
+	e := newAnnEnv(t)
+	e.exec(`INSERT INTO runs(id, job_name, job_source, run_type, status, triggered_by, trigger_kind, created_at)
+	        VALUES('t-1','export','git','bash','failure','t','manual','t')`)
+	if err := e.d.dispatch(t.Context(), runDispatchEvent(RunEvent{TraceID: "t-1", JobName: "export", Status: "failure"})); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(*e.body, "Open:") || !strings.Contains(*e.body, "Agency: Global") {
+		t.Errorf("no address stored: want the agency and no link:\n%s", *e.body)
 	}
 }
 

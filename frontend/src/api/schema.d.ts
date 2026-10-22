@@ -3636,6 +3636,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/alert-link-address": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The address alerts link to (v2.5.2)
+         * @description 2.5.2 (OP2.1). A run alert ends with an `Open:` link to the run under this
+         *     address. Recorded from the first global administrator's browser
+         *     (POST …/detect), shown on Settings → Notifications, and changed there.
+         *     Empty: alerts carry no link. A global administrator's.
+         */
+        get: operations["getAlertLinkAddress"];
+        /**
+         * Set the address alerts link to (v2.5.2)
+         * @description A global administrator's. An absolute http:// or https:// address with a
+         *     host and no query, fragment or user; a path is kept; a trailing slash is
+         *     trimmed. "" clears it: alerts carry no link, and nothing records one over
+         *     it again. The field is required. In Global's change log
+         *     (`alert-link-address-set`). CSRF required.
+         */
+        put: operations["setAlertLinkAddress"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/alert-link-address/detect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record the address a global administrator's browser is at (v2.5.2)
+         * @description Sent by the app when a global administrator opens it: the page's own
+         *     address. Stored only when no address is (detected, set or cleared), so
+         *     the first visit decides and a later one through another name changes
+         *     nothing. Answers with the address stored after the call. Validated as
+         *     PUT is. In Global's change log when it records
+         *     (`alert-link-address-detected`). CSRF required.
+         */
+        post: operations["detectAlertLinkAddress"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/freeze": {
         parameters: {
             query?: never;
@@ -7033,6 +7089,20 @@ export interface components {
             bucket: string;
             /** @description The daily UTC time of the backup (CRONOMICON_BACKUP_AT). */
             schedule: string;
+        };
+        /** @description 2.5.2 (OP2.1) — the address alerts link to, and how it got there. */
+        AlertLinkAddress: {
+            /** @description Empty when none is stored */
+            address: string;
+            /**
+             * @description Absent when nothing was ever stored.
+             * @enum {string}
+             */
+            source?: "detected" | "set";
+            /** @description Whose browser it was recorded from */
+            by?: string;
+            /** Format: date-time */
+            at?: string;
         };
         InstallationFreeze: {
             on: boolean;
@@ -16957,6 +17027,92 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    getAlertLinkAddress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stored address (all fields empty when none is). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertLinkAddress"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    setAlertLinkAddress: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    address: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The address as stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertLinkAddress"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    detectAlertLinkAddress: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    address: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The address stored after the call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertLinkAddress"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
         };
     };
     getInstallationFreeze: {

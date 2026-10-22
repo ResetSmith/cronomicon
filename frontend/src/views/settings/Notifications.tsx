@@ -7,6 +7,7 @@ import { c } from "../../theme";
 import { globalOnly } from "../../api/globalAdmin";
 import { Btn, Card, Chip, ReadOnlyFields, csrfHeader, errMsg, fmtDateTime, inputStyle, lblStyle } from "./ui";
 import { InlineLoading, Rule } from "../../components/ui";
+import { appAddress } from "../../alertLink";
 
 type NotificationConfig = components["schemas"]["NotificationConfig"];
 type AlertTarget = components["schemas"]["AlertTarget"];
@@ -20,7 +21,111 @@ export function NotificationsSection({ canWrite }: { canWrite: boolean }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <RunNotificationsCard canWrite={canWrite} />
+      <AlertLinkCard canWrite={canWrite} />
     </div>
+  );
+}
+
+type AlertLinkAddress = components["schemas"]["AlertLinkAddress"];
+
+// 2.5.2 OP2.1 — the address alerts link to. Recorded from the first global
+// administrator's browser (alertLink.ts), so normally nobody types it; shown
+// here so a wrong one (an internal address, a tunnel) is visible and can be
+// changed. Empty: alerts carry no link.
+export function AlertLinkCard({ canWrite }: { canWrite: boolean }) {
+  const [bump, setBump] = useState(0);
+  const q = useGet<AlertLinkAddress>(() => api.GET("/settings/alert-link-address"), [bump]);
+  const stored = q.data?.address ?? "";
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save(address: string) {
+    setBusy(true);
+    setErr(null);
+    const { error } = await api.PUT("/settings/alert-link-address", { params: { header: csrfHeader }, body: { address } });
+    setBusy(false);
+    if (error) {
+      setErr(errMsg(error));
+      return;
+    }
+    setEditing(false);
+    setBump((b) => b + 1);
+  }
+
+  const how =
+    q.data?.source === "detected"
+      ? `detected from ${q.data.by || "a global administrator"}'s browser`
+      : q.data?.source === "set"
+        ? `set by ${q.data.by || "a global administrator"}`
+        : "";
+  return (
+    <Card title="Alert Link Address">
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
+          Run alerts end with a link to the run, under this address. Cronomicon records it the first time a global administrator opens
+          the app; change it here if that was not the address people use.
+        </div>
+        {q.loading ? (
+          <InlineLoading what="the address" />
+        ) : editing ? (
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <label htmlFor="alert-link-address" style={{ ...lblStyle(), marginBottom: 0 }}>
+              Address
+            </label>
+            <input
+              id="alert-link-address"
+              value={value}
+              placeholder="https://cronomicon.example.gov"
+              onChange={(e) => setValue(e.target.value)}
+              style={{ ...inputStyle(), flex: 1, minWidth: 260 }}
+            />
+            <Btn primary onClick={() => save(value)} disabled={busy}>
+              Save
+            </Btn>
+            <Btn onClick={() => setEditing(false)} disabled={busy}>
+              Cancel
+            </Btn>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+            {stored ? (
+              <span data-testid="alert-link-address" style={{ fontFamily: c.mono, fontSize: c.fontSm, color: c.text }}>
+                {stored}
+              </span>
+            ) : (
+              <span data-testid="alert-link-address" style={{ fontSize: c.fontSm, color: c.textMuted }}>
+                None: alerts carry no link
+              </span>
+            )}
+            {how && (
+              <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+                {how}
+                {q.data?.at ? `, ${fmtDateTime(q.data.at)}` : ""}
+              </span>
+            )}
+            <span style={{ flex: 1 }} />
+            <Btn
+              onClick={() => {
+                setValue(stored || appAddress());
+                setEditing(true);
+              }}
+              disabled={!canWrite}
+              title={canWrite ? undefined : globalOnly(canWrite)}
+            >
+              Change
+            </Btn>
+            {stored && (
+              <Btn onClick={() => save("")} disabled={!canWrite || busy} title={canWrite ? "Alerts will carry no link" : globalOnly(canWrite)}>
+                Remove
+              </Btn>
+            )}
+          </div>
+        )}
+        {(err || q.error) && <div style={{ fontSize: c.fontSm, color: c.danger }}>{err ?? q.error}</div>}
+      </div>
+    </Card>
   );
 }
 
