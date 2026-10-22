@@ -326,11 +326,8 @@ func run() error {
 				"bound", rep.Bound)
 		}
 	}
-	// 2.5.1 SG-3: CRONOMICON_BACKUP_RECIPIENTS seeds the backup keys once.
-	if seeded, serr := settings.SeedBackupRecipientsFromEnv(ctx0, pool, cfg.BackupRecipients); serr != nil {
-		logger.Error("could not seed the backup keys from CRONOMICON_BACKUP_RECIPIENTS; backups stay as Settings → Backups has them", "error", serr)
-	} else if seeded {
-		logger.Info("backup keys seeded from CRONOMICON_BACKUP_RECIPIENTS")
+	if err := seedBackupKeys(ctx0, pool, cfg.BackupRecipients, logger); err != nil {
+		return err
 	}
 	db.StartRetention(ctx0, pool, db.RetentionPolicy{
 		// Boot values, used only if the very first Reload fails.

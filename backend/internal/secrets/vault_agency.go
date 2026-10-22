@@ -21,6 +21,12 @@ type VaultLogin interface {
 	Login() error
 }
 
+// VaultHealth is a VaultClient that can say whether its server answers
+// without logging in (the health check of an agency's own Vault, 2.5.1 SG6.2).
+type VaultHealth interface {
+	Health() error
+}
+
 // VaultForOwner is the client for a row owned by owner (an agency id): the
 // agency's own Vault when it has connected one, else the installation's. An
 // agency whose own connection cannot be read or built gets a client that

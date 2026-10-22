@@ -262,9 +262,11 @@ func TestVaultPrefixes_OnlyTheOwnerNamesASharedRowsPath(t *testing.T) {
 		{"re-sourcing TAX's secret to Vault", http.MethodPut, "/api/v1/env-secrets/" + sec.ID,
 			`{"key":"TAX_DB","source":"vault","scope":"fin-hosts","vaultPath":"secret/data/tax-private/db#password"}`},
 	} {
+		// TAX's row, though it lists FIN, is not FIN's to read since 2.5.0 C2 (a
+		// row is its owner's), so the refusal is the 404 (2.5.1 SG-42, question 140).
 		rec := gateReq(t, h, c.method, c.path, gFinAdmin, c.body)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("FIN's administrator %s = %d, want 403 (%s)", c.name, rec.Code, rec.Body)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("FIN's administrator %s = %d, want 404 (%s)", c.name, rec.Code, rec.Body)
 		}
 		// Whatever the answer, it does not tell FIN where TAX may point.
 		if strings.Contains(rec.Body.String(), "tax-private") {

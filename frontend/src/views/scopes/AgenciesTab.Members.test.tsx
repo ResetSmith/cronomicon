@@ -28,6 +28,8 @@ let PREFIXES: string[] = [];
 let prefixesForbidden = false;
 
 const puts: Array<{ path: string; body: unknown }> = [];
+// The members write's next answer, when it is a refusal (answered once).
+let membersError: unknown = null;
 
 vi.mock("../../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/client")>();
@@ -49,6 +51,11 @@ vi.mock("../../api/client", async (importOriginal) => {
           PREFIXES = (opts?.body as { prefixes: string[] }).prefixes;
           return { data: { agencyId: "ag-tax", prefixes: PREFIXES } };
         }
+        if (membersError) {
+          const error = membersError;
+          membersError = null;
+          return { error };
+        }
         // The endpoint answers with the resulting AgencyDetail; mirror that so the
         // panel re-renders from the response rather than refetching.
         const members = (opts?.body as { members: { kind: string; id: string }[] }).members.map((m) => {
@@ -68,6 +75,7 @@ import { AgenciesTab } from "./AgenciesTab";
 
 beforeEach(() => {
   puts.length = 0;
+  membersError = null;
   PREFIXES = [];
   prefixesForbidden = false;
   DETAIL = {
@@ -126,6 +134,26 @@ describe("per-agency member editor (RB-22)", () => {
       { kind: "secret", id: "s2" },
     ]);
     expect(puts[0].body).toMatchObject({ repair: true, reason: "it was always Tax's" });
+  });
+
+  // 2.5.1 SG6.2: an add that takes a Vault-backed row to another Vault is
+  // refused 409 vault_changes; "Move anyway" sends it again, confirmed.
+  it("asks before an add that changes the Vault a row is read from", async () => {
+    membersError = {
+      code: "vault_changes",
+      message: "moving it changes the Vault its path is read from",
+      rows: [{ kind: "secret", id: "s2", name: "API_KEY", from: "global", fromName: "Global", fromVault: "installation", to: "ag-tax", toName: "Tax", toVault: "own" }],
+    };
+    await openAgency();
+    fireEvent.change(screen.getByLabelText(/Add a secret to this agency/i), { target: { value: "s2" } });
+    fireEvent.change(await screen.findByLabelText("Reason"), { target: { value: "Tax's own" } });
+    fireEvent.click(screen.getByRole("button", { name: "Give it to this agency" }));
+    expect(await screen.findByText(/API_KEY: from the installation's Vault to Tax's own Vault/)).toBeTruthy();
+    expect(puts.length).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Move anyway" }));
+    await waitFor(() => expect(puts.length).toBe(2));
+    expect(puts[1].body).toMatchObject({ repair: true, reason: "Tax's own", confirmVaultChange: true });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Move anyway" })).toBeNull());
   });
 
   // A row in ONE agency cannot be removed from it: it would be left in none,

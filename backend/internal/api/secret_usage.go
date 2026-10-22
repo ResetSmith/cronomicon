@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/http"
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
@@ -75,6 +76,71 @@ type rowUsage struct {
 	// route answered before 2.5.1 (the delete's refusal reads them too).
 	Hosts    []sshkeys.Ref `json:"hosts,omitempty"`
 	Bastions []sshkeys.Ref `json:"bastions,omitempty"`
+	// OtherAgencyRecords counts the host records and bastions that name the
+	// key but belong to agencies the caller does not read: counted, never
+	// named (2.5.1 review A3).
+	OtherAgencyRecords int `json:"otherAgencyRecords,omitempty"`
+}
+
+// keepReadableRecords drops from a key's Usage the host records and bastions
+// the caller does not read (a record is its owner agency's, as on the host and
+// bastion lists) and counts them. A key Global holds for an agency, or one a
+// record of another agency named before 2.3.0, is named by records its reader
+// may not see: their hostnames are that agency's (2.5.1 review A3).
+func (s *Server) keepReadableRecords(r *http.Request, u *rowUsage) error {
+	readable := map[string]bool{}
+	judge := func(table, id string) (bool, error) {
+		key := table + "/" + id
+		if ok, seen := readable[key]; seen {
+			return ok, nil
+		}
+		var owner string
+		err := s.db.QueryRowContext(r.Context(), `SELECT owner_agency FROM `+table+` WHERE id = ?`, id).Scan(&owner) //nolint:gosec // fixed identifiers
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return false, err
+		}
+		ok := err == nil && readsAgency(r, owner)
+		readable[key] = ok
+		return ok, nil
+	}
+	keep := func(table string, refs []sshkeys.Ref) ([]sshkeys.Ref, error) {
+		var out []sshkeys.Ref
+		for _, ref := range refs {
+			ok, err := judge(table, ref.ID)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				out = append(out, ref)
+			} else {
+				u.OtherAgencyRecords++
+			}
+		}
+		return out, nil
+	}
+	var err error
+	if u.Hosts, err = keep("ssh_hosts", u.Hosts); err != nil {
+		return err
+	}
+	if u.Bastions, err = keep("bastions", u.Bastions); err != nil {
+		return err
+	}
+	viaTable := map[string]string{"host": "ssh_hosts", "bastion": "bastions"}
+	refs := u.References[:0]
+	for _, ref := range u.References {
+		if table := viaTable[ref.Via]; table != "" {
+			ok, err := judge(table, ref.OwnerID)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
+			}
+		}
+		refs = append(refs, ref)
+	}
+	u.References = refs
+	return nil
 }
 
 const (

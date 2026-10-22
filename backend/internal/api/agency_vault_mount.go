@@ -17,7 +17,7 @@ import (
 //
 //	GET    /api/v1/agencies/{agencyId}/vault          the connection (never a credential)
 //	PUT    /api/v1/agencies/{agencyId}/vault          connect or change it
-//	DELETE /api/v1/agencies/{agencyId}/vault          disconnect (409 vault_in_use while it holds Vault rows)
+//	DELETE /api/v1/agencies/{agencyId}/vault          disconnect (409 vault_in_use while it holds Vault rows); its Vault path prefixes go too
 //	POST   /api/v1/agencies/{agencyId}/vault/test     log in with a proposed connection
 //	POST   /api/v1/agencies/{agencyId}/vault/preview  would each of the agency's Vault references resolve there
 //	POST   /api/v1/settings/vault/test                log in with the installation's (a global administrator's)
@@ -76,7 +76,8 @@ func (s *Server) handleGetAgencyVault(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"agencyId": agency, "connected": v != nil, "vault": v})
 }
 
-// prepareAgencyVault decodes and validates a body and builds its client.
+// prepareAgencyVault decodes and validates a body and builds its client, one
+// of its own: the live client in the cache is not touched (2.5.1 SG6.2).
 func (s *Server) prepareAgencyVault(w http.ResponseWriter, r *http.Request, agency string) (agencyVaultBody, secrets.VaultClient, bool) {
 	var in agencyVaultBody
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -92,7 +93,7 @@ func (s *Server) prepareAgencyVault(w http.ResponseWriter, r *http.Request, agen
 		}
 		return in, nil, false
 	}
-	vc, err := settings.AgencyVaultClient(r.Context(), s.db, s.cfg, rt)
+	vc, err := settings.NewAgencyVaultClient(r.Context(), s.db, s.cfg, rt)
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
 		return in, nil, false

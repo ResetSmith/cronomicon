@@ -251,10 +251,10 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
       cell: (v) => (
         // Flex-wrap, not inline: JSX strips the newline between the key and its
         // chips, so there is no break opportunity and two badges spill out of
-        // the fixed-width column onto Scope.
+        // the fixed-width column onto Scope. The owner is not repeated here:
+        // the Agencies column says it (the owner, 2026-10-21).
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, rowGap: 4 }}>
           <span>{v.key}</span>
-          <OwnerChip owner={v.ownerAgency} />
           <ShadowBadge shadow={shadows.shadowFor("secret", v.key, v.scope)} />
           <AmbiguityBadge ambiguity={ambiguities.ambiguityFor("secret", v.key, v.scope)} />
         </div>
@@ -272,7 +272,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
       ),
     },
     { key: "usedBy", label: "Used by", sortKey: "usedBy", width: COL_W.usedBy, cell: (v) => <UsageCell {...usage.usageFor("secret", v.key)} /> },
-    { key: "agencies", label: "Agencies", width: COL_W.agencies, cell: (v) => <AgencyCell names={v.id ? entityAgencies[v.id] : undefined} /> },
+    { key: "agencies", label: "Agencies", width: COL_W.agencies, cell: (v) => <AgencyCell names={v.id ? entityAgencies[v.id] : undefined} owner={v.ownerAgency} /> },
     {
       key: "source",
       label: "Source",
@@ -545,7 +545,15 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                               )}
                               {!isVault && canEdit && !v.revealLocked && (
                                 <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
-                                  <Btn onClick={() => setLocking(v)}>Make unrevealable…</Btn>
+                                  {/* The row's own flag, as Edit and Delete: the lock is its
+                                      owner's (2.5.1 SG-42), not the page's verb anywhere. */}
+                                  <Btn
+                                    onClick={() => setLocking(v)}
+                                    disabled={!!rowFlagWhy(v.canEdit, v.ownerAgency, "secret")}
+                                    title={rowFlagWhy(v.canEdit, v.ownerAgency, "secret") || undefined}
+                                  >
+                                    Make unrevealable…
+                                  </Btn>
                                   <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
                                     Nobody can reveal it afterwards, global administrators included. Runs still use it.
                                   </span>

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, csrfHeader, errMsg } from "../../api/client";
 import { GLOBAL_AGENCY, type AgencyRef } from "../../api/access";
-import { REPAIR_HINT, RepairDialog, useRepairAllowed, type RepairBody } from "../../components/RepairDialog";
+import { REPAIR_HINT, RepairDialog, useRepairAllowed, vaultChangesOf, type RepairBody, type VaultChange } from "../../components/RepairDialog";
 import { useGet, rows } from "../../hooks";
 import { c } from "../../theme";
 import { inputStyle } from "./ui";
@@ -57,6 +57,9 @@ export function MoveAgency({
   const [target, setTarget] = useState<AgencyRef | null>(null);
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState("");
+  // A move of a Vault-backed row to another Vault waits for "Move anyway"
+  // (2.5.1 SG6.2).
+  const [vaultChanges, setVaultChanges] = useState<VaultChange[] | null>(null);
 
   const owner = ownerName || "Global";
   const ownerId = owner === "Global" ? GLOBAL_AGENCY : catalog.find((a) => a.name === owner)?.id;
@@ -78,6 +81,11 @@ export function MoveAgency({
       body: { ...rep, assignments: [{ id, agencyIds: [target.id] }] } as never,
     });
     setBusy(false);
+    const changes = vaultChangesOf(error);
+    if (changes) {
+      setVaultChanges(changes);
+      return;
+    }
     if (error) {
       setRefusal(errMsg(error));
       onError(`Repair failed: ${errMsg(error)}`);
@@ -85,6 +93,7 @@ export function MoveAgency({
     }
     const to = target.name;
     setTarget(null);
+    setVaultChanges(null);
     onMoved(`${name} now belongs to ${to}`);
   };
 
@@ -98,6 +107,7 @@ export function MoveAgency({
           const a = candidates.find((x) => x.id === e.target.value);
           if (a) {
             setRefusal("");
+            setVaultChanges(null);
             setTarget(a);
           }
         }}
@@ -130,7 +140,11 @@ export function MoveAgency({
           confirmLabel={`Move to ${target.name}`}
           busy={busy}
           error={refusal}
-          onCancel={() => setTarget(null)}
+          vaultChanges={vaultChanges}
+          onCancel={() => {
+            setTarget(null);
+            setVaultChanges(null);
+          }}
           onConfirm={move}
         />
       )}

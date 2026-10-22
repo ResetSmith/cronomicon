@@ -2681,6 +2681,10 @@ export interface paths {
          * @description Explicit unmask of a stored-source secret. Every reveal writes a Change
          *     Log entry (§8.2). POST (not GET) because it has an audit side effect.
          *     vault-source secrets cannot be revealed through Cronomicon. CSRF required.
+         *     manageEnvVars on the agency that OWNS the secret (v2.5.1): a Global-owned
+         *     secret is a global administrator's, whatever agencies it lists, so a
+         *     member agency of a secret Global holds reads it but gets 403 here. 404
+         *     to a caller who does not read the secret.
          */
         post: operations["revealEnvSecret"];
         delete?: never;
@@ -2703,9 +2707,10 @@ export interface paths {
          * @description v2.5.1. One way: no route undoes it. From then on nobody reveals the
          *     secret through Cronomicon (409 `reveal_locked`), global administrators
          *     included; runs still use it, and it can still be rotated, moved and
-         *     migrated to Vault. manageEnvVars on the secret's own agency, as for a
-         *     reveal. Idempotent. Recorded in the change log (`reveal-locked`) and
-         *     raised as `secret-changed`.
+         *     migrated to Vault. manageEnvVars on the agency that owns the secret, as
+         *     for a reveal (a Global-owned secret is a global administrator's; 404 to
+         *     a caller who does not read it). Idempotent. Recorded in the change log
+         *     (`reveal-locked`) and raised as `secret-changed`.
          */
         post: operations["lockEnvSecretReveal"];
         delete?: never;
@@ -4625,7 +4630,10 @@ export interface paths {
          *     row is the agency's. A sync of its repository is started; the job
          *     appears when it finishes. 409 `target_unsynced` when the agency's branch
          *     has commits the server has not synced (a sync is started; assign again),
-         *     409 `origin_unsynced`, 409 `branch_protected` (as a publish answers it). CSRF required.
+         *     409 `origin_unsynced`, 409 `branch_protected` (as a publish answers it).
+         *     422 `no_repository` when the agency has no repository, or one with no
+         *     connection (Global's never connected, an agency's from before 2.4.0;
+         *     v2.5.1, where that one answered `target_unsynced` for good). CSRF required.
          */
         post: operations["assignToAgency"];
         delete?: never;
@@ -4723,6 +4731,12 @@ export interface paths {
          *     Vault-backed secret or SSH key (409 `vault_in_use`, SG-27): they would
          *     all move to the installation's Vault at once. Deleting the agency
          *     deletes its connection. Logged as `vault-disconnected`. CSRF required.
+         *
+         *     The agency's Vault path prefixes are cleared with the connection
+         *     (v2.5.1 SG6.2), and the log row names them: in its own Vault they were
+         *     a limit it set itself, and in the installation's they are a global
+         *     administrator's to assign. Until one does, the agency names no Vault
+         *     path. 404 when the agency has no Vault of its own; its prefixes stay.
          */
         delete: operations["deleteAgencyVault"];
         options?: never;
@@ -4863,6 +4877,11 @@ export interface paths {
          *     v2.3.0 that several agencies share may be removed from all but one, and
          *     the one that is left becomes its owner. A no-op save writes no audit row.
          *     Returns the resulting AgencyDetail.
+         *
+         *     An addition, or a removal that settles a shared row, that would take a
+         *     Vault-backed secret or SSH key to an owner on another Vault (an
+         *     agency's own, or the installation's) is refused 409 `vault_changes`
+         *     unless `confirmVaultChange` is set (v2.5.1 SG6.2).
          */
         put: operations["setAgencyMembers"];
         post?: never;
@@ -4996,6 +5015,12 @@ export interface paths {
          *
          *     Every change is written to the audit change log (membership is an
          *     access-control fact). Ids and counts only — never a value.
+         *
+         *     A move of a Vault-backed secret to an owner on another Vault (an
+         *     agency's own, or the installation's) is refused 409 `vault_changes`
+         *     unless the repair sets `confirmVaultChange` (v2.5.1 SG6.2); a confirmed
+         *     one is marked `vault-change=confirmed` on its two `moved` change-log
+         *     rows.
          */
         put: operations["setSecretAgencies"];
         post?: never;
@@ -5084,6 +5109,10 @@ export interface paths {
          *
          *     Every change is written to the audit change log (membership is an
          *     access-control fact). Ids and counts only — never a value.
+         *
+         *     A move of a Vault-backed SSH key to an owner on another Vault is
+         *     refused 409 `vault_changes` unless the repair sets
+         *     `confirmVaultChange` (v2.5.1 SG6.2), as for a secret.
          */
         put: operations["setSshCredentialAgencies"];
         post?: never;
@@ -5676,6 +5705,38 @@ export interface components {
             message: string;
             /** @description Server request correlation ID, if available. */
             traceId?: string;
+        };
+        /**
+         * @description A move refused because it would take Vault-backed rows to an owner on
+         *     another Vault (v2.5.1 SG6.2; `code` is `vault_changes`). Also the shape
+         *     of the route's other 409s, which carry no `rows`.
+         */
+        VaultChanges: {
+            code: string;
+            message: string;
+            rows?: {
+                /** @enum {string} */
+                kind: "secret" | "ssh-credential";
+                id: string;
+                /** @description The secret's key or the key's label. */
+                name: string;
+                /** @description The owner agency's id before the move. */
+                from: string;
+                fromName: string;
+                /**
+                 * @description `own`: the from agency's own Vault.
+                 * @enum {string}
+                 */
+                fromVault: "installation" | "own";
+                /** @description The owner agency's id after it. */
+                to: string;
+                toName: string;
+                /**
+                 * @description `own`: the to agency's own Vault.
+                 * @enum {string}
+                 */
+                toVault: "installation" | "own";
+            }[];
         };
         ValidationError: components["schemas"]["Error"] & {
             errors?: components["schemas"]["LineError"][];
@@ -8029,8 +8090,10 @@ export interface components {
              *       grant's id. Filed under the grant's agency. It clears when the
              *       group is listed or the grant is deleted.
              *     - `agency_vault_unreachable` — an agency's own Vault did not
-             *       answer a login within three seconds, or refused it (v2.5.1,
-             *       SG-28). Its Vault-backed secrets and SSH keys fail until it
+             *       answer `sys/health` within three seconds, or answered that it
+             *       cannot serve (sealed, not initialized) (v2.5.1, SG-28; the check
+             *       never logs in since SG6.2, so refused credentials show on the
+             *       next read instead). Its Vault-backed secrets and SSH keys fail until it
              *       does; they are never read from the installation's Vault instead.
              *       Subject: the agency's id. Filed under that agency. It clears
              *       when the Vault answers or the connection is removed.
@@ -10266,10 +10329,12 @@ export interface components {
                 actorRelation?: "member" | "global_admin" | "outside" | "system";
                 actingAgency?: string;
             }[];
-            /** @description For a key, the host records that name it by id. */
+            /** @description For a key, the host records that name it by id and whose agency the caller reads (2.5.1). */
             hosts?: components["schemas"]["SshCredentialRef"][];
-            /** @description For a key, the bastions that name it by id. */
+            /** @description For a key, the bastions that name it by id and whose agency the caller reads (2.5.1). */
             bastions?: components["schemas"]["SshCredentialRef"][];
+            /** @description For a key, the host records and bastions that name it but belong to agencies the caller does not read: counted, never named, and left out of `hosts`, `bastions` and `references` (2.5.1). Omitted when none. */
+            otherAgencyRecords?: number;
         };
         /**
          * @description The fixed permission set a role carries. SIX permissions as of v0.56.1:
@@ -18977,6 +19042,8 @@ export interface operations {
                     repair?: boolean;
                     /** @description The repair's reason */
                     reason?: string;
+                    /** @description Confirms a move that takes a Vault-backed row to an owner on another Vault (v2.5.1 SG6.2); 409 `vault_changes` otherwise. */
+                    confirmVaultChange?: boolean;
                 };
             };
         };
@@ -18993,6 +19060,20 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /**
+             * @description A move would take a Vault-backed row to an owner on another Vault
+             *     (`vault_changes`, v2.5.1 SG6.2). Nothing is written; send
+             *     `confirmVaultChange: true` to move it anyway. Also `owner_conflict`
+             *     and `scope_agency_fixed`.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultChanges"];
+                };
+            };
             422: components["responses"]["Validation"];
         };
     };
@@ -19146,6 +19227,8 @@ export interface operations {
                     repair: true;
                     reason: string;
                     assignments: components["schemas"]["AgencyMembership"][];
+                    /** @description Confirms a move that takes a Vault-backed row to an owner on another Vault (v2.5.1 SG6.2); 409 `vault_changes` otherwise. */
+                    confirmVaultChange?: boolean;
                 };
             };
         };
@@ -19161,6 +19244,20 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /**
+             * @description A move would take a Vault-backed row to an owner on another Vault
+             *     (`vault_changes`, v2.5.1 SG6.2): its path would be read in the
+             *     other Vault from then on. Nothing is written; send
+             *     `confirmVaultChange: true` to move it anyway. Also `owner_conflict`.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultChanges"];
+                };
+            };
             422: components["responses"]["Validation"];
         };
     };
@@ -19258,6 +19355,8 @@ export interface operations {
                     repair: true;
                     reason: string;
                     assignments: components["schemas"]["AgencyMembership"][];
+                    /** @description Confirms a move that takes a Vault-backed row to an owner on another Vault (v2.5.1 SG6.2); 409 `vault_changes` otherwise. */
+                    confirmVaultChange?: boolean;
                 };
             };
         };
@@ -19273,6 +19372,20 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /**
+             * @description A move would take a Vault-backed row to an owner on another Vault
+             *     (`vault_changes`, v2.5.1 SG6.2): its path would be read in the
+             *     other Vault from then on. Nothing is written; send
+             *     `confirmVaultChange: true` to move it anyway. Also `owner_conflict`.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultChanges"];
+                };
+            };
             422: components["responses"]["Validation"];
         };
     };

@@ -22,6 +22,9 @@ const USAGE = {
     { at: "2026-10-20T09:00:00Z", actor: "ana@corp", action: "created", actorRelation: "member" },
   ],
 };
+// A key's Usage, two of whose records belong to agencies the reader does not
+// read: counted, never named (2.5.1 review A3).
+const KEY_USAGE = { ...USAGE, kind: "key", id: "k1", name: "fin-deploy-key", otherAgencyRecords: 2 };
 const paths: string[] = [];
 const HELD = [
   { kind: "secret", id: "s-old", name: "OLD_SHARED", scope: "fin-hosts" },
@@ -40,6 +43,7 @@ vi.mock("../../api/client", async (importOriginal) => {
       GET: vi.fn(async (path: string) => {
         paths.push(path);
         if (path === "/agencies/{agencyId}/held-by-global") return { data: { items: HELD } };
+        if (path === "/ssh/credentials/{credentialId}/usage") return { data: KEY_USAGE };
         return { data: USAGE };
       }),
     } as unknown as typeof actual.api,
@@ -76,6 +80,17 @@ describe("RowUsagePanel", () => {
     );
     await screen.findAllByText("fin-deploy");
     expect(paths).toContain("/ssh/credentials/{credentialId}/usage");
+    expect(screen.getByText("2 host records or bastions of other agencies, not named here.")).toBeTruthy();
+  });
+
+  it("does not say nothing refers to a key that only other agencies' records name", async () => {
+    render(
+      <MemoryRouter>
+        <RowUsagePanel kind="key" id="k1" />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText(/of other agencies, not named here/)).toBeTruthy();
+    expect(screen.queryByText("Nothing refers to it.")).toBeNull();
   });
 });
 

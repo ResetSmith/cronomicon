@@ -271,10 +271,10 @@ checked, but the file form is preferred for the reasons above.
 
 ## Retention
 
-Retention is **per-table** and lives in the DB: twelve independent day knobs (`runs`,
+Retention is **per-table** and lives in the DB: thirteen independent day knobs (`runs`,
 `activity`, `workflowRuns`, `changeLog`, `schedulePushes`, `logFiles`,
 `auditLogFiles`, `recycleBin`, `definitionRevisions`, `runnerPlacementHistory`,
-`archivedLogFiles`, `hostKeyLedger`) stored in the `auditCompliance` settings blob and edited under
+`archivedLogFiles`, `hostKeyLedger`, `secretUses`) stored in the `auditCompliance` settings blob and edited under
 **Settings → Audit & Compliance**. The vars below are **bootstrap defaults only** — on the first boot
 that finds the blob unset they seed it (each var fanning out to the tables it
 covered before), and from then on the blob is authoritative. Editing these on an
@@ -321,7 +321,7 @@ it. `CRONOMICON_BACKUP_AT` therefore also decides when retention runs.
 | Var | Default | Notes |
 |---|---|---|
 | `CRONOMICON_BACKUP_AT` | `02:00` | Daily **wall-clock UTC** `HH:MM` for the retention + backup sweep. Always UTC — *not* the application timezone from Settings → General, which governs scheduling and display only. An unset or unparseable value falls back to `02:00` rather than failing to boot. Wall-clock anchoring (rather than a 24h-from-boot ticker) is deliberate: a process restarted more often than daily would never have reached the end of a 24h ticker, so a frequently-redeployed deployment could go indefinitely without a durable backup. A **boot catch-up** sweep also runs immediately when the last recorded success is more than 24h old, gated on that persisted timestamp so a crash-loop still backs up at most about once a day. |
-| `CRONOMICON_BACKUP_RECIPIENTS` | _(empty)_ | Seeds Settings → Backups' keys **once**, on the first boot that finds none stored (2.5.1): age X25519 public keys (`age1…`), separated by commas or newlines. With keys, every snapshot is encrypted to them (`cronomicon-YYYYMMDD.db.age`, locally and in the bucket); without, backups stay unencrypted. Encryption is optional. Public keys only: the private keys that open a backup never go to the server, and **losing all of them makes every encrypted backup unreadable**. Afterwards the stored list is the one in force and this is not read. |
+| `CRONOMICON_BACKUP_RECIPIENTS` | _(empty)_ | Seeds Settings → Backups' keys **once**, on the first boot that finds none stored (2.5.1): age X25519 public keys (`age1…`), separated by commas or newlines. With keys, every snapshot is encrypted to them (`cronomicon-YYYYMMDD.db.age`, locally and in the bucket); without, backups stay unencrypted. Encryption is optional. Public keys only: the private keys that open a backup never go to the server, and **losing all of them makes every encrypted backup unreadable**. Afterwards the stored list is the one in force and this is not applied. Set but holding no usable key (a typo, a private key, nothing between the commas) while no list is stored, the server **refuses to start**, naming the variable: it would otherwise write and upload its first backup unencrypted. Beside a stored list (an empty one included) a bad value is logged and the stored list applies. |
 | `CRONOMICON_BACKUP_S3_BUCKET` | _(empty)_ | Empty ⇒ local snapshots only (no upload). |
 | `CRONOMICON_BACKUP_S3_ENDPOINT` | _(empty)_ | `host:port`; empty ⇒ AWS S3. Set for MinIO. |
 | `CRONOMICON_BACKUP_S3_REGION` | `us-east-1` | |

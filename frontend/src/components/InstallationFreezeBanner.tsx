@@ -49,7 +49,8 @@ export function InstallationFreezeBanner() {
         marginBottom: 14,
         padding: "10px 14px",
         borderRadius: c.radiusChip,
-        border: `1px solid ${c.warning}`,
+        // 2.5.1 (the owner): red, not orange, so it reads as "something is up".
+        border: `2px solid ${c.danger}`,
         background: c.panel2,
         color: c.text,
         fontSize: c.fontSm,

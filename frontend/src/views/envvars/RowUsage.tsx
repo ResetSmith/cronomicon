@@ -132,6 +132,9 @@ export function RowUsagePanel({ kind, id }: { kind: "secret" | "key"; id: string
     recent: q.data.recent ?? [],
     changes: q.data.changes ?? [],
     uses: q.data.uses ?? { days7: 0, days30: 0, days90: 0 },
+    // A key's host records and bastions of agencies the reader does not read:
+    // counted by the server, never named (2.5.1 review A3).
+    others: q.data.otherAgencyRecords ?? 0,
   };
   const muted = { color: c.textMuted, fontSize: c.fontSm } as const;
 
@@ -141,9 +144,8 @@ export function RowUsagePanel({ kind, id }: { kind: "secret" | "key"; id: string
       <div style={{ ...detailBoxStyle(), display: "grid", gap: 14 }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: c.fontSm, marginBottom: 4 }}>Referred to by</div>
-          {u.references.length === 0 ? (
-            <div style={muted}>Nothing refers to it.</div>
-          ) : (
+          {u.references.length === 0 && u.others === 0 && <div style={muted}>Nothing refers to it.</div>}
+          {u.references.length > 0 && (
             <ul style={{ margin: 0, paddingLeft: 18, fontSize: c.fontSm }}>
               {u.references.map((r) => (
                 <li key={`${r.via}:${r.ownerKind}:${r.ownerId}`}>
@@ -156,6 +158,11 @@ export function RowUsagePanel({ kind, id }: { kind: "secret" | "key"; id: string
                 </li>
               ))}
             </ul>
+          )}
+          {u.others > 0 && (
+            <div style={muted}>
+              {u.others === 1 ? "1 host record or bastion" : `${u.others} host records or bastions`} of other agencies, not named here.
+            </div>
           )}
         </div>
 

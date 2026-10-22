@@ -32,10 +32,12 @@ import (
 // (bee2b35), and a runner was handed on by MA-12.
 
 // repairInput is a repair's two fields, on every route that can change an
-// object's agency.
+// object's agency, and the confirmation a move of a Vault-backed row to
+// another Vault needs (2.5.1 SG6.2; read by the secret and key moves only).
 type repairInput struct {
-	Repair bool   `json:"repair"`
-	Reason string `json:"reason"`
+	Repair             bool   `json:"repair"`
+	Reason             string `json:"reason"`
+	ConfirmVaultChange bool   `json:"confirmVaultChange"`
 }
 
 // repairReasonMax bounds the reason written to the audit row.

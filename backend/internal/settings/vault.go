@@ -445,12 +445,7 @@ func AgencyVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Con
 	if err := CheckVaultURL(ctx, database, rt.Addr); err != nil {
 		return nil, err
 	}
-	opts := secrets.VaultOptions{
-		AuthMethod: "approle",
-		Namespace:  rt.Namespace,
-		CAPEM:      rt.CAPEM,
-		Egress:     httpx.EgressPolicy{AllowPrivate: appCfg.OutboundAllowPrivate, AllowLoopback: appCfg.OutboundAllowLoopback},
-	}
+	opts := agencyVaultOptions(appCfg, rt)
 	key := strings.Join([]string{"agency", rt.Agency, rt.Addr, rt.RoleID, rt.SecretID, rt.Namespace, string(rt.CAPEM),
 		fmt.Sprintf("%t/%t", opts.Egress.AllowPrivate, opts.Egress.AllowLoopback)}, "\x00")
 	vaultClientMu.Lock()
@@ -464,6 +459,26 @@ func AgencyVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Con
 	}
 	cacheVaultClientLocked("agency:"+rt.Agency, key, vc)
 	return vc, nil
+}
+
+// NewAgencyVaultClient builds a client for a proposed connection (the Test,
+// the preview and the save's own check), outside the cache (2.5.1 SG6.2, the
+// review's A6): taking the agency's cache slot dropped the live client and its
+// token, or, with the stored credentials, a Login on the live client did.
+func NewAgencyVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Config, rt AgencyVaultRuntime) (secrets.VaultClient, error) {
+	if err := CheckVaultURL(ctx, database, rt.Addr); err != nil {
+		return nil, err
+	}
+	return secrets.NewVaultClientWithOptions(rt.Addr, rt.RoleID, rt.SecretID, agencyVaultOptions(appCfg, rt))
+}
+
+func agencyVaultOptions(appCfg *config.Config, rt AgencyVaultRuntime) secrets.VaultOptions {
+	return secrets.VaultOptions{
+		AuthMethod: "approle",
+		Namespace:  rt.Namespace,
+		CAPEM:      rt.CAPEM,
+		Egress:     httpx.EgressPolicy{AllowPrivate: appCfg.OutboundAllowPrivate, AllowLoopback: appCfg.OutboundAllowLoopback},
+	}
 }
 
 func (d *dynamicVaultClient) Fetch(vaultRef string) (string, error) {

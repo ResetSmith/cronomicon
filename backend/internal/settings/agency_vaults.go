@@ -257,9 +257,21 @@ func PutAgencyVault(ctx context.Context, database *sql.DB, cfg *config.Config, a
 
 // DeleteAgencyVault disconnects an agency's Vault, refused while it owns
 // Vault-sourced rows (SG-27). Reports whether there was one.
+//
+// The agency's Vault path prefixes go with it (2.5.1 SG6.2, the review's A4).
+// In its own Vault they were a limit it set itself (SG-26); left standing,
+// they would become its assignment in the installation's Vault, where they
+// are a global administrator's to give (LR-80). With none it names no path
+// there until one does. The count, the connection and the prefixes are one
+// transaction; an agency with no connection keeps the prefixes it was given.
 func DeleteAgencyVault(ctx context.Context, database *sql.DB, agency, actor string) (bool, error) {
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("delete agency vault: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	var n int
-	if err := database.QueryRowContext(ctx, `
+	if err := tx.QueryRowContext(ctx, `
 		SELECT (SELECT COUNT(*) FROM secrets WHERE owner_agency = ?1 AND source = 'vault')
 		     + (SELECT COUNT(*) FROM ssh_credentials WHERE owner_agency = ?1 AND source = 'vault')`, agency).Scan(&n); err != nil {
 		return false, err
@@ -267,16 +279,43 @@ func DeleteAgencyVault(ctx context.Context, database *sql.DB, agency, actor stri
 	if n > 0 {
 		return false, fmt.Errorf("%w (%d)", ErrAgencyVaultInUse, n)
 	}
-	res, err := database.ExecContext(ctx, `DELETE FROM agency_vaults WHERE agency_id = ?`, agency)
+	res, err := tx.ExecContext(ctx, `DELETE FROM agency_vaults WHERE agency_id = ?`, agency)
 	if err != nil {
 		return false, fmt.Errorf("delete agency vault: %w", err)
 	}
-	k, _ := res.RowsAffected()
-	if k > 0 {
-		secrets.RedactionSourceChanged()
-		audit(ctx, database, agency, actor, "Settings", "vault-disconnected", "Vault", "")
+	if k, _ := res.RowsAffected(); k == 0 {
+		return false, nil
 	}
-	return k > 0, nil
+	var cleared []string
+	rows, err := tx.QueryContext(ctx, `SELECT prefix FROM agency_vault_prefixes WHERE agency_id = ? ORDER BY prefix`, agency)
+	if err != nil {
+		return false, fmt.Errorf("delete agency vault: %w", err)
+	}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return false, fmt.Errorf("delete agency vault: %w", err)
+		}
+		cleared = append(cleared, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("delete agency vault: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agency_vault_prefixes WHERE agency_id = ?`, agency); err != nil {
+		return false, fmt.Errorf("delete agency vault: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("delete agency vault: %w", err)
+	}
+	secrets.RedactionSourceChanged()
+	detail := ""
+	if len(cleared) > 0 {
+		detail = "prefixes cleared: " + strings.Join(cleared, ", ")
+	}
+	audit(ctx, database, agency, actor, "Settings", "vault-disconnected", "Vault", detail)
+	return true, nil
 }
 
 // AgencyHasOwnVault reports whether an agency has connected a Vault of its own.

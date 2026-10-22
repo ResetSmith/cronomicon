@@ -35,14 +35,19 @@ const RecipientsSuffix = ".recipients"
 const SealedSuffix = ".db.age"
 
 // ParseRecipient validates one pasted public key and returns it trimmed. The
-// refusals name what was pasted, because the common mistakes are an SSH public
-// key, a private key and a hybrid key, and each needs a different fix.
+// refusals say what kind of thing was pasted, because the common mistakes are
+// an SSH public key, a private key and a hybrid key, and each needs a different
+// fix. They never repeat the input or age's error, which quotes it (2.5.1
+// SG6.3, the review's A8): a private key pasted with quotes, in lower case or
+// inside the age-keygen file came back in the 422, on the card and, from
+// CRONOMICON_BACKUP_RECIPIENTS, in the boot log. So any input holding a
+// private key, anywhere and in any case, is refused as one.
 func ParseRecipient(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	switch {
 	case s == "":
 		return "", fmt.Errorf("%w: empty", ErrInvalidRecipient)
-	case strings.HasPrefix(s, "AGE-SECRET-KEY-"):
+	case strings.Contains(strings.ToUpper(s), "AGE-SECRET-KEY-"):
 		return "", fmt.Errorf("%w: that is a PRIVATE key; paste the public line (age1…) that age-keygen printed, and keep the private key off this server", ErrInvalidRecipient)
 	case strings.HasPrefix(s, "ssh-") || strings.HasPrefix(s, "ecdsa-"):
 		return "", fmt.Errorf("%w: SSH keys are not accepted; generate an age key with age-keygen and paste its public line (age1…)", ErrInvalidRecipient)
@@ -50,7 +55,7 @@ func ParseRecipient(s string) (string, error) {
 		return "", fmt.Errorf("%w: post-quantum (age1pq1…) keys are not accepted; generate an X25519 key with age-keygen (without -pq)", ErrInvalidRecipient)
 	}
 	if _, err := age.ParseX25519Recipient(s); err != nil {
-		return "", fmt.Errorf("%w: not an age public key (age1…): %v", ErrInvalidRecipient, err)
+		return "", fmt.Errorf("%w: not an age public key: paste the whole public line (age1…) that age-keygen printed, with nothing around it", ErrInvalidRecipient)
 	}
 	return s, nil
 }
@@ -74,7 +79,8 @@ func EncryptFile(src, dst string, recipients []string) (fingerprints []string, e
 	for _, r := range recipients {
 		x, perr := age.ParseX25519Recipient(strings.TrimSpace(r))
 		if perr != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidRecipient, perr)
+			// Named by its fingerprint, never by its text (SG6.3).
+			return nil, fmt.Errorf("%w: the stored key %s is not an age public key", ErrInvalidRecipient, Fingerprint(r))
 		}
 		rs = append(rs, x)
 		fingerprints = append(fingerprints, Fingerprint(r))

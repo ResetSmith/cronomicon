@@ -6133,7 +6133,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     afterwards: another agency that needs the value creates its own row. A global administrator alone
                     has <strong>Repair: move to another agency…</strong> in the expanded row, for a row placed by
                     mistake; the confirmation says whose runs will stop resolving the row and asks for a reason (<a
-                        href="#agencies">§11.2</a>).</p>
+                        href="#agencies">§11.2</a>). A Vault-backed secret or key moved to an agency on another Vault
+                    (since 2.5.1) is asked about once more: the dialog says which Vault it would be read from, and
+                    <strong>Move anyway</strong> moves it.</p>
                 <figure class="shot">
                     <img class="dark" src="manual/env-vars-dark.png"
                         alt="The Env Vars view on the Variables tab: keys with scope, Used-by and description columns, the CRONOMICON_VAR_ reference hint banner, a scope filter beside the search box, and the Secrets and SSH Keys tabs"
@@ -6231,7 +6233,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     uses and reveals in the window, references, and changes made from outside the agency. It never holds a
                     value. <strong>Held by Global</strong>, under each tab, lists the agency's former secrets and keys that
                     several agencies shared before 2.3.0 and that Global holds now: only Global's runs use them, and each
-                    opens its Usage. Your agency can also be told: Settings → Alerts offers <em>a secret revealed</em> and
+                    opens its Usage. They are read only: revealing one, making it unrevealable, editing or deleting it
+                    is a global administrator's. In the Agencies column such a row also names its owner, marked
+                    <em>owner</em>, where the agencies it lists do not include it. Your agency can also be told: Settings → Alerts offers <em>a secret revealed</em> and
                     <em>a secret changed</em>.</p>
 
                 <h3>11.5 SSH Keys</h3>

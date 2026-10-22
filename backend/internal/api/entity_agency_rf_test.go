@@ -30,10 +30,11 @@ func TestSSHKeyUpdateIsDepartmental(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-fin','Finance','2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO ssh_credentials (id,label,source,created_at,last_modified_at)
-	      VALUES ('k-own','key-own','stored','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO ssh_credentials (id,label,source,created_at,last_modified_at)
-	      VALUES ('k-fin','key-fin','stored','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
+	// Each key OWNED by its department (2.5.1 SG-42: the owner decides).
+	exec(`INSERT INTO ssh_credentials (id,label,source,owner_agency,created_at,last_modified_at)
+	      VALUES ('k-own','key-own','stored','ag:prod','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO ssh_credentials (id,label,source,owner_agency,created_at,last_modified_at)
+	      VALUES ('k-fin','key-fin','stored','ag-fin','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES ('k-own','ag:prod')`)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES ('k-fin','ag-fin')`)
 
@@ -44,16 +45,18 @@ func TestSSHKeyUpdateIsDepartmental(t *testing.T) {
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/ssh/credentials/k-own", "sec-admins", body); rec.Code == http.StatusForbidden {
 		t.Fatalf("update of an own-agency key = 403, want the gate to pass (%s)", rec.Body.String())
 	}
+	// Another department's key is not the caller's to read: refused with the 404
+	// (2.5.1 question 140), never a 403 that says whose it is.
 	finBody := `{"label":"key-fin","source":"stored","material":"rotated"}`
-	if rec := reqAs(t, h, http.MethodPut, "/api/v1/ssh/credentials/k-fin", "sec-admins", finBody); rec.Code != http.StatusForbidden {
-		t.Errorf("update of ANOTHER department's key material = %d, want 403 — this is the "+
+	if rec := reqAs(t, h, http.MethodPut, "/api/v1/ssh/credentials/k-fin", "sec-admins", finBody); rec.Code != http.StatusNotFound {
+		t.Errorf("update of ANOTHER department's key material = %d, want 404 — this is the "+
 			"route RB-16 was about and the one v0.56.6 left open", rec.Code)
 	}
 
 	// Tags sit beside the material and now carry the same gate (RF-5).
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/ssh-credential-tags/k-fin", "sec-admins",
-		`{"tags":["x"]}`); rec.Code != http.StatusForbidden {
-		t.Errorf("tagging another department's key = %d, want 403", rec.Code)
+		`{"tags":["x"]}`); rec.Code != http.StatusNotFound {
+		t.Errorf("tagging another department's key = %d, want 404", rec.Code)
 	}
 }
 
