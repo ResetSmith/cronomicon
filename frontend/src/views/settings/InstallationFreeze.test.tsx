@@ -26,6 +26,7 @@ vi.mock("../../api/client", async (importOriginal) => {
 
 import { InstallationFreezeBanner } from "../../components/InstallationFreezeBanner";
 import { InstallationFreezeCard } from "./InstallationFreeze";
+import { setAppZone } from "../../utils/datetime";
 
 beforeEach(() => {
   FREEZE = { on: false, reason: "" };
@@ -102,5 +103,59 @@ describe("the installation freeze (C11)", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByText("Installation freeze")).toBeNull();
     expect(screen.queryByRole("button", { name: "Lift the freeze" })).toBeNull();
+  });
+});
+
+// 2.5.2 FZ-1 to FZ-6 — a freeze with a window.
+describe("a scheduled installation freeze (2.5.2 FZ)", () => {
+  beforeEach(() => setAppZone("America/Los_Angeles"));
+  afterEach(() => setAppZone(undefined));
+
+  it("the banner announces a scheduled freeze, is red while it is in effect, and goes when it ends (FZ-4)", async () => {
+    FREEZE = { on: true, reason: "Year-end", from: "2026-12-25T02:00:00Z", until: "2026-12-27T14:00:00Z", state: "scheduled" };
+    const { unmount } = render(<InstallationFreezeBanner />);
+    let banner = await screen.findByTestId("installation-freeze-banner");
+    expect(banner.getAttribute("data-state")).toBe("scheduled");
+    expect(banner.textContent).toContain("Installation freeze from");
+    expect(banner.textContent).toContain("America/Los_Angeles");
+    expect(banner.textContent).toContain("Year-end");
+    unmount();
+    FREEZE = { ...FREEZE, state: "in_effect" };
+    const second = render(<InstallationFreezeBanner />);
+    banner = await screen.findByTestId("installation-freeze-banner");
+    expect(banner.getAttribute("data-state")).toBe("in_effect");
+    expect(banner.textContent).toContain("no run starts in any agency until");
+    second.unmount();
+    FREEZE = { ...FREEZE, state: "ended" };
+    render(<InstallationFreezeBanner />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId("installation-freeze-banner")).toBeNull();
+  });
+
+  it("schedules a window typed in the app's timezone, naming it in the confirmation (FZ-1, FZ-5)", async () => {
+    render(<InstallationFreezeCard canWrite />);
+    fireEvent.change(await screen.findByLabelText("Reason for the freeze"), { target: { value: "Year-end" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Schedule…" }));
+    const button = screen.getByRole("button", { name: "Schedule the freeze" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true); // no start yet
+    fireEvent.change(screen.getByLabelText(/Begins \(America\/Los_Angeles\)/), { target: { value: "2026-12-24T18:00" } });
+    fireEvent.change(screen.getByLabelText(/Ends \(optional: until lifted\) \(America\/Los_Angeles\)/), { target: { value: "2026-12-27T06:00" } });
+    fireEvent.click(button);
+    const words = await screen.findByTestId("freeze-window-words");
+    expect(words.textContent).toMatch(/^from .*24.* until .*27.*, America\/Los_Angeles$/);
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Schedule the freeze" }).at(-1) as HTMLElement);
+    await waitFor(() =>
+      expect(puts).toEqual([
+        { path: "/settings/freeze", body: { on: true, reason: "Year-end", from: "2026-12-25T02:00:00Z", until: "2026-12-27T14:00:00Z" } },
+      ]),
+    );
+  });
+
+  it("cancels a scheduled freeze with one button (FZ-5)", async () => {
+    FREEZE = { on: true, reason: "Year-end", from: "2026-12-25T02:00:00Z", state: "scheduled", setBy: "root@example.com" };
+    render(<InstallationFreezeCard canWrite />);
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel the scheduled freeze" }));
+    await waitFor(() => expect(puts).toEqual([{ path: "/settings/freeze", body: { on: false, reason: "" } }]));
   });
 });

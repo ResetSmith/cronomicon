@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/db"
 )
 
@@ -285,7 +286,7 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 		traceID, r.kindOrDefault(), r.JobName, src, r.RunType, nullStr(r.Scope), nullStr(r.TargetHost),
 		r.statusOrDefault(), nullStr(r.QueuedReason), r.TriggeredBy, r.TriggerKind,
 		nullStr(r.ConcurrencyKey), workflowRunID, r.executorOrDefault(), nullStr(r.ScheduleName),
-		nullStr(r.EnvJSON), nullStr(r.OverrideJSON), nullStr(r.SSHUser), nullStr(r.SSHCredential), r.agenciesSnapshot(),
+		nullStr(r.EnvJSON), nullStr(r.OverrideJSON), nullStr(r.SSHUser), nullStr(r.SSHCredential), r.agenciesSnapshot(ctx, database),
 		nullStr(r.SuppressedByCalendar), startedAt, completedAt, durationMs, now,
 		r.EntityCode, uid, uid, uid,
 		snap, uid, snap, uid, snap, uid, snap, uid,
@@ -302,12 +303,12 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 // suppressed fire, a skipped step — never reaches a claim or a resolver, and
 // keeps whatever its producer gave it, which for the suppression writers is
 // nothing: '[]'. That is history, not a decision, and it is left as it was.
-func (r RunRow) agenciesSnapshot() string {
+func (r RunRow) agenciesSnapshot(ctx context.Context, q agencyid.Queryer) string {
 	if r.Terminal {
 		if r.AgenciesJSON == "" {
 			return "[]"
 		}
 		return r.AgenciesJSON
 	}
-	return r.agenciesJSONOrDefault()
+	return r.agenciesJSONOrDefault(ctx, q)
 }

@@ -13,6 +13,8 @@ import { ScoreCutNote, fetchScoreRuns } from "../components/score-runs";
 import { GlobalCalendarBanner } from "./scheduling/GlobalCalendarBanner";
 import { excludeSuppressed } from "./scheduling/calendars";
 import { appZoneParts, fmtInAppZone } from "../utils/datetime";
+import { useAgencyOptional } from "../agency";
+import { AllAgenciesDashboard } from "./dashboard/AllAgencies";
 
 // ── Local row types (list endpoints are loosely typed in the generated client) ──
 
@@ -102,7 +104,17 @@ function fmtWhen(iso?: string | null): string {
 
 // ── View ──
 
+/**
+ * Dashboard — one agency's (AgencyDashboard), or, with All agencies chosen in
+ * the switcher, every agency's (2.5.2 OP-21, views/dashboard/AllAgencies): the
+ * Operations overview became this view rather than a page of its own.
+ */
 export function Dashboard() {
+  const ag = useAgencyOptional();
+  return ag?.onOverview ? <AllAgenciesDashboard /> : <AgencyDashboard />;
+}
+
+function AgencyDashboard() {
   const navigate = useNavigate();
   const jobsQ = useGet<unknown>(() => api.GET("/jobs"));
   // SR-1 — id → name for the readout's "Runner · name" column (session-gated, like the Runners view).

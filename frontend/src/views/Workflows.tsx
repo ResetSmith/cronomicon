@@ -25,6 +25,7 @@ const WorkflowCanvasLazy = lazy(() =>
   import("./workflows/WorkflowCanvas").then((m) => ({ default: m.WorkflowCanvas })),
 );
 import { FolderBrowser } from "../components/FolderBrowser";
+import { parentOf } from "../utils/tree";
 import { AlertBanner, Btn, ConfirmDialog, DerivedAgencies, EmptyCell, ExpandChevron, RefreshButton, HoverTr, Modal, InlineTags, Pager, SearchBar, Section, SkeletonRows, TabBar, TagEditor, TagFilterSelect, Toast, jobStatusLabel, matchesStatus, matchesTags, statusLabel, statusTone, agencySortKey } from "../components/ui";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns, type TableColumn } from "../components/table";
 import { type SortColumn } from "../utils/sort";
@@ -270,6 +271,36 @@ export function Workflows() {
     (d) => rows<Workflow>(d).some((w) => w.status === "running" || w.status === "queued"),
   );
   const items = rows<Workflow>(data);
+  // 2.5.2 OP-3 — ?workflow=<uid>, the workflow run detail's "Open workflow":
+  // the twin of Jobs' ?job= (see there). This browser does not page, so the
+  // folder and the expanded row are all it takes.
+  const focusUid = params.get("workflow");
+  const [focusName, setFocusName] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!focusUid || !data) return;
+    const w = items.find((x) => x.uid === focusUid);
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("workflow");
+        const folder = w ? parentOf(workflowDisplayPath(w)) : "";
+        if (folder) next.set("path", folder);
+        else if (w) next.delete("path");
+        return next;
+      },
+      { replace: true },
+    );
+    if (w) {
+      setExpanded(w.id ?? null);
+      setFocusName(workflowName(w));
+    } else {
+      fireToast("That workflow is not in this agency's list.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusUid, data]);
+  useEffect(() => {
+    if (focusName) document.getElementById(`workflow-detail-${focusName}`)?.scrollIntoView?.({ block: "center" });
+  }, [focusName, path]);
   // R2F-3 — the Agency column tells the catalog rows apart; a dialog TITLE shows
   // the name alone, so it qualifies when this page holds two workflows by it.
   const wfTitleName = useNameDisambiguator(items, (w) => ({ uid: w.uid, name: w.name, agencies: w.agencies }));
@@ -646,7 +677,7 @@ export function Workflows() {
           {renderCells(cols.visible, { wf: w, displayName }, { base: td })}
         </HoverTr>
         {isExp && (
-          <tr style={{ borderBottom: `1px solid ${c.border}` }}>
+          <tr id={`workflow-detail-${workflowName(w)}`} style={{ borderBottom: `1px solid ${c.border}` }}>
             <td colSpan={cols.visible.length} style={{ padding: "16px 18px", background: c.primaryBg }}>
               {/* EV-3 — the meta strip that used to sit here (Last run / Next run /
                   Schedule) is gone: it restated three columns of the row it hangs

@@ -42,6 +42,10 @@ var objectWriteProbes = map[string]objectWrite{
 	"PUT /api/v1/workflow-annotation/{workflowId}": {http.MethodPut, func(o map[string]string, k string) string { return "/api/v1/workflow-annotation/" + o["wf:"+k] }, `{"annotation":"x"}`},
 	"POST /api/v1/workflows/runs/{traceId}/cancel": {http.MethodPost, func(o map[string]string, k string) string { return "/api/v1/workflows/runs/wr-live-" + k + "/cancel" }, `{}`},
 	"DELETE /api/v1/pending-runs/{id}":             {http.MethodDelete, func(o map[string]string, k string) string { return "/api/v1/pending-runs/pr-" + k }, ``},
+	"POST /api/v1/runs/{traceId}/notes":            {http.MethodPost, func(o map[string]string, k string) string { return "/api/v1/runs/rl-" + k + "/notes" }, `{"kind":"acknowledged","body":"x"}`},
+	"POST /api/v1/workflow-runs/{traceId}/notes": {http.MethodPost, func(o map[string]string, k string) string {
+		return "/api/v1/workflow-runs/wr-live-" + k + "/notes"
+	}, `{"kind":"note","body":"x"}`},
 	"PUT /api/v1/schedule-tags/{name}": {http.MethodPut, func(o map[string]string, k string) string {
 		return "/api/v1/schedule-tags/s0-" + k + "-sched?source=cronomicon"
 	}, `{"tags":[]}`},
@@ -124,6 +128,7 @@ func TestC11_NoObjectWriteAnswersAnotherAgency(t *testing.T) {
 			`SELECT COALESCE(group_concat(uid || COALESCE(tags,''), ','), '') FROM scripts`,
 			`SELECT COUNT(*) FROM workflow_runs`,
 			`SELECT COUNT(*) FROM runs`,
+			`SELECT COUNT(*) FROM run_notes`,
 		} {
 			var s string
 			if err := pool.QueryRow(q).Scan(&s); err != nil {

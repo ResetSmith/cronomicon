@@ -411,13 +411,14 @@ func lookupScopedID(ctx context.Context, database *sql.DB, table, key, runScope 
 // "two candidates and I picked one", and that distinction is the entire safety
 // property. Every row this returns is one the old query could also have returned.
 func lookupScoped(ctx context.Context, database *sql.DB, table, key, runScope string, runAgencies []string) (id, scope string, found bool, err error) {
+	g := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	// The membership table for this row type. Compile-time constant, never input.
 	memberTable := "secret_agencies"
 	memberCol := "secret_id"
 	if table == "env_vars" {
 		memberTable, memberCol = "env_var_agencies", "env_var_id"
 	}
-	agencyJSON := marshalNames(runAgencies)
+	agencyJSON := marshalNames(runAgencies, g)
 	rows, qerr := database.QueryContext(ctx,
 		`SELECT t.id, COALESCE(t.scope,''), `+ownerNameSQL("t")+` FROM `+table+` t
 		 LEFT JOIN agencies ag ON ag.id = t.owner_agency
@@ -446,7 +447,7 @@ func lookupScoped(ctx context.Context, database *sql.DB, table, key, runScope st
 	if err := rows.Err(); err != nil {
 		return "", "", false, fmt.Errorf("lookup %s %q: %w", table, key, err)
 	}
-	win, ambiguous := pickOwned(cands, runAgencies, runScope)
+	win, ambiguous := pickOwned(cands, runAgencies, runScope, g)
 	if ambiguous {
 		return "", "", false, ErrAmbiguousReference
 	}
@@ -466,12 +467,13 @@ type candidate struct{ id, scope, owner string }
 // pickOwned applies RA-17's tiers to the visible candidates. Returns the winner, or
 // ambiguous=true when the winning tier holds more than one row at the same scope
 // precedence. A nil winner with ambiguous=false means nothing resolved.
-func pickOwned(cands []candidate, runAgencies []string, runScope string) (win *candidate, ambiguous bool) {
+func pickOwned(cands []candidate, runAgencies []string, runScope, globalName string) (win *candidate, ambiguous bool) {
 	// A row of Global's ("" here) is a run of Global's own, and no other run's
 	// (§0a, IN-6). Until then it was every run's "shared" tier, under the run's
 	// own agency's rows. usableByRunSQL already keeps it from another agency's
 	// run; this is the same rule again, as for a drifted owner below.
-	globalRun := len(runAgencies) == 0 || slices.ContainsFunc(runAgencies, agencyid.IsGlobalName)
+	// globalName is the built-in agency's name now (2.5.2 GR: it may be renamed).
+	globalRun := len(runAgencies) == 0 || slices.Contains(runAgencies, globalName)
 	var owned, shared []candidate
 	for _, c := range cands {
 		switch {
@@ -584,11 +586,13 @@ func ownerInRunSQL(alias string) string {
 const danglingOwner = " (no such agency)"
 
 // marshalNames renders an agency set for the json_each parameter above. Always a
-// well-formed array — an empty run set is Global's (a run with no snapshot is
-// Global's: the 1220 trigger runs_born_global), and matches only Global's rows.
-func marshalNames(names []string) string {
+// well-formed array — an empty run set is the built-in agency's (a run with no
+// snapshot is: the trigger runs_born_global), and matches only its rows, by
+// globalName, its name now (2.5.2 GR).
+func marshalNames(names []string, globalName string) string {
 	if len(names) == 0 {
-		return `["` + agencyid.GlobalName + `"]`
+		b, _ := json.Marshal([]string{globalName})
+		return string(b)
 	}
 	b, err := json.Marshal(names)
 	if err != nil {
@@ -650,13 +654,14 @@ func scopeOrMissing(ctx context.Context, database *sql.DB, table string, b Bindi
 // this run is not in": the two are different facts that must collapse to one operator
 // message (M2), and the caller does exactly that.
 func lookupKeyID(ctx context.Context, database *sql.DB, label string, runAgencies []string) (id string, found bool, err error) {
+	g := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	rows, qerr := database.QueryContext(ctx, `
 		SELECT c.id, `+ownerNameSQL("c")+`
 		FROM ssh_credentials c
 		LEFT JOIN agencies ag ON ag.id = c.owner_agency
 		WHERE c.label = ?
 		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id")+`
-		ORDER BY c.id`, label, marshalNames(runAgencies))
+		ORDER BY c.id`, label, marshalNames(runAgencies, g))
 	if qerr != nil {
 		return "", false, fmt.Errorf("resolve key agencies %q: %w", label, qerr)
 	}
@@ -674,7 +679,7 @@ func lookupKeyID(ctx context.Context, database *sql.DB, label string, runAgencie
 	}
 	// runScope "" — keys have no scope axis, so the scope tiebreak is a no-op here
 	// and the tier decides alone.
-	win, ambiguous := pickOwned(cands, runAgencies, "")
+	win, ambiguous := pickOwned(cands, runAgencies, "", g)
 	if ambiguous {
 		return "", false, ErrAmbiguousReference
 	}
@@ -692,13 +697,14 @@ func lookupKeyID(ctx context.Context, database *sql.DB, label string, runAgencie
 //
 // A credential id that matches no row reports false: there is nothing to use.
 func KeyIDUsable(ctx context.Context, database *sql.DB, credentialID string, runAgencies []string) (bool, error) {
+	g := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	var n int
 	err := database.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM ssh_credentials c
 		WHERE c.id = ?
 		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id")+`
 		  AND `+ownerInRunSQL("c"),
-		credentialID, marshalNames(runAgencies), marshalNames(runAgencies)).Scan(&n)
+		credentialID, marshalNames(runAgencies, g), marshalNames(runAgencies, g)).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("resolve key agencies %q: %w", credentialID, err)
 	}
@@ -706,13 +712,14 @@ func KeyIDUsable(ctx context.Context, database *sql.DB, credentialID string, run
 }
 
 func keyInAgencies(ctx context.Context, database *sql.DB, label string, runAgencies []string) (bool, error) {
+	g := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	var hit int
 	err := database.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM ssh_credentials c
 		WHERE c.label = ?
 		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id")+`
 		  AND `+ownerInRunSQL("c"),
-		label, marshalNames(runAgencies), marshalNames(runAgencies)).Scan(&hit)
+		label, marshalNames(runAgencies, g), marshalNames(runAgencies, g)).Scan(&hit)
 	if err != nil {
 		return false, fmt.Errorf("resolve key agencies %q: %w", label, err)
 	}

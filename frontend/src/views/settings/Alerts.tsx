@@ -7,7 +7,9 @@ import { c } from "../../theme";
 import { GLOBAL_AGENCY, agenciesFor, useMyAccess } from "../../api/access";
 import { useAgencyOptional } from "../../agency";
 import { Btn, Card, Chip, csrfHeader, errMsg, inputStyle, lblStyle, tdStyle, thStyle } from "./ui";
+import { AgencyContactCard } from "./AgencyContact";
 import { ConfirmDialog, SkeletonRows, SortableLabel, statusLabel } from "../../components/ui";
+import { globalAgencyName } from "../../globalName";
 
 type AlertRule = components["schemas"]["AlertRule"];
 type AlertRuleInput = components["schemas"]["AlertRuleInput"];
@@ -39,7 +41,7 @@ export function AlertsSection({ isGlobal }: { isGlobal: boolean }) {
   // cannot be told, and then the server decides.
   const agency = ag?.agency ?? (isGlobal ? GLOBAL_AGENCY : mine.length === 1 ? mine[0].id : "");
   const agencyName =
-    ag?.agencyName ?? (agency === GLOBAL_AGENCY ? "Global" : mine.find((a) => a.id === agency)?.name ?? agency);
+    ag?.agencyName ?? (agency === GLOBAL_AGENCY ? globalAgencyName() : mine.find((a) => a.id === agency)?.name ?? agency);
   // While /me/access loads, or if it cannot be read, nothing here claims the
   // agency is somebody else's: the controls stay live and the server decides.
   const known = isGlobal || access != null;
@@ -69,6 +71,11 @@ export function AlertsSection({ isGlobal }: { isGlobal: boolean }) {
         To change another agency's, switch to it. The mail server and the Apprise gateway are the installation's, on
         Notifications.
       </div>
+      <AgencyContactCard
+        agency={agency}
+        agencyName={agencyName}
+        why={why && (agency === GLOBAL_AGENCY ? "Global's contact is a global administrator's to change." : `Only ${agencyName}'s administrators can change its contact.`)}
+      />
       <PushTargetsCard
         agency={agency}
         why={why}

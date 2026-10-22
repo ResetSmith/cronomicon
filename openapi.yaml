@@ -1910,6 +1910,92 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /workflow-runs/{traceId}/notes:
+    get:
+      tags: [Runs]
+      operationId: getWorkflowRunNotes
+      summary: A workflow run's notes and acknowledgement (v2.5.2)
+      description: As GET /runs/{traceId}/notes, for a workflow run; its read check is the workflow run's.
+      parameters: [{ $ref: '#/components/parameters/traceId' }]
+      responses:
+        '200':
+          description: The state and the entries, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunNotes' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Runs]
+      operationId: addWorkflowRunNote
+      summary: Add a note to a workflow run, or acknowledge it (v2.5.2)
+      description: As POST /runs/{traceId}/notes, for a workflow run.
+      parameters: [{ $ref: '#/components/parameters/traceId' }, { $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RunNoteInput' }
+      responses:
+        '200':
+          description: The state and the entries after the call.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunNotes' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /runs/{traceId}/notes:
+    get:
+      tags: [Runs]
+      operationId: getRunNotes
+      summary: A run's notes and acknowledgement (v2.5.2)
+      description: |
+        2.5.2 (OP3). What a shift knew about the run, for the next one: an
+        append-only record of notes, and of acknowledging the run and taking
+        that back. `acknowledged` is the latest acknowledgement still in force.
+        Readable by anyone who can read the run (its own read check; 404
+        otherwise). Not narrowed by `X-Cronomicon-Agency`, as a single run's
+        read never is.
+      parameters: [{ $ref: '#/components/parameters/traceId' }]
+      responses:
+        '200':
+          description: The state and the entries, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunNotes' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Runs]
+      operationId: addRunNote
+      summary: Add a note to a run, or acknowledge it (v2.5.2)
+      description: |
+        2.5.2 (OP3). Anyone who can read the run (404 otherwise). `note` needs
+        text; `acknowledged` may carry the first note; `unacknowledged` takes an
+        acknowledgement back. Acknowledging an acknowledged run, or taking back
+        one that is not there, records nothing and answers the state as it is.
+        At most 1,000 characters, trimmed. Entries are never edited or deleted;
+        they go with their run. Each is in the run's agency's change log (with
+        the text) and Activity, category `Runs`. Notes are not redacted: do not
+        paste credentials. CSRF required.
+      parameters: [{ $ref: '#/components/parameters/traceId' }, { $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RunNoteInput' }
+      responses:
+        '200':
+          description: The state and the entries after the call.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunNotes' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+
   /workflows/runs/{traceId}/cancel:
     post:
       tags: [Workflows]
@@ -3815,9 +3901,9 @@ paths:
       summary: Update an agency
       description: |
         A rename is carried onto the runs that are waiting or running under the old
-        name, so they stay claimable. The built-in agency Global cannot be renamed
-        (422 `builtin_agency`), and no other agency may take its name (422
-        `name_reserved`).
+        name, so they stay claimable. Since 2.5.2 (GR) the built-in agency (id
+        `global`) is renamed like any other, and no name is reserved: names are
+        unique (409), and that is the only rule.
       parameters: [{ $ref: '#/components/parameters/agencyId' }, { $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -5966,6 +6052,86 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
 
   # ── Settings (DB-backed config per §2.2) ───────────────────────────────────
+  /settings/alert-link-address:
+    get:
+      tags: [Settings]
+      operationId: getAlertLinkAddress
+      summary: The address alerts link to (v2.5.2)
+      description: |
+        2.5.2 (OP2.1). A run alert ends with an `Open:` link to the run under this
+        address. Recorded from the first global administrator's browser
+        (POST …/detect), shown on Settings → Notifications, and changed there.
+        Empty: alerts carry no link. A global administrator's.
+      responses:
+        '200':
+          description: The stored address (all fields empty when none is).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertLinkAddress' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [Settings]
+      operationId: setAlertLinkAddress
+      summary: Set the address alerts link to (v2.5.2)
+      description: |
+        A global administrator's. An absolute http:// or https:// address with a
+        host and no query, fragment or user; a path is kept; a trailing slash is
+        trimmed. "" clears it: alerts carry no link, and nothing records one over
+        it again. The field is required. In Global's change log
+        (`alert-link-address-set`). CSRF required.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: { type: string }
+      responses:
+        '200':
+          description: The address as stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertLinkAddress' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /settings/alert-link-address/detect:
+    post:
+      tags: [Settings]
+      operationId: detectAlertLinkAddress
+      summary: Record the address a global administrator's browser is at (v2.5.2)
+      description: |
+        Sent by the app when a global administrator opens it: the page's own
+        address. Stored only when no address is (detected, set or cleared), so
+        the first visit decides and a later one through another name changes
+        nothing. Answers with the address stored after the call. Validated as
+        PUT is. In Global's change log when it records
+        (`alert-link-address-detected`). CSRF required.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: { type: string }
+      responses:
+        '200':
+          description: The address stored after the call.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertLinkAddress' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
   /settings/freeze:
     get:
       tags: [Settings]
@@ -5990,6 +6156,14 @@ paths:
       description: |
         A global administrator's (configureApp on every agency). Turning it on
         takes a reason (422 without one), at most 500 characters. Audited.
+
+        2.5.2 (FZ-1 to FZ-6): it may carry a window, `from` and `until` (RFC 3339,
+        stored in UTC), each optional: no `from` is from now, no `until` is until
+        lifted. `until` must be later than now and than `from` (422). The window is
+        judged at the moment in question, so a freeze begins and ends on time with
+        nothing to wake up for it. Turning it off ends a running window early and
+        cancels one that has not begun. The change log records the window when it
+        is set; a window that simply ends records nothing.
       parameters: [{ $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -6001,6 +6175,8 @@ paths:
               properties:
                 on: { type: boolean }
                 reason: { type: string }
+                from: { type: string, format: date-time }
+                until: { type: string, format: date-time }
       responses:
         '200':
           description: The freeze as written.
@@ -7379,6 +7555,41 @@ paths:
               required: [maxConcurrent]
               properties:
                 maxConcurrent: { type: [integer, 'null'], minimum: 1 }
+      responses:
+        '200':
+          description: The agency as stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agency' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /agencies/{agencyId}/contact:
+    put:
+      tags: [Agencies]
+      operationId: setAgencyContact
+      summary: Set who to call about an agency's runs (v2.5.2)
+      description: |
+        2.5.2 (OP-28). The agency's contact: who the central team calls about its
+        runs when the job or workflow names no contact of its own (shown on the
+        overview's attention items and on run details, marked as the agency's).
+        The agency's administrators (`configureApp` on it) or a global
+        administrator; Global's by a global administrator. At most 256
+        characters, trimmed; "" clears it. The field is required, so a body
+        without it clears nothing. A change is in the agency's change log
+        (`contact-set`). CSRF required.
+      parameters: [{ $ref: '#/components/parameters/agencyId' }, { $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contact]
+              properties:
+                contact: { type: string, maxLength: 256 }
       responses:
         '200':
           description: The agency as stored.
@@ -9391,6 +9602,71 @@ components:
           type: string
           maxLength: 4096
           description: Free-text operator notes. Plain text; newlines are significant.
+    RunAcknowledgement:
+      type: object
+      readOnly: true
+      description: 2.5.2 (OP-9) — who acknowledged a run, how they stood to its agency then, and when.
+      required: [by, relation, at]
+      properties:
+        by: { type: string }
+        relation: { type: string, enum: [member, global_admin, outside, system], description: 'auth.Identity.RelationTo, judged when written: outside, on a run, is someone whose access reaches every agency.' }
+        at: { type: string, format: date-time }
+    RunNoteEntry:
+      type: object
+      readOnly: true
+      required: [id, kind, body, author, relation, at]
+      properties:
+        id: { type: integer }
+        kind: { type: string, enum: [note, acknowledged, unacknowledged] }
+        body: { type: string, description: Empty on an acknowledgement or its taking back that carried no text. }
+        author: { type: string }
+        relation: { type: string, enum: [member, global_admin, outside, system] }
+        at: { type: string, format: date-time }
+    RunNotes:
+      type: object
+      readOnly: true
+      description: 2.5.2 (OP3) — a run's record.
+      required: [acknowledged, notes]
+      properties:
+        acknowledged:
+          oneOf:
+            - $ref: '#/components/schemas/RunAcknowledgement'
+            - type: 'null'
+          description: The acknowledgement in force; null when there is none.
+        notes:
+          type: array
+          description: Every entry, oldest first.
+          items: { $ref: '#/components/schemas/RunNoteEntry' }
+    RunNoteInput:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [note, acknowledged, unacknowledged] }
+        body: { type: string, maxLength: 1000, description: Required for a note; optional otherwise. }
+    RunNotesSummary:
+      type: object
+      readOnly: true
+      description: 2.5.2 (OP-18) — a run's record in brief, on the run lists; absent from a run with no entries.
+      required: [acknowledged, count]
+      properties:
+        acknowledged: { type: boolean }
+        count: { type: integer, description: Entries that carry text. }
+    RunAnnotation:
+      type: object
+      readOnly: true
+      description: >-
+        2.5.2 (OP-2) — who to call about a run: its job's or workflow's annotation contact and
+        critical flag, read when the run is read (a later edit of the annotation shows here).
+        The notes stay on the job; the run detail links there.
+      required: [contact, critical]
+      properties:
+        contact: { type: string, description: Empty when the annotation names no contact. }
+        critical: { type: boolean }
+        agencyContact:
+          type: string
+          description: >-
+            2.5.2 (OP-28) — the run's agency's contact, when `contact` is empty and the agency
+            has one. A run with no definition carries the annotation for this alone.
     Job:
       type: object
       description: |
@@ -10887,12 +11163,30 @@ components:
         localKeepDays: { type: integer }
         bucket: { type: string, description: "The S3 bucket backups are uploaded to; empty when they are kept locally only." }
         schedule: { type: string, description: "The daily UTC time of the backup (CRONOMICON_BACKUP_AT)." }
+    AlertLinkAddress:
+      type: object
+      readOnly: true
+      description: 2.5.2 (OP2.1) — the address alerts link to, and how it got there.
+      required: [address]
+      properties:
+        address: { type: string, description: Empty when none is stored, or when it was cleared. }
+        source: { type: string, enum: [detected, set], description: Absent when nothing was ever stored. }
+        by: { type: string, description: Whose browser it was recorded from, or who set it. }
+        at: { type: string, format: date-time }
+
     InstallationFreeze:
       type: object
       required: [on, reason]
       properties:
         on: { type: boolean }
         reason: { type: string }
+        from: { type: string, format: date-time, description: '2.5.2 (FZ-1) — when the window begins (UTC); absent is from when it was set.' }
+        until: { type: string, format: date-time, description: '2.5.2 (FZ-1) — when the window ends (UTC, exclusive); absent is until lifted.' }
+        state:
+          type: string
+          readOnly: true
+          enum: [off, scheduled, in_effect, ended]
+          description: '2.5.2 (FZ-4) — the freeze now: off; scheduled (before from); in_effect; ended (at or after until).'
         setBy: { type: string }
         setAt: { type: string, format: date-time }
     CalendarInput:
@@ -11153,6 +11447,14 @@ components:
             two jobs, and unlike `jobId` (a database rowid) it is never reused —
             key integrations on this.
         jobName: { type: string, readOnly: true }
+        annotation:
+          $ref: '#/components/schemas/RunAnnotation'
+          description: >-
+            2.5.2 (OP-2) — the run's job's contact and critical flag, read now by `jobUid`. On
+            GET /runs/{traceId} only; absent when the run has no job uid and its agency no contact; never on the list.
+        notes:
+          $ref: '#/components/schemas/RunNotesSummary'
+          description: 2.5.2 (OP-18) — on the list (GET /runs) only, and only on a run with entries.
         jobSource:
           type: string
           enum: [git, cronomicon]
@@ -11415,12 +11717,24 @@ components:
           type: array
           readOnly: true
           items: { type: string, format: uuid }
+        notes:
+          $ref: '#/components/schemas/RunNotesSummary'
+          description: 2.5.2 (OP-18) — on the list (GET /workflow-runs) only, and only on a run with entries.
 
     WorkflowRunDetail:
       allOf:
         - $ref: '#/components/schemas/WorkflowRun'
         - type: object
           properties:
+            ownerAgency:
+              type: string
+              readOnly: true
+              description: 2.5.2 (OP4) — the id of the agency the run is (its owner, as the read check judges it).
+            annotation:
+              $ref: '#/components/schemas/RunAnnotation'
+              description: >-
+                2.5.2 (OP-2) — the workflow's contact and critical flag, read now by
+                `workflowUid`; absent when the run has no workflow uid.
             steps:
               type: array
               items: { $ref: '#/components/schemas/WorkflowRunStep' }
@@ -12772,15 +13086,23 @@ components:
                 one of its runs is produced, its runs waiting and running are counted
                 against it; at the claim, its running runs. The installation's cap
                 binds as well. Set with PUT /agencies/{agencyId}/concurrency.
+            contact:
+              type: string
+              readOnly: true
+              description: >-
+                2.5.2 (OP-28) — who the central team calls about the agency's runs when
+                the job or workflow names no contact of its own; empty is none. Free
+                text, display-only. Set with PUT /agencies/{agencyId}/contact.
             builtin:
               type: boolean
               readOnly: true
               description: >-
-                True for **Global** (id `global`), the one agency every installation has
-                (v2.3.0, LR-21). It cannot be renamed or deleted (422 `builtin_agency`), no
-                other agency may be called Global in any letter case (422 `name_reserved`),
-                and no access grant or service account may name it: it belongs to the global
-                administrators, and the way to be one is an all-scopes grant.
+                True for the built-in agency (id `global`), the one agency every installation
+                has (v2.3.0, LR-21): "Central" on an installation made with 2.5.2 or later,
+                "Global" on an older one until it is renamed (2.5.2 GR: it may be renamed; it
+                cannot be deleted, 422 `builtin_agency`). No access grant or service account may
+                name it: it belongs to the global administrators, and the way to be one is an
+                all-scopes grant.
         - $ref: '#/components/schemas/AuditFields'
 
     AgencyInput:
@@ -15343,6 +15665,7 @@ components:
         effectiveDefault: { type: string, description: Where a visit with no agency in its address starts. }
         workingAgency: { type: string, description: The agency the lists use; on the overview, the rule without it. }
         canOverview: { type: boolean, description: True when the caller's grant reaches every agency. }
+        globalName: { type: string, description: '2.5.2 (GR) — the built-in agency''s name now (id `global`): Central on a new installation, Global on an older one until renamed.' }
     OperationsOverview:
       type: object
       description: The Operations overview (v2.4.4; GET /overview).
@@ -15358,6 +15681,7 @@ components:
               name: { type: string }
               jobs: { type: integer }
               pausedJobs: { type: integer }
+              scheduledJobs: { type: integer, description: '2.5.2 (OP-26) — jobs on a schedule (not manual): the agency Dashboard''s "Active schedules".' }
               workflows: { type: integer }
               pausedWorkflows: { type: integer }
               runs24h:
@@ -15383,6 +15707,33 @@ components:
               name: { type: string }
               id: { type: string, description: The job's or workflow's uid, or the run's job's. }
               traceId: { type: string, description: The run (or workflow run) to open. }
+              contact:
+                type: string
+                description: >-
+                  2.5.2 (OP-1) — the job's or workflow's annotation contact; absent when it has none,
+                  and on a sync item.
+              critical:
+                type: boolean
+                description: 2.5.2 (OP-1) — the annotation's critical flag; absent when false.
+              agencyContact:
+                type: string
+                description: >-
+                  2.5.2 (OP-28) — the agency's contact, when the item names none of its own (a
+                  repository's item included) and the agency has one.
+              acknowledged:
+                $ref: '#/components/schemas/RunAcknowledgement'
+                description: 2.5.2 (OP-20) — the run's acknowledgement; absent when it is not acknowledged.
+              latestNote: { type: string, description: '2.5.2 (OP-20) — the latest entry with text on the run; absent when none.' }
+              noteCount: { type: integer, description: '2.5.2 (OP-20) — how many entries on the run carry text; absent when none.' }
+              previousAck:
+                type: object
+                description: >-
+                  2.5.2 (OP-11) — on a failed job: its previous failed run was acknowledged, by
+                  whom, and when that run was. Absent otherwise.
+                required: [by, runAt]
+                properties:
+                  by: { type: string }
+                  runAt: { type: string, format: date-time }
               at: { type: string }
         attentionTotal: { type: integer, description: How many need attention; at most 100 are listed. }
         generatedAt: { type: string, format: date-time }

@@ -548,7 +548,7 @@ func scopeAgencyIDs(ctx context.Context, db *sql.DB, scopeID string) ([]string, 
 func ScopeAgencies(ctx context.Context, db *sql.DB, agency, scope string) ([]string, error) {
 	out := []string{}
 	if scope == "" {
-		return []string{agencyid.GlobalName}, nil
+		return []string{agencyid.CurrentGlobalName(ctx, db)}, nil
 	}
 	if agency == "" {
 		agency = agencyid.Global
@@ -589,7 +589,7 @@ func ScopeAgencies(ctx context.Context, db *sql.DB, agency, scope string) ([]str
 	if known {
 		return nil, fmt.Errorf("%w: %q", ErrScopeHasNoAgency, scope)
 	}
-	return []string{agencyid.GlobalName}, nil
+	return []string{agencyid.CurrentGlobalName(ctx, db)}, nil
 }
 
 // ownerOrGlobal is an agency id, Global's for none: a caller that does not

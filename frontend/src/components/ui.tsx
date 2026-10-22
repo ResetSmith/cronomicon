@@ -14,6 +14,7 @@ import terraformIcon from "../assets/hashicorp-terraform.webp";
 import pythonIcon from "../assets/python.webp";
 import shellIconLight from "../assets/shell-tips-light.webp";
 import shellIconDark from "../assets/shell-tips-dark.webp";
+import { globalAgencyName } from "../globalName";
 
 // ── Status → color/tint ──────────────────────────────────────────────────────
 // Maps semantic run/job statuses onto the palette. `bg` uses the prototype's
@@ -434,7 +435,7 @@ export function DerivedAgencies({
 export function agencySortKey(agencies: string[] | undefined, scope?: string | null): string {
   const list = agencies ?? [];
   if (list.length > 0) return list.join(", ");
-  return scope != null && scope === "" ? "Global" : "";
+  return scope != null && scope === "" ? globalAgencyName() : "";
 }
 
 // ── InlineTags (capped table cell) ───────────────────────────────────────────

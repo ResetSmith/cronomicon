@@ -3,6 +3,7 @@ import { api, fetchCapabilities } from "../api/client";
 import { GLOBAL_AGENCY, agenciesFor, fetchMyAccess, type AgencyRef } from "../api/access";
 import { c } from "../theme";
 import { useAgencyOptional } from "../agency";
+import { globalAgencyName } from "../globalName";
 
 type Agency = { id?: string; name?: string };
 
@@ -65,7 +66,7 @@ export function useCreationAgencies(isEdit: boolean, permission?: "configureApp"
       let options: AgencyRef[] = [];
       try {
         if (isGlobal) {
-          options = [{ id: GLOBAL_AGENCY, name: "Global" }, ...(await catalog())];
+          options = [{ id: GLOBAL_AGENCY, name: globalAgencyName() }, ...(await catalog())];
         } else {
           const mine = permission ? agenciesFor(await fetchMyAccess(), permission) : [];
           // Their own agencies when the server could say; otherwise the catalog,
@@ -76,7 +77,7 @@ export function useCreationAgencies(isEdit: boolean, permission?: "configureApp"
         // A failed read leaves whatever was gathered (Global, for a global
         // administrator). The form must still settle: with nothing to choose
         // from, the server names the owner or says what is missing.
-        if (isGlobal && options.length === 0) options = [{ id: GLOBAL_AGENCY, name: "Global" }];
+        if (isGlobal && options.length === 0) options = [{ id: GLOBAL_AGENCY, name: globalAgencyName() }];
       }
       if (cancelled) return;
       setGlobal(isGlobal);

@@ -12,22 +12,46 @@
 // same way without importing one another.
 package agencyid
 
+import (
+	"context"
+	"database/sql"
+)
+
 const (
 	// Global is the agency's id. It is fixed, unlike every other agency's
 	// (which is generated), because code and triggers name it.
 	Global = "global"
 
-	// GlobalName is its name, and it never changes: a run stores its agencies by
-	// NAME (runs.agencies_json, run_agencies.agency), so a snapshot that says
-	// "Global" must mean this agency for as long as the row exists. The catalog
-	// refuses to rename or delete the built-in row, and refuses another agency
-	// this name in any letter case.
+	// GlobalName is the name migration 1220 gave it. Since 2.5.2 (GR) the name
+	// may change — a new installation calls it "Central", and a global
+	// administrator may rename it — so code that writes or compares the
+	// agency's name reads it by id (CurrentGlobalName); this is only what an
+	// installation from before 2.5.2 calls it until then, and the fallback
+	// when the catalog cannot be read. Runs store their agencies by NAME, and
+	// the rename path carries a new name onto waiting runs.
 	GlobalName = "Global"
 )
 
-// IsGlobalName reports whether name is Global's, in any letter case. It is the
-// reservation check: "global" and "GLOBAL" would be read as this agency by
-// every person who saw them, so no other agency may hold them.
+// Queryer is what CurrentGlobalName reads through (a *sql.DB or *sql.Tx).
+type Queryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// CurrentGlobalName is the built-in agency's name now, read by its id (2.5.2
+// GR): what a run snapshot must carry to be this agency's, and what a name
+// comparison must compare with. GlobalName when it cannot be read.
+func CurrentGlobalName(ctx context.Context, q Queryer) string {
+	var name string
+	if err := q.QueryRowContext(ctx, `SELECT name FROM agencies WHERE id = ?`, Global).Scan(&name); err != nil || name == "" {
+		return GlobalName
+	}
+	return name
+}
+
+// IsGlobalName reports whether name is "Global", in any letter case: the name
+// migration 1220 gave the built-in agency. Until 2.5.2 it was the reservation
+// check; since GR the name is not reserved and may change, so a comparison
+// with the agency's name now uses CurrentGlobalName.
 func IsGlobalName(name string) bool {
 	if len(name) != len(GlobalName) {
 		return false

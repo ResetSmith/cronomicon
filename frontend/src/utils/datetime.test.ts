@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { fmtInAppZone, setAppZone, appZone, appZoneParts } from "./datetime";
+import { fmtInAppZone, setAppZone, appZone, appZoneParts, appZoneLocalToISO, isoToAppZoneLocal, appZoneName } from "./datetime";
 
 // fmtInAppZone is the single formatter every absolute timestamp routes through
 // (timezone-update §5). These tests pin that the app zone is honored: a fixed UTC
@@ -76,5 +76,28 @@ describe("fmtInAppZone — Activity/History format (VC.2)", () => {
     setAppZone("America/New_York"); // UTC-4 in July
     const out = fmtInAppZone("2026-07-01T21:43:55Z", ACTIVITY_OPTS);
     expect(out).toMatch(/17:43/);
+  });
+});
+
+// 2.5.2 FZ — a time typed for the freeze's window is read in the app zone,
+// whatever the browser's clock says.
+describe("appZoneLocalToISO / isoToAppZoneLocal", () => {
+  afterEach(() => setAppZone(undefined));
+  it("reads a wall time in the app zone, summer and winter", () => {
+    setAppZone("America/Los_Angeles");
+    expect(appZoneName()).toBe("America/Los_Angeles");
+    expect(appZoneLocalToISO("2026-07-01T09:30")).toBe("2026-07-01T16:30:00Z"); // PDT, UTC-7
+    expect(appZoneLocalToISO("2026-12-24T18:00")).toBe("2026-12-25T02:00:00Z"); // PST, UTC-8
+    setAppZone("Europe/Berlin");
+    expect(appZoneLocalToISO("2026-12-24T18:00")).toBe("2026-12-24T17:00:00Z");
+  });
+  it("goes back to the same wall time", () => {
+    setAppZone("Asia/Tokyo");
+    expect(isoToAppZoneLocal("2026-10-24T09:00:00Z")).toBe("2026-10-24T18:00");
+    expect(isoToAppZoneLocal(appZoneLocalToISO("2026-10-24T18:00") as string)).toBe("2026-10-24T18:00");
+  });
+  it("refuses what is not a datetime-local value", () => {
+    expect(appZoneLocalToISO("tomorrow")).toBeNull();
+    expect(appZoneLocalToISO("")).toBeNull();
   });
 });

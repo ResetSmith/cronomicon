@@ -9,6 +9,7 @@ import { SkeletonRows } from "../../components/ui";
 import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../../api/access";
 import { useAgencyOptional } from "../../agency";
 import { Btn, Card, StatusBadge, csrfHeader, errMsg, fmtDateTime, inputStyle } from "./ui";
+import { globalAgencyName } from "../../globalName";
 
 type SshHost = components["schemas"]["SshHost"];
 type SshHostInput = components["schemas"]["SshHostInput"];
@@ -257,7 +258,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
   const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
   const catalog = rows<{ id: string; name: string }>(catalogQ.data);
   const owners: AgencyRef[] = canWrite
-    ? [{ id: GLOBAL_AGENCY, name: "Global" }, ...catalog.filter((a) => a.id !== GLOBAL_AGENCY)]
+    ? [{ id: GLOBAL_AGENCY, name: globalAgencyName() }, ...catalog.filter((a) => a.id !== GLOBAL_AGENCY)]
     : agenciesFor(access ?? null, "configureApp");
   const mine = new Set(owners.map((a) => a.id));
   // The agency the person works in, where a new record is created (below).
@@ -269,7 +270,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
   // server decides, as it does on the Runners page.
   const known = canWrite || access != null;
   const ownerName = (id?: string | null, name?: string | null) =>
-    name || owners.find((a) => a.id === id)?.name || catalog.find((a) => a.id === id)?.name || (id === GLOBAL_AGENCY || !id ? "Global" : id);
+    name || owners.find((a) => a.id === id)?.name || catalog.find((a) => a.id === id)?.name || (id === GLOBAL_AGENCY || !id ? globalAgencyName() : id);
   // Why "+ Add" is disabled: the caller administers no agency to create one for.
   const addWhy =
     known && owners.length === 0

@@ -3471,7 +3471,70 @@ func (s *Server) listWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 			"jobTraceIds":          s.childTraceIDs(r, b.traceID),
 		})
 	}
+	s.attachRunNoteSummaries(r.Context(), runNotesByWR, items) // 2.5.2 OP-18
 	httpx.JSON(w, http.StatusOK, pageEnvelope(page, pageSize, total, items))
+}
+
+// workflowRunReadable is the read check of one workflow run (FR-H2 IDOR
+// mitigation, A5 fix), after whose the run is (2.5.0 C2, CF-1; 1520): another
+// agency's run, or Global's, whose jobs have no scope (or that had not reached
+// a job) passed. Refused as absent (question 72; it was 403, which confirmed
+// the run). It answers the refusal itself and returns false. Shared by the
+// run's GET and its notes (2.5.2 OP-13), so the two cannot disagree.
+func (s *Server) workflowRunReadable(w http.ResponseWriter, r *http.Request, wrAgency string, stepsSnapshot sql.NullString, children []wfChildRun) bool {
+	id, hasID := auth.IdentityFrom(r.Context())
+	if !hasID || id.Unrestricted() {
+		return true
+	}
+	if !id.ReadsAgency(wrAgency) {
+		s.notReadable(w, r, "", "workflow run")
+		return false
+	}
+	for _, cr := range children {
+		if !auth.ScopeReadableIn(id, cr.scopeOwner, cr.scope) {
+			s.notReadable(w, r, cr.scope, "workflow run")
+			return false
+		}
+	}
+	stepScopes, err := s.workflowRunStepScopes(r.Context(), stepsSnapshot, wrAgency)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	for _, st := range stepScopes {
+		if !auth.ScopeReadableIn(id, st.owner, st.scope) {
+			s.notReadable(w, r, st.scope, "workflow run")
+			return false
+		}
+	}
+	return true
+}
+
+// requireReadableWorkflowRun finds one workflow run and applies its read check:
+// its agency (the owner, as the GET reads it) and true, or the 404 answered.
+func (s *Server) requireReadableWorkflowRun(w http.ResponseWriter, r *http.Request, traceID string) (string, bool) {
+	var wrAgency string
+	var stepsSnapshot sql.NullString
+	err := s.db.QueryRowContext(r.Context(), `
+		SELECT `+agencyid.ColumnOwnerSQL("workflow_runs", "agency_id")+`, steps_snapshot
+		FROM workflow_runs WHERE id = ?`, traceID).Scan(&wrAgency, &stepsSnapshot)
+	if errors.Is(err, sql.ErrNoRows) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow run not found")
+		return "", false
+	}
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return "", false
+	}
+	children, err := s.loadWorkflowChildRuns(r, traceID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return "", false
+	}
+	if !s.workflowRunReadable(w, r, wrAgency, stepsSnapshot, children) {
+		return "", false
+	}
+	return wrAgency, true
 }
 
 func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
@@ -3483,11 +3546,12 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	var durationMs sql.NullInt64
 	var cancelled int
 	var wrAgency string
+	var wfUID sql.NullString
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT workflow_id, workflow_name, status, triggered_by, started_at, completed_at, schedule_name, duration_ms, steps_snapshot, cancelled,
-		       `+agencyid.ColumnOwnerSQL("workflow_runs", "agency_id")+`
+		       `+agencyid.ColumnOwnerSQL("workflow_runs", "agency_id")+`, workflow_uid
 		FROM workflow_runs WHERE id = ?
-	`, traceID).Scan(&wrid, &wfName, &status, &triggeredBy, &startedAt, &completedAt, &scheduleName, &durationMs, &stepsSnapshot, &cancelled, &wrAgency)
+	`, traceID).Scan(&wrid, &wfName, &status, &triggeredBy, &startedAt, &completedAt, &scheduleName, &durationMs, &stepsSnapshot, &cancelled, &wrAgency, &wfUID)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow run not found")
 		return
@@ -3505,34 +3569,8 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Scope access check (FR-H2 IDOR mitigation, A5 fix), after whose the run
-	// is (2.5.0 C2, CF-1; 1520): another agency's run, or Global's, whose jobs
-	// have no scope (or that had not reached a job) passed. Refused as absent
-	// (question 72; it was 403, which confirmed the run).
-	id, hasID := auth.IdentityFrom(r.Context())
-	if hasID && !id.Unrestricted() {
-		if !id.ReadsAgency(wrAgency) {
-			s.notReadable(w, r, "", "workflow run")
-			return
-		}
-		for _, cr := range children {
-			if !auth.ScopeReadableIn(id, cr.scopeOwner, cr.scope) {
-				s.notReadable(w, r, cr.scope, "workflow run")
-				return
-			}
-		}
-
-		stepScopes, err := s.workflowRunStepScopes(r.Context(), stepsSnapshot, wrAgency)
-		if err != nil {
-			httpx.Fail500(w, s.log, "db_error", err)
-			return
-		}
-		for _, st := range stepScopes {
-			if !auth.ScopeReadableIn(id, st.owner, st.scope) {
-				s.notReadable(w, r, st.scope, "workflow run")
-				return
-			}
-		}
+	if !s.workflowRunReadable(w, r, wrAgency, stepsSnapshot, children) {
+		return
 	}
 	stats := make(map[string]nodeStat, len(children))
 	jobIDs := make([]string, 0, len(children))
@@ -3547,6 +3585,8 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"traceId":      traceID,
 		"workflowId":   nullInt64Val(wrid),
+		"workflowUid":  nullStrVal(wfUID),
+		"ownerAgency":  wrAgency, // 2.5.2 OP4: whose it is, for the notes' author labels
 		"workflowName": wfName,
 		"status":       workflowDisplayStatus(status, cancelled),
 		"triggeredBy":  nullStrVal(triggeredBy),
@@ -3558,6 +3598,9 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		"jobTraceIds":  jobIDs,
 		"steps":        s.workflowRunSteps(r, children, containers),
 		"graph":        workflowRunGraph(stepsSnapshot.String, stats),
+	}
+	if ann := s.runAnnotation(r.Context(), "workflow", wfUID.String, wrAgency); ann != nil {
+		resp["annotation"] = ann
 	}
 	httpx.JSON(w, http.StatusOK, resp)
 }
@@ -4281,47 +4324,87 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	for _, rr := range raws {
 		items = append(items, s.runToMap(rr, caches))
 	}
+	s.attachRunNoteSummaries(r.Context(), runNotesByRun, items) // 2.5.2 OP-18
 	httpx.JSON(w, http.StatusOK, pageEnvelope(page, pageSize, total, items))
 }
 
-func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
-	traceID := r.PathValue("traceId")
+// requireReadableRun finds one run and applies its read check (FR-H2 IDOR
+// mitigation, A5 fix): an unrestricted actor sees every run; everyone else may
+// read only global runs plus their granted scopes, after whose the run is. The
+// run (as GET /runs/{traceId} serves it) and true, or the 404 answered. Shared
+// by the run's GET and its notes (2.5.2 OP-13), so the two cannot disagree.
+func (s *Server) requireReadableRun(w http.ResponseWriter, r *http.Request, traceID string) (map[string]any, bool) {
 	run := s.fetchRunByID(r, traceID)
 	if run == nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
+		return nil, false
+	}
+	id, hasID := auth.IdentityFrom(r.Context())
+	if !hasID || id.Unrestricted() {
+		return run, true
+	}
+	var scope string
+	if scVal, ok := run["scope"]; ok && scVal != nil {
+		if sStr, ok := scVal.(string); ok {
+			scope = sStr
+		}
+	}
+	// The agency the run's scope is looked for in (I2), from its snapshot.
+	var agencies []string
+	if a, ok := run["agencies"].([]string); ok {
+		agencies = a
+	}
+	runOwner, oerr := execspec.RunScopeOwner(r.Context(), s.db, agencies)
+	if oerr != nil {
+		httpx.Fail500(w, s.log, "db_error", oerr)
+		return nil, false
+	}
+	// Whose the run is first (2.5.0 C2, CF-1; 1480's owner): another agency's
+	// no-scope run, and Global's, passed the scope check. Refused as absent
+	// (question 72; it was 403, which confirmed the run).
+	owner, _ := run["ownerAgency"].(string)
+	if !id.ReadsAgency(agencyOrGlobal(owner)) || !auth.ScopeReadableIn(id, runOwner, scope) {
+		s.notReadable(w, r, scope, "run")
+		return nil, false
+	}
+	return run, true
+}
+
+func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.requireReadableRun(w, r, r.PathValue("traceId"))
+	if !ok {
 		return
 	}
-
-	// Scope access check (FR-H2 IDOR mitigation, A5 fix): an unrestricted actor sees
-	// every run; everyone else may read only global runs plus their granted scopes.
-	id, hasID := auth.IdentityFrom(r.Context())
-	if hasID && !id.Unrestricted() {
-		var scope string
-		if scVal, ok := run["scope"]; ok && scVal != nil {
-			if sStr, ok := scVal.(string); ok {
-				scope = sStr
-			}
-		}
-		// The agency the run's scope is looked for in (I2), from its snapshot.
-		var agencies []string
-		if a, ok := run["agencies"].([]string); ok {
-			agencies = a
-		}
-		runOwner, oerr := execspec.RunScopeOwner(r.Context(), s.db, agencies)
-		if oerr != nil {
-			httpx.Fail500(w, s.log, "db_error", oerr)
-			return
-		}
-		// Whose the run is first (2.5.0 C2, CF-1; 1480's owner): another
-		// agency's no-scope run, and Global's, passed the scope check. Refused
-		// as absent (question 72; it was 403, which confirmed the run).
-		owner, _ := run["ownerAgency"].(string)
-		if !id.ReadsAgency(agencyOrGlobal(owner)) || !auth.ScopeReadableIn(id, runOwner, scope) {
-			s.notReadable(w, r, scope, "run")
-			return
-		}
+	// Who to call (2.5.2 OP-2), on the detail only: the list never pays for it.
+	jobUID, _ := run["jobUid"].(string)
+	owner, _ := run["ownerAgency"].(string)
+	if ann := s.runAnnotation(r.Context(), "job", jobUID, agencyOrGlobal(owner)); ann != nil {
+		run["annotation"] = ann
 	}
 	httpx.JSON(w, http.StatusOK, run)
+}
+
+// runAnnotation is who to call about a run (2.5.2 OP-2): its job's or workflow's
+// annotation contact and critical flag, read now by uid, so a contact edited
+// after the run shows, and the run's agency's contact (OP-28) when the
+// definition names none. nil when there is neither a definition nor an agency
+// contact, so the field is absent rather than empty; an unannotated definition
+// is an empty contact.
+func (s *Server) runAnnotation(ctx context.Context, kind, uid, agency string) map[string]any {
+	out := map[string]any{"contact": "", "critical": false}
+	if uid != "" {
+		a := s.loadAnnotation(ctx, kind, uid)
+		out["contact"], out["critical"] = a.contact, a.critical
+	}
+	if out["contact"] == "" {
+		if c := settings.AgencyContact(ctx, s.db, agency); c != "" {
+			out["agencyContact"] = c
+		}
+	}
+	if uid == "" && out["agencyContact"] == nil {
+		return nil
+	}
+	return out
 }
 
 func (s *Server) fetchRunByID(r *http.Request, traceID string) map[string]any {

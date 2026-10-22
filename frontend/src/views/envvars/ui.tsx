@@ -17,8 +17,8 @@ export { csrfHeader, errMsg };
  */
 export function rowFlagWhy(flag: boolean | undefined, owner: string | null | undefined, noun: string): string {
   if (flag !== false) return "";
-  return !owner || owner === "Global"
-    ? `This ${noun} is Global's — only a global administrator (a role on every agency) can change it.`
+  return !owner || owner === globalAgencyName()
+    ? `This ${noun} is ${globalAgencyName()}'s — only a global administrator (a role on every agency) can change it.`
     : `This ${noun} belongs to ${owner} — only that agency's administrators can change it.`;
 }
 
@@ -102,6 +102,7 @@ export function DetailGrid({ children }: { children: ReactNode }) {
 // in was a rename, not a rewrite. Re-exported under the old name so the three
 // tabs' imports keep working.
 import { SectionLabel } from "../../components/ui";
+import { globalAgencyName } from "../../globalName";
 export { SectionLabel as DetailLabel };
 
 export function DetailRow({ label, value, last }: { label: string; value: ReactNode; last?: boolean }) {
@@ -386,8 +387,8 @@ export function OwnerChip({ owner }: { owner?: string | null }) {
         // 2.5.0 C11, defect 90: a row is its owner's runs' alone since 2.4.0
         // (§0a, IN-6). The text said Global's was every agency's, resolved after
         // an agency's own: an order that no longer exists.
-        owner === "Global"
-          ? "Owned by Global: used by Global's runs only, and changed only by global administrators."
+        owner === globalAgencyName()
+          ? `Owned by ${owner}: used by ${owner}'s runs only, and changed only by global administrators.`
           : `Owned by ${owner}: used by ${owner}'s runs only, and changed by its administrators.`
       }
       style={{

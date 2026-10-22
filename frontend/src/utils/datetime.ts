@@ -97,3 +97,48 @@ export function appZoneParts(d: Date): { minute: number; hour: number; dow: numb
   }
   return { minute, hour, dow, dom, month };
 }
+
+// appZoneName is the zone times are entered and shown in: the app zone, else
+// the browser's (as fmtInAppZone falls back).
+export function appZoneName(): string {
+  return _appZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+// zoneOffsetMs is the app zone's wall clock minus UTC at an instant, in ms.
+function zoneOffsetMs(at: number): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: _appZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(new Date(at));
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+  const asUTC = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+  return asUTC - Math.floor(at / 1000) * 1000;
+}
+
+// appZoneLocalToISO turns a wall-clock time typed IN THE APP ZONE (a
+// datetime-local value, "YYYY-MM-DDTHH:mm") into the UTC instant it names
+// (2.5.2 FZ: a datetime-local input speaks the browser's clock, so it is read
+// through the app zone instead, and the label says which). Null for a value
+// that is not one.
+export function appZoneLocalToISO(local: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(local.trim());
+  if (!m) return null;
+  const [y, mo, d, h, mi] = m.slice(1).map(Number);
+  const wall = Date.UTC(y, mo - 1, d, h, mi);
+  let t = wall;
+  for (let i = 0; i < 3; i++) t = wall - zoneOffsetMs(t);
+  return new Date(t).toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+// isoToAppZoneLocal is the reverse, for prefilling a datetime-local input.
+export function isoToAppZoneLocal(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  return new Date(t + zoneOffsetMs(t)).toISOString().slice(0, 16);
+}

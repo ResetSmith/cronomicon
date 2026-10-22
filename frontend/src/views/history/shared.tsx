@@ -2,6 +2,7 @@ import { type CSSProperties, type ReactNode } from "react";
 import { c } from "../../theme";
 import { CopyText, EmptyCell, Field as UIField, InlineLoading, statusLabel, statusTone } from "../../components/ui";
 import { runnerLabel } from "../../components/score-model";
+import { CriticalChip } from "../../components/Annotation";
 import { fmtInAppZone } from "../../utils/datetime";
 
 // ── formatting ──────────────────────────────────────────────────────────────
@@ -312,6 +313,41 @@ export function EmptyRow({ colSpan, title, hint, action }: { colSpan: number; ti
 // anywhere rather than at word boundaries.
 export function Field({ label, isMono, children }: { label: string; isMono?: boolean; children: ReactNode }) {
   return <UIField label={label} value={children} mono={isMono} breakAll />;
+}
+
+/**
+ * Where a run's job or workflow is opened (2.5.2 OP-2/OP-3): its row on the
+ * Jobs or Workflows page, expanded, in the run's agency when the run says it.
+ */
+export function definitionHref(kind: "job" | "workflow", uid: string, agency?: string | null): string {
+  const q = new URLSearchParams({ [kind]: uid });
+  if (agency) q.set("agency", agency);
+  return `/${kind === "job" ? "jobs" : "workflows"}?${q.toString()}`;
+}
+
+/**
+ * RunContact — who to call about a run (2.5.2 OP-2): the job's or workflow's
+ * annotation contact, else the agency's (OP-28, marked so), "None set" when
+ * neither has one, and the Critical chip.
+ */
+export function RunContact({ contact, critical, agencyContact }: { contact: string; critical: boolean; agencyContact?: string }) {
+  return (
+    <>
+      {contact ||
+        (agencyContact ? (
+          <>
+            {agencyContact} <span style={{ color: c.textMuted }}>(agency)</span>
+          </>
+        ) : (
+          <span style={{ color: c.textMuted }}>None set</span>
+        ))}
+      {critical && (
+        <span style={{ marginLeft: 8, display: "inline-flex", verticalAlign: "middle" }}>
+          <CriticalChip />
+        </span>
+      )}
+    </>
+  );
 }
 
 // ── pagination (per-tab state — fixes prototype X3) ──────────────────────────

@@ -8,6 +8,7 @@ import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { btnStyle } from "./shared";
 import { WorkflowRunDetail } from "./WorkflowRunDetail";
+import { RunNotesCell } from "../history/RunNotes";
 import { CalendarFilterSelect } from "../scheduling/CalendarFilterSelect";
 import {
   EmptyRow,
@@ -43,6 +44,8 @@ interface WorkflowRun {
   completedAt?: string | null;
   durationMs?: number | null;
   jobTraceIds?: string[];
+  /** 2.5.2 OP-18 — the run's notes in brief, only when it has some. */
+  notes?: { acknowledged: boolean; count: number };
 }
 
 // F-1 — the filter speaks the display vocabulary, not the wire's. It used to
@@ -71,6 +74,7 @@ const COL_W: Record<string, number> = {
   jobs: 70,
   duration: 100,
   status: 110,
+  notes: 130,
 };
 
 // Sortable columns (TS-23, the sorting-update plan). serverSide: the keys go to
@@ -283,6 +287,8 @@ export function WorkflowRunsTable({
         ]),
     { key: "jobs", label: "Jobs", width: COL_W.jobs, fixed: true, tdStyle: { color: c.textSec, fontSize: c.fontSm }, cell: (w) => w.jobTraceIds?.length ?? 0 },
     { key: "duration", label: "Duration", sortKey: "duration", width: COL_W.duration, fixed: true, tdStyle: { ...mono(), fontSize: c.fontSm, textAlign: "right" }, cell: (w) => fmtDuration(w.durationMs) },
+    // 2.5.2 OP-18 — whether someone has the run in hand, and how many notes.
+    { key: "notes", label: "Notes", width: COL_W.notes, fixed: true, cell: (w) => <RunNotesCell notes={w.notes} status={w.status} /> },
     {
       key: "status",
       label: "Result",
@@ -403,7 +409,7 @@ export function WorkflowRunsTable({
                       <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                         <td colSpan={cols.visible.length} style={{ padding: "14px 16px 18px", background: c.primaryBg }}>
                           <RefreshScope>
-                          <WorkflowRunDetail traceId={w.traceId} live={live} />
+                          <WorkflowRunDetail traceId={w.traceId} live={live} showOwner={!compact} />
                           </RefreshScope>
                         </td>
                       </tr>

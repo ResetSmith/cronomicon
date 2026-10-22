@@ -1096,17 +1096,15 @@ type EnqueueParams struct {
 // a run with no agency is Global's, never nobody's and never "anyone's". Every
 // producer does set it (execspec.ScopeAgencies never returns an empty set), so
 // this is the backstop, and it agrees with the database's own (the birth
-// trigger on runs).
-func (p EnqueueParams) agenciesJSONOrDefault() string {
+// trigger on runs). The built-in agency's name is read by id (2.5.2 GR: it may
+// be renamed, and the claim matches names), in the compact form
+// execspec.MarshalAgencies produces.
+func (p EnqueueParams) agenciesJSONOrDefault(ctx context.Context, q agencyid.Queryer) string {
 	if p.AgenciesJSON == "" || p.AgenciesJSON == "[]" {
-		return globalAgenciesJSON
+		return execspec.MarshalAgencies([]string{agencyid.CurrentGlobalName(ctx, q)})
 	}
 	return p.AgenciesJSON
 }
-
-// globalAgenciesJSON is the snapshot of a Global run, in the compact form
-// execspec.MarshalAgencies produces.
-var globalAgenciesJSON = execspec.MarshalAgencies([]string{agencyid.GlobalName})
 
 // executorOrDefault is the value of runs.executor for a NEW row: always the
 // runner executor (LR-42). The parameter is not consulted. A parked run's
@@ -1604,7 +1602,7 @@ func EnqueueRunWithID(ctx context.Context, database *sql.DB, p EnqueueParams) (s
 		// valid; swallowing this keeps a diagnostic from becoming an outage.
 		_ = rerr
 	}
-	if err := execspec.SyncRunAgencies(ctx, database, traceID, p.agenciesJSONOrDefault()); err != nil {
+	if err := execspec.SyncRunAgencies(ctx, database, traceID, p.agenciesJSONOrDefault(ctx, database)); err != nil {
 		// The row is committed and its agencies are not: no runner would ever
 		// claim it, and it counted toward the cap until retention (2.4.2,
 		// present defect 66). It is closed, failed, with the reason.

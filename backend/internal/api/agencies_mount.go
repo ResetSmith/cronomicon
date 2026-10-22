@@ -52,6 +52,10 @@ func (s *Server) mountAgencies(mux *http.ServeMux) {
 	// (they limit only itself there); otherwise a global administrator does,
 	// since they divide the installation's Vault between agencies.
 	mux.Handle("PUT /api/v1/agencies/{agencyId}/vault-prefixes", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleSetVaultPrefixes)))
+	// 2.5.2 OP-28: who the central team calls about the agency's runs when a
+	// job names no one. The agency's administrators keep it current; a global
+	// administrator may set any agency's.
+	mux.Handle("PUT /api/v1/agencies/{agencyId}/contact", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleSetAgencyContact)))
 	// GA-1 (2.5.0 C5): the directory groups an agency's grants may name. Set by
 	// a global administrator; read by the agency's own administrators of access
 	// (question 82), whose grant form offers them (GA-3).
@@ -693,11 +697,8 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "agency name is required")
 		return
 	}
-	// The name's own rules first: they need no remote.
-	if agencyid.IsGlobalName(strings.TrimSpace(inp.Name)) {
-		failAgencyRule(w, settings.ErrAgencyNameReserved)
-		return
-	}
+	// The name's own rule first: it needs no remote. Since 2.5.2 (GR) no name is
+	// reserved; a name is unique, and that is all.
 	var taken int
 	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE name = ?`, strings.TrimSpace(inp.Name)).Scan(&taken); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -1169,8 +1170,6 @@ func failAgencyRule(w http.ResponseWriter, err error) bool {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "global_mixed", err.Error())
 	case errors.Is(err, settings.ErrBuiltinAgency):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "builtin_agency", err.Error())
-	case errors.Is(err, settings.ErrAgencyNameReserved):
-		httpx.Fail(w, http.StatusUnprocessableEntity, "name_reserved", err.Error())
 	case errors.Is(err, settings.ErrOneAgency):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "one_agency", err.Error())
 	case errors.Is(err, settings.ErrScopeAgencyFixed):
@@ -1428,6 +1427,48 @@ func (s *Server) handleSetAgencyConcurrency(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	a, err := settings.SetAgencyConcurrency(r.Context(), s.db, r.PathValue("agencyId"), maxConcurrent, id.Email)
+	switch {
+	case errors.Is(err, settings.ErrUnknownAgency):
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+	case errors.Is(err, settings.ErrValidation):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+	case err != nil:
+		httpx.Fail500(w, s.log, "update_failed", err)
+	default:
+		httpx.JSON(w, http.StatusOK, a)
+	}
+}
+
+// handleSetAgencyContact sets the agency's contact (2.5.2 OP-28): who the
+// central team calls about its runs when the job or workflow names no contact
+// of its own. Its administrators keep it, as they keep its alert rules; a
+// global administrator may set any agency's, Global's included (Global is the
+// global administrators' agency).
+func (s *Server) handleSetAgencyContact(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	agencyID := r.PathValue("agencyId")
+	if !id.GlobalAdmin(auth.PermConfigureApp) && (agencyID == agencyid.Global || !id.CanAgency(auth.PermConfigureApp, agencyID)) {
+		s.denyEntityAgency(w, r, id, auth.PermConfigureApp, agencyID,
+			"an agency's contact is set by its administrators or a global administrator")
+		return
+	}
+	var body struct {
+		Contact *string `json:"contact"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return
+	}
+	// "" clears it, so a body without the field must not read as "".
+	if body.Contact == nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", `contact is required: the text, or "" to clear it`)
+		return
+	}
+	a, err := settings.SetAgencyContact(r.Context(), s.db, agencyID, *body.Contact, id.Email)
 	switch {
 	case errors.Is(err, settings.ErrUnknownAgency):
 		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")

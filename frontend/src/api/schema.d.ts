@@ -1061,6 +1061,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workflow-runs/{traceId}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A workflow run's notes and acknowledgement (v2.5.2)
+         * @description As GET /runs/{traceId}/notes, for a workflow run; its read check is the workflow run's.
+         */
+        get: operations["getWorkflowRunNotes"];
+        put?: never;
+        /**
+         * Add a note to a workflow run, or acknowledge it (v2.5.2)
+         * @description As POST /runs/{traceId}/notes, for a workflow run.
+         */
+        post: operations["addWorkflowRunNote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{traceId}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A run's notes and acknowledgement (v2.5.2)
+         * @description 2.5.2 (OP3). What a shift knew about the run, for the next one: an
+         *     append-only record of notes, and of acknowledging the run and taking
+         *     that back. `acknowledged` is the latest acknowledgement still in force.
+         *     Readable by anyone who can read the run (its own read check; 404
+         *     otherwise). Not narrowed by `X-Cronomicon-Agency`, as a single run's
+         *     read never is.
+         */
+        get: operations["getRunNotes"];
+        put?: never;
+        /**
+         * Add a note to a run, or acknowledge it (v2.5.2)
+         * @description 2.5.2 (OP3). Anyone who can read the run (404 otherwise). `note` needs
+         *     text; `acknowledged` may carry the first note; `unacknowledged` takes an
+         *     acknowledgement back. Acknowledging an acknowledged run, or taking back
+         *     one that is not there, records nothing and answers the state as it is.
+         *     At most 1,000 characters, trimmed. Entries are never edited or deleted;
+         *     they go with their run. Each is in the run's agency's change log (with
+         *     the text) and Activity, category `Runs`. Notes are not redacted: do not
+         *     paste credentials. CSRF required.
+         */
+        post: operations["addRunNote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workflows/runs/{traceId}/cancel": {
         parameters: {
             query?: never;
@@ -2179,9 +2239,9 @@ export interface paths {
         /**
          * Update an agency
          * @description A rename is carried onto the runs that are waiting or running under the old
-         *     name, so they stay claimable. The built-in agency Global cannot be renamed
-         *     (422 `builtin_agency`), and no other agency may take its name (422
-         *     `name_reserved`).
+         *     name, so they stay claimable. Since 2.5.2 (GR) the built-in agency (id
+         *     `global`) is renamed like any other, and no name is reserved: names are
+         *     unique (409), and that is the only rule.
          */
         put: operations["updateAgency"];
         post?: never;
@@ -3636,6 +3696,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/alert-link-address": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The address alerts link to (v2.5.2)
+         * @description 2.5.2 (OP2.1). A run alert ends with an `Open:` link to the run under this
+         *     address. Recorded from the first global administrator's browser
+         *     (POST …/detect), shown on Settings → Notifications, and changed there.
+         *     Empty: alerts carry no link. A global administrator's.
+         */
+        get: operations["getAlertLinkAddress"];
+        /**
+         * Set the address alerts link to (v2.5.2)
+         * @description A global administrator's. An absolute http:// or https:// address with a
+         *     host and no query, fragment or user; a path is kept; a trailing slash is
+         *     trimmed. "" clears it: alerts carry no link, and nothing records one over
+         *     it again. The field is required. In Global's change log
+         *     (`alert-link-address-set`). CSRF required.
+         */
+        put: operations["setAlertLinkAddress"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/alert-link-address/detect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record the address a global administrator's browser is at (v2.5.2)
+         * @description Sent by the app when a global administrator opens it: the page's own
+         *     address. Stored only when no address is (detected, set or cleared), so
+         *     the first visit decides and a later one through another name changes
+         *     nothing. Answers with the address stored after the call. Validated as
+         *     PUT is. In Global's change log when it records
+         *     (`alert-link-address-detected`). CSRF required.
+         */
+        post: operations["detectAlertLinkAddress"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/freeze": {
         parameters: {
             query?: never;
@@ -3655,6 +3771,14 @@ export interface paths {
          * Freeze or thaw the installation
          * @description A global administrator's (configureApp on every agency). Turning it on
          *     takes a reason (422 without one), at most 500 characters. Audited.
+         *
+         *     2.5.2 (FZ-1 to FZ-6): it may carry a window, `from` and `until` (RFC 3339,
+         *     stored in UTC), each optional: no `from` is from now, no `until` is until
+         *     lifted. `until` must be later than now and than `from` (422). The window is
+         *     judged at the moment in question, so a freeze begins and ends on time with
+         *     nothing to wake up for it. Turning it off ends a running window early and
+         *     cancels one that has not begun. The change log records the window when it
+         *     is set; a window that simply ends records nothing.
          */
         put: operations["setInstallationFreeze"];
         post?: never;
@@ -4559,6 +4683,33 @@ export interface paths {
          *     CSRF required.
          */
         put: operations["setAgencyConcurrency"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/contact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set who to call about an agency's runs (v2.5.2)
+         * @description 2.5.2 (OP-28). The agency's contact: who the central team calls about its
+         *     runs when the job or workflow names no contact of its own (shown on the
+         *     overview's attention items and on run details, marked as the agency's).
+         *     The agency's administrators (`configureApp` on it) or a global
+         *     administrator; Global's by a global administrator. At most 256
+         *     characters, trimmed; "" clears it. The field is required, so a body
+         *     without it clears nothing. A change is in the agency's change log
+         *     (`contact-set`). CSRF required.
+         */
+        put: operations["setAgencyContact"];
         post?: never;
         delete?: never;
         options?: never;
@@ -5805,6 +5956,56 @@ export interface components {
             /** @description Free-text operator notes. Plain text; newlines are significant. */
             notes?: string;
         };
+        /** @description 2.5.2 (OP-9) — who acknowledged a run, how they stood to its agency then, and when. */
+        RunAcknowledgement: {
+            by: string;
+            /**
+             * @description auth.Identity.RelationTo, judged when written: outside, on a run, is someone whose access reaches every agency.
+             * @enum {string}
+             */
+            relation: "member" | "global_admin" | "outside" | "system";
+            /** Format: date-time */
+            at: string;
+        };
+        RunNoteEntry: {
+            id: number;
+            /** @enum {string} */
+            kind: "note" | "acknowledged" | "unacknowledged";
+            /** @description Empty on an acknowledgement or its taking back that carried no text. */
+            body: string;
+            author: string;
+            /** @enum {string} */
+            relation: "member" | "global_admin" | "outside" | "system";
+            /** Format: date-time */
+            at: string;
+        };
+        /** @description 2.5.2 (OP3) — a run's record. */
+        RunNotes: {
+            /** @description The acknowledgement in force; null when there is none. */
+            acknowledged: components["schemas"]["RunAcknowledgement"] | null;
+            /** @description Every entry, oldest first. */
+            notes: components["schemas"]["RunNoteEntry"][];
+        };
+        RunNoteInput: {
+            /** @enum {string} */
+            kind: "note" | "acknowledged" | "unacknowledged";
+            /** @description Required for a note; optional otherwise. */
+            body?: string;
+        };
+        /** @description 2.5.2 (OP-18) — a run's record in brief, on the run lists; absent from a run with no entries. */
+        RunNotesSummary: {
+            acknowledged: boolean;
+            /** @description Entries that carry text. */
+            count: number;
+        };
+        /** @description 2.5.2 (OP-2) — who to call about a run: its job's or workflow's annotation contact and critical flag, read when the run is read (a later edit of the annotation shows here). The notes stay on the job; the run detail links there. */
+        RunAnnotation: {
+            /** @description Empty when the annotation names no contact. */
+            contact: string;
+            critical: boolean;
+            /** @description 2.5.2 (OP-28) — the run's agency's contact, when `contact` is empty and the agency has one. A run with no definition carries the annotation for this alone. */
+            agencyContact?: string;
+        };
         /**
          * @description A job definition + DB runtime state. source ∈ {git, cronomicon} (A9): git
          *     jobs are Git-authored (definition fields read-only over the API; edits go
@@ -6999,9 +7200,38 @@ export interface components {
             /** @description The daily UTC time of the backup (CRONOMICON_BACKUP_AT). */
             schedule: string;
         };
+        /** @description 2.5.2 (OP2.1) — the address alerts link to, and how it got there. */
+        AlertLinkAddress: {
+            /** @description Empty when none is stored */
+            address: string;
+            /**
+             * @description Absent when nothing was ever stored.
+             * @enum {string}
+             */
+            source?: "detected" | "set";
+            /** @description Whose browser it was recorded from */
+            by?: string;
+            /** Format: date-time */
+            at?: string;
+        };
         InstallationFreeze: {
             on: boolean;
             reason: string;
+            /**
+             * Format: date-time
+             * @description 2.5.2 (FZ-1) — when the window begins (UTC); absent is from when it was set.
+             */
+            from?: string;
+            /**
+             * Format: date-time
+             * @description 2.5.2 (FZ-1) — when the window ends (UTC, exclusive); absent is until lifted.
+             */
+            until?: string;
+            /**
+             * @description 2.5.2 (FZ-4) — the freeze now: off; scheduled (before from); in_effect; ended (at or after until).
+             * @enum {string}
+             */
+            readonly state?: "off" | "scheduled" | "in_effect" | "ended";
             setBy?: string;
             /** Format: date-time */
             setAt?: string;
@@ -7236,6 +7466,10 @@ export interface components {
              */
             readonly jobUid?: string | null;
             readonly jobName?: string;
+            /** @description 2.5.2 (OP-2) — the run's job's contact and critical flag, read now by `jobUid`. On GET /runs/{traceId} only; absent when the run has no job uid and its agency no contact; never on the list. */
+            annotation?: components["schemas"]["RunAnnotation"];
+            /** @description 2.5.2 (OP-18) — on the list (GET /runs) only, and only on a run with entries. */
+            notes?: components["schemas"]["RunNotesSummary"];
             /**
              * @description Origin of the job this run executed (A9; NULL legacy runs report git).
              * @enum {string}
@@ -7482,8 +7716,14 @@ export interface components {
             /** @description True when the run was soft-cancelled (WB-S2); the status then displays as 'cancelled'. */
             readonly cancelled?: boolean;
             readonly jobTraceIds?: string[];
+            /** @description 2.5.2 (OP-18) — on the list (GET /workflow-runs) only, and only on a run with entries. */
+            notes?: components["schemas"]["RunNotesSummary"];
         };
         WorkflowRunDetail: components["schemas"]["WorkflowRun"] & {
+            /** @description 2.5.2 (OP4) — the id of the agency the run is (its owner, as the read check judges it). */
+            readonly ownerAgency?: string;
+            /** @description 2.5.2 (OP-2) — the workflow's contact and critical flag, read now by `workflowUid`; absent when the run has no workflow uid. */
+            annotation?: components["schemas"]["RunAnnotation"];
             steps?: components["schemas"]["WorkflowRunStep"][];
             /**
              * @description The executed step graph (WB-D1 per-run snapshot) with each node's
@@ -8567,7 +8807,9 @@ export interface components {
             readonly onlineRunnerCount?: number;
             /** @description The agency's own concurrency cap (v2.5.0, QT-1); null is none. Where one of its runs is produced, its runs waiting and running are counted against it; at the claim, its running runs. The installation's cap binds as well. Set with PUT /agencies/{agencyId}/concurrency. */
             readonly maxConcurrent?: number | null;
-            /** @description True for **Global** (id `global`), the one agency every installation has (v2.3.0, LR-21). It cannot be renamed or deleted (422 `builtin_agency`), no other agency may be called Global in any letter case (422 `name_reserved`), and no access grant or service account may name it: it belongs to the global administrators, and the way to be one is an all-scopes grant. */
+            /** @description 2.5.2 (OP-28) — who the central team calls about the agency's runs when the job or workflow names no contact of its own; empty is none. Free text, display-only. Set with PUT /agencies/{agencyId}/contact. */
+            readonly contact?: string;
+            /** @description True for the built-in agency (id `global`), the one agency every installation has (v2.3.0, LR-21): "Central" on an installation made with 2.5.2 or later, "Global" on an older one until it is renamed (2.5.2 GR: it may be renamed; it cannot be deleted, 422 `builtin_agency`). No access grant or service account may name it: it belongs to the global administrators, and the way to be one is an all-scopes grant. */
             readonly builtin?: boolean;
         } & components["schemas"]["AuditFields"];
         AgencyInput: {
@@ -10464,6 +10706,8 @@ export interface components {
             workingAgency: string;
             /** @description True when the caller's grant reaches every agency. */
             canOverview: boolean;
+            /** @description 2.5.2 (GR) — the built-in agency's name now (id `global`): Central on a new installation, Global on an older one until renamed. */
+            globalName?: string;
         };
         /** @description The Operations overview (v2.4.4; GET /overview). */
         OperationsOverview: {
@@ -10472,6 +10716,8 @@ export interface components {
                 name: string;
                 jobs: number;
                 pausedJobs: number;
+                /** @description 2.5.2 (OP-26) — jobs on a schedule (not manual): the agency Dashboard's "Active schedules". */
+                scheduledJobs?: number;
                 workflows: number;
                 pausedWorkflows: number;
                 /** @description Runs created in the last 24 hours, by status (success, failure, warning, running, queued, killed, skipped) and `lost`. */
@@ -10496,6 +10742,24 @@ export interface components {
                 id?: string;
                 /** @description The run (or workflow run) to open. */
                 traceId?: string;
+                /** @description 2.5.2 (OP-1) — the job's or workflow's annotation contact; absent when it has none, and on a sync item. */
+                contact?: string;
+                /** @description 2.5.2 (OP-1) — the annotation's critical flag; absent when false. */
+                critical?: boolean;
+                /** @description 2.5.2 (OP-28) — the agency's contact, when the item names none of its own (a repository's item included) and the agency has one. */
+                agencyContact?: string;
+                /** @description 2.5.2 (OP-20) — the run's acknowledgement; absent when it is not acknowledged. */
+                acknowledged?: components["schemas"]["RunAcknowledgement"];
+                /** @description 2.5.2 (OP-20) — the latest entry with text on the run; absent when none. */
+                latestNote?: string;
+                /** @description 2.5.2 (OP-20) — how many entries on the run carry text; absent when none. */
+                noteCount?: number;
+                /** @description 2.5.2 (OP-11) — on a failed job: its previous failed run was acknowledged, by whom, and when that run was. Absent otherwise. */
+                previousAck?: {
+                    by: string;
+                    /** Format: date-time */
+                    runAt: string;
+                };
                 at: string;
             }[];
             /** @description How many need attention; at most 100 are listed. */
@@ -12645,6 +12909,122 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getWorkflowRunNotes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Backend-minted UUIDv7 trace ID (S11). Opaque to clients. */
+                traceId: components["parameters"]["traceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The state and the entries, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunNotes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addWorkflowRunNote: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                /** @description Backend-minted UUIDv7 trace ID (S11). Opaque to clients. */
+                traceId: components["parameters"]["traceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunNoteInput"];
+            };
+        };
+        responses: {
+            /** @description The state and the entries after the call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunNotes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    getRunNotes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Backend-minted UUIDv7 trace ID (S11). Opaque to clients. */
+                traceId: components["parameters"]["traceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The state and the entries, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunNotes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addRunNote: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                /** @description Backend-minted UUIDv7 trace ID (S11). Opaque to clients. */
+                traceId: components["parameters"]["traceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunNoteInput"];
+            };
+        };
+        responses: {
+            /** @description The state and the entries after the call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunNotes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
         };
     };
     cancelWorkflowRun: {
@@ -16912,6 +17292,92 @@ export interface operations {
             };
         };
     };
+    getAlertLinkAddress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stored address (all fields empty when none is). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertLinkAddress"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    setAlertLinkAddress: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    address: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The address as stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertLinkAddress"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    detectAlertLinkAddress: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    address: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The address stored after the call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertLinkAddress"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
     getInstallationFreeze: {
         parameters: {
             query?: never;
@@ -16948,6 +17414,10 @@ export interface operations {
                 "application/json": {
                     on: boolean;
                     reason?: string;
+                    /** Format: date-time */
+                    from?: string;
+                    /** Format: date-time */
+                    until?: string;
                 };
             };
         };
@@ -18624,6 +19094,41 @@ export interface operations {
             content: {
                 "application/json": {
                     maxConcurrent: number | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The agency as stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agency"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    setAgencyContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    contact: string;
                 };
             };
         };

@@ -4,7 +4,8 @@ import { OVERVIEW, useAgency, type AgencyChoice } from "../agency";
 import { c } from "../theme";
 
 // The agency switcher (2.4.4 F1), under the wordmark. One agency at a time:
-// the menu lists the person's choices — the Operations overview first for
+// the menu lists the person's choices — All agencies (the Dashboard across
+// every agency, 2.5.2 OP-21) first for
 // those who may see it, then Global, then their agencies — each with what it
 // has waiting (SW-14), so that a person of several agencies is not blind to
 // the ones they are not viewing. A person with a single choice sees a label.
@@ -98,7 +99,7 @@ export function AgencySwitcher({ collapsed }: { collapsed: boolean }) {
   }, [open]);
 
   const currentId = ag.onOverview ? OVERVIEW : ag.agency;
-  const currentName = ag.onOverview ? "Overview" : ag.agencyName;
+  const currentName = ag.onOverview ? "All agencies" : ag.agencyName;
   const single = ag.choices.length <= 1;
   const elsewhere = Object.values(badges).some(
     (b) => b.agencyId !== ag.agency && (b.openNotices > 0 || b.failedRuns24h > 0),

@@ -80,7 +80,7 @@ export function AgenciesTab({
 }) {
   const globalWhy = globalOnly(globalAdmin);
   const rowWhy = (a: AgencyRow, flag: boolean | undefined): string =>
-    globalWhy || (flag === false ? (a.id === GLOBAL_AGENCY ? "Global is built in: it is neither renamed nor deleted." : "You cannot change this agency.") : "");
+    globalWhy || (flag === false ? (a.id === GLOBAL_AGENCY ? `${a.name} is built in: it may be renamed, never deleted.` : "You cannot change this agency.") : "");
   const [dep, setDep] = useState(0);
   const { data, error, loading } = useGet<unknown>(() => api.GET("/agencies"), [dep]);
   const items = rows<AgencyRow>(data);
@@ -251,7 +251,7 @@ export function AgenciesTab({
                       {canEdit && (
                         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
                           {/* R8 — the row says what the caller may do with it;
-                              Global is neither renamed nor deleted. */}
+                              the built-in agency is renamed (2.5.2 GR), never deleted. */}
                           <Btn onClick={() => setEditing(a)} disabled={!!rowWhy(a, a.canEdit)} title={rowWhy(a, a.canEdit) || undefined}>
                             Edit
                           </Btn>

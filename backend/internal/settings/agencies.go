@@ -37,6 +37,10 @@ type Agency struct {
 	// at the claim (internal/runcap). nil is none; the installation's cap
 	// binds either way. Set by a global administrator (SetAgencyConcurrency).
 	MaxConcurrent *int `json:"maxConcurrent"`
+	// Contact is who the central team calls about the agency's runs when the
+	// job or workflow names none (2.5.2 OP-28, migration 1640). Free text;
+	// empty is none. Set by SetAgencyContact.
+	Contact string `json:"contact"`
 	// OnlineRunnerCount is the number of ONLINE runners assigned to this agency
 	// (agency-support.md M4 coverage view). 0 ⇒ jobs bound here will wait — no
 	// runner can claim them. Computed per list read; not stored.
@@ -96,19 +100,42 @@ var (
 	// same name (and scope). Mapped 409 `owner_conflict`.
 	ErrOwnerConflict = errors.New("the agency already has a row with this name")
 
-	// ErrBuiltinAgency is returned by an attempt to rename or delete Global
-	// (LR-21). Runs name their agency by NAME, and code and triggers name its id.
-	ErrBuiltinAgency = errors.New("the Global agency is built in: it cannot be renamed or deleted")
-
-	// ErrAgencyNameReserved is returned when another agency would be called
-	// Global, in any letter case.
-	ErrAgencyNameReserved = errors.New("the name Global is reserved for the built-in agency")
+	// ErrBuiltinAgency is returned by an attempt to delete the built-in agency
+	// (LR-21). Since 2.5.2 (GR) it may be renamed: code and triggers name its
+	// id, and the rename path carries the new name onto waiting runs.
+	ErrBuiltinAgency = errors.New("the built-in agency cannot be deleted")
 )
+
+// NewInstallationAgencyName is what a new installation calls the built-in
+// agency (2.5.2 GR, the owner, 2026-10-21): the central team, not "everyone".
+// An existing installation keeps "Global" until a global administrator
+// renames it.
+const NewInstallationAgencyName = "Central"
+
+// NameNewInstallationAgency names the built-in agency "Central" on a new
+// installation: called once, at the first start, when the database was created
+// by that start (a migration cannot tell a new database from an empty one, so
+// boot does, from the schema version it started at). Through UpdateAgency, so
+// it is the rename every agency gets, audited as the system.
+func NameNewInstallationAgency(ctx context.Context, database *sql.DB) error {
+	if _, err := UpdateAgency(ctx, database, agencyid.Global, AgencyInput{Name: NewInstallationAgencyName}, "system"); err != nil {
+		return fmt.Errorf("name the new installation's agency: %w", err)
+	}
+	return nil
+}
+
+// GlobalAgencyName is the built-in agency's name now (2.5.2 GR): "Global" on
+// an installation from before 2.5.2 that has not renamed it, "Central" on a new
+// one, or whatever a global administrator called it. agencyid.GlobalName when
+// the catalog cannot be read, as before.
+func GlobalAgencyName(ctx context.Context, database *sql.DB) string {
+	return agencyid.CurrentGlobalName(ctx, database)
+}
 
 // ListAgencies returns the agency catalog ordered by name.
 func ListAgencies(ctx context.Context, database *sql.DB) ([]Agency, error) {
 	rows, err := database.QueryContext(ctx,
-		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin, max_concurrent
+		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin, max_concurrent, contact
 		 FROM agencies ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list agencies: %w", err)
@@ -153,7 +180,7 @@ func ListAgencies(ctx context.Context, database *sql.DB) ([]Agency, error) {
 // GetAgency fetches one agency by id; returns (nil, nil) if not found.
 func GetAgency(ctx context.Context, database *sql.DB, id string) (*Agency, error) {
 	row := database.QueryRowContext(ctx,
-		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin, max_concurrent
+		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin, max_concurrent, contact
 		 FROM agencies WHERE id=?`, id)
 	a, err := scanAgency(row)
 	if err != nil {
@@ -169,7 +196,7 @@ func scanAgency(rs interface{ Scan(...any) error }) (Agency, error) {
 	var a Agency
 	var desc, createdBy, lmBy, lmAt sql.NullString
 	var maxConc sql.NullInt64
-	if err := rs.Scan(&a.ID, &a.Name, &desc, &createdBy, &a.CreatedAt, &lmBy, &lmAt, &a.Builtin, &maxConc); err != nil {
+	if err := rs.Scan(&a.ID, &a.Name, &desc, &createdBy, &a.CreatedAt, &lmBy, &lmAt, &a.Builtin, &maxConc, &a.Contact); err != nil {
 		return a, err
 	}
 	if maxConc.Valid {
@@ -197,9 +224,6 @@ func CreateAgency(ctx context.Context, database *sql.DB, inp AgencyInput, actor 
 		return nil, fmt.Errorf("agency name is required")
 	}
 	id := db.NewID()
-	if agencyid.IsGlobalName(name) {
-		return nil, ErrAgencyNameReserved
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := database.ExecContext(ctx,
 		`INSERT INTO agencies (id, name, description, created_by, created_at, last_modified_by, last_modified_at)
@@ -222,12 +246,8 @@ func UpdateAgency(ctx context.Context, database *sql.DB, id string, inp AgencyIn
 	if name == "" {
 		return nil, fmt.Errorf("agency name is required")
 	}
-	if id == agencyid.Global && name != agencyid.GlobalName {
-		return nil, ErrBuiltinAgency
-	}
-	if id != agencyid.Global && agencyid.IsGlobalName(name) {
-		return nil, ErrAgencyNameReserved
-	}
+	// 2.5.2 GR: the built-in agency is renamed like any other, and no name is
+	// reserved; names are unique, which the catalog's constraint enforces.
 	now := time.Now().UTC().Format(time.RFC3339)
 	// The rename and its propagation to waiting runs are one transaction: a run
 	// stores its agencies by NAME, and the claim matches those names against the

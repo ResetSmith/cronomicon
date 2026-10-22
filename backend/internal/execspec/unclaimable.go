@@ -166,17 +166,19 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 			// row in this state was written around both.
 			return "this run carries no agency at all, so no runner can claim it (an internal error: " +
 				"every run belongs to Global or to its scope's agency)", nil
-		case len(names) == 1 && names[0] == agencyid.GlobalName:
+		case len(names) == 1 && names[0] == agencyid.CurrentGlobalName(ctx, database):
+			// The built-in agency, by its name now (2.5.2 GR).
+			g := names[0]
 			// Since 2.4.0 (§0a) a Global job names Global's scopes only: binding it
 			// to an agency's scope is not a remedy, so the reason does not offer it.
 			// The local runner is offered only for what it runs (2.5.0 C11,
 			// defect 90: it was offered to an Ansible run too).
-			remedy := "enrol a runner for Global"
+			remedy := "enrol a runner for " + g
 			if slices.Contains(localRunnerTypes, runType.String) {
-				remedy += ", or turn on the local runner (it serves Global)"
+				remedy += ", or turn on the local runner (it serves " + g + ")"
 			}
-			return "this run belongs to Global (it has no scope, or its scope is Global's), and no online " +
-				"runner serves Global — " + remedy, nil
+			return "this run belongs to " + g + " (it has no scope, or its scope is " + g + "'s), and no online " +
+				"runner serves " + g + " — " + remedy, nil
 		}
 		return "no online runner serves " + strings.Join(names, ", "), nil
 	}

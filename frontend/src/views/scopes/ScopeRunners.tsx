@@ -6,6 +6,7 @@ import { c } from "../../theme";
 import { Link } from "react-router-dom";
 import { isRunnerOnly } from "../../runtypes";
 import { AlertBanner, Btn, InlineLoading, Modal } from "../../components/ui";
+import { globalAgencyName } from "../../globalName";
 
 // Scope↔runner bindings — the UI (SB band).
 //
@@ -67,7 +68,7 @@ export function boundRunnerState(b: BoundRunner): string {
 /** The scope's agency by name ("Global" for one with none listed: where every scope without another agency is). */
 export function scopePoolName(scope: BindableScope): string {
   const names = (scope.agencies ?? []).map((a) => a.name);
-  return names.length === 0 ? "Global" : names.join(", ");
+  return names.length === 0 ? globalAgencyName() : names.join(", ");
 }
 
 // A runner is eligible for a scope by the claim query's agency rule: it serves

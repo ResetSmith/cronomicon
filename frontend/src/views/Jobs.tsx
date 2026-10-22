@@ -21,6 +21,7 @@ import { RevisionHistory } from "./RevisionHistory";
 import { RunAnalytics } from "../components/RunAnalytics";
 import { JobEffectiveReferences, JobKeyField, ReferencePreflightPanel, useRunReferencePreflight } from "../components/ReferenceBindings";
 import { FolderBrowser } from "../components/FolderBrowser";
+import { parentOf } from "../utils/tree";
 import { isIdentityCapable, isRunnerOnly } from "../runtypes";
 import { RecentRuns, DurationTrend } from "../components/RecentRuns";
 import { RunInputsPanel, type InputState, type Provenance } from "./jobs/RunInputs";
@@ -298,6 +299,37 @@ export function Jobs() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [toast, fireToast] = useToast();
+  // 2.5.2 OP-3 — ?job=<uid>, the run detail's "Open job": open the job's
+  // folder, expand its row and bring it into view, then drop the parameter so
+  // the page is the person's again. A uid not in this agency's list (binned,
+  // another agency's, gone) says so rather than leaving an unexplained list.
+  const focusUid = params.get("job");
+  const [focusName, setFocusName] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!focusUid || !data) return;
+    const j = items.find((x) => x.uid === focusUid);
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("job");
+        const folder = j ? parentOf(jobDisplayPath(j)) : "";
+        if (folder) next.set("path", folder);
+        else if (j) next.delete("path");
+        return next;
+      },
+      { replace: true },
+    );
+    if (j) {
+      setExpanded(j.id ?? null);
+      setFocusName(jobName(j));
+    } else {
+      fireToast("That job is not in this agency's list.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusUid, data]);
+  useEffect(() => {
+    if (focusName) document.getElementById(`job-detail-${focusName}`)?.scrollIntoView?.({ block: "center" });
+  }, [focusName, path]);
   const [runFor, setRunFor] = useState<Job | null>(null);
   const [killFor, setKillFor] = useState<Job | null>(null);
   const [deleting, setDeleting] = useState<Job | null>(null);
@@ -673,7 +705,7 @@ export function Jobs() {
           {renderCells(cols.visible, { job: j, displayName }, { rowStyle: isExp ? { borderBottom: "none" } : undefined })}
         </HoverTr>
         {isExp && (
-          <tr>
+          <tr id={`job-detail-${jobName(j)}`}>
             <td colSpan={cols.visible.length} style={{ padding: "14px 18px", background: c.primaryBg, borderBottom: `1px solid ${c.border}` }}>
               {/* Row actions appear only once a job is expanded (V1.1), freeing
                   the table row for the Last Run column. EV-4: they are handed to
@@ -948,6 +980,7 @@ export function Jobs() {
               renderLeaf={(leaf) => renderJobRow(leaf.item, leaf.label)}
               hideBreadcrumbAtRoot
               paginate
+              focusName={focusName}
             />
           )}
           </div>

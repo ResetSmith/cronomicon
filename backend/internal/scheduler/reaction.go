@@ -840,8 +840,9 @@ func (s *Scheduler) definitionEnabled(ctx context.Context, source, kind, name, u
 // calendars of the reacting definition's own agency.
 func (s *Scheduler) globalCalendarVerdict(ctx context.Context, agency string) (calendar.Verdict, string, bool) {
 	loc := s.location()
-	day := calendar.DayOf(time.Now(), loc)
-	v, err := freezeTier(ctx, s.db, agency, nil, nil, day)
+	now := time.Now()
+	day := calendar.DayOf(now, loc)
+	v, err := freezeTier(ctx, s.db, agency, nil, nil, day, now)
 	if err != nil {
 		s.log.Error("reactor: load calendars — reacting without calendar suppression", "err", err)
 		return calendar.Verdict{}, day, false

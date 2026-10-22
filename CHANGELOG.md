@@ -13,6 +13,139 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.5.2] - 2026-10-22
+
+Operations: who to call, and what the last shift knew. A run, an alert and
+each item that needs attention now say whose it is and who to contact; a run
+can be acknowledged and carry notes that the next shift reads; the Operations
+overview becomes the Dashboard with *All agencies* chosen; the installation
+freeze can be scheduled; and the built-in agency can be renamed, which a new
+installation does by calling it *Central*. Three migrations (1640 to 1660,
+schema v1660); runner protocol 14 is unchanged.
+
+### Upgrading
+
+**From 2.5.1:** take a snapshot as for every release, replace the image and
+start it; the three migrations run at the first start. Nothing is one-way
+beyond what 2.5.1 already did. Then:
+
+- The built-in agency keeps the name *Global* on an upgraded installation; only
+  a new one calls it *Central*. Rename it, if you like, in Scopes → Agencies →
+  Edit.
+- The alert link address (below) fills itself in the first time a global
+  administrator opens the app. Check it on Settings → Notifications if people
+  reach the app by more than one name.
+- Every alert now has an `Agency:` line: a mail filter or push consumer that
+  matches the whole body sees one more line.
+- `/overview` leads to `/?agency=overview`, so bookmarks keep working.
+
+**From 2.2.3 (or any release before 2.5.1):** follow 2.5.1's upgrade below
+with the 2.5.2 image. It is one step, and one-way for 2.5.1's reason (the
+caution there); the schema goes from 1210 to 1660.
+
+### Added
+
+- **Who to call.** A run's detail (a job run's and a workflow run's) and each
+  item of Needs attention show the job's or workflow's contact and whether it
+  is critical, and a run's detail has **Open job** (**Open workflow**), which
+  opens the definition on the Jobs (Workflows) page: those pages take `?job=`
+  and `?workflow=` with the definition's uid.
+- **The agency's contact**: an optional line on Settings → Alerts, kept by
+  the agency's administrators (Global's by a global administrator). Where a
+  job or workflow names no contact, the app and the alert show the agency's,
+  marked "(agency)".
+- **Alerts say whose run it was, and link to it.** Every alert has an
+  `Agency:` line with the agency's current name; a run's alert has an
+  `Open:` link to the run in History; the `Contact:` line falls back to the
+  agency's contact. The subject is unchanged.
+- **The alert link address, learned from the browser**: the first time a
+  global administrator opens the app, the server keeps the address the
+  browser used, and only while none is stored. Settings → Notifications →
+  Alert Link Address shows how it got there, by whom and when, with Change
+  and Remove. Nothing to configure, and no environment setting.
+- **Acknowledgement and notes on a run.** A panel on a run's detail, between
+  its fields and its log: **Acknowledge** (with an optional first note),
+  **Remove acknowledgement**, and an append-only thread of notes (at most 1,000
+  characters each), each with its author and how they stood to the run's
+  agency (the agency's name, *Global administrator*, or the built-in agency's
+  name). Anyone who can read the run may write, so a viewer whose access
+  reaches every agency can acknowledge any agency's run. Each entry is
+  recorded in the run's agency's change log (category `Runs`) and Activity.
+  History has a **Notes** column (a tick and the count, or *Not
+  acknowledged* on a failed, stopped or lost run). What is acknowledged is the
+  run: the next failure of the same job is a new item, which says who
+  acknowledged the previous one.
+- **A scheduled installation freeze**: Settings → General's freeze card offers
+  **Now** or **Schedule…**, with a beginning and an optional end in the app's
+  time zone. A scheduled freeze shows a warning banner until it begins; every
+  producer judges a run at its own moment, so the Upcoming list and the Score
+  mark only the fires inside the window; and a window that ends lifts itself.
+  The change log names the window, and says when a freeze was cancelled before
+  it began.
+
+### Changed
+
+- **The Operations overview is the Dashboard with *All agencies* chosen.** The
+  switcher's first choice reads *All agencies* (its id stays `overview`, so a
+  saved default still works) and shows the Dashboard across every agency at
+  `/?agency=overview`: a strip saying how many items need attention and how
+  many nobody has acknowledged, the tiles summed over every agency (Failed in
+  the last day scrolls to Needs attention), the Score, Needs attention with
+  its Contact and Acknowledgement columns (acknowledged items dimmed, an
+  *Unacknowledged only* filter off by default), and the Agencies table with
+  the search in its header. The `/overview` page is gone; its address leads
+  there.
+- **The built-in agency can be renamed** (Scopes → Agencies → Edit, a global
+  administrator's); it still cannot be deleted, and its id stays `global`. No
+  agency name is reserved any longer: once the built-in agency is renamed,
+  *Global* is free for another agency. A run waiting for a runner follows the
+  rename; a run that has started keeps the name it started with.
+- **A new installation calls the built-in agency *Central*.** An upgraded one
+  keeps *Global* until someone renames it.
+
+### Known, and worth knowing
+
+- **The manuals say "Global" for the built-in agency, whatever it is
+  called.** Each says so where it introduces it. About 58 help texts in the
+  app also still say "Global" in prose. The names the app shows (the
+  switcher, owners, labels) read the current name.
+- Notes are not redacted; the box says not to paste credentials. They are
+  deleted with their run by retention; the change log keeps their text for its
+  own retention.
+- A deep link to a job (`?job=`) finds it in the first 200 of the agency's
+  jobs; a job past them says it is not in the agency's list.
+
+### For developers
+
+- New routes: `GET/POST /runs/{traceId}/notes` and
+  `/workflow-runs/{traceId}/notes` (by the run's own read check, not narrowed
+  by `X-Cronomicon-Agency`; both `clsVisible` with object probes),
+  `PUT /agencies/{id}/contact`, `GET/PUT /settings/alert-link-address` and
+  `POST /settings/alert-link-address/detect`. `GET /runs/{traceId}` and
+  `GET /workflow-runs/{traceId}` carry `annotation` (`RunAnnotation`, with
+  `agencyContact`); the workflow run detail carries `workflowUid` and
+  `ownerAgency`; run and workflow-run list rows carry `notes` only when the run
+  has entries; attention items carry `contact`, `critical`, `agencyContact`,
+  `acknowledged`, `latestNote`, `noteCount` and `previousAck`; overview agency
+  rows carry `scheduledJobs`. `GET/PUT /settings/freeze` take and return
+  `from`/`until` and return `state`. `GET /me/context` returns `globalName`.
+- `calendar.FreezeState` and `FreezeVerdictAt` replace `FreezeVerdict`;
+  `freezeTier` takes the moment judged.
+- `agencyid.CurrentGlobalName` reads the built-in agency's name by id; every
+  Go path that stamped "Global" reads it. In the frontend, `globalAgencyName()`
+  (`globalName.ts`, set from `/me/context`) and `nameOf("global")` replace the
+  literal. `settings.ErrAgencyNameReserved` and the `name_reserved` error are
+  gone; `ErrBuiltinAgency` means "cannot be deleted".
+- `notify`: a dispatched event carries a renderer, run once the agency is
+  known (`msgContext{agencyName, link}`); the alert link address is read per
+  dispatched alert.
+- Migrations: 1640 `agencies.contact`; 1650 `run_notes` (one of `run_id` /
+  `workflow_run_id`, both `ON DELETE CASCADE`); 1660 `global_renamable`
+  (`agencies_builtin_stays_builtin` replaces `agencies_builtin_no_rename`, the
+  name-reservation triggers are dropped, `runs_born_global` stamps the current
+  name; its down names the agency Global again). A new database is named
+  *Central* at boot (`settings.NameNewInstallationAgency`), not by a migration.
+
 ## [2.5.1] - 2026-10-21
 
 Secrets guarded. Backups can be encrypted to keys whose private halves never

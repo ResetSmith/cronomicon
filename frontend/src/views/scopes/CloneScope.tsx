@@ -5,6 +5,7 @@ import { useGet, rows } from "../../hooks";
 import { Btn, Modal } from "../../components/ui";
 import { c } from "../../theme";
 import { inputStyle, labelStyle } from "../envvars/ui";
+import { globalAgencyName } from "../../globalName";
 
 /**
  * CloneScopeDialog — Scopes → a scope → "Clone to an agency" (2.4.0; R6 has
@@ -43,7 +44,7 @@ export function CloneScopeDialog({
   const catalog = rows<{ id: string; name: string }>(catalogQ.data);
   const targets: AgencyRef[] = (
     globalAdmin
-      ? [{ id: GLOBAL_AGENCY, name: "Global" }, ...catalog.filter((a) => a.id !== GLOBAL_AGENCY)]
+      ? [{ id: GLOBAL_AGENCY, name: globalAgencyName() }, ...catalog.filter((a) => a.id !== GLOBAL_AGENCY)]
       : agenciesFor(access ?? null, "configureApp")
   ).filter((a) => a.id !== (currentAgency || GLOBAL_AGENCY));
   const [target, setTarget] = useState("");

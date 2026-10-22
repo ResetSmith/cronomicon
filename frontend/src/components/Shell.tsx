@@ -5,6 +5,7 @@ import { c } from "../theme";
 import { useTheme } from "../theme-context";
 import { useAuth } from "../auth";
 import { api, fetchCapabilities, fetchVersion, type BuildInfo } from "../api/client";
+import { useOfferAlertLinkAddress } from "../alertLink";
 import { UserMenu } from "./UserMenu";
 import { AgencySwitcher } from "./AgencySwitcher";
 import { useAgencyOptional } from "../agency";
@@ -64,7 +65,6 @@ export const meta: Record<string, { label: string; subtitle: string; icon: React
   "/runners": { label: "Runners", subtitle: "Registered execution runners", icon: <IcServer /> },
   "/settings": { label: "Settings", subtitle: "Configuration and access", icon: <IcGear /> },
   // Not in the sidebar: reached from the agency switcher (2.4.4).
-  "/overview": { label: "Operations overview", subtitle: "Every agency at a glance; open an item to work in its agency", icon: <IcGrid /> },
   // Not in the sidebar: reached from the top bar's Notices control (LR-85).
   "/notices": { label: "Notices", subtitle: "Conditions that need a person, for the agencies you administer", icon: <IcBell /> },
 };
@@ -94,6 +94,9 @@ export function Shell() {
   useEffect(() => {
     void fetchVersion().then(setBuild);
   }, []);
+  // 2.5.2 OP2.1 — a global administrator's visit tells the server the address
+  // alerts link to, the first time (alertLink.ts).
+  useOfferAlertLinkAddress();
 
   // Shared top-bar control style (Refresh + theme toggle). Defined in render so
   // it reads the live, mutable theme tokens in `c` rather than freezing them at
@@ -216,10 +219,12 @@ export function Shell() {
                 surfaces (theme.ts `display`). */}
             <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
               <div style={{ fontSize: c.fontTitle, fontWeight: 600, letterSpacing: -0.2, color: c.text, lineHeight: 1.15 }}>{current.label}</div>
-              {/* Which agency this page shows (2.4.4): every list is one agency's. */}
-              {ag && !ag.onOverview && (
+              {/* Which agency this page shows (2.4.4): every list is one agency's;
+                  the Dashboard may show them all (2.5.2 OP-21). */}
+              {ag && (
                 <span data-testid="page-agency" style={{ fontSize: c.fontSm, color: c.textSec }}>
-                  in <strong style={{ color: c.text }}>{ag.agencyName}</strong>
+                  {ag.onOverview ? "across " : "in "}
+                  <strong style={{ color: c.text }}>{ag.onOverview ? "all agencies" : ag.agencyName}</strong>
                 </span>
               )}
             </div>

@@ -13,6 +13,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
 // The Operations overview and the switcher's badges (2.4.4 S5; plan-2.4.4
@@ -42,6 +43,7 @@ type overviewAgency struct {
 	Name            string         `json:"name"`
 	Jobs            int            `json:"jobs"`
 	PausedJobs      int            `json:"pausedJobs"`
+	ScheduledJobs   int            `json:"scheduledJobs"` // 2.5.2 OP-26
 	Workflows       int            `json:"workflows"`
 	PausedWorkflows int            `json:"pausedWorkflows"`
 	Runs24h         map[string]int `json:"runs24h"`
@@ -57,7 +59,28 @@ type attentionItem struct {
 	Name       string  `json:"name"`
 	ID         *string `json:"id,omitempty"`
 	TraceID    *string `json:"traceId,omitempty"`
-	At         string  `json:"at"`
+	// Who to call (2.5.2 OP-1): the job's or workflow's annotation, read by
+	// annotateAttention. Absent on a sync item and on an unannotated one.
+	Contact  string `json:"contact,omitempty"`
+	Critical bool   `json:"critical,omitempty"`
+	// The agency's own contact (OP-28), when the item names none of its own:
+	// who to call when the job or workflow says nobody, and for a repository.
+	AgencyContact string `json:"agencyContact,omitempty"`
+	// The run's record (2.5.2 OP-20): its acknowledgement, its latest note and
+	// how many entries carry text; for a failed job, whether its previous
+	// failure was acknowledged (OP-11). Absent where there is nothing.
+	Acknowledged *runAckState      `json:"acknowledged,omitempty"`
+	LatestNote   string            `json:"latestNote,omitempty"`
+	NoteCount    int               `json:"noteCount,omitempty"`
+	PreviousAck  *attentionPrevAck `json:"previousAck,omitempty"`
+	At           string            `json:"at"`
+}
+
+// attentionPrevAck: the job's previous failed run was acknowledged, by whom,
+// and when that run was.
+type attentionPrevAck struct {
+	By    string `json:"by"`
+	RunAt string `json:"runAt"`
 }
 
 type overviewResponse struct {
@@ -165,6 +188,15 @@ func (s *Server) getOverview(w http.ResponseWriter, r *http.Request) {
 		fail(err)
 		return
 	}
+	// Jobs on a schedule (2.5.2 OP-26): what an agency's Dashboard counts as
+	// its "Active schedules" (a job whose schedule is not manual), so the
+	// All-agencies tile is their sum.
+	if err := count(`SELECT `+agencyid.JobOwnerSQL("j")+`, COUNT(*), 0
+		  FROM jobs j WHERE j.deleted_at IS NULL AND COALESCE(j.schedule, '') <> '' AND lower(j.schedule) <> 'manual' GROUP BY 1`,
+		func(a *overviewAgency, n, _ int) { a.ScheduledJobs += n }); err != nil {
+		fail(err)
+		return
+	}
 	if err := count(`SELECT `+agencyid.WorkflowOwnerSQL+`, COUNT(*),
 		       SUM(CASE WHEN w.enabled = 0 OR EXISTS (SELECT 1 FROM paused_jobs p WHERE p.owner_kind = 'workflow'
 		             AND (p.owner_uid = w.uid OR (p.owner_uid IS NULL AND p.source = w.source AND p.name = w.name))) THEN 1 ELSE 0 END)
@@ -253,11 +285,165 @@ func (s *Server) getOverview(w http.ResponseWriter, r *http.Request) {
 	if len(attention) > attentionCap {
 		attention = attention[:attentionCap]
 	}
+	s.annotateAttention(ctx, attention)
+	s.attentionNotes(ctx, attention)
 	out.Attention = append([]attentionItem{}, attention...)
 	for _, idv := range order {
 		out.Agencies = append(out.Agencies, *byID[idv])
 	}
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+// attentionOwnerKind is the annotation owner kind an attention item's ID names:
+// a workflow's uid for a failed workflow, a job's uid for the run kinds, and
+// nothing for a repository.
+func attentionOwnerKind(kind string) string {
+	switch kind {
+	case "workflow_failed":
+		return "workflow"
+	case "job_failed", "run_lost", "run_overdue":
+		return "job"
+	}
+	return ""
+}
+
+// annotateAttention gives each job and workflow item its definition's contact
+// and critical flag (2.5.2 OP-1), in one read of the annotations sidecar for the
+// items listed (the cap is applied first). Keyed on (kind, uid) like every read
+// of that table. Then the agency's contact (OP-28) for every item left without
+// one, a repository's included. Display-only, as the run detail and the
+// notification are: a failed read leaves the items un-annotated and never
+// costs the overview.
+func (s *Server) annotateAttention(ctx context.Context, items []attentionItem) {
+	s.annotateFromDefinitions(ctx, items)
+	contacts, err := settings.AgencyContacts(ctx, s.db)
+	if err != nil {
+		s.log.Warn("agency contact lookup failed; attention items render without them", "err", err)
+		return
+	}
+	for i := range items {
+		if items[i].Contact == "" {
+			items[i].AgencyContact = contacts[items[i].AgencyID]
+		}
+	}
+}
+
+// attentionNotes gives each item that names a run its record in brief (2.5.2
+// OP-20), one read per run kind, and a failed job whether its previous failed
+// run was acknowledged (OP-11: a new failure is a new item, but the next shift
+// should see it has history). Display-only: a failed read leaves the items as
+// they were.
+func (s *Server) attentionNotes(ctx context.Context, items []attentionItem) {
+	var runIDs, wrIDs []string
+	for _, it := range items {
+		if it.TraceID == nil || *it.TraceID == "" {
+			continue
+		}
+		switch it.Kind {
+		case "workflow_failed":
+			wrIDs = append(wrIDs, *it.TraceID)
+		case "job_failed", "run_lost", "run_overdue":
+			runIDs = append(runIDs, *it.TraceID)
+		}
+	}
+	runSums, err := s.runNoteSummaries(ctx, runNotesByRun, runIDs)
+	if err != nil {
+		s.log.Warn("run note summaries failed; attention items render without them", "err", err)
+		return
+	}
+	wrSums, err := s.runNoteSummaries(ctx, runNotesByWR, wrIDs)
+	if err != nil {
+		s.log.Warn("run note summaries failed; attention items render without them", "err", err)
+		return
+	}
+	// The previous failed run of each failed job, before the one listed.
+	prevOf := map[string]string{} // listed trace → previous run's id
+	prevAt := map[string]string{} // previous run's id → its time
+	var prevIDs []string
+	for _, it := range items {
+		if it.Kind != "job_failed" || it.ID == nil || it.TraceID == nil {
+			continue
+		}
+		var id, at string
+		if err := s.db.QueryRowContext(ctx, `SELECT r.id, r.created_at FROM runs r
+			 WHERE r.job_uid = ? AND r.kind = 'job' AND r.status IN ('failure', 'killed') AND r.id <> ?
+			   AND r.created_at <= (SELECT created_at FROM runs WHERE id = ?)
+			 ORDER BY r.created_at DESC LIMIT 1`, *it.ID, *it.TraceID, *it.TraceID).Scan(&id, &at); err == nil {
+			prevOf[*it.TraceID], prevAt[id] = id, at
+			prevIDs = append(prevIDs, id)
+		}
+	}
+	prevSums, err := s.runNoteSummaries(ctx, runNotesByRun, prevIDs)
+	if err != nil {
+		s.log.Warn("run note summaries failed; attention items render without them", "err", err)
+		return
+	}
+	for i := range items {
+		it := &items[i]
+		if it.TraceID == nil {
+			continue
+		}
+		sum := runSums[*it.TraceID]
+		if it.Kind == "workflow_failed" {
+			sum = wrSums[*it.TraceID]
+		}
+		if sum != nil {
+			it.Acknowledged, it.LatestNote, it.NoteCount = sum.ack, sum.latestNote, sum.count
+		}
+		if prev := prevOf[*it.TraceID]; prev != "" {
+			if ps := prevSums[prev]; ps != nil && ps.ack != nil {
+				it.PreviousAck = &attentionPrevAck{By: ps.ack.By, RunAt: prevAt[prev]}
+			}
+		}
+	}
+}
+
+// annotateFromDefinitions is annotateAttention's first half: the job's or
+// workflow's own annotation.
+func (s *Server) annotateFromDefinitions(ctx context.Context, items []attentionItem) {
+	type key struct{ kind, uid string }
+	var uids []any
+	seen := map[string]bool{}
+	for _, it := range items {
+		if attentionOwnerKind(it.Kind) == "" || it.ID == nil || *it.ID == "" || seen[*it.ID] {
+			continue
+		}
+		seen[*it.ID] = true
+		uids = append(uids, *it.ID)
+	}
+	if len(uids) == 0 {
+		return
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT owner_kind, owner_uid, critical, contact FROM annotations
+		 WHERE owner_uid IN (`+strings.Repeat(",?", len(uids))[1:]+`)`, uids...)
+	if err != nil {
+		s.log.Warn("annotation lookup failed; attention items render un-annotated", "err", err)
+		return
+	}
+	defer rows.Close()
+	type ann struct {
+		contact  string
+		critical bool
+	}
+	got := map[key]ann{}
+	for rows.Next() {
+		var k key
+		var crit int
+		var contact string
+		if err := rows.Scan(&k.kind, &k.uid, &crit, &contact); err != nil {
+			s.log.Warn("annotation lookup failed; attention items render un-annotated", "err", err)
+			return
+		}
+		got[k] = ann{contact: contact, critical: crit == 1}
+	}
+	for i := range items {
+		if items[i].ID == nil {
+			continue
+		}
+		if a, ok := got[key{attentionOwnerKind(items[i].Kind), *items[i].ID}]; ok {
+			items[i].Contact, items[i].Critical = a.contact, a.critical
+		}
+	}
 }
 
 // overviewAttention is what needs a person, across agencies: jobs and
@@ -338,15 +524,12 @@ func (s *Server) overviewAttention(ctx context.Context, now time.Time, since str
 
 // nextFireByAgency is each agency's next scheduled run in the coming week, as
 // the Upcoming tab projects it (listUpcomingSchedules): enabled and unpaused
-// entries only, a fire a calendar suppresses skipped, none while the
-// installation is frozen.
+// entries only, a fire a calendar suppresses skipped, and a fire the
+// installation freeze will stop skipped (judged at its own time, 2.5.2 FZ-3:
+// a scheduled window skips the fires inside it, an open freeze every one).
 func (s *Server) nextFireByAgency(ctx context.Context, now time.Time) (map[string]time.Time, error) {
 	out := map[string]time.Time{}
-	if f, err := calendar.ReadFreeze(ctx, s.db); err == nil {
-		if _, frozen := calendar.FreezeVerdict(f); frozen {
-			return out, nil
-		}
-	}
+	freeze, _ := calendar.ReadFreeze(ctx, s.db)
 	srows, err := s.drainScheduleRows(ctx)
 	if err != nil {
 		return nil, err
@@ -378,6 +561,9 @@ func (s *Server) nextFireByAgency(ctx context.Context, now time.Time) (map[strin
 		}
 		skip, only := calendar.ParseNames(sr.skipCals.String), calendar.ParseNames(sr.onlyCals.String)
 		for _, t := range cronutil.NextNSpec(sr.spec(), now, end, 50, appLoc) {
+			if _, frozen := calendar.FreezeVerdictAt(freeze, t); frozen {
+				continue
+			}
 			if calendar.EvaluateFor(set, owner, skip, only, calendar.DayOf(t, appLoc)).Suppressed {
 				continue
 			}

@@ -57,7 +57,8 @@ func (s *Scheduler) location() *time.Location {
 // run at all; a database this scheduler cannot read is not a policy statement.
 func (s *Scheduler) calendarVerdict(ctx context.Context, source, ownerKind, ownerName, ownerUID, scheduleName string) calGate {
 	loc := s.location()
-	day := calendar.DayOf(time.Now(), loc)
+	now := time.Now()
+	day := calendar.DayOf(now, loc)
 	gate := calGate{Day: day, Loc: loc}
 
 	skip, only := s.calendarBindings(ctx, source, ownerKind, ownerName, ownerUID, scheduleName)
@@ -70,7 +71,7 @@ func (s *Scheduler) calendarVerdict(ctx context.Context, source, ownerKind, owne
 	// Since §0a (2.4.0): the installation-wide freeze first, then the entry's
 	// own calendars and its agency's global ones (until then every global
 	// calendar, whoever's).
-	v, err := freezeTier(ctx, s.db, definitionAgency(ctx, s.db, ownerUID, ownerKind), skip, only, day)
+	v, err := freezeTier(ctx, s.db, definitionAgency(ctx, s.db, ownerUID, ownerKind), skip, only, day, now)
 	if err != nil {
 		s.log.Error("scheduler: load calendars — firing without calendar suppression",
 			"owner", ownerName, "kind", ownerKind, "schedule", scheduleName, "err", err)

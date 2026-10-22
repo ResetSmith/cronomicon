@@ -25,6 +25,7 @@ import {
   } from "../envvars/ui";
 import { BindingNotices, BoundRunnersCell, ScopeRunnersField, UnboundHostKeysNote, type BoundRunner } from "./ScopeRunners";
 import { ScopeKeyCoverage } from "../runners/HostKeys";
+import { globalAgencyName } from "../../globalName";
 
 
 export interface ScopeRow {
@@ -157,7 +158,7 @@ export function ScopesTab({
   const agencyOptionsFor = (current: { id: string; name: string }[]): AgencyRef[] => {
     const all = rows<{ id: string; name: string }>(agencyData);
     const out = new Map<string, string>();
-    out.set(GLOBAL_AGENCY, "Global");
+    out.set(GLOBAL_AGENCY, globalAgencyName());
     for (const a of all) if (a.id !== GLOBAL_AGENCY) out.set(a.id, a.name);
     for (const a of current) if (!out.has(a.id)) out.set(a.id, a.name);
     return [...out].map(([id, name]) => ({ id, name }));

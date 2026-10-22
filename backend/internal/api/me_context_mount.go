@@ -37,6 +37,9 @@ type myAgencyContext struct {
 	EffectiveDefault string         `json:"effectiveDefault"`
 	WorkingAgency    string         `json:"workingAgency"`
 	CanOverview      bool           `json:"canOverview"`
+	// GlobalName is the built-in agency's name now (2.5.2 GR), for everyone:
+	// an agency's people do not read Global's rows, but they see its name.
+	GlobalName string `json:"globalName"`
 }
 
 func (s *Server) mountMeContext(mux *http.ServeMux) {
@@ -89,7 +92,7 @@ func (s *Server) agencyChoices(ctx context.Context, id auth.Identity) ([]agencyC
 	})
 	out := []agencyChoice{}
 	if canSeeOverview(id) {
-		out = append(out, agencyChoice{ID: overviewChoice, Name: "Overview: all agencies", Kind: "overview"})
+		out = append(out, agencyChoice{ID: overviewChoice, Name: "All agencies", Kind: "overview"})
 	}
 	// Global is a choice for those who read it (2.5.0 C2, question 77), and
 	// the one choice of someone who holds no grant at all, so that the shell
@@ -127,7 +130,7 @@ func (s *Server) myAgencyContextFor(ctx context.Context, id auth.Identity) (myAg
 	if err != nil {
 		return myAgencyContext{}, err
 	}
-	out := myAgencyContext{Choices: choices, CanOverview: canSeeOverview(id)}
+	out := myAgencyContext{Choices: choices, CanOverview: canSeeOverview(id), GlobalName: agencyid.CurrentGlobalName(ctx, s.db)}
 	var stored sql.NullString
 	err = s.db.QueryRowContext(ctx, `SELECT default_agency FROM user_preferences WHERE email = ?`, prefKey(id)).Scan(&stored)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {

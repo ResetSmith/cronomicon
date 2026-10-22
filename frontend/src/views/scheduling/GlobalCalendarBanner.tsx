@@ -11,6 +11,7 @@ import { c } from "../../theme";
 import { calendarDaysKey, calendarExpiry, dayInAppZone, useCalendarDays, useCalendars } from "./calendars";
 import { api } from "../../api/client";
 import { useGet, rows } from "../../hooks";
+import { globalAgencyName } from "../../globalName";
 
 export function GlobalCalendarBanner({ onGoToCalendars }: { onGoToCalendars?: () => void }) {
   const { calendars, expiryWarningDays } = useCalendars();
@@ -21,7 +22,7 @@ export function GlobalCalendarBanner({ onGoToCalendars }: { onGoToCalendars?: ()
   const today = dayInAppZone();
   const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
   const agencyName = (id?: string | null) =>
-    !id || id === "global" ? "Global" : (rows<{ id: string; name: string }>(catalogQ.data).find((a) => a.id === id)?.name ?? id);
+    !id || id === "global" ? globalAgencyName() : (rows<{ id: string; name: string }>(catalogQ.data).find((a) => a.id === id)?.name ?? id);
 
   // Covering today: the fleet is quiet right now, and this is the only place
   // that says why.

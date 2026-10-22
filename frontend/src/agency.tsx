@@ -5,6 +5,7 @@ import { AGENCY_REFRESH_EVENT, api, csrfHeader, errMsg, setRequestAgency } from 
 import { useToast } from "./hooks";
 import { Toast } from "./components/ui";
 import { c } from "./theme";
+import { setGlobalAgencyName } from "./globalName";
 
 // The agency switcher (2.4.4; plan-2.4.4 §3, SW-1 to SW-19).
 //
@@ -15,11 +16,15 @@ import { c } from "./theme";
 // (X-Cronomicon-Agency, api/client.ts); the server narrows each list by it and
 // still enforces every grant, so this is a view, not a permission.
 //
-// The Operations overview (/overview) is a page, not an agency: on it the
-// switcher reads "Overview", and the lists use the working agency.
+// All agencies (2.5.2 OP-21, the Operations overview until then) is not an
+// agency: it is the Dashboard across every agency, at /?agency=overview, for
+// those whose access reaches every agency. On it the switcher reads "All
+// agencies"; every other page, and every list, uses the working agency.
 
 export const OVERVIEW = "overview";
 export const AGENCY_PARAM = "agency";
+/** The built-in agency's id: fixed, whatever it is called (2.5.2 GR). */
+const GLOBAL_AGENCY_ID = "global";
 
 /**
  * VIEW_PARAMS are the query parameters that say how a page is shown, and are
@@ -43,6 +48,8 @@ type MeContext = {
   effectiveDefault: string;
   workingAgency: string;
   canOverview: boolean;
+  /** 2.5.2 GR — the built-in agency's name now (id "global"); absent from an older server. */
+  globalName?: string;
 };
 
 type AgencyCtx = {
@@ -52,6 +59,8 @@ type AgencyCtx = {
   onOverview: boolean;
   choices: AgencyChoice[];
   canOverview: boolean;
+  /** The built-in agency's name now (2.5.2 GR); read it with useGlobalName. */
+  globalName: string;
   /** The person's own default, as stored (null when none). */
   storedDefault: string | null;
   /** Where a visit with no agency in its address starts. */
@@ -79,6 +88,17 @@ export function useAgency(): AgencyCtx {
  * provider (a test, the login screen): null there. */
 export function useAgencyOptional(): AgencyCtx | null {
   return useContext(Ctx);
+}
+
+/**
+ * useGlobalName — the built-in agency's name now (2.5.2 GR): "Central" on a new
+ * installation, "Global" on an older one until a global administrator renames
+ * it. Read it here, never write the literal: an owner name compared with
+ * "Global" stops matching the day the agency is renamed. "Global" outside the
+ * provider (a test) or from a server that does not say.
+ */
+export function useGlobalName(): string {
+  return useContext(Ctx)?.globalName ?? "Global";
 }
 
 /**
@@ -134,7 +154,10 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
     [me],
   );
   const nameOf = useCallback(
-    (id: string) => (id === OVERVIEW ? "Overview" : me?.choices.find((ch) => ch.id === id)?.name ?? id),
+    (id: string) =>
+      id === OVERVIEW
+        ? "All agencies"
+        : me?.choices.find((ch) => ch.id === id)?.name ?? (id === GLOBAL_AGENCY_ID ? (me?.globalName ?? "Global") : id),
     [me],
   );
 
@@ -150,13 +173,27 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
     if (!started.current) {
       started.current = true;
       next = me.workingAgency;
+      // A person whose start is the overview lands on the Dashboard with All
+      // agencies chosen (2.5.2 OP-25).
       if (!urlAgency && me.effectiveDefault === OVERVIEW && location.pathname === "/") {
         setAgency(next);
-        navigate("/overview", { replace: true });
+        navigate({ pathname: "/", search: `?${AGENCY_PARAM}=${OVERVIEW}` }, { replace: true });
         return;
       }
     }
-    if (urlAgency && urlAgency !== agency) {
+    // All agencies (2.5.2 OP-21) is the Dashboard's, for those whose access
+    // reaches every agency: the address keeps it, and the agency the lists use
+    // stays the working one (OP-24). Elsewhere, or for anyone else, it gives
+    // way to that agency like any agency that is not a choice.
+    if (urlAgency === OVERVIEW && me.canOverview && location.pathname === "/") {
+      if (!isChoice(next)) next = me.workingAgency;
+      if (next !== agency) setAgency(next);
+      return;
+    }
+    if (urlAgency === OVERVIEW) {
+      if (!me.canOverview) fire(`That agency is not available to you; showing ${nameOf(next || me.workingAgency)}`);
+      if (!isChoice(next)) next = me.workingAgency;
+    } else if (urlAgency && urlAgency !== agency) {
       if (isChoice(urlAgency)) {
         if (agency && quietSwitch.current !== urlAgency) fire(`Switched to ${nameOf(urlAgency)}`);
         quietSwitch.current = null;
@@ -169,7 +206,7 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
       next = me.workingAgency;
     }
     if (next !== agency) setAgency(next);
-    if (location.pathname !== "/overview" && params.get(AGENCY_PARAM) !== next) {
+    if (params.get(AGENCY_PARAM) !== next) {
       params.set(AGENCY_PARAM, next);
       navigate({ pathname: location.pathname, search: "?" + params.toString(), hash: location.hash }, { replace: true });
     }
@@ -179,12 +216,12 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
   const switchTo = useCallback(
     (id: string, notice?: string, opts?: { keepPage?: boolean }) => {
       if (id === OVERVIEW) {
-        navigate("/overview");
+        navigate({ pathname: "/", search: `?${AGENCY_PARAM}=${OVERVIEW}` });
         return;
       }
       if (!isChoice(id)) return;
-      const params = new URLSearchParams(location.pathname === "/overview" ? "" : location.search);
-      let path = location.pathname === "/overview" ? "/" : location.pathname;
+      const params = new URLSearchParams(location.search);
+      let path = location.pathname;
       if (opts?.keepPage) {
         setAgency(id);
       } else {
@@ -227,7 +264,8 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
     [load, fire, nameOf],
   );
 
-  const onOverview = location.pathname === "/overview";
+  // The Dashboard with All agencies chosen (2.5.2 OP-21).
+  const onOverview = location.pathname === "/" && urlAgency === OVERVIEW && !!me?.canOverview;
   const value = useMemo<AgencyCtx | null>(() => {
     if (!me || !agency) return null;
     return {
@@ -236,6 +274,7 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
       onOverview,
       choices: me.choices,
       canOverview: me.canOverview,
+      globalName: me.globalName ?? "Global",
       storedDefault: me.storedDefault ?? null,
       effectiveDefault: me.effectiveDefault,
       nameOf,
@@ -259,6 +298,8 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
   // Set during render, before any child's effect fetches, so a list never
   // asks without the agency.
   setRequestAgency(value.agency);
+  // 2.5.2 GR: the built-in agency's name for plain functions and labels (globalName.ts).
+  setGlobalAgencyName(value.globalName);
   return (
     <Ctx.Provider value={value}>
       {children}

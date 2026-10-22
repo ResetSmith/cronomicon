@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./client";
 import type { components } from "./schema";
+import { globalAgencyName } from "../globalName";
 
 export type MyAccess = components["schemas"]["MyAccess"];
 export type AgencyRef = { id: string; name: string };
@@ -78,7 +79,7 @@ export function useAgencyIdByName(name: string | undefined): string | undefined 
       setId(undefined);
       return;
     }
-    if (name === "Global") {
+    if (name === globalAgencyName()) {
       setId(GLOBAL_AGENCY);
       return;
     }
