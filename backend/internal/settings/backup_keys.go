@@ -33,6 +33,11 @@ var (
 	// ErrBackupUnencryptedConfirm refuses removing the last key without the
 	// confirmation. Handlers answer 422 `confirmation_required`.
 	ErrBackupUnencryptedConfirm = fmt.Errorf("%w: removing the last key turns encryption off: confirm that later backups are written unencrypted", ErrValidation)
+	// ErrBackupRecipientsEnvUnusable is the seed's refusal when no list is
+	// stored yet (2.5.1 SG6.3, the review's A7): the server does not start,
+	// since it would write and upload its boot backup unencrypted.
+	ErrBackupRecipientsEnvUnusable = errors.New("CRONOMICON_BACKUP_RECIPIENTS is set but holds no usable backup key, and no backup keys are stored, " +
+		"so backups would be written unencrypted: fix the variable or unset it")
 )
 
 // BackupRecipient is one key as the card shows it.
@@ -172,19 +177,31 @@ func backupKeysChange(prev, next []string, acknowledged bool) string {
 // SeedBackupRecipientsFromEnv stores CRONOMICON_BACKUP_RECIPIENTS (commas or
 // newlines) on the first boot that finds no stored list, and never after. The
 // operator who sets the environment holds the private keys; an invalid key
-// refuses the seed (nothing stored) so the boot log says why. Reports whether
-// it stored anything.
+// refuses the seed (nothing stored). With no list stored, that refusal, or a
+// value that holds no key at all, wraps ErrBackupRecipientsEnvUnusable and the
+// caller refuses to start (2.5.1 SG6.3): started, the server would back up
+// unencrypted, the opposite of what the variable asked for. With a list stored
+// (an empty one included: encryption turned off on the card) the variable no
+// longer applies and a bad one is an error to log. Reports whether it stored
+// anything.
 func SeedBackupRecipientsFromEnv(ctx context.Context, database *sql.DB, raw string) (bool, error) {
 	if strings.TrimSpace(raw) == "" {
 		return false, nil
 	}
 	fields := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' })
 	keys, err := NormalizeBackupRecipients(fields)
-	if err != nil {
-		return false, err
+	if err == nil && len(keys) == 0 {
+		err = fmt.Errorf("%w: no key in it", ErrValidation)
 	}
-	if len(keys) == 0 {
-		return false, nil
+	if err != nil {
+		var stored int
+		if qerr := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key = ?`, backupRecipientsKey).Scan(&stored); qerr != nil {
+			return false, qerr
+		}
+		if stored == 0 {
+			return false, fmt.Errorf("%w (%w)", ErrBackupRecipientsEnvUnusable, err)
+		}
+		return false, err
 	}
 	b, err := json.Marshal(keys)
 	if err != nil {
