@@ -57,7 +57,11 @@ type attentionItem struct {
 	Name       string  `json:"name"`
 	ID         *string `json:"id,omitempty"`
 	TraceID    *string `json:"traceId,omitempty"`
-	At         string  `json:"at"`
+	// Who to call (2.5.2 OP-1): the job's or workflow's annotation, read by
+	// annotateAttention. Absent on a sync item and on an unannotated one.
+	Contact  string `json:"contact,omitempty"`
+	Critical bool   `json:"critical,omitempty"`
+	At       string `json:"at"`
 }
 
 type overviewResponse struct {
@@ -253,11 +257,76 @@ func (s *Server) getOverview(w http.ResponseWriter, r *http.Request) {
 	if len(attention) > attentionCap {
 		attention = attention[:attentionCap]
 	}
+	s.annotateAttention(ctx, attention)
 	out.Attention = append([]attentionItem{}, attention...)
 	for _, idv := range order {
 		out.Agencies = append(out.Agencies, *byID[idv])
 	}
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+// attentionOwnerKind is the annotation owner kind an attention item's ID names:
+// a workflow's uid for a failed workflow, a job's uid for the run kinds, and
+// nothing for a repository.
+func attentionOwnerKind(kind string) string {
+	switch kind {
+	case "workflow_failed":
+		return "workflow"
+	case "job_failed", "run_lost", "run_overdue":
+		return "job"
+	}
+	return ""
+}
+
+// annotateAttention gives each job and workflow item its definition's contact
+// and critical flag (2.5.2 OP-1), in one read of the annotations sidecar for the
+// items listed (the cap is applied first). Keyed on (kind, uid) like every read
+// of that table. Display-only, as the run detail and the notification are: a
+// failed read leaves the items un-annotated and never costs the overview.
+func (s *Server) annotateAttention(ctx context.Context, items []attentionItem) {
+	type key struct{ kind, uid string }
+	var uids []any
+	seen := map[string]bool{}
+	for _, it := range items {
+		if attentionOwnerKind(it.Kind) == "" || it.ID == nil || *it.ID == "" || seen[*it.ID] {
+			continue
+		}
+		seen[*it.ID] = true
+		uids = append(uids, *it.ID)
+	}
+	if len(uids) == 0 {
+		return
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT owner_kind, owner_uid, critical, contact FROM annotations
+		 WHERE owner_uid IN (`+strings.Repeat(",?", len(uids))[1:]+`)`, uids...)
+	if err != nil {
+		s.log.Warn("annotation lookup failed; attention items render un-annotated", "err", err)
+		return
+	}
+	defer rows.Close()
+	type ann struct {
+		contact  string
+		critical bool
+	}
+	got := map[key]ann{}
+	for rows.Next() {
+		var k key
+		var crit int
+		var contact string
+		if err := rows.Scan(&k.kind, &k.uid, &crit, &contact); err != nil {
+			s.log.Warn("annotation lookup failed; attention items render un-annotated", "err", err)
+			return
+		}
+		got[k] = ann{contact: contact, critical: crit == 1}
+	}
+	for i := range items {
+		if items[i].ID == nil {
+			continue
+		}
+		if a, ok := got[key{attentionOwnerKind(items[i].Kind), *items[i].ID}]; ok {
+			items[i].Contact, items[i].Critical = a.contact, a.critical
+		}
+	}
 }
 
 // overviewAttention is what needs a person, across agencies: jobs and

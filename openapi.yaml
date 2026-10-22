@@ -9391,6 +9391,17 @@ components:
           type: string
           maxLength: 4096
           description: Free-text operator notes. Plain text; newlines are significant.
+    RunAnnotation:
+      type: object
+      readOnly: true
+      description: >-
+        2.5.2 (OP-2) — who to call about a run: its job's or workflow's annotation contact and
+        critical flag, read when the run is read (a later edit of the annotation shows here).
+        The notes stay on the job; the run detail links there.
+      required: [contact, critical]
+      properties:
+        contact: { type: string, description: Empty when the annotation names no contact. }
+        critical: { type: boolean }
     Job:
       type: object
       description: |
@@ -11153,6 +11164,11 @@ components:
             two jobs, and unlike `jobId` (a database rowid) it is never reused —
             key integrations on this.
         jobName: { type: string, readOnly: true }
+        annotation:
+          $ref: '#/components/schemas/RunAnnotation'
+          description: >-
+            2.5.2 (OP-2) — the run's job's contact and critical flag, read now by `jobUid`. On
+            GET /runs/{traceId} only, and absent when the run has no job uid; never on the list.
         jobSource:
           type: string
           enum: [git, cronomicon]
@@ -11421,6 +11437,11 @@ components:
         - $ref: '#/components/schemas/WorkflowRun'
         - type: object
           properties:
+            annotation:
+              $ref: '#/components/schemas/RunAnnotation'
+              description: >-
+                2.5.2 (OP-2) — the workflow's contact and critical flag, read now by
+                `workflowUid`; absent when the run has no workflow uid.
             steps:
               type: array
               items: { $ref: '#/components/schemas/WorkflowRunStep' }
@@ -15383,6 +15404,14 @@ components:
               name: { type: string }
               id: { type: string, description: The job's or workflow's uid, or the run's job's. }
               traceId: { type: string, description: The run (or workflow run) to open. }
+              contact:
+                type: string
+                description: >-
+                  2.5.2 (OP-1) — the job's or workflow's annotation contact; absent when it has none,
+                  and on a sync item.
+              critical:
+                type: boolean
+                description: 2.5.2 (OP-1) — the annotation's critical flag; absent when false.
               at: { type: string }
         attentionTotal: { type: integer, description: How many need attention; at most 100 are listed. }
         generatedAt: { type: string, format: date-time }

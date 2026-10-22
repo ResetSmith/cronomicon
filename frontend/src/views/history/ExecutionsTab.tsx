@@ -25,6 +25,8 @@ import {
   fmtDuration,
   fmtTime,
   mono,
+  RunContact,
+  definitionHref,
   TraceId,
   td,
   th,
@@ -43,6 +45,10 @@ interface Run {
   // backfill could not attribute. R2F-3 keys the name badge on it.
   jobUid?: string | null;
   jobName?: string;
+  /** Whose run it is (its owner agency's id): where its job is opened. */
+  ownerAgency?: string | null;
+  /** 2.5.2 OP-2 — who to call: the job's annotation, on the detail only. */
+  annotation?: { contact: string; critical: boolean };
   // The run's FROZEN agency snapshot (what it actually ran for), not live
   // membership — so a historical row keeps saying whose run it was.
   agencies?: string[];
@@ -826,7 +832,7 @@ export function ExecutionsTab() {
  * record while it is still queued/running (the useLiveGet idiom) so the header
  * fields settle and RunLog's `active` actually flips off at terminal — with a
  * one-shot useGet, a drawer opened mid-run would tail forever. */
-function RunDetail({ traceId }: { traceId: string }) {
+export function RunDetail({ traceId }: { traceId: string }) {
   const detail = useLiveGet<Run>(
     () => api.GET("/runs/{traceId}", { params: { path: { traceId } } }),
     [traceId],
@@ -868,6 +874,21 @@ function RunDetail({ traceId }: { traceId: string }) {
               </>
             )}
           </Field>
+          {/* 2.5.2 OP-2 — who to call about this run, and its job one click
+              away: the two things an operator mid-incident looked for here and
+              had to go to the agency's Jobs page to find. */}
+          {d.annotation && (
+            <Field label="Contact">
+              <RunContact contact={d.annotation.contact} critical={d.annotation.critical} />
+            </Field>
+          )}
+          {d.jobUid && (
+            <Field label="Job">
+              <Link to={definitionHref("job", d.jobUid, d.ownerAgency)} style={{ color: c.primary, fontWeight: 600, textDecoration: "none" }}>
+                Open job
+              </Link>
+            </Field>
+          )}
           {/* RX-17 — "why did this run?", answered by pointing rather than by
               prose. Both directions live here because a reaction's coupling is
               invisible everywhere else: the forward link is a field on this row,

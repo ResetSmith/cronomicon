@@ -3483,11 +3483,12 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	var durationMs sql.NullInt64
 	var cancelled int
 	var wrAgency string
+	var wfUID sql.NullString
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT workflow_id, workflow_name, status, triggered_by, started_at, completed_at, schedule_name, duration_ms, steps_snapshot, cancelled,
-		       `+agencyid.ColumnOwnerSQL("workflow_runs", "agency_id")+`
+		       `+agencyid.ColumnOwnerSQL("workflow_runs", "agency_id")+`, workflow_uid
 		FROM workflow_runs WHERE id = ?
-	`, traceID).Scan(&wrid, &wfName, &status, &triggeredBy, &startedAt, &completedAt, &scheduleName, &durationMs, &stepsSnapshot, &cancelled, &wrAgency)
+	`, traceID).Scan(&wrid, &wfName, &status, &triggeredBy, &startedAt, &completedAt, &scheduleName, &durationMs, &stepsSnapshot, &cancelled, &wrAgency, &wfUID)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow run not found")
 		return
@@ -3547,6 +3548,7 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"traceId":      traceID,
 		"workflowId":   nullInt64Val(wrid),
+		"workflowUid":  nullStrVal(wfUID),
 		"workflowName": wfName,
 		"status":       workflowDisplayStatus(status, cancelled),
 		"triggeredBy":  nullStrVal(triggeredBy),
@@ -3558,6 +3560,9 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		"jobTraceIds":  jobIDs,
 		"steps":        s.workflowRunSteps(r, children, containers),
 		"graph":        workflowRunGraph(stepsSnapshot.String, stats),
+	}
+	if ann := s.runAnnotation(r.Context(), "workflow", wfUID.String); ann != nil {
+		resp["annotation"] = ann
 	}
 	httpx.JSON(w, http.StatusOK, resp)
 }
@@ -4321,7 +4326,24 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Who to call (2.5.2 OP-2), on the detail only: the list never pays for it.
+	jobUID, _ := run["jobUid"].(string)
+	if ann := s.runAnnotation(r.Context(), "job", jobUID); ann != nil {
+		run["annotation"] = ann
+	}
 	httpx.JSON(w, http.StatusOK, run)
+}
+
+// runAnnotation is who to call about a run (2.5.2 OP-2): its job's or workflow's
+// annotation contact and critical flag, read now by uid, so a contact edited
+// after the run shows. nil when the run names no definition, so the field is
+// absent rather than empty; an unannotated definition is an empty contact.
+func (s *Server) runAnnotation(ctx context.Context, kind, uid string) map[string]any {
+	if uid == "" {
+		return nil
+	}
+	a := s.loadAnnotation(ctx, kind, uid)
+	return map[string]any{"contact": a.contact, "critical": a.critical}
 }
 
 func (s *Server) fetchRunByID(r *http.Request, traceID string) map[string]any {

@@ -5805,6 +5805,12 @@ export interface components {
             /** @description Free-text operator notes. Plain text; newlines are significant. */
             notes?: string;
         };
+        /** @description 2.5.2 (OP-2) — who to call about a run: its job's or workflow's annotation contact and critical flag, read when the run is read (a later edit of the annotation shows here). The notes stay on the job; the run detail links there. */
+        RunAnnotation: {
+            /** @description Empty when the annotation names no contact. */
+            contact: string;
+            critical: boolean;
+        };
         /**
          * @description A job definition + DB runtime state. source ∈ {git, cronomicon} (A9): git
          *     jobs are Git-authored (definition fields read-only over the API; edits go
@@ -7236,6 +7242,8 @@ export interface components {
              */
             readonly jobUid?: string | null;
             readonly jobName?: string;
+            /** @description 2.5.2 (OP-2) — the run's job's contact and critical flag, read now by `jobUid`. On GET /runs/{traceId} only, and absent when the run has no job uid; never on the list. */
+            annotation?: components["schemas"]["RunAnnotation"];
             /**
              * @description Origin of the job this run executed (A9; NULL legacy runs report git).
              * @enum {string}
@@ -7484,6 +7492,8 @@ export interface components {
             readonly jobTraceIds?: string[];
         };
         WorkflowRunDetail: components["schemas"]["WorkflowRun"] & {
+            /** @description 2.5.2 (OP-2) — the workflow's contact and critical flag, read now by `workflowUid`; absent when the run has no workflow uid. */
+            annotation?: components["schemas"]["RunAnnotation"];
             steps?: components["schemas"]["WorkflowRunStep"][];
             /**
              * @description The executed step graph (WB-D1 per-run snapshot) with each node's
@@ -10496,6 +10506,10 @@ export interface components {
                 id?: string;
                 /** @description The run (or workflow run) to open. */
                 traceId?: string;
+                /** @description 2.5.2 (OP-1) — the job's or workflow's annotation contact; absent when it has none, and on a sync item. */
+                contact?: string;
+                /** @description 2.5.2 (OP-1) — the annotation's critical flag; absent when false. */
+                critical?: boolean;
                 at: string;
             }[];
             /** @description How many need attention; at most 100 are listed. */

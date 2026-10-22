@@ -10,6 +10,7 @@ import { excludeSuppressed } from "./scheduling/calendars";
 import { appZoneParts, fmtInAppZone } from "../utils/datetime";
 import { useAgency } from "../agency";
 import { InlineLoading } from "../components/ui";
+import { CriticalChip } from "../components/Annotation";
 import { c } from "../theme";
 
 // The Operations overview (2.4.4 F3; plan-2.4.4 SW-12, SW-13). ONE read-only
@@ -37,6 +38,9 @@ type AttentionItem = {
   name: string;
   id?: string;
   traceId?: string;
+  // Who to call (2.5.2 OP-1): the job's or workflow's annotation.
+  contact?: string;
+  critical?: boolean;
   at: string;
 };
 type OverviewData = { agencies: OverviewAgency[]; attention: AttentionItem[]; attentionTotal: number; generatedAt: string };
@@ -53,17 +57,21 @@ const KIND_LABEL: Record<AttentionItem["kind"], string> = {
   sync_failed: "Repository sync failed",
 };
 
-/** Where an attention item is opened: in its own agency. */
+/**
+ * Where an attention item is opened: in its own agency, at the run it names
+ * (2.5.2 OP-4). A failed job opened its run list and a failed workflow the
+ * whole tab, which made the person find the run again.
+ */
 export function attentionHref(it: AttentionItem): string {
   const a = `agency=${encodeURIComponent(it.agencyId)}`;
+  const trace = it.traceId ? `trace=${encodeURIComponent(it.traceId)}&` : "";
   switch (it.kind) {
     case "job_failed":
-      return it.id ? `/runs?jobUid=${encodeURIComponent(it.id)}&${a}` : `/runs?${a}`;
     case "run_lost":
     case "run_overdue":
-      return it.traceId ? `/runs?trace=${encodeURIComponent(it.traceId)}&${a}` : `/runs?${a}`;
+      return `/runs?${trace}${a}`;
     case "workflow_failed":
-      return `/runs?tab=workflow-runs&${a}`;
+      return `/runs?tab=workflow-runs&${trace}${a}`;
     case "sync_failed":
       return `/runs?tab=git-sync&${a}`;
   }
@@ -325,6 +333,7 @@ export function Overview() {
                 <th style={th}>What</th>
                 <th style={th}>Name</th>
                 <th style={th}>Agency</th>
+                <th style={th}>Contact</th>
                 <th style={th}>When</th>
               </tr>
             </thead>
@@ -336,8 +345,22 @@ export function Overview() {
                     <Link to={attentionHref(it)} style={link} title={`Open in ${it.agencyName}`}>
                       {it.name}
                     </Link>
+                    {it.critical && (
+                      <span style={{ marginLeft: 8, display: "inline-flex", verticalAlign: "middle" }}>
+                        <CriticalChip />
+                      </span>
+                    )}
                   </td>
                   <td style={td}>{it.agencyName}</td>
+                  <td style={td}>
+                    {it.kind === "sync_failed" ? (
+                      <span style={{ color: c.textMuted }}>—</span>
+                    ) : it.contact ? (
+                      it.contact
+                    ) : (
+                      <span style={{ color: c.textMuted }}>None set</span>
+                    )}
+                  </td>
                   <td style={td}>{when(it.at)}</td>
                 </tr>
               ))}

@@ -111,6 +111,28 @@ describe("the Operations overview (2.4.4 F3)", () => {
     expect(page.querySelectorAll("button")).toHaveLength(0);
   });
 
+  it("says who to call about each item, and marks a critical one (2.5.2 OP-1)", async () => {
+    OVERVIEW = {
+      ...(OVERVIEW as Record<string, unknown>),
+      attention: [
+        { kind: "job_failed", agencyId: "ag-a", agencyName: "agency-alpha", name: "payroll-export", id: "u-1", traceId: "t-1", contact: "Payroll on-call", critical: true, at: "2026-10-16T11:00:00Z" },
+        { kind: "run_lost", agencyId: "ag-a", agencyName: "agency-alpha", name: "e2e-alpha-slow", id: "u-2", traceId: "t-2", at: "2026-10-16T10:50:00Z" },
+        { kind: "sync_failed", agencyId: "ag-b", agencyName: "agency-beta", name: "agency-beta's repository", at: "2026-10-16T10:30:00Z" },
+      ],
+      attentionTotal: 3,
+    };
+    renderAt("/overview");
+    await screen.findByTestId("overview");
+    expect(screen.getByRole("columnheader", { name: "Contact" })).toBeTruthy();
+    const [annotated, bare, sync] = screen.getAllByTestId("attention-item");
+    expect(annotated.textContent).toContain("Payroll on-call");
+    expect(within(annotated).getByText("Critical")).toBeTruthy();
+    expect(bare.textContent).toContain("None set");
+    expect(within(bare).queryByText("Critical")).toBeNull();
+    // A repository has no contact to set.
+    expect(sync.textContent).not.toContain("None set");
+  });
+
   it("opens an item in its own agency, which switches and says so", async () => {
     renderAt("/overview");
     await screen.findByTestId("overview");
@@ -185,12 +207,15 @@ describe("the Operations overview (2.4.4 F3)", () => {
     expect(screen.queryByTestId("score-cut")).toBeNull();
   });
 
-  it("links each kind of item where it is worked on", () => {
+  it("links each kind of item to the run it names (2.5.2 OP-4)", () => {
     const base = { agencyId: "ag-a", agencyName: "a", name: "n", at: "" };
-    expect(attentionHref({ ...base, kind: "job_failed", id: "u" })).toBe("/runs?jobUid=u&agency=ag-a");
+    expect(attentionHref({ ...base, kind: "job_failed", id: "u", traceId: "t" })).toBe("/runs?trace=t&agency=ag-a");
+    expect(attentionHref({ ...base, kind: "run_lost", id: "u", traceId: "t" })).toBe("/runs?trace=t&agency=ag-a");
     expect(attentionHref({ ...base, kind: "run_overdue", traceId: "t" })).toBe("/runs?trace=t&agency=ag-a");
-    expect(attentionHref({ ...base, kind: "workflow_failed" })).toBe("/runs?tab=workflow-runs&agency=ag-a");
+    expect(attentionHref({ ...base, kind: "workflow_failed", id: "w", traceId: "wt" })).toBe("/runs?tab=workflow-runs&trace=wt&agency=ag-a");
     expect(attentionHref({ ...base, kind: "sync_failed" })).toBe("/runs?tab=git-sync&agency=ag-a");
+    // An item without a run falls back to the agency's list, as before.
+    expect(attentionHref({ ...base, kind: "job_failed", id: "u" })).toBe("/runs?agency=ag-a");
     expect(hitHref({ kind: "workflow", id: "w", name: "n", agencyId: "global", agencyName: "Global" })).toBe("/workflows?agency=global");
   });
 });

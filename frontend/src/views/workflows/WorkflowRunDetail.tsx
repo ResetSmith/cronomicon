@@ -1,4 +1,5 @@
 import { Suspense, lazy, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import { useGet } from "../../hooks";
 import { c } from "../../theme";
@@ -13,7 +14,7 @@ import {
 import { StepChain } from "./StepChain";
 import { normalizeGraph } from "./graphView";
 import { RunLog } from "../history/RunLog";
-import { shortTrace } from "../history/shared";
+import { Field, RunContact, definitionHref, shortTrace } from "../history/shared";
 
 // WC-R1: the dagre canvas loads on demand (xyflow + dagre share the editor's chunk).
 const WorkflowCanvasLazy = lazy(() => import("./WorkflowCanvas").then((m) => ({ default: m.WorkflowCanvas })));
@@ -22,6 +23,35 @@ interface RunDetailResp {
   status?: string;
   steps?: WfRunStep[];
   graph?: WfStep[];
+  workflowUid?: string | null;
+  /** 2.5.2 OP-2 — who to call: the workflow's annotation. */
+  annotation?: { contact: string; critical: boolean };
+}
+
+/**
+ * Who to call about the run and its workflow one click away (2.5.2 OP-2).
+ * The link opens the workflow in the agency in use, which is the run's: History
+ * shows a run in its own agency, and the Workflows page embeds this with
+ * `showOwner` off (the workflow is the row it sits under).
+ */
+function RunOwner({ data }: { data: RunDetailResp }) {
+  if (!data.annotation && !data.workflowUid) return null;
+  return (
+    <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
+      {data.annotation && (
+        <Field label="Contact">
+          <RunContact contact={data.annotation.contact} critical={data.annotation.critical} />
+        </Field>
+      )}
+      {data.workflowUid && (
+        <Field label="Workflow">
+          <Link to={definitionHref("workflow", data.workflowUid)} style={{ color: c.primary, fontWeight: 600, textDecoration: "none" }}>
+            Open workflow
+          </Link>
+        </Field>
+      )}
+    </div>
+  );
 }
 
 // Shared workflow-run drill-down (WB-O1/O3/O4/O5): a grouped step-graph view
@@ -30,7 +60,7 @@ interface RunDetailResp {
 // context and job-run log (WB-O1/O4 — step.id IS the child-run trace id). Consumed
 // by both the Workflows page (the expanded row's compact runs table) and History
 // (WorkflowRunsTab) so the two surfaces never drift.
-export function WorkflowRunDetail({ traceId, live }: { traceId: string; live?: boolean }) {
+export function WorkflowRunDetail({ traceId, live, showOwner = true }: { traceId: string; live?: boolean; showOwner?: boolean }) {
   // While the run is in flight, poll so step status/duration advance live; stop
   // once terminal (WB-O2).
   const { data, error, loading } = useGet<RunDetailResp>(
@@ -46,15 +76,22 @@ export function WorkflowRunDetail({ traceId, live }: { traceId: string; live?: b
 
   if (loading) return <div style={muted()}>Loading steps…</div>;
   if (error) return <div style={{ ...muted(), color: c.danger }}>Error loading run: {error}</div>;
+  const owner = showOwner && data ? <RunOwner data={data} /> : null;
   if (steps.length === 0) {
     // WB-O3: a still-starting run reads differently from one that recorded none.
     const running = data?.status === "running" || data?.status === "queued";
-    return <div style={muted()}>{running ? "Steps are starting…" : "No step-level detail recorded for this run."}</div>;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {owner}
+        <div style={muted()}>{running ? "Steps are starting…" : "No step-level detail recorded for this run."}</div>
+      </div>
+    );
   }
 
   return (
     // EP-4 Shape A — the workflow-run fetch plus every step's log viewer inside.
     <DetailPanel style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {owner}
       {graph.length > 0 && (
         <div>
           <SectionLabel>Step Graph</SectionLabel>

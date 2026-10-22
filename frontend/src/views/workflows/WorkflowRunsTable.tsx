@@ -403,7 +403,7 @@ export function WorkflowRunsTable({
                       <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                         <td colSpan={cols.visible.length} style={{ padding: "14px 16px 18px", background: c.primaryBg }}>
                           <RefreshScope>
-                          <WorkflowRunDetail traceId={w.traceId} live={live} />
+                          <WorkflowRunDetail traceId={w.traceId} live={live} showOwner={!compact} />
                           </RefreshScope>
                         </td>
                       </tr>
