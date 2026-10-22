@@ -65,7 +65,21 @@ type attentionItem struct {
 	// The agency's own contact (OP-28), when the item names none of its own:
 	// who to call when the job or workflow says nobody, and for a repository.
 	AgencyContact string `json:"agencyContact,omitempty"`
-	At            string `json:"at"`
+	// The run's record (2.5.2 OP-20): its acknowledgement, its latest note and
+	// how many entries carry text; for a failed job, whether its previous
+	// failure was acknowledged (OP-11). Absent where there is nothing.
+	Acknowledged *runAckState      `json:"acknowledged,omitempty"`
+	LatestNote   string            `json:"latestNote,omitempty"`
+	NoteCount    int               `json:"noteCount,omitempty"`
+	PreviousAck  *attentionPrevAck `json:"previousAck,omitempty"`
+	At           string            `json:"at"`
+}
+
+// attentionPrevAck: the job's previous failed run was acknowledged, by whom,
+// and when that run was.
+type attentionPrevAck struct {
+	By    string `json:"by"`
+	RunAt string `json:"runAt"`
 }
 
 type overviewResponse struct {
@@ -262,6 +276,7 @@ func (s *Server) getOverview(w http.ResponseWriter, r *http.Request) {
 		attention = attention[:attentionCap]
 	}
 	s.annotateAttention(ctx, attention)
+	s.attentionNotes(ctx, attention)
 	out.Attention = append([]attentionItem{}, attention...)
 	for _, idv := range order {
 		out.Agencies = append(out.Agencies, *byID[idv])
@@ -299,6 +314,76 @@ func (s *Server) annotateAttention(ctx context.Context, items []attentionItem) {
 	for i := range items {
 		if items[i].Contact == "" {
 			items[i].AgencyContact = contacts[items[i].AgencyID]
+		}
+	}
+}
+
+// attentionNotes gives each item that names a run its record in brief (2.5.2
+// OP-20), one read per run kind, and a failed job whether its previous failed
+// run was acknowledged (OP-11: a new failure is a new item, but the next shift
+// should see it has history). Display-only: a failed read leaves the items as
+// they were.
+func (s *Server) attentionNotes(ctx context.Context, items []attentionItem) {
+	var runIDs, wrIDs []string
+	for _, it := range items {
+		if it.TraceID == nil || *it.TraceID == "" {
+			continue
+		}
+		switch it.Kind {
+		case "workflow_failed":
+			wrIDs = append(wrIDs, *it.TraceID)
+		case "job_failed", "run_lost", "run_overdue":
+			runIDs = append(runIDs, *it.TraceID)
+		}
+	}
+	runSums, err := s.runNoteSummaries(ctx, runNotesByRun, runIDs)
+	if err != nil {
+		s.log.Warn("run note summaries failed; attention items render without them", "err", err)
+		return
+	}
+	wrSums, err := s.runNoteSummaries(ctx, runNotesByWR, wrIDs)
+	if err != nil {
+		s.log.Warn("run note summaries failed; attention items render without them", "err", err)
+		return
+	}
+	// The previous failed run of each failed job, before the one listed.
+	prevOf := map[string]string{} // listed trace → previous run's id
+	prevAt := map[string]string{} // previous run's id → its time
+	var prevIDs []string
+	for _, it := range items {
+		if it.Kind != "job_failed" || it.ID == nil || it.TraceID == nil {
+			continue
+		}
+		var id, at string
+		if err := s.db.QueryRowContext(ctx, `SELECT r.id, r.created_at FROM runs r
+			 WHERE r.job_uid = ? AND r.kind = 'job' AND r.status IN ('failure', 'killed') AND r.id <> ?
+			   AND r.created_at <= (SELECT created_at FROM runs WHERE id = ?)
+			 ORDER BY r.created_at DESC LIMIT 1`, *it.ID, *it.TraceID, *it.TraceID).Scan(&id, &at); err == nil {
+			prevOf[*it.TraceID], prevAt[id] = id, at
+			prevIDs = append(prevIDs, id)
+		}
+	}
+	prevSums, err := s.runNoteSummaries(ctx, runNotesByRun, prevIDs)
+	if err != nil {
+		s.log.Warn("run note summaries failed; attention items render without them", "err", err)
+		return
+	}
+	for i := range items {
+		it := &items[i]
+		if it.TraceID == nil {
+			continue
+		}
+		sum := runSums[*it.TraceID]
+		if it.Kind == "workflow_failed" {
+			sum = wrSums[*it.TraceID]
+		}
+		if sum != nil {
+			it.Acknowledged, it.LatestNote, it.NoteCount = sum.ack, sum.latestNote, sum.count
+		}
+		if prev := prevOf[*it.TraceID]; prev != "" {
+			if ps := prevSums[prev]; ps != nil && ps.ack != nil {
+				it.PreviousAck = &attentionPrevAck{By: ps.ack.By, RunAt: prevAt[prev]}
+			}
 		}
 	}
 }

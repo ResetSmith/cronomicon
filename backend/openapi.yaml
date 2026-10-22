@@ -1910,6 +1910,92 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /workflow-runs/{traceId}/notes:
+    get:
+      tags: [Runs]
+      operationId: getWorkflowRunNotes
+      summary: A workflow run's notes and acknowledgement (v2.5.2)
+      description: As GET /runs/{traceId}/notes, for a workflow run; its read check is the workflow run's.
+      parameters: [{ $ref: '#/components/parameters/traceId' }]
+      responses:
+        '200':
+          description: The state and the entries, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunNotes' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Runs]
+      operationId: addWorkflowRunNote
+      summary: Add a note to a workflow run, or acknowledge it (v2.5.2)
+      description: As POST /runs/{traceId}/notes, for a workflow run.
+      parameters: [{ $ref: '#/components/parameters/traceId' }, { $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RunNoteInput' }
+      responses:
+        '200':
+          description: The state and the entries after the call.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunNotes' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /runs/{traceId}/notes:
+    get:
+      tags: [Runs]
+      operationId: getRunNotes
+      summary: A run's notes and acknowledgement (v2.5.2)
+      description: |
+        2.5.2 (OP3). What a shift knew about the run, for the next one: an
+        append-only record of notes, and of acknowledging the run and taking
+        that back. `acknowledged` is the latest acknowledgement still in force.
+        Readable by anyone who can read the run (its own read check; 404
+        otherwise). Not narrowed by `X-Cronomicon-Agency`, as a single run's
+        read never is.
+      parameters: [{ $ref: '#/components/parameters/traceId' }]
+      responses:
+        '200':
+          description: The state and the entries, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunNotes' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Runs]
+      operationId: addRunNote
+      summary: Add a note to a run, or acknowledge it (v2.5.2)
+      description: |
+        2.5.2 (OP3). Anyone who can read the run (404 otherwise). `note` needs
+        text; `acknowledged` may carry the first note; `unacknowledged` takes an
+        acknowledgement back. Acknowledging an acknowledged run, or taking back
+        one that is not there, records nothing and answers the state as it is.
+        At most 1,000 characters, trimmed. Entries are never edited or deleted;
+        they go with their run. Each is in the run's agency's change log (with
+        the text) and Activity, category `Runs`. Notes are not redacted: do not
+        paste credentials. CSRF required.
+      parameters: [{ $ref: '#/components/parameters/traceId' }, { $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RunNoteInput' }
+      responses:
+        '200':
+          description: The state and the entries after the call.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunNotes' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+
   /workflows/runs/{traceId}/cancel:
     post:
       tags: [Workflows]
@@ -9506,6 +9592,55 @@ components:
           type: string
           maxLength: 4096
           description: Free-text operator notes. Plain text; newlines are significant.
+    RunAcknowledgement:
+      type: object
+      readOnly: true
+      description: 2.5.2 (OP-9) — who acknowledged a run, how they stood to its agency then, and when.
+      required: [by, relation, at]
+      properties:
+        by: { type: string }
+        relation: { type: string, enum: [member, global_admin, outside, system], description: 'auth.Identity.RelationTo, judged when written: outside, on a run, is someone whose access reaches every agency.' }
+        at: { type: string, format: date-time }
+    RunNoteEntry:
+      type: object
+      readOnly: true
+      required: [id, kind, body, author, relation, at]
+      properties:
+        id: { type: integer }
+        kind: { type: string, enum: [note, acknowledged, unacknowledged] }
+        body: { type: string, description: Empty on an acknowledgement or its taking back that carried no text. }
+        author: { type: string }
+        relation: { type: string, enum: [member, global_admin, outside, system] }
+        at: { type: string, format: date-time }
+    RunNotes:
+      type: object
+      readOnly: true
+      description: 2.5.2 (OP3) — a run's record.
+      required: [acknowledged, notes]
+      properties:
+        acknowledged:
+          oneOf:
+            - $ref: '#/components/schemas/RunAcknowledgement'
+            - type: 'null'
+          description: The acknowledgement in force; null when there is none.
+        notes:
+          type: array
+          description: Every entry, oldest first.
+          items: { $ref: '#/components/schemas/RunNoteEntry' }
+    RunNoteInput:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [note, acknowledged, unacknowledged] }
+        body: { type: string, maxLength: 1000, description: Required for a note; optional otherwise. }
+    RunNotesSummary:
+      type: object
+      readOnly: true
+      description: 2.5.2 (OP-18) — a run's record in brief, on the run lists; absent from a run with no entries.
+      required: [acknowledged, count]
+      properties:
+        acknowledged: { type: boolean }
+        count: { type: integer, description: Entries that carry text. }
     RunAnnotation:
       type: object
       readOnly: true
@@ -11300,6 +11435,9 @@ components:
           description: >-
             2.5.2 (OP-2) — the run's job's contact and critical flag, read now by `jobUid`. On
             GET /runs/{traceId} only; absent when the run has no job uid and its agency no contact; never on the list.
+        notes:
+          $ref: '#/components/schemas/RunNotesSummary'
+          description: 2.5.2 (OP-18) — on the list (GET /runs) only, and only on a run with entries.
         jobSource:
           type: string
           enum: [git, cronomicon]
@@ -11562,6 +11700,9 @@ components:
           type: array
           readOnly: true
           items: { type: string, format: uuid }
+        notes:
+          $ref: '#/components/schemas/RunNotesSummary'
+          description: 2.5.2 (OP-18) — on the list (GET /workflow-runs) only, and only on a run with entries.
 
     WorkflowRunDetail:
       allOf:
@@ -15555,6 +15696,20 @@ components:
                 description: >-
                   2.5.2 (OP-28) — the agency's contact, when the item names none of its own (a
                   repository's item included) and the agency has one.
+              acknowledged:
+                $ref: '#/components/schemas/RunAcknowledgement'
+                description: 2.5.2 (OP-20) — the run's acknowledgement; absent when it is not acknowledged.
+              latestNote: { type: string, description: '2.5.2 (OP-20) — the latest entry with text on the run; absent when none.' }
+              noteCount: { type: integer, description: '2.5.2 (OP-20) — how many entries on the run carry text; absent when none.' }
+              previousAck:
+                type: object
+                description: >-
+                  2.5.2 (OP-11) — on a failed job: its previous failed run was acknowledged, by
+                  whom, and when that run was. Absent otherwise.
+                required: [by, runAt]
+                properties:
+                  by: { type: string }
+                  runAt: { type: string, format: date-time }
               at: { type: string }
         attentionTotal: { type: integer, description: How many need attention; at most 100 are listed. }
         generatedAt: { type: string, format: date-time }

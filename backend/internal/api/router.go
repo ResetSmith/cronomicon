@@ -362,6 +362,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.mountCalendars(mux)            // CAL-4: /calendars/* (working calendars — holiday skip / run-day sets bound to schedule entries)
 	s.mountFreeze(mux)               // §0a: the installation-wide freeze (/settings/freeze)
 	s.mountAlertLink(mux)            // 2.5.2 OP2.1: the address alerts link to (/settings/alert-link-address)
+	s.mountRunNotes(mux)             // 2.5.2 OP3: run notes and acknowledgements (/runs/{id}/notes, /workflow-runs/{id}/notes)
 	s.mountBackupSettings(mux)       // 2.5.1 SG1: the backup keys (/settings/backup)
 	s.mountSecretsReport(mux)        // 2.5.1 SG2.5: an agency's secrets report
 	s.mountAgencyVaults(mux)         // 2.5.1 SG3: a Vault per agency

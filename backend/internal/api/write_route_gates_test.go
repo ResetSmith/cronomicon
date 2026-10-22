@@ -114,6 +114,8 @@ var writeRouteGates = map[string]routeGate{
 	"PUT /api/v1/workflow-tags/{workflowId}":                          {clsVisible, "any signed-in user, on a workflow they can read: its agency (CF-1, C11) and its jobs' scopes (GC-12)"},
 	"PUT /api/v1/workflow-annotation/{workflowId}":                    {clsVisible, "any signed-in user, on a workflow they can read: its agency (CF-1, C11) and its jobs' scopes (GC-12)"},
 	"POST /api/v1/workflows/runs/{traceId}/cancel":                    {clsVerb, "the run's agency (404, C11), then killJobs on every scope the run tree touches (GC-10)"},
+	"POST /api/v1/runs/{traceId}/notes":                               {clsVisible, "any signed-in user who can read the run, by its own read check (2.5.2 OP-13)"},
+	"POST /api/v1/workflow-runs/{traceId}/notes":                      {clsVisible, "any signed-in user who can read the workflow run, by its own read check (2.5.2 OP-13)"},
 	"POST /api/v1/webhooks/gitlab":                                    {clsWebhook, "X-Gitlab-Token shared secret; triggers a sync, takes no input"},
 	"POST /api/v1/webhooks/gitlab/{repoId}":                           {clsWebhook, "the named repository's X-Gitlab-Token secret; triggers that repository's sync, takes no input (GR-20)"},
 	"POST /api/v1/schedules/publish":                                  {clsObject, "authorizePublish (GR-24): Global's repository is a global publisher's alone; an agency's takes publishSchedule on that agency, and for a job file the scope on both sides of the write"},

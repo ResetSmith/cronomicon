@@ -3471,6 +3471,7 @@ func (s *Server) listWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 			"jobTraceIds":          s.childTraceIDs(r, b.traceID),
 		})
 	}
+	s.attachRunNoteSummaries(r.Context(), runNotesByWR, items) // 2.5.2 OP-18
 	httpx.JSON(w, http.StatusOK, pageEnvelope(page, pageSize, total, items))
 }
 
@@ -4322,6 +4323,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	for _, rr := range raws {
 		items = append(items, s.runToMap(rr, caches))
 	}
+	s.attachRunNoteSummaries(r.Context(), runNotesByRun, items) // 2.5.2 OP-18
 	httpx.JSON(w, http.StatusOK, pageEnvelope(page, pageSize, total, items))
 }
 

@@ -1061,6 +1061,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workflow-runs/{traceId}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A workflow run's notes and acknowledgement (v2.5.2)
+         * @description As GET /runs/{traceId}/notes, for a workflow run; its read check is the workflow run's.
+         */
+        get: operations["getWorkflowRunNotes"];
+        put?: never;
+        /**
+         * Add a note to a workflow run, or acknowledge it (v2.5.2)
+         * @description As POST /runs/{traceId}/notes, for a workflow run.
+         */
+        post: operations["addWorkflowRunNote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{traceId}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A run's notes and acknowledgement (v2.5.2)
+         * @description 2.5.2 (OP3). What a shift knew about the run, for the next one: an
+         *     append-only record of notes, and of acknowledging the run and taking
+         *     that back. `acknowledged` is the latest acknowledgement still in force.
+         *     Readable by anyone who can read the run (its own read check; 404
+         *     otherwise). Not narrowed by `X-Cronomicon-Agency`, as a single run's
+         *     read never is.
+         */
+        get: operations["getRunNotes"];
+        put?: never;
+        /**
+         * Add a note to a run, or acknowledge it (v2.5.2)
+         * @description 2.5.2 (OP3). Anyone who can read the run (404 otherwise). `note` needs
+         *     text; `acknowledged` may carry the first note; `unacknowledged` takes an
+         *     acknowledgement back. Acknowledging an acknowledged run, or taking back
+         *     one that is not there, records nothing and answers the state as it is.
+         *     At most 1,000 characters, trimmed. Entries are never edited or deleted;
+         *     they go with their run. Each is in the run's agency's change log (with
+         *     the text) and Activity, category `Runs`. Notes are not redacted: do not
+         *     paste credentials. CSRF required.
+         */
+        post: operations["addRunNote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workflows/runs/{traceId}/cancel": {
         parameters: {
             query?: never;
@@ -5888,6 +5948,48 @@ export interface components {
             /** @description Free-text operator notes. Plain text; newlines are significant. */
             notes?: string;
         };
+        /** @description 2.5.2 (OP-9) — who acknowledged a run, how they stood to its agency then, and when. */
+        RunAcknowledgement: {
+            by: string;
+            /**
+             * @description auth.Identity.RelationTo, judged when written: outside, on a run, is someone whose access reaches every agency.
+             * @enum {string}
+             */
+            relation: "member" | "global_admin" | "outside" | "system";
+            /** Format: date-time */
+            at: string;
+        };
+        RunNoteEntry: {
+            id: number;
+            /** @enum {string} */
+            kind: "note" | "acknowledged" | "unacknowledged";
+            /** @description Empty on an acknowledgement or its taking back that carried no text. */
+            body: string;
+            author: string;
+            /** @enum {string} */
+            relation: "member" | "global_admin" | "outside" | "system";
+            /** Format: date-time */
+            at: string;
+        };
+        /** @description 2.5.2 (OP3) — a run's record. */
+        RunNotes: {
+            /** @description The acknowledgement in force; null when there is none. */
+            acknowledged: components["schemas"]["RunAcknowledgement"] | null;
+            /** @description Every entry, oldest first. */
+            notes: components["schemas"]["RunNoteEntry"][];
+        };
+        RunNoteInput: {
+            /** @enum {string} */
+            kind: "note" | "acknowledged" | "unacknowledged";
+            /** @description Required for a note; optional otherwise. */
+            body?: string;
+        };
+        /** @description 2.5.2 (OP-18) — a run's record in brief, on the run lists; absent from a run with no entries. */
+        RunNotesSummary: {
+            acknowledged: boolean;
+            /** @description Entries that carry text. */
+            count: number;
+        };
         /** @description 2.5.2 (OP-2) — who to call about a run: its job's or workflow's annotation contact and critical flag, read when the run is read (a later edit of the annotation shows here). The notes stay on the job; the run detail links there. */
         RunAnnotation: {
             /** @description Empty when the annotation names no contact. */
@@ -7343,6 +7445,8 @@ export interface components {
             readonly jobName?: string;
             /** @description 2.5.2 (OP-2) — the run's job's contact and critical flag, read now by `jobUid`. On GET /runs/{traceId} only; absent when the run has no job uid and its agency no contact; never on the list. */
             annotation?: components["schemas"]["RunAnnotation"];
+            /** @description 2.5.2 (OP-18) — on the list (GET /runs) only, and only on a run with entries. */
+            notes?: components["schemas"]["RunNotesSummary"];
             /**
              * @description Origin of the job this run executed (A9; NULL legacy runs report git).
              * @enum {string}
@@ -7589,6 +7693,8 @@ export interface components {
             /** @description True when the run was soft-cancelled (WB-S2); the status then displays as 'cancelled'. */
             readonly cancelled?: boolean;
             readonly jobTraceIds?: string[];
+            /** @description 2.5.2 (OP-18) — on the list (GET /workflow-runs) only, and only on a run with entries. */
+            notes?: components["schemas"]["RunNotesSummary"];
         };
         WorkflowRunDetail: components["schemas"]["WorkflowRun"] & {
             /** @description 2.5.2 (OP-2) — the workflow's contact and critical flag, read now by `workflowUid`; absent when the run has no workflow uid. */
@@ -10613,6 +10719,18 @@ export interface components {
                 critical?: boolean;
                 /** @description 2.5.2 (OP-28) — the agency's contact, when the item names none of its own (a repository's item included) and the agency has one. */
                 agencyContact?: string;
+                /** @description 2.5.2 (OP-20) — the run's acknowledgement; absent when it is not acknowledged. */
+                acknowledged?: components["schemas"]["RunAcknowledgement"];
+                /** @description 2.5.2 (OP-20) — the latest entry with text on the run; absent when none. */
+                latestNote?: string;
+                /** @description 2.5.2 (OP-20) — how many entries on the run carry text; absent when none. */
+                noteCount?: number;
+                /** @description 2.5.2 (OP-11) — on a failed job: its previous failed run was acknowledged, by whom, and when that run was. Absent otherwise. */
+                previousAck?: {
+                    by: string;
+                    /** Format: date-time */
+                    runAt: string;
+                };
                 at: string;
             }[];
             /** @description How many need attention; at most 100 are listed. */
@@ -12762,6 +12880,122 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getWorkflowRunNotes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Backend-minted UUIDv7 trace ID (S11). Opaque to clients. */
+                traceId: components["parameters"]["traceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The state and the entries, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunNotes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addWorkflowRunNote: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                /** @description Backend-minted UUIDv7 trace ID (S11). Opaque to clients. */
+                traceId: components["parameters"]["traceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunNoteInput"];
+            };
+        };
+        responses: {
+            /** @description The state and the entries after the call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunNotes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    getRunNotes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Backend-minted UUIDv7 trace ID (S11). Opaque to clients. */
+                traceId: components["parameters"]["traceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The state and the entries, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunNotes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addRunNote: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                /** @description Backend-minted UUIDv7 trace ID (S11). Opaque to clients. */
+                traceId: components["parameters"]["traceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunNoteInput"];
+            };
+        };
+        responses: {
+            /** @description The state and the entries after the call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunNotes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
         };
     };
     cancelWorkflowRun: {
