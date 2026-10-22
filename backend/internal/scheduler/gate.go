@@ -360,8 +360,9 @@ func appLocationOrDB(ctx context.Context, database *sql.DB, loc *time.Location) 
 // calendars of the definition's OWN agency (until then every global calendar,
 // whoever's).
 func globalFreezeVerdict(ctx context.Context, database *sql.DB, log logger, loc *time.Location, agency string) (calendar.Verdict, string, bool) {
-	day := calendar.DayOf(time.Now(), appLocationOrDB(ctx, database, loc))
-	v, err := freezeTier(ctx, database, agency, nil, nil, day)
+	now := time.Now()
+	day := calendar.DayOf(now, appLocationOrDB(ctx, database, loc))
+	v, err := freezeTier(ctx, database, agency, nil, nil, day, now)
 	if err != nil {
 		logErr(log, "gate: load calendars — admitting the run without calendar suppression", "err", err)
 		return calendar.Verdict{}, day, false
@@ -369,15 +370,16 @@ func globalFreezeVerdict(ctx context.Context, database *sql.DB, log logger, loc 
 	return v, day, true
 }
 
-// freezeTier is the verdict for a fire of an agency's definition on a day: the
-// installation-wide freeze when it is on, else the calendars (the entry's
-// own, skip and only, and its agency's global ones).
-func freezeTier(ctx context.Context, database *sql.DB, agency string, skip, only []string, day string) (calendar.Verdict, error) {
+// freezeTier is the verdict for a fire of an agency's definition at a moment
+// (on its day): the installation-wide freeze when it is in effect then (2.5.2
+// FZ-2: a freeze may carry a window), else the calendars (the entry's own,
+// skip and only, and its agency's global ones).
+func freezeTier(ctx context.Context, database *sql.DB, agency string, skip, only []string, day string, at time.Time) (calendar.Verdict, error) {
 	f, err := calendar.ReadFreeze(ctx, database)
 	if err != nil {
 		return calendar.Verdict{}, err
 	}
-	if v, on := calendar.FreezeVerdict(f); on {
+	if v, on := calendar.FreezeVerdictAt(f, at); on {
 		return v, nil
 	}
 	sets, err := calendar.Load(ctx, database, agency, append(append([]string{}, skip...), only...))

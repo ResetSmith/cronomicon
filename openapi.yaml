@@ -6156,6 +6156,14 @@ paths:
       description: |
         A global administrator's (configureApp on every agency). Turning it on
         takes a reason (422 without one), at most 500 characters. Audited.
+
+        2.5.2 (FZ-1 to FZ-6): it may carry a window, `from` and `until` (RFC 3339,
+        stored in UTC), each optional: no `from` is from now, no `until` is until
+        lifted. `until` must be later than now and than `from` (422). The window is
+        judged at the moment in question, so a freeze begins and ends on time with
+        nothing to wake up for it. Turning it off ends a running window early and
+        cancels one that has not begun. The change log records the window when it
+        is set; a window that simply ends records nothing.
       parameters: [{ $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -6167,6 +6175,8 @@ paths:
               properties:
                 on: { type: boolean }
                 reason: { type: string }
+                from: { type: string, format: date-time }
+                until: { type: string, format: date-time }
       responses:
         '200':
           description: The freeze as written.
@@ -11170,6 +11180,13 @@ components:
       properties:
         on: { type: boolean }
         reason: { type: string }
+        from: { type: string, format: date-time, description: '2.5.2 (FZ-1) — when the window begins (UTC); absent is from when it was set.' }
+        until: { type: string, format: date-time, description: '2.5.2 (FZ-1) — when the window ends (UTC, exclusive); absent is until lifted.' }
+        state:
+          type: string
+          readOnly: true
+          enum: [off, scheduled, in_effect, ended]
+          description: '2.5.2 (FZ-4) — the freeze now: off; scheduled (before from); in_effect; ended (at or after until).'
         setBy: { type: string }
         setAt: { type: string, format: date-time }
     CalendarInput:

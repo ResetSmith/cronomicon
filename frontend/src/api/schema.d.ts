@@ -3771,6 +3771,14 @@ export interface paths {
          * Freeze or thaw the installation
          * @description A global administrator's (configureApp on every agency). Turning it on
          *     takes a reason (422 without one), at most 500 characters. Audited.
+         *
+         *     2.5.2 (FZ-1 to FZ-6): it may carry a window, `from` and `until` (RFC 3339,
+         *     stored in UTC), each optional: no `from` is from now, no `until` is until
+         *     lifted. `until` must be later than now and than `from` (422). The window is
+         *     judged at the moment in question, so a freeze begins and ends on time with
+         *     nothing to wake up for it. Turning it off ends a running window early and
+         *     cancels one that has not begun. The change log records the window when it
+         *     is set; a window that simply ends records nothing.
          */
         put: operations["setInstallationFreeze"];
         post?: never;
@@ -7209,6 +7217,21 @@ export interface components {
         InstallationFreeze: {
             on: boolean;
             reason: string;
+            /**
+             * Format: date-time
+             * @description 2.5.2 (FZ-1) — when the window begins (UTC); absent is from when it was set.
+             */
+            from?: string;
+            /**
+             * Format: date-time
+             * @description 2.5.2 (FZ-1) — when the window ends (UTC, exclusive); absent is until lifted.
+             */
+            until?: string;
+            /**
+             * @description 2.5.2 (FZ-4) — the freeze now: off; scheduled (before from); in_effect; ended (at or after until).
+             * @enum {string}
+             */
+            readonly state?: "off" | "scheduled" | "in_effect" | "ended";
             setBy?: string;
             /** Format: date-time */
             setAt?: string;
@@ -17389,6 +17412,10 @@ export interface operations {
                 "application/json": {
                     on: boolean;
                     reason?: string;
+                    /** Format: date-time */
+                    from?: string;
+                    /** Format: date-time */
+                    until?: string;
                 };
             };
         };

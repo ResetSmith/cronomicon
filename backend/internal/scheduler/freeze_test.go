@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 )
@@ -27,7 +28,7 @@ func TestI1_AGlobalCalendarFreezesItsAgencyAndTheFreezeEveryone(t *testing.T) {
 	}
 	verdict := func(agency string) calendar.Verdict {
 		t.Helper()
-		v, err := freezeTier(ctx, pool, agency, nil, nil, day)
+		v, err := freezeTier(ctx, pool, agency, nil, nil, day, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -44,6 +45,39 @@ func TestI1_AGlobalCalendarFreezesItsAgencyAndTheFreezeEveryone(t *testing.T) {
 		v := verdict(agency)
 		if !v.Suppressed || v.Calendar != calendar.FreezeCalendar || calendar.Reason(v) != "Skipped: the installation is frozen (year-end)" {
 			t.Errorf("a fire of %s while frozen: %+v (%q)", agency, v, calendar.Reason(v))
+		}
+	}
+}
+
+// 2.5.2 FZ-2: the freeze is judged at the fire's moment, by the same tier
+// every producer asks (the scheduled fire, the reactor, the gate for runs,
+// deferred runs and arrivals): before a window and after it a fire goes on,
+// inside it the fire is skipped with the reason.
+func TestFZ_AFireIsJudgedAtItsMoment(t *testing.T) {
+	pool := mustPool(t)
+	ctx := context.Background()
+	from := time.Date(2026, 12, 24, 18, 0, 0, 0, time.UTC)
+	until := from.Add(60 * time.Hour)
+	if _, err := pool.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`, calendar.FreezeKey,
+		`{"on":true,"reason":"year-end","from":"`+from.Format(time.RFC3339)+`","until":"`+until.Format(time.RFC3339)+`"}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name   string
+		at     time.Time
+		frozen bool
+	}{
+		{"before", from.Add(-time.Minute), false},
+		{"at from", from, true},
+		{"inside", from.Add(30 * time.Hour), true},
+		{"at until", until, false},
+	} {
+		v, err := freezeTier(ctx, pool, "global", nil, nil, calendar.DayOf(c.at, time.UTC), c.at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := v.Suppressed && v.Calendar == calendar.FreezeCalendar; got != c.frozen {
+			t.Errorf("a fire %s the window: frozen=%v, want %v (%+v)", c.name, got, c.frozen, v)
 		}
 	}
 }

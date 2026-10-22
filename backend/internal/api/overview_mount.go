@@ -524,15 +524,12 @@ func (s *Server) overviewAttention(ctx context.Context, now time.Time, since str
 
 // nextFireByAgency is each agency's next scheduled run in the coming week, as
 // the Upcoming tab projects it (listUpcomingSchedules): enabled and unpaused
-// entries only, a fire a calendar suppresses skipped, none while the
-// installation is frozen.
+// entries only, a fire a calendar suppresses skipped, and a fire the
+// installation freeze will stop skipped (judged at its own time, 2.5.2 FZ-3:
+// a scheduled window skips the fires inside it, an open freeze every one).
 func (s *Server) nextFireByAgency(ctx context.Context, now time.Time) (map[string]time.Time, error) {
 	out := map[string]time.Time{}
-	if f, err := calendar.ReadFreeze(ctx, s.db); err == nil {
-		if _, frozen := calendar.FreezeVerdict(f); frozen {
-			return out, nil
-		}
-	}
+	freeze, _ := calendar.ReadFreeze(ctx, s.db)
 	srows, err := s.drainScheduleRows(ctx)
 	if err != nil {
 		return nil, err
@@ -564,6 +561,9 @@ func (s *Server) nextFireByAgency(ctx context.Context, now time.Time) (map[strin
 		}
 		skip, only := calendar.ParseNames(sr.skipCals.String), calendar.ParseNames(sr.onlyCals.String)
 		for _, t := range cronutil.NextNSpec(sr.spec(), now, end, 50, appLoc) {
+			if _, frozen := calendar.FreezeVerdictAt(freeze, t); frozen {
+				continue
+			}
 			if calendar.EvaluateFor(set, owner, skip, only, calendar.DayOf(t, appLoc)).Suppressed {
 				continue
 			}

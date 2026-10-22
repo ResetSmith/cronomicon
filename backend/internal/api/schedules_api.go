@@ -344,13 +344,15 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		return sets
 	}
 	// The installation freeze (§0a, open point 2) outranks every calendar, as
-	// the scheduler's freezeTier has it: while it is on, every projected fire is
-	// annotated with it (the review of I1: the projection promised them).
-	freezeV, frozen := calendar.Verdict{}, false
+	// the scheduler's freezeTier has it: every projected fire it will stop is
+	// annotated with it (the review of I1: the projection promised them), each
+	// judged at its own time, so a scheduled window marks the fires inside it
+	// and none outside (2.5.2 FZ-3).
+	freeze := calendar.Freeze{}
 	if f, err := calendar.ReadFreeze(ctx, s.db); err != nil {
 		s.log.Error("upcoming: read the installation freeze — projection not annotated with it", "err", err)
 	} else {
-		freezeV, frozen = calendar.FreezeVerdict(f)
+		freeze = f
 	}
 	ownerAgencyOf := map[string]string{}
 	agencyOfOwner := func(uid, kind string) string {
@@ -405,7 +407,7 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		for _, t := range cronutil.NextNSpec(sr.spec(), now, end, perEntryCap, appLoc) {
 			// Evaluated per instant, in the app zone, exactly as fire() will —
 			// a holiday suppresses one day's instant, not the whole entry.
-			v := freezeV
+			v, frozen := calendar.FreezeVerdictAt(freeze, t)
 			if !frozen {
 				v = calendar.EvaluateFor(calSetsFor(ownerAgency), ownerAgency, skipCals, onlyCals, calendar.DayOf(t, appLoc))
 			}
