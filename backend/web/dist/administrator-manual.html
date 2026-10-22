@@ -6914,9 +6914,12 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <li><strong>The built-in agency keeps its name.</strong> An upgraded installation still calls it
                         <em>Global</em>; only a new installation calls it <em>Central</em>. To rename it, Scopes
                         &rarr; Agencies &rarr; Edit (&sect;6.1c).</li>
-                    <li><strong>The alert link address fills itself in</strong> the first time a global
-                        administrator opens the app (<a href="#alert-link">&sect;8.11</a>). Check it on Settings
-                        &rarr; Notifications if people reach the app by more than one name.</li>
+                    <li><strong>Check the alert link address after the first visit.</strong> It fills itself in
+                        from the browser of the first global administrator to open the app, whatever address that
+                        visit used: <code>localhost</code>, a tunnel or a raw IP address sticks, and later visits do
+                        not correct it (<a href="#alert-link">&sect;8.11</a>). Open Settings &rarr; Notifications
+                        &rarr; Alert Link Address, and change it if it is not the address people reach the app
+                        by.</li>
                     <li><strong>Every alert now carries an <code>Agency:</code> line.</strong> A mail filter or
                         a push consumer that matches the whole body sees one more line.</li>
                     <li><strong>The Operations overview is now the Dashboard with All agencies chosen</strong>;
@@ -7840,6 +7843,21 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     absolute <code>http</code> or <code>https</code> address with a host and no query (a path is
                     kept). It is a global administrator's (<code>GET</code>/<code>PUT
                         /api/v1/settings/alert-link-address</code>; each change in Global's Change Log).</p>
+                <div class="callout warn">
+                    <div class="ct"><span class="em">⚠️</span> The first global administrator's visit decides where
+                        every alert link points</div>
+                    <p>The address kept is the one in the browser of the <strong>first</strong> global administrator
+                        to open the app after the upgrade (or on a new installation), whatever it was. If that visit
+                        came through <code>localhost</code>, an SSH tunnel, a raw IP address or a name that only the
+                        internal network resolves, every alert's <code>Open:</code> link points there, and the people
+                        who click it from a phone or another network reach nothing. Nothing warns you, and later
+                        visits through the right name do not correct it.</p>
+                    <p><strong>After you deploy 2.5.2, open Settings &rarr; Notifications &rarr; Alert Link
+                            Address</strong>, read the address and whose browser it came from, and use
+                        <strong>Change</strong> to set the address that people reach the app by, if it is not that
+                        one. To avoid the problem, make your first visit as a global administrator through that
+                        address.</p>
+                </div>
                 <p><strong>Settings &rarr; Notifications is the relay alone</strong> (the Installation group, a
                     global administrator's): the mail and Apprise transport, and the default recipients. It shows
                     Global's push targets read-only, with a link to Alerts working in Global, where they are edited
