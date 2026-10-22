@@ -36,6 +36,7 @@ import { Btn, DetailPanel, EmptyCell, HoverTr, SkeletonRows, TableSurface, TypeB
 import { RunReferences } from "../../components/ReferenceBindings";
 import { CalendarFilterSelect } from "../scheduling/CalendarFilterSelect";
 import { RunLog } from "./RunLog";
+import { RunNotesCell, RunNotesPanel } from "./RunNotes";
 import { RefreshScope } from "../../components/RefreshScope";
 
 interface Run {
@@ -49,6 +50,8 @@ interface Run {
   ownerAgency?: string | null;
   /** 2.5.2 OP-2 — who to call: the job's annotation, on the detail only. */
   annotation?: { contact: string; critical: boolean; agencyContact?: string };
+  /** 2.5.2 OP-18 — the run's notes in brief, on the list, only when it has some. */
+  notes?: { acknowledged: boolean; count: number };
   // The run's FROZEN agency snapshot (what it actually ran for), not live
   // membership — so a historical row keeps saying whose run it was.
   agencies?: string[];
@@ -287,6 +290,7 @@ const COL_W: Record<string, number> = {
   user: 140,
   duration: 100,
   status: 110,
+  notes: 130,
 };
 
 // Sortable columns (TS-5/TS-23, the sorting-update plan). serverSide: the
@@ -652,6 +656,8 @@ export function ExecutionsTab() {
         </span>
       ),
     },
+    // 2.5.2 OP-18 — whether someone has the run in hand, and how many notes.
+    { key: "notes", label: "Notes", width: COL_W.notes, fixed: true, cell: (r) => <RunNotesCell notes={r.notes} status={r.status} /> },
   ]);
 
   return (
@@ -934,6 +940,17 @@ export function RunDetail({ traceId }: { traceId: string }) {
               an operator trust a log that outlived its disk. */}
           {d.logArchivedAt && <Field label="Log archived to S3">{fmtTime(d.logArchivedAt)}</Field>}
         </div>
+      )}
+      {/* 2.5.2 OP4 — what a shift knew about this run, between its fields and
+          its log. Acknowledge is offered where it means something: a run that
+          failed, was stopped or lost, or is still running (it may be overdue). */}
+      {d && (
+        <RunNotesPanel
+          kind="run"
+          traceId={d.traceId}
+          agencyId={d.ownerAgency}
+          offerAck={["danger", "failure", "killed", "running"].includes(d.status ?? "")}
+        />
       )}
       {/* T2.2 — run-input audit. Rendered ahead of the override block because "this ran
           without a value someone said was required" is the first thing an auditor needs,

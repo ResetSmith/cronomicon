@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { allReadable, api } from "../api/client";
+import { allReadable, api, csrfHeader, errMsg } from "../api/client";
 import { paged, rows, useGet, useLiveGet } from "../hooks";
 import { Score } from "../components/Score";
 import { buildScoreMarks, scoreTruncatedAt, type ScoreRun, type ScoreUpcoming } from "../components/score-feed";
@@ -9,9 +9,10 @@ import { ScoreCutNote, fetchScoreRuns } from "../components/score-runs";
 import { excludeSuppressed } from "./scheduling/calendars";
 import { appZoneParts, fmtInAppZone } from "../utils/datetime";
 import { useAgency } from "../agency";
-import { InlineLoading } from "../components/ui";
+import { Btn, InlineLoading } from "../components/ui";
 import { CriticalChip } from "../components/Annotation";
 import { RunContact } from "./history/shared";
+import { relationLabel } from "./history/RunNotes";
 import { c } from "../theme";
 
 // The Operations overview (2.4.4 F3; plan-2.4.4 SW-12, SW-13). ONE read-only
@@ -44,8 +45,120 @@ type AttentionItem = {
   critical?: boolean;
   /** The agency's contact (OP-28), when the item names none of its own. */
   agencyContact?: string;
+  /** The run's record in brief (OP-20); absent where there is nothing. */
+  acknowledged?: { by: string; relation: string; at: string };
+  latestNote?: string;
+  noteCount?: number;
+  /** A failed job's previous failed run was acknowledged (OP-11). */
+  previousAck?: { by: string; runAt: string };
   at: string;
 };
+
+/**
+ * AttentionAck — an item's Acknowledgement cell (2.5.2 OP-20, mockup board 1).
+ * In hand: who and when, the latest note on one line, and the note count
+ * linking to the run. Not yet: an Acknowledge button that opens a small box
+ * for an optional first note. A repository is not a run and has nothing to
+ * acknowledge. The run's own detail holds the whole thread.
+ */
+function AttentionAck({
+  item,
+  open,
+  onOpen,
+  onClose,
+  onDone,
+  central,
+}: {
+  item: AttentionItem;
+  open: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  onDone: () => void;
+  central: string;
+}) {
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (item.kind === "sync_failed" || !item.traceId) return <span style={{ color: c.textMuted }}>Not a run</span>;
+  const traceId = item.traceId;
+  const count = item.noteCount ?? 0;
+  const notesLink =
+    count > 0 ? (
+      <Link to={attentionHref(item)} style={{ color: c.primary, textDecoration: "none", fontSize: c.fontXs }}>
+        {count} note{count === 1 ? "" : "s"}
+      </Link>
+    ) : null;
+
+  if (item.acknowledged) {
+    const label = relationLabel(item.acknowledged.relation, item.agencyName, central);
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        <span data-testid="attention-acked" style={{ display: "inline-flex", alignItems: "center", gap: 6, color: c.success, fontWeight: 600 }}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path d="M3 8.5l3 3 7-7" />
+          </svg>
+          Acknowledged by {item.acknowledged.by}
+          {label ? ` (${label})` : ""}, {when(item.acknowledged.at)}
+        </span>
+        {item.latestNote && <span style={{ color: c.text, overflowWrap: "anywhere" }}>“{item.latestNote}”</span>}
+        {notesLink}
+      </div>
+    );
+  }
+
+  async function acknowledge() {
+    setBusy(true);
+    setErr(null);
+    const req = { params: { path: { traceId }, header: csrfHeader }, body: { kind: "acknowledged" as const, body: draft.trim() } };
+    // A single run's notes are not narrowed by the agency in use (OP-13), so
+    // this answers for any agency's run from here.
+    const { error } = item.kind === "workflow_failed" ? await api.POST("/workflow-runs/{traceId}/notes", req) : await api.POST("/runs/{traceId}/notes", req);
+    setBusy(false);
+    if (error) {
+      setErr(errMsg(error));
+      return;
+    }
+    setDraft("");
+    onDone();
+  }
+
+  if (!open) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
+        {item.latestNote && <span style={{ color: c.textSec, overflowWrap: "anywhere" }}>“{item.latestNote}”</span>}
+        {notesLink}
+        <Btn small onClick={onOpen}>
+          Acknowledge
+        </Btn>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, border: `1px solid ${c.borderStrong}`, borderRadius: c.radiusSurface, padding: 8, background: c.panelInput }}>
+      <label htmlFor={`ack-${traceId}`} style={{ fontSize: c.fontXs, color: c.textSec }}>
+        What you know so far (optional)
+      </label>
+      <textarea
+        id={`ack-${traceId}`}
+        rows={2}
+        value={draft}
+        maxLength={1000}
+        onChange={(e) => setDraft(e.target.value)}
+        style={{ resize: "vertical", background: c.panel, color: c.text, border: `1px solid ${c.borderStrong}`, borderRadius: c.radiusChip, padding: "6px 8px", fontFamily: c.sans, fontSize: c.fontSm }}
+      />
+      <span style={{ fontSize: c.fontXs, color: c.textMuted }}>Do not paste credentials. Notes are seen by {item.agencyName} and by Ops.</span>
+      <span style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <Btn small onClick={onClose} disabled={busy}>
+          Cancel
+        </Btn>
+        <Btn small primary onClick={acknowledge} disabled={busy}>
+          Acknowledge
+        </Btn>
+      </span>
+      {err && <span style={{ fontSize: c.fontSm, color: c.danger }}>{err}</span>}
+    </div>
+  );
+}
 type OverviewData = { agencies: OverviewAgency[]; attention: AttentionItem[]; attentionTotal: number; generatedAt: string };
 type Hit = { kind: "job" | "workflow"; id: string; name: string; agencyId: string; agencyName: string };
 
@@ -196,6 +309,11 @@ export function Overview() {
   const q = useLiveGet<OverviewData>(() => api.GET("/overview") as never, [], () => true, REFRESH_MS);
   const [term, setTerm] = useState("");
   const [hits, setHits] = useState<Hit[] | null>(null);
+  // 2.5.2 OP-20 — off by default: the incoming shift most needs the items
+  // already in hand and their latest note, which this would hide.
+  const [unackedOnly, setUnackedOnly] = useState(false);
+  // The item whose Acknowledge box is open, by its run's trace id.
+  const [ackFor, setAckFor] = useState<string | null>(null);
 
   // The search: a name, across agencies; each match says whose it is.
   useEffect(() => {
@@ -222,6 +340,8 @@ export function Overview() {
   if (q.loading && !q.data) return <InlineLoading what="the overview" />;
   if (q.error && !q.data) return <div style={{ color: c.danger }}>The overview could not be read: {q.error}</div>;
   const data = q.data as OverviewData;
+  const ackedCount = data.attention.filter((it) => it.acknowledged).length;
+  const shown = unackedOnly ? data.attention.filter((it) => !it.acknowledged) : data.attention;
 
   const th: CSSProperties = { textAlign: "left", padding: "6px 8px", fontSize: c.fontXs, color: c.textSec, textTransform: "uppercase", letterSpacing: 0.5, borderBottom: `1px solid ${c.border}` };
   const td: CSSProperties = { padding: "8px", fontSize: c.fontSm, color: c.text, borderBottom: `1px solid ${c.borderLight}`, verticalAlign: "top" };
@@ -322,13 +442,22 @@ export function Overview() {
       <Section
         title="Needs attention"
         aside={
-          <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
-            {data.attentionTotal > data.attention.length ? `The ${data.attention.length} newest of ${data.attentionTotal}` : `${data.attentionTotal}`}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: c.fontSm, color: c.textSec, cursor: "pointer" }}>
+              <input type="checkbox" checked={unackedOnly} onChange={(e) => setUnackedOnly(e.target.checked)} style={{ margin: 0, accentColor: c.primary }} />
+              Unacknowledged only
+            </label>
+            <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+              {data.attentionTotal > data.attention.length ? `The ${data.attention.length} newest of ${data.attentionTotal}` : `${data.attentionTotal}`}
+              {ackedCount > 0 && ` · ${ackedCount} acknowledged`}
+            </span>
           </span>
         }
       >
-        {data.attention.length === 0 ? (
-          <div style={{ fontSize: c.fontSm, color: c.textMuted }}>Nothing needs attention.</div>
+        {shown.length === 0 ? (
+          <div style={{ fontSize: c.fontSm, color: c.textMuted }}>
+            {data.attention.length === 0 ? "Nothing needs attention." : "Everything listed is acknowledged."}
+          </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
@@ -338,11 +467,12 @@ export function Overview() {
                 <th style={th}>Agency</th>
                 <th style={th}>Contact</th>
                 <th style={th}>When</th>
+                <th style={{ ...th, width: 320 }}>Acknowledgement</th>
               </tr>
             </thead>
             <tbody>
-              {data.attention.map((it, i) => (
-                <tr key={i} data-testid="attention-item">
+              {shown.map((it, i) => (
+                <tr key={i} data-testid="attention-item" style={it.acknowledged ? { opacity: 0.62 } : undefined}>
                   <td style={td}>{KIND_LABEL[it.kind] ?? it.kind}</td>
                   <td style={td}>
                     <Link to={attentionHref(it)} style={link} title={`Open in ${it.agencyName}`}>
@@ -352,6 +482,12 @@ export function Overview() {
                       <span style={{ marginLeft: 8, display: "inline-flex", verticalAlign: "middle" }}>
                         <CriticalChip />
                       </span>
+                    )}
+                    {/* OP-11 — a new failure is a new item; say it has history. */}
+                    {it.previousAck && (
+                      <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 3 }}>
+                        Its previous failure ({when(it.previousAck.runAt)}) was acknowledged by {it.previousAck.by}
+                      </div>
                     )}
                   </td>
                   <td style={td}>{it.agencyName}</td>
@@ -363,6 +499,19 @@ export function Overview() {
                     )}
                   </td>
                   <td style={td}>{when(it.at)}</td>
+                  <td style={td}>
+                    <AttentionAck
+                      item={it}
+                      open={ackFor === it.traceId}
+                      onOpen={() => setAckFor(it.traceId ?? null)}
+                      onClose={() => setAckFor(null)}
+                      onDone={() => {
+                        setAckFor(null);
+                        q.refetch();
+                      }}
+                      central={ag.nameOf("global")}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -12,6 +12,8 @@ let RUNS: unknown[] = [];
 // Set: /runs answers page by page, one run a page, of this many runs in all.
 let RUNS_TOTAL: number | null = null;
 const asked: { path: string; headers?: Record<string, string> }[] = [];
+// What an acknowledgement sent (2.5.2 OP-20).
+const posted: { path: string; traceId: string; body: unknown }[] = [];
 
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
@@ -38,6 +40,10 @@ vi.mock("../api/client", async (importOriginal) => {
         if (path === "/overview") return { data: OVERVIEW };
         if (path === "/overview/search") return { data: HITS };
         return { data: [] };
+      }),
+      POST: vi.fn(async (path: string, opts: { params: { path: { traceId: string } }; body: unknown }) => {
+        posted.push({ path, traceId: opts.params.path.traceId, body: opts.body });
+        return { data: {} };
       }),
     } as unknown as typeof actual.api,
   };
@@ -97,18 +103,62 @@ beforeEach(() => {
   RUNS_TOTAL = null;
   resetScoreRunsCache();
   asked.length = 0;
+  posted.length = 0;
 });
 afterEach(cleanup);
 
 describe("the Operations overview (2.4.4 F3)", () => {
-  it("shows a row per agency and what needs attention, and nothing to change", async () => {
+  it("shows a row per agency and what needs attention, and nothing to change but an acknowledgement", async () => {
     renderAt("/overview");
     const page = await screen.findByTestId("overview");
     expect(within(screen.getByTestId("overview-row-ag-a")).getByText("agency-alpha")).toBeTruthy();
     expect(screen.getByTestId("overview-row-ag-b").textContent).toContain("failed");
     expect(screen.getAllByTestId("attention-item")).toHaveLength(2);
-    // Read-only: links to open things in their agency, no button to change one.
-    expect(page.querySelectorAll("button")).toHaveLength(0);
+    // Links to open things in their agency; the one button is acknowledging
+    // the lost run (2.5.2 OP-20) — a repository is not a run.
+    expect([...page.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Acknowledge"]);
+  });
+
+  it("acknowledges an item with a first note, from here, for any agency's run (2.5.2 OP-20)", async () => {
+    renderAt("/overview");
+    await screen.findByTestId("overview");
+    fireEvent.click(screen.getByRole("button", { name: "Acknowledge" }));
+    fireEvent.change(screen.getByLabelText("What you know so far (optional)"), { target: { value: " Restarting the agent. " } });
+    const ackButtons = screen.getAllByRole("button", { name: "Acknowledge" });
+    fireEvent.click(ackButtons[ackButtons.length - 1]);
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].path).toBe("/runs/{traceId}/notes");
+    expect(posted[0].traceId).toBe("t-1");
+    expect(posted[0].body).toEqual({ kind: "acknowledged", body: "Restarting the agent." });
+  });
+
+  it("shows an acknowledged item dimmed, with who, the latest note and the count, and can hide it (2.5.2 OP-20, OP-11)", async () => {
+    OVERVIEW = {
+      ...(OVERVIEW as Record<string, unknown>),
+      attention: [
+        { kind: "job_failed", agencyId: "ag-a", agencyName: "agency-alpha", name: "payroll-export", id: "u-1", traceId: "t-1", at: "2026-10-16T11:00:00Z",
+          previousAck: { by: "m.chen@example.gov", runAt: "2026-10-15T02:03:00Z" } },
+        { kind: "run_lost", agencyId: "ag-a", agencyName: "agency-alpha", name: "e2e-alpha-slow", id: "u-2", traceId: "t-2", at: "2026-10-16T10:50:00Z",
+          acknowledged: { by: "j.ortiz@example.gov", relation: "outside", at: "2026-10-16T10:55:00Z" }, latestNote: "Agent rebooting.", noteCount: 2 },
+      ],
+      attentionTotal: 2,
+    };
+    renderAt("/overview");
+    await screen.findByTestId("overview");
+    const [fresh, inHand] = screen.getAllByTestId("attention-item");
+    expect(fresh.textContent).toContain("Its previous failure");
+    expect(fresh.textContent).toContain("was acknowledged by m.chen@example.gov");
+    expect(fresh.style.opacity).toBe("");
+    expect(inHand.style.opacity).toBe("0.62");
+    expect(within(inHand).getByTestId("attention-acked").textContent).toContain("Acknowledged by j.ortiz@example.gov (Global)");
+    expect(inHand.textContent).toContain("“Agent rebooting.”");
+    expect(within(inHand).getByRole("link", { name: "2 notes" }).getAttribute("href")).toBe("/runs?trace=t-2&agency=ag-a");
+    // Off by default; on, it hides what is in hand.
+    const filter = screen.getByRole("checkbox", { name: "Unacknowledged only" }) as HTMLInputElement;
+    expect(filter.checked).toBe(false);
+    fireEvent.click(filter);
+    expect(screen.getAllByTestId("attention-item")).toHaveLength(1);
+    expect(screen.getByTestId("attention-item").textContent).toContain("payroll-export");
   });
 
   it("says who to call about each item, and marks a critical one (2.5.2 OP-1)", async () => {

@@ -3586,6 +3586,7 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		"traceId":      traceID,
 		"workflowId":   nullInt64Val(wrid),
 		"workflowUid":  nullStrVal(wfUID),
+		"ownerAgency":  wrAgency, // 2.5.2 OP4: whose it is, for the notes' author labels
 		"workflowName": wfName,
 		"status":       workflowDisplayStatus(status, cancelled),
 		"triggeredBy":  nullStrVal(triggeredBy),

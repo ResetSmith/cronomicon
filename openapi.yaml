@@ -11709,6 +11709,10 @@ components:
         - $ref: '#/components/schemas/WorkflowRun'
         - type: object
           properties:
+            ownerAgency:
+              type: string
+              readOnly: true
+              description: 2.5.2 (OP4) — the id of the agency the run is (its owner, as the read check judges it).
             annotation:
               $ref: '#/components/schemas/RunAnnotation'
               description: >-

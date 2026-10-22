@@ -7697,6 +7697,8 @@ export interface components {
             notes?: components["schemas"]["RunNotesSummary"];
         };
         WorkflowRunDetail: components["schemas"]["WorkflowRun"] & {
+            /** @description 2.5.2 (OP4) — the id of the agency the run is (its owner, as the read check judges it). */
+            readonly ownerAgency?: string;
             /** @description 2.5.2 (OP-2) — the workflow's contact and critical flag, read now by `workflowUid`; absent when the run has no workflow uid. */
             annotation?: components["schemas"]["RunAnnotation"];
             steps?: components["schemas"]["WorkflowRunStep"][];

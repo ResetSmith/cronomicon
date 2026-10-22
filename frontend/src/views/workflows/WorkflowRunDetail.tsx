@@ -15,6 +15,7 @@ import { StepChain } from "./StepChain";
 import { normalizeGraph } from "./graphView";
 import { RunLog } from "../history/RunLog";
 import { Field, RunContact, definitionHref, shortTrace } from "../history/shared";
+import { RunNotesPanel } from "../history/RunNotes";
 
 // WC-R1: the dagre canvas loads on demand (xyflow + dagre share the editor's chunk).
 const WorkflowCanvasLazy = lazy(() => import("./WorkflowCanvas").then((m) => ({ default: m.WorkflowCanvas })));
@@ -24,6 +25,8 @@ interface RunDetailResp {
   steps?: WfRunStep[];
   graph?: WfStep[];
   workflowUid?: string | null;
+  /** Whose run it is (2.5.2 OP4), for the notes' author labels. */
+  ownerAgency?: string;
   /** 2.5.2 OP-2 — who to call: the workflow's annotation. */
   annotation?: { contact: string; critical: boolean; agencyContact?: string };
 }
@@ -77,12 +80,22 @@ export function WorkflowRunDetail({ traceId, live, showOwner = true }: { traceId
   if (loading) return <div style={muted()}>Loading steps…</div>;
   if (error) return <div style={{ ...muted(), color: c.danger }}>Error loading run: {error}</div>;
   const owner = showOwner && data ? <RunOwner data={data} /> : null;
+  // 2.5.2 OP4 — the run's acknowledgement and notes, under who to call.
+  const notes = (
+    <RunNotesPanel
+      kind="workflow"
+      traceId={traceId}
+      agencyId={data?.ownerAgency}
+      offerAck={["failure", "danger", "running"].includes(data?.status ?? "")}
+    />
+  );
   if (steps.length === 0) {
     // WB-O3: a still-starting run reads differently from one that recorded none.
     const running = data?.status === "running" || data?.status === "queued";
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {owner}
+        {notes}
         <div style={muted()}>{running ? "Steps are starting…" : "No step-level detail recorded for this run."}</div>
       </div>
     );
@@ -92,6 +105,7 @@ export function WorkflowRunDetail({ traceId, live, showOwner = true }: { traceId
     // EP-4 Shape A — the workflow-run fetch plus every step's log viewer inside.
     <DetailPanel style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {owner}
+      {notes}
       {graph.length > 0 && (
         <div>
           <SectionLabel>Step Graph</SectionLabel>
