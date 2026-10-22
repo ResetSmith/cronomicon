@@ -4566,6 +4566,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agencies/{agencyId}/contact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set who to call about an agency's runs (v2.5.2)
+         * @description 2.5.2 (OP-28). The agency's contact: who the central team calls about its
+         *     runs when the job or workflow names no contact of its own (shown on the
+         *     overview's attention items and on run details, marked as the agency's).
+         *     The agency's administrators (`configureApp` on it) or a global
+         *     administrator; Global's by a global administrator. At most 256
+         *     characters, trimmed; "" clears it. The field is required, so a body
+         *     without it clears nothing. A change is in the agency's change log
+         *     (`contact-set`). CSRF required.
+         */
+        put: operations["setAgencyContact"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agencies/{agencyId}/assign": {
         parameters: {
             query?: never;
@@ -5810,6 +5837,8 @@ export interface components {
             /** @description Empty when the annotation names no contact. */
             contact: string;
             critical: boolean;
+            /** @description 2.5.2 (OP-28) — the run's agency's contact, when `contact` is empty and the agency has one. A run with no definition carries the annotation for this alone. */
+            agencyContact?: string;
         };
         /**
          * @description A job definition + DB runtime state. source ∈ {git, cronomicon} (A9): git
@@ -7242,7 +7271,7 @@ export interface components {
              */
             readonly jobUid?: string | null;
             readonly jobName?: string;
-            /** @description 2.5.2 (OP-2) — the run's job's contact and critical flag, read now by `jobUid`. On GET /runs/{traceId} only, and absent when the run has no job uid; never on the list. */
+            /** @description 2.5.2 (OP-2) — the run's job's contact and critical flag, read now by `jobUid`. On GET /runs/{traceId} only; absent when the run has no job uid and its agency no contact; never on the list. */
             annotation?: components["schemas"]["RunAnnotation"];
             /**
              * @description Origin of the job this run executed (A9; NULL legacy runs report git).
@@ -8577,6 +8606,8 @@ export interface components {
             readonly onlineRunnerCount?: number;
             /** @description The agency's own concurrency cap (v2.5.0, QT-1); null is none. Where one of its runs is produced, its runs waiting and running are counted against it; at the claim, its running runs. The installation's cap binds as well. Set with PUT /agencies/{agencyId}/concurrency. */
             readonly maxConcurrent?: number | null;
+            /** @description 2.5.2 (OP-28) — who the central team calls about the agency's runs when the job or workflow names no contact of its own; empty is none. Free text, display-only. Set with PUT /agencies/{agencyId}/contact. */
+            readonly contact?: string;
             /** @description True for **Global** (id `global`), the one agency every installation has (v2.3.0, LR-21). It cannot be renamed or deleted (422 `builtin_agency`), no other agency may be called Global in any letter case (422 `name_reserved`), and no access grant or service account may name it: it belongs to the global administrators, and the way to be one is an all-scopes grant. */
             readonly builtin?: boolean;
         } & components["schemas"]["AuditFields"];
@@ -10510,6 +10541,8 @@ export interface components {
                 contact?: string;
                 /** @description 2.5.2 (OP-1) — the annotation's critical flag; absent when false. */
                 critical?: boolean;
+                /** @description 2.5.2 (OP-28) — the agency's contact, when the item names none of its own (a repository's item included) and the agency has one. */
+                agencyContact?: string;
                 at: string;
             }[];
             /** @description How many need attention; at most 100 are listed. */
@@ -18638,6 +18671,41 @@ export interface operations {
             content: {
                 "application/json": {
                     maxConcurrent: number | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The agency as stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agency"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    setAgencyContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    contact: string;
                 };
             };
         };

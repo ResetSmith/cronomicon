@@ -48,7 +48,7 @@ interface Run {
   /** Whose run it is (its owner agency's id): where its job is opened. */
   ownerAgency?: string | null;
   /** 2.5.2 OP-2 — who to call: the job's annotation, on the detail only. */
-  annotation?: { contact: string; critical: boolean };
+  annotation?: { contact: string; critical: boolean; agencyContact?: string };
   // The run's FROZEN agency snapshot (what it actually ran for), not live
   // membership — so a historical row keeps saying whose run it was.
   agencies?: string[];
@@ -879,7 +879,7 @@ export function RunDetail({ traceId }: { traceId: string }) {
               had to go to the agency's Jobs page to find. */}
           {d.annotation && (
             <Field label="Contact">
-              <RunContact contact={d.annotation.contact} critical={d.annotation.critical} />
+              <RunContact contact={d.annotation.contact} critical={d.annotation.critical} agencyContact={d.annotation.agencyContact} />
             </Field>
           )}
           {d.jobUid && (

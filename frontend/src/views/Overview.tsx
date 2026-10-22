@@ -11,6 +11,7 @@ import { appZoneParts, fmtInAppZone } from "../utils/datetime";
 import { useAgency } from "../agency";
 import { InlineLoading } from "../components/ui";
 import { CriticalChip } from "../components/Annotation";
+import { RunContact } from "./history/shared";
 import { c } from "../theme";
 
 // The Operations overview (2.4.4 F3; plan-2.4.4 SW-12, SW-13). ONE read-only
@@ -41,6 +42,8 @@ type AttentionItem = {
   // Who to call (2.5.2 OP-1): the job's or workflow's annotation.
   contact?: string;
   critical?: boolean;
+  /** The agency's contact (OP-28), when the item names none of its own. */
+  agencyContact?: string;
   at: string;
 };
 type OverviewData = { agencies: OverviewAgency[]; attention: AttentionItem[]; attentionTotal: number; generatedAt: string };
@@ -353,12 +356,10 @@ export function Overview() {
                   </td>
                   <td style={td}>{it.agencyName}</td>
                   <td style={td}>
-                    {it.kind === "sync_failed" ? (
+                    {it.kind === "sync_failed" && !it.agencyContact ? (
                       <span style={{ color: c.textMuted }}>—</span>
-                    ) : it.contact ? (
-                      it.contact
                     ) : (
-                      <span style={{ color: c.textMuted }}>None set</span>
+                      <RunContact contact={it.contact ?? ""} critical={false} agencyContact={it.agencyContact} />
                     )}
                   </td>
                   <td style={td}>{when(it.at)}</td>

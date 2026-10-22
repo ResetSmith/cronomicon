@@ -25,7 +25,7 @@ interface RunDetailResp {
   graph?: WfStep[];
   workflowUid?: string | null;
   /** 2.5.2 OP-2 — who to call: the workflow's annotation. */
-  annotation?: { contact: string; critical: boolean };
+  annotation?: { contact: string; critical: boolean; agencyContact?: string };
 }
 
 /**
@@ -40,7 +40,7 @@ function RunOwner({ data }: { data: RunDetailResp }) {
     <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
       {data.annotation && (
         <Field label="Contact">
-          <RunContact contact={data.annotation.contact} critical={data.annotation.critical} />
+          <RunContact contact={data.annotation.contact} critical={data.annotation.critical} agencyContact={data.annotation.agencyContact} />
         </Field>
       )}
       {data.workflowUid && (

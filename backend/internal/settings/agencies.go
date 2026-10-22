@@ -37,6 +37,10 @@ type Agency struct {
 	// at the claim (internal/runcap). nil is none; the installation's cap
 	// binds either way. Set by a global administrator (SetAgencyConcurrency).
 	MaxConcurrent *int `json:"maxConcurrent"`
+	// Contact is who the central team calls about the agency's runs when the
+	// job or workflow names none (2.5.2 OP-28, migration 1640). Free text;
+	// empty is none. Set by SetAgencyContact.
+	Contact string `json:"contact"`
 	// OnlineRunnerCount is the number of ONLINE runners assigned to this agency
 	// (agency-support.md M4 coverage view). 0 ⇒ jobs bound here will wait — no
 	// runner can claim them. Computed per list read; not stored.
@@ -108,7 +112,7 @@ var (
 // ListAgencies returns the agency catalog ordered by name.
 func ListAgencies(ctx context.Context, database *sql.DB) ([]Agency, error) {
 	rows, err := database.QueryContext(ctx,
-		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin, max_concurrent
+		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin, max_concurrent, contact
 		 FROM agencies ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list agencies: %w", err)
@@ -153,7 +157,7 @@ func ListAgencies(ctx context.Context, database *sql.DB) ([]Agency, error) {
 // GetAgency fetches one agency by id; returns (nil, nil) if not found.
 func GetAgency(ctx context.Context, database *sql.DB, id string) (*Agency, error) {
 	row := database.QueryRowContext(ctx,
-		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin, max_concurrent
+		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin, max_concurrent, contact
 		 FROM agencies WHERE id=?`, id)
 	a, err := scanAgency(row)
 	if err != nil {
@@ -169,7 +173,7 @@ func scanAgency(rs interface{ Scan(...any) error }) (Agency, error) {
 	var a Agency
 	var desc, createdBy, lmBy, lmAt sql.NullString
 	var maxConc sql.NullInt64
-	if err := rs.Scan(&a.ID, &a.Name, &desc, &createdBy, &a.CreatedAt, &lmBy, &lmAt, &a.Builtin, &maxConc); err != nil {
+	if err := rs.Scan(&a.ID, &a.Name, &desc, &createdBy, &a.CreatedAt, &lmBy, &lmAt, &a.Builtin, &maxConc, &a.Contact); err != nil {
 		return a, err
 	}
 	if maxConc.Valid {

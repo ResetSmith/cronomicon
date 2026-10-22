@@ -51,6 +51,14 @@ describe("the run detail: who to call, and its job (2.5.2 OP-2)", () => {
     expect(screen.queryByText("Critical")).toBeNull();
   });
 
+  it("falls back to the agency's contact, marked as the agency's (2.5.2 OP-28)", async () => {
+    RUN = { ...RUN, annotation: { contact: "", critical: false, agencyContact: "Payroll desk" } };
+    renderIn(<RunDetail traceId="t-1" />);
+    expect(await screen.findByText(/Payroll desk/)).toBeTruthy();
+    expect(screen.getByText("(agency)")).toBeTruthy();
+    expect(screen.queryByText("None set")).toBeNull();
+  });
+
   it("shows neither for a run with no job", async () => {
     RUN = { traceId: "t-2", jobName: "adhoc", jobUid: null, status: "success" };
     renderIn(<RunDetail traceId="t-2" />);

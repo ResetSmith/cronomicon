@@ -327,12 +327,20 @@ export function definitionHref(kind: "job" | "workflow", uid: string, agency?: s
 
 /**
  * RunContact — who to call about a run (2.5.2 OP-2): the job's or workflow's
- * annotation contact, "None set" when it has none, and the Critical chip.
+ * annotation contact, else the agency's (OP-28, marked so), "None set" when
+ * neither has one, and the Critical chip.
  */
-export function RunContact({ contact, critical }: { contact: string; critical: boolean }) {
+export function RunContact({ contact, critical, agencyContact }: { contact: string; critical: boolean; agencyContact?: string }) {
   return (
     <>
-      {contact || <span style={{ color: c.textMuted }}>None set</span>}
+      {contact ||
+        (agencyContact ? (
+          <>
+            {agencyContact} <span style={{ color: c.textMuted }}>(agency)</span>
+          </>
+        ) : (
+          <span style={{ color: c.textMuted }}>None set</span>
+        ))}
       {critical && (
         <span style={{ marginLeft: 8, display: "inline-flex", verticalAlign: "middle" }}>
           <CriticalChip />

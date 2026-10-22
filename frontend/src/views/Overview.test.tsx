@@ -133,6 +133,24 @@ describe("the Operations overview (2.4.4 F3)", () => {
     expect(sync.textContent).not.toContain("None set");
   });
 
+  it("falls back to the agency's contact, marked as the agency's (2.5.2 OP-28)", async () => {
+    OVERVIEW = {
+      ...(OVERVIEW as Record<string, unknown>),
+      attention: [
+        { kind: "job_failed", agencyId: "ag-a", agencyName: "agency-alpha", name: "payroll-export", id: "u-1", traceId: "t-1", agencyContact: "Alpha on-call", at: "2026-10-16T11:00:00Z" },
+        { kind: "sync_failed", agencyId: "ag-b", agencyName: "agency-beta", name: "agency-beta's repository", agencyContact: "Beta desk", at: "2026-10-16T10:30:00Z" },
+      ],
+      attentionTotal: 2,
+    };
+    renderAt("/overview");
+    await screen.findByTestId("overview");
+    const [job, sync] = screen.getAllByTestId("attention-item");
+    expect(job.textContent).toContain("Alpha on-call (agency)");
+    expect(job.textContent).not.toContain("None set");
+    // A repository has no contact of its own; its agency's is who to call.
+    expect(sync.textContent).toContain("Beta desk (agency)");
+  });
+
   it("opens an item in its own agency, which switches and says so", async () => {
     renderAt("/overview");
     await screen.findByTestId("overview");

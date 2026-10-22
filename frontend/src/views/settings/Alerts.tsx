@@ -7,6 +7,7 @@ import { c } from "../../theme";
 import { GLOBAL_AGENCY, agenciesFor, useMyAccess } from "../../api/access";
 import { useAgencyOptional } from "../../agency";
 import { Btn, Card, Chip, csrfHeader, errMsg, inputStyle, lblStyle, tdStyle, thStyle } from "./ui";
+import { AgencyContactCard } from "./AgencyContact";
 import { ConfirmDialog, SkeletonRows, SortableLabel, statusLabel } from "../../components/ui";
 
 type AlertRule = components["schemas"]["AlertRule"];
@@ -69,6 +70,11 @@ export function AlertsSection({ isGlobal }: { isGlobal: boolean }) {
         To change another agency's, switch to it. The mail server and the Apprise gateway are the installation's, on
         Notifications.
       </div>
+      <AgencyContactCard
+        agency={agency}
+        agencyName={agencyName}
+        why={why && (agency === GLOBAL_AGENCY ? "Global's contact is a global administrator's to change." : `Only ${agencyName}'s administrators can change its contact.`)}
+      />
       <PushTargetsCard
         agency={agency}
         why={why}

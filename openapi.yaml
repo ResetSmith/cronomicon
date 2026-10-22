@@ -7390,6 +7390,41 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/Validation' }
 
+  /agencies/{agencyId}/contact:
+    put:
+      tags: [Agencies]
+      operationId: setAgencyContact
+      summary: Set who to call about an agency's runs (v2.5.2)
+      description: |
+        2.5.2 (OP-28). The agency's contact: who the central team calls about its
+        runs when the job or workflow names no contact of its own (shown on the
+        overview's attention items and on run details, marked as the agency's).
+        The agency's administrators (`configureApp` on it) or a global
+        administrator; Global's by a global administrator. At most 256
+        characters, trimmed; "" clears it. The field is required, so a body
+        without it clears nothing. A change is in the agency's change log
+        (`contact-set`). CSRF required.
+      parameters: [{ $ref: '#/components/parameters/agencyId' }, { $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contact]
+              properties:
+                contact: { type: string, maxLength: 256 }
+      responses:
+        '200':
+          description: The agency as stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agency' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+
   /agencies/{agencyId}/assign:
     post:
       tags: [Agencies]
@@ -9402,6 +9437,11 @@ components:
       properties:
         contact: { type: string, description: Empty when the annotation names no contact. }
         critical: { type: boolean }
+        agencyContact:
+          type: string
+          description: >-
+            2.5.2 (OP-28) — the run's agency's contact, when `contact` is empty and the agency
+            has one. A run with no definition carries the annotation for this alone.
     Job:
       type: object
       description: |
@@ -11168,7 +11208,7 @@ components:
           $ref: '#/components/schemas/RunAnnotation'
           description: >-
             2.5.2 (OP-2) — the run's job's contact and critical flag, read now by `jobUid`. On
-            GET /runs/{traceId} only, and absent when the run has no job uid; never on the list.
+            GET /runs/{traceId} only; absent when the run has no job uid and its agency no contact; never on the list.
         jobSource:
           type: string
           enum: [git, cronomicon]
@@ -12793,6 +12833,13 @@ components:
                 one of its runs is produced, its runs waiting and running are counted
                 against it; at the claim, its running runs. The installation's cap
                 binds as well. Set with PUT /agencies/{agencyId}/concurrency.
+            contact:
+              type: string
+              readOnly: true
+              description: >-
+                2.5.2 (OP-28) — who the central team calls about the agency's runs when
+                the job or workflow names no contact of its own; empty is none. Free
+                text, display-only. Set with PUT /agencies/{agencyId}/contact.
             builtin:
               type: boolean
               readOnly: true
@@ -15412,6 +15459,11 @@ components:
               critical:
                 type: boolean
                 description: 2.5.2 (OP-1) — the annotation's critical flag; absent when false.
+              agencyContact:
+                type: string
+                description: >-
+                  2.5.2 (OP-28) — the agency's contact, when the item names none of its own (a
+                  repository's item included) and the agency has one.
               at: { type: string }
         attentionTotal: { type: integer, description: How many need attention; at most 100 are listed. }
         generatedAt: { type: string, format: date-time }

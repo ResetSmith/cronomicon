@@ -3561,7 +3561,7 @@ func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		"steps":        s.workflowRunSteps(r, children, containers),
 		"graph":        workflowRunGraph(stepsSnapshot.String, stats),
 	}
-	if ann := s.runAnnotation(r.Context(), "workflow", wfUID.String); ann != nil {
+	if ann := s.runAnnotation(r.Context(), "workflow", wfUID.String, wrAgency); ann != nil {
 		resp["annotation"] = ann
 	}
 	httpx.JSON(w, http.StatusOK, resp)
@@ -4328,7 +4328,8 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// Who to call (2.5.2 OP-2), on the detail only: the list never pays for it.
 	jobUID, _ := run["jobUid"].(string)
-	if ann := s.runAnnotation(r.Context(), "job", jobUID); ann != nil {
+	owner, _ := run["ownerAgency"].(string)
+	if ann := s.runAnnotation(r.Context(), "job", jobUID, agencyOrGlobal(owner)); ann != nil {
 		run["annotation"] = ann
 	}
 	httpx.JSON(w, http.StatusOK, run)
@@ -4336,14 +4337,25 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 
 // runAnnotation is who to call about a run (2.5.2 OP-2): its job's or workflow's
 // annotation contact and critical flag, read now by uid, so a contact edited
-// after the run shows. nil when the run names no definition, so the field is
-// absent rather than empty; an unannotated definition is an empty contact.
-func (s *Server) runAnnotation(ctx context.Context, kind, uid string) map[string]any {
-	if uid == "" {
+// after the run shows, and the run's agency's contact (OP-28) when the
+// definition names none. nil when there is neither a definition nor an agency
+// contact, so the field is absent rather than empty; an unannotated definition
+// is an empty contact.
+func (s *Server) runAnnotation(ctx context.Context, kind, uid, agency string) map[string]any {
+	out := map[string]any{"contact": "", "critical": false}
+	if uid != "" {
+		a := s.loadAnnotation(ctx, kind, uid)
+		out["contact"], out["critical"] = a.contact, a.critical
+	}
+	if out["contact"] == "" {
+		if c := settings.AgencyContact(ctx, s.db, agency); c != "" {
+			out["agencyContact"] = c
+		}
+	}
+	if uid == "" && out["agencyContact"] == nil {
 		return nil
 	}
-	a := s.loadAnnotation(ctx, kind, uid)
-	return map[string]any{"contact": a.contact, "critical": a.critical}
+	return out
 }
 
 func (s *Server) fetchRunByID(r *http.Request, traceID string) map[string]any {

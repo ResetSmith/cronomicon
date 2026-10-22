@@ -13,6 +13,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
 // The Operations overview and the switcher's badges (2.4.4 S5; plan-2.4.4
@@ -61,7 +62,10 @@ type attentionItem struct {
 	// annotateAttention. Absent on a sync item and on an unannotated one.
 	Contact  string `json:"contact,omitempty"`
 	Critical bool   `json:"critical,omitempty"`
-	At       string `json:"at"`
+	// The agency's own contact (OP-28), when the item names none of its own:
+	// who to call when the job or workflow says nobody, and for a repository.
+	AgencyContact string `json:"agencyContact,omitempty"`
+	At            string `json:"at"`
 }
 
 type overviewResponse struct {
@@ -281,9 +285,27 @@ func attentionOwnerKind(kind string) string {
 // annotateAttention gives each job and workflow item its definition's contact
 // and critical flag (2.5.2 OP-1), in one read of the annotations sidecar for the
 // items listed (the cap is applied first). Keyed on (kind, uid) like every read
-// of that table. Display-only, as the run detail and the notification are: a
-// failed read leaves the items un-annotated and never costs the overview.
+// of that table. Then the agency's contact (OP-28) for every item left without
+// one, a repository's included. Display-only, as the run detail and the
+// notification are: a failed read leaves the items un-annotated and never
+// costs the overview.
 func (s *Server) annotateAttention(ctx context.Context, items []attentionItem) {
+	s.annotateFromDefinitions(ctx, items)
+	contacts, err := settings.AgencyContacts(ctx, s.db)
+	if err != nil {
+		s.log.Warn("agency contact lookup failed; attention items render without them", "err", err)
+		return
+	}
+	for i := range items {
+		if items[i].Contact == "" {
+			items[i].AgencyContact = contacts[items[i].AgencyID]
+		}
+	}
+}
+
+// annotateFromDefinitions is annotateAttention's first half: the job's or
+// workflow's own annotation.
+func (s *Server) annotateFromDefinitions(ctx context.Context, items []attentionItem) {
 	type key struct{ kind, uid string }
 	var uids []any
 	seen := map[string]bool{}
