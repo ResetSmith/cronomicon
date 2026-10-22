@@ -237,6 +237,14 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 	if st.originSvc == nil || st.targetSvc == nil {
 		return nil, refuse(http.StatusServiceUnavailable, "unavailable", "a repository's sync service is not running; try again in a moment")
 	}
+	// A row with no connection (Global's never connected, an agency's from
+	// before 2.4.0) has nowhere to commit, as a publish says since 2.5.1 SG5.
+	// It reached the commit and answered target_unsynced "assign again"
+	// forever, since its sync only records "not configured" (SG6.4, A9).
+	if st.targetSvc.repoURL == "" {
+		return nil, refuse(http.StatusUnprocessableEntity, "no_repository",
+			"%s's repository is not connected yet, so there is nothing to commit to: its administrator connects it in Settings → Repositories", st.targetName)
+	}
 	// One commit of the origin, read first: every file is read as it is there,
 	// and it is what the record and the stamp name.
 	if err := q.QueryRowContext(ctx, `SELECT COALESCE(last_sha, ''), COALESCE(url, '') FROM git_repos WHERE id = ?`, top.repo).

@@ -4630,7 +4630,10 @@ export interface paths {
          *     row is the agency's. A sync of its repository is started; the job
          *     appears when it finishes. 409 `target_unsynced` when the agency's branch
          *     has commits the server has not synced (a sync is started; assign again),
-         *     409 `origin_unsynced`, 409 `branch_protected` (as a publish answers it). CSRF required.
+         *     409 `origin_unsynced`, 409 `branch_protected` (as a publish answers it).
+         *     422 `no_repository` when the agency has no repository, or one with no
+         *     connection (Global's never connected, an agency's from before 2.4.0;
+         *     v2.5.1, where that one answered `target_unsynced` for good). CSRF required.
          */
         post: operations["assignToAgency"];
         delete?: never;
