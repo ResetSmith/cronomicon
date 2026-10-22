@@ -292,9 +292,9 @@ To run an agent as a container instead, the same page generates a `docker run` c
 ### Upgrading
 
 > [!CAUTION]
-> **2.5.1 is a one-way upgrade: back up before you start it.** At its first start, 2.5.1 re-encrypts every stored secret, SSH key and sealed setting so that each value is bound to its own row. After that, **2.5.0 cannot open them**: starting 2.5.0 again on the same data leaves every secret, key, repository token and Vault credential unreadable. The only way back is the snapshot you take in step 1 below, and anything changed since is lost.
+> **2.5.1 is a one-way upgrade: back up before you start it.** At its first start, 2.5.1 re-encrypts every stored secret, SSH key and sealed setting so that each value is bound to its own row. After that, **the release you came from cannot open them**: starting it again on the same data leaves every secret, key, repository token and Vault credential unreadable. The only way back to it is the snapshot you take in step 1 below, and anything changed since is lost.
 
-Migrations run automatically when a new version starts, and they cannot be rolled back. Read the [CHANGELOG](CHANGELOG.md)'s **Upgrading** section for each version you pass: from 2.2.3 to 2.5.0 it is seven steps, some of them before you stop the old server, and from 2.5.0 to 2.5.1 it is the snapshot. Then take a snapshot:
+Migrations run automatically when a new version starts, and they cannot be rolled back. Read the [CHANGELOG](CHANGELOG.md)'s **Upgrading** section: from 2.2.3 (or any release since) to 2.5.1 it is one step of eight, some of them before you stop the old server. 2.5.0 was never published; it is a step of the development line, like 2.3.x and 2.4.x. Then take a snapshot:
 
 1. **Snapshot the data.** Stop the container and archive the volume:
 

@@ -9,10 +9,12 @@ rebuilds them (see [After a restore: runs and repositories](#after-a-restore-run
 
 > **2.5.1 is a one-way upgrade: back up before you start it.** At its first
 > start 2.5.1 binds every sealed value (stored secrets, SSH keys, repository
-> tokens, Vault and other credentials) to its own row. After that **2.5.0
-> cannot open them**, and the down of migration 1620 does not undo it. The
-> backup taken before the upgrade is the only way back to 2.5.0; anything
-> changed since is lost. Restoring that backup and starting 2.5.0 on it works.
+> tokens, Vault and other credentials) to its own row. After that **the
+> release you came from cannot open them** (2.2.3, from which production goes
+> to 2.5.1 in one step, or a build of the unpublished 2.5.0), and the down of
+> migration 1620 does not undo it. The backup taken before the upgrade is the
+> only way back to that release; anything changed since is lost. Restoring
+> that backup and starting the old release on it works.
 
 ## How the nightly backup works
 

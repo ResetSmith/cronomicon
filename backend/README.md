@@ -67,10 +67,10 @@ frontend generates a client (`npm run gen`).
 | `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | — | multi-use runner registration token. It names no agency, so an agent it enrols is owned by, and serves, Global; a token minted in the app names the agency |
 | `CRONOMICON_LOCAL_RUNNER` | — | `forbid` keeps this server from ever running jobs itself (the local runner reads as off and cannot be turned on in the app). Unset or `allow` leaves it to **Settings → Local runner**; any other value refuses to start. The three `CRONOMICON_SSH_EXECUTOR_*` names are covered in `deploy/env-matrix.md` |
 | `CRONOMICON_KEK_FILE` / `CRONOMICON_KEK` | — | stored-secret KEK: mounted file preferred, env fallback. **Back up separately from the DB.** |
-| `CRONOMICON_RETENTION_RUNS_DAYS` / `_CHANGELOG_DAYS` / `_LOG_FILES_DAYS` | `90` / `365` / `90` | Retention **bootstrap defaults only** — they seed the `auditCompliance` settings blob on the first boot that finds it unset; afterwards the twelve per-table knobs in Settings → Audit & Compliance are authoritative (the knobs with no env var — `auditLogFiles`, `recycleBin`, `definitionRevisions`, `runnerPlacementHistory`, `archivedLogFiles`, `hostKeyLedger` — start at their own defaults). `_LOG_FILES_DAYS` reaps **on-disk run logs**. |
+| `CRONOMICON_RETENTION_RUNS_DAYS` / `_CHANGELOG_DAYS` / `_LOG_FILES_DAYS` | `90` / `365` / `90` | Retention **bootstrap defaults only** — they seed the `auditCompliance` settings blob on the first boot that finds it unset; afterwards the thirteen per-table knobs in Settings → Audit & Compliance are authoritative (the knobs with no env var — `auditLogFiles`, `recycleBin`, `definitionRevisions`, `runnerPlacementHistory`, `archivedLogFiles`, `hostKeyLedger`, `secretUses` — start at their own defaults). `_LOG_FILES_DAYS` reaps **on-disk run logs**. |
 | `CRONOMICON_BACKUP_S3_BUCKET` | — | nightly VACUUM-INTO upload target; empty disables upload |
 | `CRONOMICON_BACKUP_S3_ENDPOINT` / `_REGION` / `_ACCESS_KEY` / `_SECRET_KEY` / `_USE_SSL` | — / `us-east-1` / — / — / `true` | S3-compatible target (AWS/MinIO/Ceph/R2). See `deploy/backup-restore.md` |
-| `CRONOMICON_BACKUP_RECIPIENTS` | — | 2.5.1, optional: age public keys that seed Settings → Backups once; every backup is then encrypted to them. Losing every private key loses every encrypted backup |
+| `CRONOMICON_BACKUP_RECIPIENTS` | — | 2.5.1, optional: age public keys that seed Settings → Backups once; every backup is then encrypted to them. Losing every private key loses every encrypted backup. Set but holding no usable key, with no keys stored yet, the server refuses to start (it would back up unencrypted); beside stored keys it is logged and ignored |
 
 > **Namespace note.** Names under the reserved prefixes `CRONOMICON_VAR_`,
 > `CRONOMICON_SECRET_`, `CRONOMICON_KEY_`, and `CRONOMICON_RUN_` are **not** configuration —
@@ -134,7 +134,8 @@ degrade gracefully — the server boots and serves with them absent.
   to the keys in Settings → Backups (2.5.1). Restore runbook, with
   `cronomicon restore --identity`: `deploy/backup-restore.md`.
 - **2.5.1 is a one-way upgrade:** its first start binds every sealed value to
-  its row, and 2.5.0 cannot open them afterwards. Back up before upgrading.
+  its row, and the release you came from (2.2.3, or a build of 2.5.0) cannot
+  open them afterwards. Back up before upgrading: the backup is the way back.
 - **CI-time validation:** `deploy/ci-validate-template.yml` is the
   drop-in `.gitlab-ci.yml` snippet for the job-definitions repo that runs
   `cronomicon validate` on every MR (fail-fast, line-numbered; opt-in MR-comment

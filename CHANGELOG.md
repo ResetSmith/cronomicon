@@ -27,31 +27,40 @@ v1630); runner protocol 14 is unchanged.
 > **2.5.1 is a one-way upgrade. Take a backup before you start it.** At its
 > first start 2.5.1 re-seals every stored secret, SSH key and sealed setting so
 > that each value is bound to its own row (it logs when it does). From then on
-> **2.5.0 cannot open those values**: starting 2.5.0 again on the same database
-> leaves every secret, key, repository token and Vault credential unreadable.
-> Rolling back means restoring the backup taken before the upgrade, and losing
-> what changed since. Reversing the migrations does not undo the binding
-> either (the down of migration 1620 leaves bound values unreadable).
+> **the release you came from cannot open those values**: starting 2.2.3 (or a
+> build of 2.5.0) again on the same database leaves every secret, key,
+> repository token and Vault credential unreadable. Rolling back means
+> restoring the backup taken before the upgrade, and losing what changed since.
+> Reversing the migrations does not undo the binding either (the down of
+> migration 1620 leaves bound values unreadable).
 
-### Upgrading from 2.5.0
+### Upgrading from 2.2.3 (or any release since)
 
-From 2.2.3 or a release before 2.5.0, follow the steps of 2.5.0 below with the
-2.5.1 binary; the backup of its step 2 is the one meant here.
+Production and every published image go from 2.2.3 to 2.5.1 in one step: the
+schema goes from 1210 to 1630 in the first start, and runner protocol 14 is
+unchanged. 2.5.0 was not published; like 2.3.x and 2.4.x it is a step of the
+development line, and what it changed arrives with 2.5.1.
 
-1. **Take a backup** of the database (or the volume) and keep it apart. It is
-   the only way back to 2.5.0 (above).
-2. **Start 2.5.1.** The first start binds the sealed values, seals the push
-   targets' URLs, and empties the unread list of Apprise URLs that 2.5.0 left
-   in `notification_config`. With no encryption key (KEK) configured there is
-   nothing to bind. If a value cannot be opened (a KEK version that is not
-   configured), the start leaves it readable, writes no marker, and tries again
-   at the next start: configure the missing KEK version.
-3. **Upgrade the agents with the server**, as for every release (protocol 14
-   is unchanged).
-4. **Optionally**, add backup keys (Settings → Backups), list the hosts an
-   agency's own Vault may be on (Settings → Vault, Installation), and review
-   the Notices inbox: each agency now also sees the former secrets of its own
-   that Global holds.
+**Steps 1 to 7 are those of 2.5.0's entry below**, with the 2.5.1 binary: let
+queued runs finish, take the backup (the one the caution above means; keep it
+apart) and run `cronomicon preflight`, upgrade the agents with the server,
+start 2.5.1, then read the Notices inbox, list each agency's groups, give each
+agency its repository and assign Vault path prefixes.
+
+**Step 8: what the first start of 2.5.1 binds, and what is optional.** The
+first start binds the sealed values and seals the push targets' URLs. With no
+encryption key (KEK) configured there is nothing to bind. If a value cannot be
+opened (a KEK version that is not configured), the start leaves it readable,
+writes no marker, and tries again at the next start: configure the missing KEK
+version. Optionally, add backup keys (Settings → Backups), list the hosts an
+agency's own Vault may be on (Settings → Vault, Installation), and review the
+Notices inbox again: each agency also sees the former secrets of its own that
+Global holds.
+
+**From a build of 2.5.0** (schema 1590): take a backup and keep it apart (the
+only way back to 2.5.0); start 2.5.1, which also empties the unread list of
+Apprise URLs that 2.5.0 left in `notification_config`; upgrade the agents with
+the server; and optionally as in step 8.
 
 ### Added
 
@@ -121,7 +130,57 @@ From 2.2.3 or a release before 2.5.0, follow the steps of 2.5.0 below with the
   in Settings → Repositories; until then it cannot be given a job or published
   to (422 `no_repository`), and the `agency_no_repository` notice says so.
 - An agency with its own Vault sets its own Vault path prefixes; any other's
-  are still a global administrator's.
+  are still a global administrator's. **Disconnecting its Vault clears them**:
+  in the installation's Vault an agency's paths are a global administrator's
+  to assign, and until they are, it names none.
+- **A row Global holds is read only to its agencies.** A secret or key that
+  several agencies shared before 2.3.0 is Global's, with those agencies listed:
+  they read it and its Usage, and nothing more. Revealing it, making it
+  unrevealable, editing, tagging, migrating or deleting it is a global
+  administrator's, as for any of Global's rows. Before this release any listed
+  agency's administrator could reveal it, lock it for good or delete a key
+  Global's hosts use. The same holds for a row of one agency that listed
+  another before 2.3.0: the other agency does not read it, and its routes
+  answer 404.
+- **Another agency's secret or key is 404** to its routes (reveal, edit, tags,
+  delete, lock, migrate), not a 403 that named whose it is.
+- A key's Usage names only the host records and bastions the reader can read;
+  it counts the others.
+- Moving a secret or key through an agency's member list (Scopes → Agencies)
+  raises the same secret-changed alerts, in both agencies, as a repair on the
+  row itself.
+- **Moving a Vault-backed secret or key to an owner on another Vault** (an
+  agency's own, the installation's, or another agency's own) is refused until
+  it is confirmed: the dialog says which Vault each row would be read from,
+  since the same path there may hold another value, or none, and *Move anyway*
+  sends it again. A confirmed move is marked so in the change log. Over the
+  API: 409 `vault_changes` with the rows, and `confirmVaultChange: true`.
+- **The agency Vault health check never logs in**: it asks the Vault's
+  `sys/health`, as the installation's status does. It used to log in each
+  time, up to twice a minute: a Vault token each time, and with a limited
+  AppRole secret id, a use of it. `agency_vault_unreachable` now says that the
+  Vault does not answer, is sealed or is not initialized; refused credentials
+  show on the next read instead. The *Test* button and the preview use a
+  client of their own, so they no longer drop the live one.
+- **A bad `CRONOMICON_BACKUP_RECIPIENTS` stops the start** when no backup keys
+  are stored: set but holding no usable key, it used to be logged, and the
+  first backup was written and uploaded unencrypted. Beside stored keys it is
+  logged as before, and the stored keys apply.
+- **A private key is refused in any form**, quoted, in lower case, after
+  `key=` or inside the whole `age-keygen` file, and no refusal repeats what was
+  pasted: the refusal used to carry the private key into the response, the
+  card and, from the environment variable, the boot log.
+- Giving a job or workflow to an agency whose repository is not connected
+  (Global's never connected, an agency's from before 2.4.0) is 422
+  `no_repository`, as a publish is; it answered 409 `target_unsynced`,
+  "assign again", for good.
+- Env Vars → Variables and Secrets: the agency chip beside a name is gone; the
+  Agencies column says whose a row is, and names the owner (marked *owner*)
+  where a row shared before 2.3.0 does not list it. *Make unrevealable…* is
+  disabled, with the reason, on a row the reader cannot change.
+- The *Installation freeze* card is shown to global administrators only, at the
+  bottom of Settings → General; freezing opens a danger dialog with an
+  acknowledgement to tick, and the banner above every page has a red border.
 
 ### Known, and worth knowing
 
@@ -151,7 +210,15 @@ From 2.2.3 or a release before 2.5.0, follow the steps of 2.5.0 below with the
   `GET /agencies/{id}/held-by-global`, `GET/PUT/DELETE /agencies/{id}/vault`
   with `…/vault/test` and `…/vault/preview`, `POST /settings/vault/test`.
   `POST /agencies` takes `repository` optionally; `GET
-  /agencies/{id}/vault-prefixes` says `ownVault`.
+  /agencies/{id}/vault-prefixes` says `ownVault`. `PUT /secret-agencies`,
+  `PUT /ssh-credential-agencies` and `PUT /agencies/{id}/members` take
+  `confirmVaultChange` (409 `vault_changes`, schema `VaultChanges`); a key's
+  Usage carries `otherAgencyRecords`.
+- `settings.MoveOptions` confirms a membership write's Vault change, checked
+  in the writer's transaction over the owner moves it makes (a held row that
+  settles on its last member included). `secrets.VaultHealth` is the health
+  check's `sys/health`; `settings.NewAgencyVaultClient` builds an uncached
+  client for a proposed connection.
 - Migrations: 1600 `secret_uses` and `change_log.actor_relation`, 1610
   (`notification_config.apprise_targets` emptied), 1620 `seal_format` and the
   reveal lock on `secrets` and `ssh_credentials` (its down does not unbind),
@@ -165,15 +232,16 @@ read by its own people and by those whose access reaches every agency, and
 nobody else; its alerts, its recycle bin, the groups its grants may name and
 its concurrency are its own; a global administrator hands a job or workflow to
 an agency as one commit into its repository, and is told when the original
-changes. A copied runner identity file is detected. The first published release
-since 2.2.3: the upgrade below reads every step from 2.2.3 as one. Eight
-migrations in this release (1520 to 1590, schema v1590); runner protocol 14 is
-unchanged.
+changes. A copied runner identity file is detected. Not published: like 2.3.x
+and 2.4.x it is a step of the development line, and production goes from 2.2.3
+to 2.5.1 in one step, whose upgrade follows the steps below. Eight migrations
+in this release (1520 to 1590, schema v1590); runner protocol 14 is unchanged.
 
-### Upgrading from 2.2.3 (or any release since)
+### Upgrading from 2.2.3 (the steps 2.5.1 follows)
 
-Production and every published image go from 2.2.3 to 2.5.0 in one step. What
-each release in between did is in its own entry below; what has to be done, in
+Production and every published image go from 2.2.3 to 2.5.1 in one step (see
+2.5.1 above); these are its steps 1 to 7, with the 2.5.1 binary. What each
+release in between did is in its own entry below; what has to be done, in
 order, is here. An installation with no data has nothing to do but upgrade the
 agents with the server.
 
@@ -211,7 +279,7 @@ agents with the server.
    run is closed as `runner_lost` when the agent starts again.
 
 Steps 1 to 3 come before, or with, the switch: stop the old server, start
-2.5.0 on the same database (it migrates at its first start), then steps 4 to 7.
+2.5.1 on the same database (it migrates at its first start), then steps 4 to 7.
 
 4. **Read the Notices inbox.** Every conversion that needs a person is listed
    there, by agency: what was shared before 2.4.0 stays Global's and stops
@@ -254,8 +322,9 @@ gain an `agency` column (last), after 2.4.4's `actingAgency`.
 
 ### Added
 
-- **The installation freeze in the app**: an *Installation freeze* switch at the
-  top of Settings → General (a reason is required; a global administrator's),
+- **The installation freeze in the app**: an *Installation freeze* switch in
+  Settings → General (a reason is required; a global administrator's; at the
+  bottom of the page since 2.5.1),
   and a banner above every page while it is on, with the reason, who set it and
   when. Until now only `PUT /settings/freeze` set it, though 2.4.0 said
   Settings, and nothing in the app said why every agency's schedules were
