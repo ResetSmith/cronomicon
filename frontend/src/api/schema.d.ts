@@ -10691,6 +10691,8 @@ export interface components {
                 name: string;
                 jobs: number;
                 pausedJobs: number;
+                /** @description 2.5.2 (OP-26) — jobs on a schedule (not manual): the agency Dashboard's "Active schedules". */
+                scheduledJobs?: number;
                 workflows: number;
                 pausedWorkflows: number;
                 /** @description Runs created in the last 24 hours, by status (success, failure, warning, running, queued, killed, skipped) and `lost`. */

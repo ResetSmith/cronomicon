@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
-// The Operations overview page (2.4.4 F3).
+// The Dashboard with All agencies chosen (2.5.2 OP5; the Operations overview of 2.4.4 F3).
 
 let CONTEXT: Record<string, unknown> = {};
 let OVERVIEW: unknown = null;
@@ -15,8 +15,8 @@ const asked: { path: string; headers?: Record<string, string> }[] = [];
 // What an acknowledgement sent (2.5.2 OP-20).
 const posted: { path: string; traceId: string; body: unknown }[] = [];
 
-vi.mock("../api/client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../api/client")>();
+vi.mock("../../api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api/client")>();
   return {
     ...actual,
     setRequestAgency: vi.fn(),
@@ -49,12 +49,13 @@ vi.mock("../api/client", async (importOriginal) => {
   };
 });
 
-import { AgencyProvider, useAgency } from "../agency";
-import { Overview, attentionHref, hitHref } from "./Overview";
-import { SCORE_MAX_PAGES, resetScoreRunsCache } from "../components/score-runs";
+import { AgencyProvider, useAgency } from "../../agency";
+import { attentionHref, hitHref } from "./AllAgencies";
+import { Dashboard } from "../Dashboard";
+import { SCORE_MAX_PAGES, resetScoreRunsCache } from "../../components/score-runs";
 
 const choices = [
-  { id: "overview", name: "Overview: all agencies", kind: "overview" },
+  { id: "overview", name: "All agencies", kind: "overview" },
   { id: "global", name: "Global", kind: "agency" },
   { id: "ag-a", name: "agency-alpha", kind: "agency" },
   { id: "ag-b", name: "agency-beta", kind: "agency" },
@@ -76,7 +77,7 @@ function renderAt(url: string) {
       <AgencyProvider>
         <Where />
         <Routes>
-          <Route path="/overview" element={<Overview />} />
+          <Route path="/" element={<Dashboard />} />
           <Route path="*" element={null} />
         </Routes>
       </AgencyProvider>
@@ -109,18 +110,21 @@ afterEach(cleanup);
 
 describe("the Operations overview (2.4.4 F3)", () => {
   it("shows a row per agency and what needs attention, and nothing to change but an acknowledgement", async () => {
-    renderAt("/overview");
+    renderAt("/?agency=overview");
     const page = await screen.findByTestId("overview");
     expect(within(screen.getByTestId("overview-row-ag-a")).getByText("agency-alpha")).toBeTruthy();
     expect(screen.getByTestId("overview-row-ag-b").textContent).toContain("failed");
     expect(screen.getAllByTestId("attention-item")).toHaveLength(2);
-    // Links to open things in their agency; the one button is acknowledging
-    // the lost run (2.5.2 OP-20) — a repository is not a run.
-    expect([...page.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Acknowledge"]);
+    // Links to open things in their agency; the one thing to change in the
+    // list is acknowledging the lost run (2.5.2 OP-20) — a repository is not
+    // a run. (The strip and the Failed tile only take you to the list.)
+    const rowButtons = screen.getAllByTestId("attention-item").flatMap((r) => [...r.querySelectorAll("button")].map((b) => b.textContent));
+    expect(rowButtons).toEqual(["Acknowledge"]);
+    expect(page.querySelectorAll("input:not([type=checkbox]):not([aria-label='Find a job or workflow']), select")).toHaveLength(0);
   });
 
   it("acknowledges an item with a first note, from here, for any agency's run (2.5.2 OP-20)", async () => {
-    renderAt("/overview");
+    renderAt("/?agency=overview");
     await screen.findByTestId("overview");
     fireEvent.click(screen.getByRole("button", { name: "Acknowledge" }));
     fireEvent.change(screen.getByLabelText("What you know so far (optional)"), { target: { value: " Restarting the agent. " } });
@@ -143,7 +147,7 @@ describe("the Operations overview (2.4.4 F3)", () => {
       ],
       attentionTotal: 2,
     };
-    renderAt("/overview");
+    renderAt("/?agency=overview");
     await screen.findByTestId("overview");
     const [fresh, inHand] = screen.getAllByTestId("attention-item");
     expect(fresh.textContent).toContain("Its previous failure");
@@ -171,7 +175,7 @@ describe("the Operations overview (2.4.4 F3)", () => {
       ],
       attentionTotal: 3,
     };
-    renderAt("/overview");
+    renderAt("/?agency=overview");
     await screen.findByTestId("overview");
     expect(screen.getByRole("columnheader", { name: "Contact" })).toBeTruthy();
     const [annotated, bare, sync] = screen.getAllByTestId("attention-item");
@@ -192,7 +196,7 @@ describe("the Operations overview (2.4.4 F3)", () => {
       ],
       attentionTotal: 2,
     };
-    renderAt("/overview");
+    renderAt("/?agency=overview");
     await screen.findByTestId("overview");
     const [job, sync] = screen.getAllByTestId("attention-item");
     expect(job.textContent).toContain("Alpha on-call (agency)");
@@ -202,9 +206,9 @@ describe("the Operations overview (2.4.4 F3)", () => {
   });
 
   it("opens an item in its own agency, which switches and says so", async () => {
-    renderAt("/overview");
+    renderAt("/?agency=overview");
     await screen.findByTestId("overview");
-    expect(screen.getByTestId("where").textContent).toBe("/overview|global");
+    expect(screen.getByTestId("where").textContent).toBe("/|global");
     fireEvent.click(screen.getByRole("link", { name: "e2e-alpha-slow" }));
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/runs|ag-a"));
     expect(screen.getByRole("status").textContent).toBe("Switched to agency-alpha");
@@ -212,7 +216,7 @@ describe("the Operations overview (2.4.4 F3)", () => {
 
   it("finds a job or workflow by name, saying whose", async () => {
     HITS = [{ kind: "job", id: "u-1", name: "nightly-backup", agencyId: "ag-b", agencyName: "agency-beta" }];
-    renderAt("/overview");
+    renderAt("/?agency=overview");
     fireEvent.change(await screen.findByRole("textbox", { name: "Find a job or workflow" }), { target: { value: "night" } });
     const hit = await screen.findByRole("link", { name: "nightly-backup" });
     expect(hit.parentElement?.textContent).toContain("in agency-beta");
@@ -221,14 +225,49 @@ describe("the Operations overview (2.4.4 F3)", () => {
 
   it("is not for someone whose access does not reach every agency", async () => {
     CONTEXT = { choices: choices.slice(1), storedDefault: null, effectiveDefault: "ag-a", workingAgency: "ag-a", canOverview: false };
-    renderAt("/overview");
-    expect(await screen.findByText("The overview is for those whose access reaches every agency.")).toBeTruthy();
+    renderAt("/?agency=overview");
+    // Their own Dashboard, with the notice an agency not among the choices gets.
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/|ag-a"));
+    expect(await screen.findByText("That agency is not available to you; showing agency-alpha")).toBeTruthy();
+    expect(screen.queryByTestId("overview")).toBeNull();
   });
 
   it("does not land a global administrator on it", async () => {
     CONTEXT = { ...CONTEXT, effectiveDefault: "global", workingAgency: "global" };
     renderAt("/");
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/|global"));
+    expect(screen.queryByTestId("overview")).toBeNull();
+  });
+
+  it("is the Dashboard: the strip, the five tiles summed over agencies, and Needs attention above Agencies (2.5.2 OP-22)", async () => {
+    OVERVIEW = {
+      ...(OVERVIEW as Record<string, unknown>),
+      agencies: [
+        { id: "ag-a", name: "agency-alpha", jobs: 5, pausedJobs: 1, scheduledJobs: 3, workflows: 2, pausedWorkflows: 0, runs24h: { success: 4, lost: 1, running: 2 }, nextRunAt: null, repository: null, openNotices: 0 },
+        { id: "ag-b", name: "agency-beta", jobs: 4, pausedJobs: 0, scheduledJobs: 1, workflows: 0, pausedWorkflows: 0, runs24h: { failure: 2, warning: 1 }, nextRunAt: null, repository: null, openNotices: 2 },
+      ],
+    };
+    renderAt("/?agency=overview");
+    await screen.findByTestId("overview");
+    const tiles = screen.getByTestId("all-agencies-tiles").textContent ?? "";
+    for (const t of ["3Failed (24h)", "2Running now", "4Active schedules", "9Total jobs", "2Agencies"]) expect(tiles).toContain(t);
+    const strip = screen.getByLabelText("Status").textContent ?? "";
+    expect(strip).toContain("2 items need attention, 2 not yet acknowledged.");
+    expect(strip).toContain("3 failed · 1 warned in the last 24 hours.");
+    // Needs attention comes before Agencies, and the search is in Agencies' header.
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(headings.indexOf("Needs attention")).toBeLessThan(headings.indexOf("Agencies"));
+    expect(screen.getByRole("textbox", { name: "Find a job or workflow" })).toBeTruthy();
+    // Dismissed, the strip stays away until the situation changes.
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss this alert until something changes" }));
+    expect(screen.queryByLabelText("Status")).toBeNull();
+  });
+
+  it("says when nothing needs attention", async () => {
+    OVERVIEW = { ...(OVERVIEW as Record<string, unknown>), attention: [], attentionTotal: 0 };
+    renderAt("/?agency=overview");
+    await screen.findByTestId("overview");
+    expect(screen.getByLabelText("Status").textContent).toBe("Nothing needs attentionacross 2 agencies.");
   });
 
   it("draws the Score across every agency, its readout always showing, with an Agency column (F4)", async () => {
@@ -237,7 +276,7 @@ describe("the Operations overview (2.4.4 F3)", () => {
       { traceId: "t-a", jobName: "backup", ownerAgency: "ag-a", status: "success", kind: "job", startedAt: recent },
       { traceId: "t-b", jobName: "report", ownerAgency: "ag-b", status: "danger", kind: "job", startedAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString() },
     ];
-    renderAt("/overview");
+    renderAt("/?agency=overview");
     await screen.findByTestId("overview-score");
     await waitFor(() => expect(screen.getAllByRole("option").length).toBeGreaterThan(0));
     const names = screen.getAllByRole("option").map((o) => o.getAttribute("aria-label") ?? "").join(" | ");
@@ -261,7 +300,7 @@ describe("the Operations overview (2.4.4 F3)", () => {
 
   it("reads the Score's runs page after page, and says when the day held more", async () => {
     RUNS_TOTAL = 1350;
-    renderAt("/overview");
+    renderAt("/?agency=overview");
     const note = await screen.findByTestId("score-cut");
     expect(asked.filter((a) => a.path === "/runs")).toHaveLength(SCORE_MAX_PAGES);
     expect(note.textContent).toContain("Showing the newest 5 of 1,350 runs");
@@ -269,7 +308,7 @@ describe("the Operations overview (2.4.4 F3)", () => {
 
   it("reads no further than the last page, and says nothing then", async () => {
     RUNS_TOTAL = 2;
-    renderAt("/overview");
+    renderAt("/?agency=overview");
     await screen.findByTestId("overview-score");
     await waitFor(() => expect(asked.filter((a) => a.path === "/runs")).toHaveLength(2));
     expect(screen.queryByTestId("score-cut")).toBeNull();

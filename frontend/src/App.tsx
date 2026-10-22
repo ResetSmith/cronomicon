@@ -18,7 +18,6 @@ import { Scopes } from "./views/Scopes";
 import { Settings } from "./views/Settings";
 import { Runners } from "./views/Runners";
 import { Notices } from "./views/Notices";
-import { Overview } from "./views/Overview";
 import { TimezoneProvider } from "./timezone-context";
 import { AgencyProvider } from "./agency";
 import { useTheme } from "./theme-context";
@@ -76,8 +75,9 @@ export function App() {
         <Route path="runners" element={<Runners />} />
         <Route path="settings" element={<Settings />} />
         <Route path="notices" element={<Notices />} />
-        {/* 2.4.4 — the Operations overview: every agency at a glance, read-only. */}
-        <Route path="overview" element={<Overview />} />
+        {/* 2.5.2 OP-25 — the Operations overview is the Dashboard with All
+            agencies chosen; old links and bookmarks land there. */}
+        <Route path="overview" element={<Navigate to="/?agency=overview" replace />} />
       </Route>
       </Routes>
       </AgencyProvider>

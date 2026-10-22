@@ -43,6 +43,7 @@ type overviewAgency struct {
 	Name            string         `json:"name"`
 	Jobs            int            `json:"jobs"`
 	PausedJobs      int            `json:"pausedJobs"`
+	ScheduledJobs   int            `json:"scheduledJobs"` // 2.5.2 OP-26
 	Workflows       int            `json:"workflows"`
 	PausedWorkflows int            `json:"pausedWorkflows"`
 	Runs24h         map[string]int `json:"runs24h"`
@@ -184,6 +185,15 @@ func (s *Server) getOverview(w http.ResponseWriter, r *http.Request) {
 		             AND (p.owner_uid = j.uid OR (p.owner_uid IS NULL AND p.source = j.source AND p.name = j.name))) THEN 1 ELSE 0 END)
 		  FROM jobs j WHERE j.deleted_at IS NULL GROUP BY 1`,
 		func(a *overviewAgency, n, p int) { a.Jobs, a.PausedJobs = a.Jobs+n, a.PausedJobs+p }); err != nil {
+		fail(err)
+		return
+	}
+	// Jobs on a schedule (2.5.2 OP-26): what an agency's Dashboard counts as
+	// its "Active schedules" (a job whose schedule is not manual), so the
+	// All-agencies tile is their sum.
+	if err := count(`SELECT `+agencyid.JobOwnerSQL("j")+`, COUNT(*), 0
+		  FROM jobs j WHERE j.deleted_at IS NULL AND COALESCE(j.schedule, '') <> '' AND lower(j.schedule) <> 'manual' GROUP BY 1`,
+		func(a *overviewAgency, n, _ int) { a.ScheduledJobs += n }); err != nil {
 		fail(err)
 		return
 	}

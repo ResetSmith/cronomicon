@@ -89,7 +89,7 @@ func (s *Server) agencyChoices(ctx context.Context, id auth.Identity) ([]agencyC
 	})
 	out := []agencyChoice{}
 	if canSeeOverview(id) {
-		out = append(out, agencyChoice{ID: overviewChoice, Name: "Overview: all agencies", Kind: "overview"})
+		out = append(out, agencyChoice{ID: overviewChoice, Name: "All agencies", Kind: "overview"})
 	}
 	// Global is a choice for those who read it (2.5.0 C2, question 77), and
 	// the one choice of someone who holds no grant at all, so that the shell

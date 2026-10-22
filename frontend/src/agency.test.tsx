@@ -115,12 +115,38 @@ describe("the agency context (2.4.4 F1)", () => {
     expect(screen.getByRole("status").textContent).toBe("That agency is not available to you; showing agency-alpha");
   });
 
-  it("lands an every-agency viewer on the overview, with Global for the lists", async () => {
-    CONTEXT = { ...CONTEXT, choices: [{ id: "overview", name: "Overview: all agencies", kind: "overview" }, ...agencies], effectiveDefault: "overview", workingAgency: "global", canOverview: true };
+  it("lands an every-agency viewer on the Dashboard with All agencies chosen, with Global for the lists (2.5.2 OP-25)", async () => {
+    CONTEXT = { ...CONTEXT, choices: [{ id: "overview", name: "All agencies", kind: "overview" }, ...agencies], effectiveDefault: "overview", workingAgency: "global", canOverview: true };
     renderAt("/");
-    await waitFor(() => expect(screen.getByTestId("path").textContent).toBe("/overview"));
+    await waitFor(() => expect(screen.getByTestId("search").textContent).toBe("?agency=overview"));
+    expect(screen.getByTestId("path").textContent).toBe("/");
     expect(screen.getByTestId("agency").textContent).toBe("global");
-    expect(screen.getByTestId("agency-switcher").textContent).toContain("Overview");
+    expect(screen.getByTestId("agency-switcher").textContent).toContain("All agencies");
+  });
+
+  it("keeps the working agency on every other page while All agencies is chosen (2.5.2 OP-24)", async () => {
+    CONTEXT = { ...CONTEXT, choices: [{ id: "overview", name: "All agencies", kind: "overview" }, ...agencies], effectiveDefault: "overview", workingAgency: "global", canOverview: true };
+    renderAt("/jobs?agency=overview");
+    await waitFor(() => expect(screen.getByTestId("search").textContent).toBe("?agency=global"));
+    expect(screen.getByTestId("agency").textContent).toBe("global");
+    expect(screen.getByTestId("agency-switcher").textContent).toContain("Global");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("switches to All agencies on the Dashboard, and back to an agency from it (2.5.2 OP-21)", async () => {
+    CONTEXT = { ...CONTEXT, choices: [{ id: "overview", name: "All agencies", kind: "overview" }, ...agencies], effectiveDefault: "ag-a", workingAgency: "ag-a", canOverview: true };
+    renderAt("/jobs?agency=ag-a");
+    await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("ag-a"));
+    fireEvent.click(screen.getByTestId("agency-switcher"));
+    fireEvent.click(await screen.findByRole("option", { name: /All agencies/ }));
+    await waitFor(() => expect(screen.getByTestId("path").textContent).toBe("/"));
+    expect(screen.getByTestId("search").textContent).toBe("?agency=overview");
+    expect(screen.getByTestId("agency").textContent).toBe("ag-a");
+    fireEvent.click(screen.getByTestId("agency-switcher"));
+    fireEvent.click(await screen.findByRole("option", { name: /agency-beta/ }));
+    await waitFor(() => expect(screen.getByTestId("search").textContent).toBe("?agency=ag-b"));
+    expect(screen.getByTestId("path").textContent).toBe("/");
+    expect(screen.getByTestId("agency").textContent).toBe("ag-b");
   });
 
   it("reads the choices again when a request is refused", async () => {

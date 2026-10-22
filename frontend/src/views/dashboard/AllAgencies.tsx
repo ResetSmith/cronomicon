@@ -1,31 +1,37 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { allReadable, api, csrfHeader, errMsg } from "../api/client";
-import { paged, rows, useGet, useLiveGet } from "../hooks";
-import { Score } from "../components/Score";
-import { buildScoreMarks, scoreTruncatedAt, type ScoreRun, type ScoreUpcoming } from "../components/score-feed";
-import { ScoreCutNote, fetchScoreRuns } from "../components/score-runs";
-import { excludeSuppressed } from "./scheduling/calendars";
-import { appZoneParts, fmtInAppZone } from "../utils/datetime";
-import { useAgency } from "../agency";
-import { Btn, InlineLoading } from "../components/ui";
-import { CriticalChip } from "../components/Annotation";
-import { RunContact } from "./history/shared";
-import { relationLabel } from "./history/RunNotes";
-import { c } from "../theme";
+import { allReadable, api, csrfHeader, errMsg } from "../../api/client";
+import { paged, rows, useGet, useLiveGet } from "../../hooks";
+import { Score } from "../../components/Score";
+import { buildScoreMarks, scoreTruncatedAt, type ScoreRun, type ScoreUpcoming } from "../../components/score-feed";
+import { ScoreCutNote, fetchScoreRuns } from "../../components/score-runs";
+import { excludeSuppressed } from "../scheduling/calendars";
+import { appZoneParts, fmtInAppZone } from "../../utils/datetime";
+import { useAgency } from "../../agency";
+import { Btn, InlineLoading, StatTile } from "../../components/ui";
+import { CriticalChip } from "../../components/Annotation";
+import { RunContact } from "../history/shared";
+import { relationLabel } from "../history/RunNotes";
+import { c } from "../../theme";
 
-// The Operations overview (2.4.4 F3; plan-2.4.4 SW-12, SW-13). ONE read-only
-// page across every agency, for those whose grant reaches every agency (the
-// operations team, and global administrators). Lists stay one agency at a
-// time; every line here opens its item in its own agency (the link carries
-// ?agency=, and the shell switches and says so). Nothing on it is editable.
+// The Dashboard with All agencies chosen (2.5.2 OP5, OP-21 to OP-26; the
+// Operations overview of 2.4.4 F3 until then). One page across every agency,
+// for those whose grant reaches every agency (the operations team, and global
+// administrators), in the shape of an agency's Dashboard so it is one screen
+// to learn: the status strip, the tiles, the Score, then Needs attention where
+// an agency's Dashboard has Recent errors, and the agencies. Lists stay one
+// agency at a time; every line here opens its item in its own agency (the link
+// carries ?agency=, and the shell switches and says so). The only change made
+// here is acknowledging a run (OP-20).
 
 type OverviewAgency = {
   id: string;
   name: string;
   jobs: number;
   pausedJobs: number;
+  /** Jobs on a schedule (OP-26): an agency Dashboard's "Active schedules". */
+  scheduledJobs?: number;
   workflows: number;
   pausedWorkflows: number;
   runs24h: Record<string, number>;
@@ -304,7 +310,76 @@ function OverviewScore() {
   );
 }
 
-export function Overview() {
+/**
+ * AllAgenciesStrip — the status strip (OP-22), as an agency's Dashboard has
+ * one: how many items need attention and how many nobody has acknowledged,
+ * with the day's failures and warnings; it scrolls to Needs attention, and
+ * dismissing it holds until the situation changes. Quiet when nothing does.
+ */
+function AllAgenciesStrip({
+  total,
+  unacked,
+  failed,
+  warned,
+  agencies,
+  onShow,
+}: {
+  total: number;
+  unacked: number;
+  failed: number;
+  warned: number;
+  agencies: number;
+  onShow: () => void;
+}) {
+  const situation = `${total}/${unacked}/${failed}/${warned}`;
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const shell: CSSProperties = {
+    display: "flex",
+    alignItems: "baseline",
+    gap: 10,
+    flexWrap: "wrap",
+    padding: "10px 16px",
+    marginBottom: 14,
+    borderRadius: c.radiusSurface,
+    border: `1px solid ${c.border}`,
+    background: c.panel,
+    fontSize: c.fontBody,
+  };
+  if (total === 0) {
+    return (
+      <div aria-label="Status" style={shell}>
+        <span style={{ fontWeight: 600, color: c.text }}>Nothing needs attention</span>
+        <span style={{ fontSize: c.fontSm, color: c.textSec }}>across {agencies} agencies.</span>
+      </div>
+    );
+  }
+  if (dismissed === situation) return null;
+  const parts = [failed > 0 ? `${failed} failed` : "", warned > 0 ? `${warned} warned` : ""].filter(Boolean);
+  return (
+    <div aria-label="Status" style={{ ...shell, border: `1px solid ${c.danger}`, background: c.dangerBg }}>
+      <button
+        onClick={onShow}
+        title="Jump to Needs attention"
+        style={{ flex: 1, display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", background: "transparent", border: "none", padding: 0, textAlign: "left", font: "inherit", fontSize: c.fontBody, cursor: "pointer" }}
+      >
+        <span style={{ fontWeight: 600, color: c.danger }}>
+          {total} item{total === 1 ? "" : "s"} need{total === 1 ? "s" : ""} attention, {unacked} not yet acknowledged.
+        </span>
+        {parts.length > 0 && <span style={{ fontSize: c.fontSm, color: c.textSec }}>{parts.join(" · ")} in the last 24 hours.</span>}
+      </button>
+      <button
+        onClick={() => setDismissed(situation)}
+        aria-label="Dismiss this alert until something changes"
+        title="Dismiss — returns if anything changes"
+        style={{ background: "transparent", border: "none", padding: "0 0 0 12px", color: c.danger, opacity: 0.7, fontSize: c.fontBody, lineHeight: 1, cursor: "pointer" }}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+export function AllAgenciesDashboard() {
   const ag = useAgency();
   const q = useLiveGet<OverviewData>(() => api.GET("/overview") as never, [], () => true, REFRESH_MS);
   const [term, setTerm] = useState("");
@@ -314,6 +389,8 @@ export function Overview() {
   const [unackedOnly, setUnackedOnly] = useState(false);
   // The item whose Acknowledge box is open, by its run's trace id.
   const [ackFor, setAckFor] = useState<string | null>(null);
+  const attentionRef = useRef<HTMLDivElement>(null);
+  const showAttention = () => attentionRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
 
   // The search: a name, across agencies; each match says whose it is.
   useEffect(() => {
@@ -335,13 +412,20 @@ export function Overview() {
   }, [term]);
 
   if (!ag.canOverview) {
-    return <div style={{ color: c.textSec }}>The overview is for those whose access reaches every agency.</div>;
+    return <div style={{ color: c.textSec }}>All agencies is for those whose access reaches every agency.</div>;
   }
-  if (q.loading && !q.data) return <InlineLoading what="the overview" />;
-  if (q.error && !q.data) return <div style={{ color: c.danger }}>The overview could not be read: {q.error}</div>;
+  if (q.loading && !q.data) return <InlineLoading what="every agency" />;
+  if (q.error && !q.data) return <div style={{ color: c.danger }}>Every agency could not be read: {q.error}</div>;
   const data = q.data as OverviewData;
   const ackedCount = data.attention.filter((it) => it.acknowledged).length;
   const shown = unackedOnly ? data.attention.filter((it) => !it.acknowledged) : data.attention;
+  // The tiles, summed over agencies (OP-22).
+  const sum = (f: (a: OverviewAgency) => number) => data.agencies.reduce((n, a) => n + f(a), 0);
+  const failed24h = sum((a) => (a.runs24h?.failure ?? 0) + (a.runs24h?.killed ?? 0) + (a.runs24h?.lost ?? 0));
+  const warned24h = sum((a) => a.runs24h?.warning ?? 0);
+  const runningNow = sum((a) => a.runs24h?.running ?? 0);
+  const scheduled = sum((a) => a.scheduledJobs ?? 0);
+  const totalJobs = sum((a) => a.jobs);
 
   const th: CSSProperties = { textAlign: "left", padding: "6px 8px", fontSize: c.fontXs, color: c.textSec, textTransform: "uppercase", letterSpacing: 0.5, borderBottom: `1px solid ${c.border}` };
   const td: CSSProperties = { padding: "8px", fontSize: c.fontSm, color: c.text, borderBottom: `1px solid ${c.borderLight}`, verticalAlign: "top" };
@@ -349,20 +433,79 @@ export function Overview() {
 
   return (
     <div data-testid="overview">
+      <AllAgenciesStrip
+        total={data.attentionTotal}
+        unacked={data.attention.length - ackedCount}
+        failed={failed24h}
+        warned={warned24h}
+        agencies={data.agencies.length}
+        onShow={showAttention}
+      />
+
+      {/* OP-23 — there is no cross-agency History for the tiles to open, so
+          Failed (24h) goes to Needs attention and the rest link nowhere. */}
+      <div data-testid="all-agencies-tiles" style={{ display: "flex", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          onClick={showAttention}
+          title="Go to Needs attention"
+          style={{ display: "flex", padding: 0, border: "none", background: "transparent", borderRadius: c.radiusSurface, cursor: "pointer", font: "inherit" }}
+        >
+          <StatTile label="Failed (24h)" value={String(failed24h)} color={failed24h ? c.danger : c.textMuted} tint={failed24h ? c.dangerBg : undefined} />
+        </button>
+        <div style={{ display: "flex" }}>
+          <StatTile label="Running now" value={String(runningNow)} color={runningNow ? c.info : c.textMuted} />
+        </div>
+        <div style={{ display: "flex" }}>
+          <StatTile label="Active schedules" value={String(scheduled)} color={c.textMuted} />
+        </div>
+        <div style={{ display: "flex" }}>
+          <StatTile label="Total jobs" value={String(totalJobs)} color={c.textMuted} />
+        </div>
+        <div style={{ display: "flex" }}>
+          <StatTile label="Agencies" value={String(data.agencies.length)} color={c.textMuted} />
+        </div>
+      </div>
+
       <OverviewScore />
-      <Section
-        title="Find a job or workflow"
-        aside={<span style={{ fontSize: c.fontXs, color: c.textMuted }}>Across every agency</span>}
-      >
-        <input
-          value={term}
-          onChange={(e) => setTerm(e.target.value)}
-          placeholder="A name, or part of one"
-          aria-label="Find a job or workflow"
-          style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", borderRadius: c.radiusChip, border: `1px solid ${c.border}`, background: c.panelInput, color: c.text, fontSize: c.fontSm }}
+
+      <div ref={attentionRef}>
+        <NeedsAttention
+          data={data}
+          shown={shown}
+          ackedCount={ackedCount}
+          unackedOnly={unackedOnly}
+          setUnackedOnly={setUnackedOnly}
+          ackFor={ackFor}
+          setAckFor={setAckFor}
+          onAcked={() => {
+            setAckFor(null);
+            q.refetch();
+          }}
+          central={ag.nameOf("global")}
+          th={th}
+          td={td}
+          link={link}
         />
+      </div>
+
+      <Section
+        title="Agencies"
+        aside={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <input
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder="Find a job or workflow"
+              aria-label="Find a job or workflow"
+              style={{ width: 240, boxSizing: "border-box", padding: "5px 10px", borderRadius: c.radiusChip, border: `1px solid ${c.borderStrong}`, background: c.panelInput, color: c.text, fontSize: c.fontSm }}
+            />
+            <span style={{ fontSize: c.fontXs, color: c.textMuted }}>Updated {when(data.generatedAt)}</span>
+          </span>
+        }
+      >
         {hits && (
-          <div style={{ marginTop: 8 }}>
+          <div data-testid="find-hits" style={{ marginBottom: 12 }}>
             {hits.length === 0 ? (
               <div style={{ fontSize: c.fontSm, color: c.textMuted }}>Nothing of that name.</div>
             ) : (
@@ -378,9 +521,6 @@ export function Overview() {
             )}
           </div>
         )}
-      </Section>
-
-      <Section title="Agencies" aside={<span style={{ fontSize: c.fontXs, color: c.textMuted }}>Updated {when(data.generatedAt)}</span>}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -439,85 +579,114 @@ export function Overview() {
         </table>
       </Section>
 
-      <Section
-        title="Needs attention"
-        aside={
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: c.fontSm, color: c.textSec, cursor: "pointer" }}>
-              <input type="checkbox" checked={unackedOnly} onChange={(e) => setUnackedOnly(e.target.checked)} style={{ margin: 0, accentColor: c.primary }} />
-              Unacknowledged only
-            </label>
-            <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
-              {data.attentionTotal > data.attention.length ? `The ${data.attention.length} newest of ${data.attentionTotal}` : `${data.attentionTotal}`}
-              {ackedCount > 0 && ` · ${ackedCount} acknowledged`}
-            </span>
-          </span>
-        }
-      >
-        {shown.length === 0 ? (
-          <div style={{ fontSize: c.fontSm, color: c.textMuted }}>
-            {data.attention.length === 0 ? "Nothing needs attention." : "Everything listed is acknowledged."}
-          </div>
-        ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={th}>What</th>
-                <th style={th}>Name</th>
-                <th style={th}>Agency</th>
-                <th style={th}>Contact</th>
-                <th style={th}>When</th>
-                <th style={{ ...th, width: 320 }}>Acknowledgement</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((it, i) => (
-                <tr key={i} data-testid="attention-item" style={it.acknowledged ? { opacity: 0.62 } : undefined}>
-                  <td style={td}>{KIND_LABEL[it.kind] ?? it.kind}</td>
-                  <td style={td}>
-                    <Link to={attentionHref(it)} style={link} title={`Open in ${it.agencyName}`}>
-                      {it.name}
-                    </Link>
-                    {it.critical && (
-                      <span style={{ marginLeft: 8, display: "inline-flex", verticalAlign: "middle" }}>
-                        <CriticalChip />
-                      </span>
-                    )}
-                    {/* OP-11 — a new failure is a new item; say it has history. */}
-                    {it.previousAck && (
-                      <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 3 }}>
-                        Its previous failure ({when(it.previousAck.runAt)}) was acknowledged by {it.previousAck.by}
-                      </div>
-                    )}
-                  </td>
-                  <td style={td}>{it.agencyName}</td>
-                  <td style={td}>
-                    {it.kind === "sync_failed" && !it.agencyContact ? (
-                      <span style={{ color: c.textMuted }}>—</span>
-                    ) : (
-                      <RunContact contact={it.contact ?? ""} critical={false} agencyContact={it.agencyContact} />
-                    )}
-                  </td>
-                  <td style={td}>{when(it.at)}</td>
-                  <td style={td}>
-                    <AttentionAck
-                      item={it}
-                      open={ackFor === it.traceId}
-                      onOpen={() => setAckFor(it.traceId ?? null)}
-                      onClose={() => setAckFor(null)}
-                      onDone={() => {
-                        setAckFor(null);
-                        q.refetch();
-                      }}
-                      central={ag.nameOf("global")}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Section>
     </div>
+  );
+}
+
+/** Needs attention (OP-20, OP-22): what needs a person, with who to call and who has it in hand. */
+function NeedsAttention({
+  data,
+  shown,
+  ackedCount,
+  unackedOnly,
+  setUnackedOnly,
+  ackFor,
+  setAckFor,
+  onAcked,
+  central,
+  th,
+  td,
+  link,
+}: {
+  data: OverviewData;
+  shown: AttentionItem[];
+  ackedCount: number;
+  unackedOnly: boolean;
+  setUnackedOnly: (v: boolean) => void;
+  ackFor: string | null;
+  setAckFor: (v: string | null) => void;
+  onAcked: () => void;
+  central: string;
+  th: CSSProperties;
+  td: CSSProperties;
+  link: CSSProperties;
+}) {
+  return (
+      <Section
+      title="Needs attention"
+      aside={
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: c.fontSm, color: c.textSec, cursor: "pointer" }}>
+            <input type="checkbox" checked={unackedOnly} onChange={(e) => setUnackedOnly(e.target.checked)} style={{ margin: 0, accentColor: c.primary }} />
+            Unacknowledged only
+          </label>
+          <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+            {data.attentionTotal > data.attention.length ? `The ${data.attention.length} newest of ${data.attentionTotal}` : `${data.attentionTotal}`}
+            {ackedCount > 0 && ` · ${ackedCount} acknowledged`}
+          </span>
+        </span>
+      }
+    >
+      {shown.length === 0 ? (
+        <div style={{ fontSize: c.fontSm, color: c.textMuted }}>
+          {data.attention.length === 0 ? "Nothing needs attention." : "Everything listed is acknowledged."}
+        </div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={th}>What</th>
+              <th style={th}>Name</th>
+              <th style={th}>Agency</th>
+              <th style={th}>Contact</th>
+              <th style={th}>When</th>
+              <th style={{ ...th, width: 320 }}>Acknowledgement</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((it, i) => (
+              <tr key={i} data-testid="attention-item" style={it.acknowledged ? { opacity: 0.62 } : undefined}>
+                <td style={td}>{KIND_LABEL[it.kind] ?? it.kind}</td>
+                <td style={td}>
+                  <Link to={attentionHref(it)} style={link} title={`Open in ${it.agencyName}`}>
+                    {it.name}
+                  </Link>
+                  {it.critical && (
+                    <span style={{ marginLeft: 8, display: "inline-flex", verticalAlign: "middle" }}>
+                      <CriticalChip />
+                    </span>
+                  )}
+                  {/* OP-11 — a new failure is a new item; say it has history. */}
+                  {it.previousAck && (
+                    <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 3 }}>
+                      Its previous failure ({when(it.previousAck.runAt)}) was acknowledged by {it.previousAck.by}
+                    </div>
+                  )}
+                </td>
+                <td style={td}>{it.agencyName}</td>
+                <td style={td}>
+                  {it.kind === "sync_failed" && !it.agencyContact ? (
+                    <span style={{ color: c.textMuted }}>—</span>
+                  ) : (
+                    <RunContact contact={it.contact ?? ""} critical={false} agencyContact={it.agencyContact} />
+                  )}
+                </td>
+                <td style={td}>{when(it.at)}</td>
+                <td style={td}>
+                  <AttentionAck
+                    item={it}
+                    open={ackFor === it.traceId}
+                    onOpen={() => setAckFor(it.traceId ?? null)}
+                    onClose={() => setAckFor(null)}
+                    onDone={onAcked}
+                    central={central}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Section>
   );
 }

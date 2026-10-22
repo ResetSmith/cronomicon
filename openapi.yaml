@@ -15662,6 +15662,7 @@ components:
               name: { type: string }
               jobs: { type: integer }
               pausedJobs: { type: integer }
+              scheduledJobs: { type: integer, description: '2.5.2 (OP-26) — jobs on a schedule (not manual): the agency Dashboard''s "Active schedules".' }
               workflows: { type: integer }
               pausedWorkflows: { type: integer }
               runs24h:
