@@ -432,20 +432,7 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 	for _, m := range repaired {
 		s.auditRepair(r.Context(), s.memberAgency(r.Context(), string(kind), m.ID), id.Email, string(kind)+" "+m.ID, agencySet(m.AgencyIDs), rep)
 	}
-	for rowID, before := range ownersBefore {
-		after, err := s.rowOwnerOrGlobal(r.Context(), movedTable, rowID)
-		if err != nil || after == before {
-			continue
-		}
-		nameCol := "key"
-		if movedTable == "ssh_credentials" {
-			nameCol = "label"
-		}
-		var name string
-		_ = s.db.QueryRowContext(r.Context(), `SELECT `+nameCol+` FROM `+movedTable+` WHERE id = ?`, rowID).Scan(&name) //nolint:gosec // fixed identifiers
-		s.raiseSecretAlert(r, notify.TriggerSecretChanged, movedNoun, name, before, "moved to "+s.agencyNameOr(r, after))
-		s.raiseSecretAlert(r, notify.TriggerSecretChanged, movedNoun, name, after, "moved in from "+s.agencyNameOr(r, before))
-	}
+	s.alertOwnerMoves(r, movedTable, movedNoun, ownersBefore)
 	// Scope membership decides what an agency grant reaches. Since LR-78 that is
 	// resolved per request from the grant snapshot, which the setter itself
 	// invalidates (settings.SetAgencyMembership → auth.GrantsChanged), so the
@@ -1072,6 +1059,26 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// 2.5.1 SG-17 (review A10): a secret or key this changes hands is told to
+	// both agencies' alert rules, as the per-kind route does.
+	secretsBefore, keysBefore := map[string]string{}, map[string]string{}
+	for _, list := range [][]settings.AgencyMemberRef{delta.Added, delta.Removed} {
+		for _, m := range list {
+			var table string
+			var into map[string]string
+			switch settings.MemberKind(m.Kind) {
+			case settings.MemberSecret:
+				table, into = "secrets", secretsBefore
+			case settings.MemberSSHCredential:
+				table, into = "ssh_credentials", keysBefore
+			default:
+				continue
+			}
+			if o, err := s.rowOwnerOrGlobal(r.Context(), table, m.ID); err == nil {
+				into[m.ID] = o
+			}
+		}
+	}
 	if _, err := settings.SetAgencyMembers(r.Context(), s.db, agencyID, body.Members, id.Email); err != nil {
 		switch {
 		case errors.Is(err, settings.ErrUnknownAgency):
@@ -1086,6 +1093,9 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 		}
 		return
 	}
+
+	s.alertOwnerMoves(r, "secrets", "Secret", secretsBefore)
+	s.alertOwnerMoves(r, "ssh_credentials", "SSH key", keysBefore)
 
 	// A scope moving in or out of this agency changes what grants reach; the
 	// setter told the grant snapshot (LR-78). No session is signed out.
@@ -1104,6 +1114,27 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	httpx.JSON(w, http.StatusOK, d)
+}
+
+// alertOwnerMoves tells the alert rules of the agency a secret or key left and
+// of the one it reached (2.5.1 SG-17), for each row of table whose owner is no
+// longer the one ownersBefore recorded. Both routes that move an owner call it
+// (the 2.5.1 review's A10: the per-agency members route did not).
+func (s *Server) alertOwnerMoves(r *http.Request, table, noun string, ownersBefore map[string]string) {
+	for rowID, before := range ownersBefore {
+		after, err := s.rowOwnerOrGlobal(r.Context(), table, rowID)
+		if err != nil || after == before {
+			continue
+		}
+		nameCol := "key"
+		if table == "ssh_credentials" {
+			nameCol = "label"
+		}
+		var name string
+		_ = s.db.QueryRowContext(r.Context(), `SELECT `+nameCol+` FROM `+table+` WHERE id = ?`, rowID).Scan(&name) //nolint:gosec // fixed identifiers
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, noun, name, before, "moved to "+s.agencyNameOr(r, after))
+		s.raiseSecretAlert(r, notify.TriggerSecretChanged, noun, name, after, "moved in from "+s.agencyNameOr(r, before))
+	}
 }
 
 // failAgencyRule answers the refusals that Global being a real agency introduced

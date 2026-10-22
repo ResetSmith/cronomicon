@@ -2681,6 +2681,10 @@ export interface paths {
          * @description Explicit unmask of a stored-source secret. Every reveal writes a Change
          *     Log entry (§8.2). POST (not GET) because it has an audit side effect.
          *     vault-source secrets cannot be revealed through Cronomicon. CSRF required.
+         *     manageEnvVars on the agency that OWNS the secret (v2.5.1): a Global-owned
+         *     secret is a global administrator's, whatever agencies it lists, so a
+         *     member agency of a secret Global holds reads it but gets 403 here. 404
+         *     to a caller who does not read the secret.
          */
         post: operations["revealEnvSecret"];
         delete?: never;
@@ -2703,9 +2707,10 @@ export interface paths {
          * @description v2.5.1. One way: no route undoes it. From then on nobody reveals the
          *     secret through Cronomicon (409 `reveal_locked`), global administrators
          *     included; runs still use it, and it can still be rotated, moved and
-         *     migrated to Vault. manageEnvVars on the secret's own agency, as for a
-         *     reveal. Idempotent. Recorded in the change log (`reveal-locked`) and
-         *     raised as `secret-changed`.
+         *     migrated to Vault. manageEnvVars on the agency that owns the secret, as
+         *     for a reveal (a Global-owned secret is a global administrator's; 404 to
+         *     a caller who does not read it). Idempotent. Recorded in the change log
+         *     (`reveal-locked`) and raised as `secret-changed`.
          */
         post: operations["lockEnvSecretReveal"];
         delete?: never;
@@ -10266,10 +10271,12 @@ export interface components {
                 actorRelation?: "member" | "global_admin" | "outside" | "system";
                 actingAgency?: string;
             }[];
-            /** @description For a key, the host records that name it by id. */
+            /** @description For a key, the host records that name it by id and whose agency the caller reads (2.5.1). */
             hosts?: components["schemas"]["SshCredentialRef"][];
-            /** @description For a key, the bastions that name it by id. */
+            /** @description For a key, the bastions that name it by id and whose agency the caller reads (2.5.1). */
             bastions?: components["schemas"]["SshCredentialRef"][];
+            /** @description For a key, the host records and bastions that name it but belong to agencies the caller does not read: counted, never named, and left out of `hosts`, `bastions` and `references` (2.5.1). Omitted when none. */
+            otherAgencyRecords?: number;
         };
         /**
          * @description The fixed permission set a role carries. SIX permissions as of v0.56.1:

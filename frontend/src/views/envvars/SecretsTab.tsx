@@ -272,7 +272,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
       ),
     },
     { key: "usedBy", label: "Used by", sortKey: "usedBy", width: COL_W.usedBy, cell: (v) => <UsageCell {...usage.usageFor("secret", v.key)} /> },
-    { key: "agencies", label: "Agencies", width: COL_W.agencies, cell: (v) => <AgencyCell names={v.id ? entityAgencies[v.id] : undefined} /> },
+    { key: "agencies", label: "Agencies", width: COL_W.agencies, cell: (v) => <AgencyCell names={v.id ? entityAgencies[v.id] : undefined} owner={v.ownerAgency} /> },
     {
       key: "source",
       label: "Source",
@@ -545,7 +545,15 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                               )}
                               {!isVault && canEdit && !v.revealLocked && (
                                 <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
-                                  <Btn onClick={() => setLocking(v)}>Make unrevealable…</Btn>
+                                  {/* The row's own flag, as Edit and Delete: the lock is its
+                                      owner's (2.5.1 SG-42), not the page's verb anywhere. */}
+                                  <Btn
+                                    onClick={() => setLocking(v)}
+                                    disabled={!!rowFlagWhy(v.canEdit, v.ownerAgency, "secret")}
+                                    title={rowFlagWhy(v.canEdit, v.ownerAgency, "secret") || undefined}
+                                  >
+                                    Make unrevealable…
+                                  </Btn>
                                   <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
                                     Nobody can reveal it afterwards, global administrators included. Runs still use it.
                                   </span>

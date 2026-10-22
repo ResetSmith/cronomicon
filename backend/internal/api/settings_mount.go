@@ -98,7 +98,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			list = kept
 		}
 		rows, err := withRowFlags(list, func(sc secrets.Secret) (rowFlags, error) {
-			fl, err := s.flagsByMembership(r.Context(), id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sc.ID)
+			fl, err := s.flagsByOwner(r.Context(), id, auth.PermManageEnvVars, "secrets", sc.ID)
 			if err != nil {
 				return fl, err
 			}
@@ -212,8 +212,8 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// agency that owns THIS secret. Secret material is the highest-consequence
 		// case — reveal is gated on manageEnvVars, so a global verb meant anyone
 		// trusted with any department's variables could read every department's
-		// credentials.
-		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
+		// credentials. The owner, not any agency it lists (2.5.1 SG-42).
+		if !s.requireRowOwner(w, r, id, auth.PermManageEnvVars, "secrets", sid, "secret") {
 			return
 		}
 		var inp struct {
@@ -309,8 +309,8 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		if !ok {
 			return
 		}
-		// RB-32: and the agency that owns it (RB-Q2/RB-Q14).
-		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
+		// RB-32: and the agency that owns it (RB-Q2/RB-Q14; SG-42).
+		if !s.requireRowOwner(w, r, id, auth.PermManageEnvVars, "secrets", sid, "secret") {
 			return
 		}
 		secretAgency := settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid) // read while the row is there
@@ -375,8 +375,9 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 	})))
 	// 2.5.1 SG2.11 (SG-19, question 134(b)): an agency makes a stored secret
 	// unrevealable. One way: there is no route that undoes it. The same gate as
-	// a reveal (manageEnvVars on the secret's own agency); the change log and
-	// the secret-changed alert record who did it.
+	// a reveal (manageEnvVars on the secret's OWNER agency, SG-42: a member
+	// agency of a row Global holds may not lock Global out of it); the change
+	// log and the secret-changed alert record who did it.
 	mux.Handle("POST /api/v1/env-secrets/{secretId}/lock-reveal", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := auth.IdentityFrom(r.Context())
 		if !ok {
@@ -388,7 +389,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		if !ok {
 			return
 		}
-		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
+		if !s.requireRowOwner(w, r, id, auth.PermManageEnvVars, "secrets", sid, "secret") {
 			return
 		}
 		if sc.RevealLocked {
@@ -431,7 +432,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// case — reveal is gated on manageEnvVars, so a global verb meant anyone
 		// trusted with any department's variables could read every department's
 		// credentials.
-		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
+		if !s.requireRowOwner(w, r, id, auth.PermManageEnvVars, "secrets", sid, "secret") {
 			return
 		}
 		// 2.5.1 SG-19: an agency made it unrevealable. Refused before anything
@@ -487,7 +488,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		}
 		// RB-32 (RF-5): migrating rewrites where the secret's MATERIAL lives — a
 		// write in every sense — so it takes the same departmental gate as PUT.
-		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
+		if !s.requireRowOwner(w, r, id, auth.PermManageEnvVars, "secrets", sid, "secret") {
 			return
 		}
 		// LR-80: migration WRITES the value to a caller-supplied Vault path, so
@@ -600,7 +601,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		}
 		id, _ := auth.IdentityFrom(r.Context())
 		rows, err := withRowFlags(list, func(c sshkeys.Credential) (rowFlags, error) {
-			return s.flagsByMembership(r.Context(), id, auth.PermConfigureApp, "ssh_credential_agencies", "credential_id", c.ID)
+			return s.flagsByOwner(r.Context(), id, auth.PermConfigureApp, "ssh_credentials", c.ID)
 		})
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
@@ -704,9 +705,9 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// highest-consequence gap. v0.56.6 put the gate on the create route (where
 		// {credentialId} is always empty) and left this one open; the misplacement
 		// shipped precisely because no test touched ssh_credential_agencies here.
-		// An unmembered key is shared infrastructure and is unrestricted-only (RB-Q14).
-		if !s.requireEntityAgency(w, r, id, auth.PermConfigureApp, "ssh_credential_agencies", "credential_id",
-			r.PathValue("credentialId"), "SSH key") {
+		// A Global-owned key is a global administrator's, whatever agencies it
+		// lists (RB-Q14; 2.5.1 SG-42).
+		if !s.requireRowOwner(w, r, id, auth.PermConfigureApp, "ssh_credentials", r.PathValue("credentialId"), "SSH key") {
 			return
 		}
 		inp, _, err := decodeCredentialInput(r)
@@ -765,10 +766,10 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// RB-16: SSH keys have NO scope column at all — isolation is pure agency
 		// intersection (AG-Q5). Without this, a Tax admin could manage Finance's
 		// credential MATERIAL, which the plan calls the highest-consequence gap in
-		// the whole program. An unmembered key is shared infrastructure and is
-		// unrestricted-only (RB-Q14).
-		if !s.requireEntityAgency(w, r, id, auth.PermConfigureApp, "ssh_credential_agencies", "credential_id",
-			r.PathValue("credentialId"), "SSH key") {
+		// the whole program. A Global-owned key is a global administrator's,
+		// whatever agencies it lists (RB-Q14; 2.5.1 SG-42): its delete clears
+		// the key from every agency's host records and bastions.
+		if !s.requireRowOwner(w, r, id, auth.PermConfigureApp, "ssh_credentials", r.PathValue("credentialId"), "SSH key") {
 			return
 		}
 		cid := r.PathValue("credentialId")
@@ -834,6 +835,10 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			return
 		}
 		u.Hosts, u.Bastions = usage.Hosts, usage.Bastions
+		if err := s.keepReadableRecords(r, u); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
 		httpx.JSON(w, http.StatusOK, u)
 	})))
 	// Tags (migration 470): operator-authored, SQLite-only labels on an SSH key
@@ -913,7 +918,16 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 		httpx.Fail500(w, s.log, "db_error", oerr)
 		return nil, false
 	}
-	if sc == nil || !auth.ScopeReadableIn(actor, owner, scopeStr) {
+	if sc == nil {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
+		return nil, false
+	}
+	// Its agency's too, not its scope alone (2.5.1 question 140): an unscoped
+	// secret of another agency passed the scope check, and the gates after it
+	// answered 403 naming whose it was. A member agency reads a secret Global
+	// holds for it (SG-16).
+	if !(auth.ScopeReadableIn(actor, owner, scopeStr) && readsAgency(r, owner)) &&
+		!s.heldByGlobalFor(r, "secrets", "secret_agencies", "secret_id", sid) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 		return nil, false
 	}

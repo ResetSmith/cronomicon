@@ -40,15 +40,19 @@ func TestSecretWritesAreDepartmental(t *testing.T) {
 	}
 
 	// Re-home it to the other department: the SAME caller, the SAME scope access,
-	// now refused. Scope access is not authority over credential material.
+	// now refused. Scope access is not authority over credential material. A
+	// re-home is a new OWNER (2.5.1 SG-42: the owner decides, not membership),
+	// and another department's row is not the caller's to read, so the refusal
+	// is a 404 (question 140), never a 403 that says whose it is.
 	exec(`DELETE FROM secret_agencies WHERE secret_id = ?`, prodID)
 	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES (?, 'ag-fin')`, prodID)
-	if rec := reqAs(t, h, http.MethodPost, "/api/v1/env-secrets/"+prodID+"/reveal", "sec-admins", ""); rec.Code != http.StatusForbidden {
-		t.Errorf("reveal of ANOTHER department's secret = %d, want 403 — this is the gap "+
+	exec(`UPDATE secrets SET owner_agency = 'ag-fin' WHERE id = ?`, prodID)
+	if rec := reqAs(t, h, http.MethodPost, "/api/v1/env-secrets/"+prodID+"/reveal", "sec-admins", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("reveal of ANOTHER department's secret = %d, want 404 — this is the gap "+
 			"RB-32 exists to close", rec.Code)
 	}
-	if rec := reqAs(t, h, http.MethodDelete, "/api/v1/env-secrets/"+prodID, "sec-admins", ""); rec.Code != http.StatusForbidden {
-		t.Errorf("delete of another department's secret = %d, want 403", rec.Code)
+	if rec := reqAs(t, h, http.MethodDelete, "/api/v1/env-secrets/"+prodID, "sec-admins", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("delete of another department's secret = %d, want 404", rec.Code)
 	}
 
 	// An unrestricted admin reaches every department, which is what makes the
@@ -77,8 +81,10 @@ func TestUnmemberedEntityIsUnrestrictedOnly(t *testing.T) {
 	h, pool := secretRBACServer(t, map[string]string{"admin": "prod"})
 	globalID := secretID(t, pool, "SEC_GLOBAL") // seeded with no scope and no agency
 
-	if rec := reqAs(t, h, http.MethodPost, "/api/v1/env-secrets/"+globalID+"/reveal", "sec-admins", ""); rec.Code != http.StatusForbidden {
-		t.Errorf("restricted reveal of an unmembered secret = %d, want 403", rec.Code)
+	// Refused; since 2.5.0 C2 the restricted admin does not read Global's rows at
+	// all, so the refusal is the 404 (2.5.1 question 140).
+	if rec := reqAs(t, h, http.MethodPost, "/api/v1/env-secrets/"+globalID+"/reveal", "sec-admins", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("restricted reveal of an unmembered secret = %d, want 404", rec.Code)
 	}
 
 	// The same request from an unrestricted admin succeeds — the rule is about

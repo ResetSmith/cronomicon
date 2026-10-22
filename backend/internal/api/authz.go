@@ -909,6 +909,75 @@ func (s *Server) denyEntityAgency(w http.ResponseWriter, r *http.Request, id aut
 	httpx.Fail(w, http.StatusForbidden, "forbidden", message)
 }
 
+// ownedRowMembership names, for each table requireRowOwner gates, its
+// membership table and column (heldByGlobalFor reads them). Compile-time
+// constants, never input.
+var ownedRowMembership = map[string]struct{ table, col string }{
+	"secrets":         {"secret_agencies", "secret_id"},
+	"ssh_credentials": {"ssh_credential_agencies", "credential_id"},
+}
+
+// requireRowOwner is the gate for a secret's or an SSH key's reveal, its
+// lock-reveal and every write to it (2.5.1 SG-42, SG-19): perm on the agency
+// that OWNS the row, so a Global-owned row is a global administrator's. The
+// membership gate it replaces (requireEntityAgency) let any agency the row
+// lists through, and a row several agencies shared before 2.3.0 is Global's
+// and lists them all: each could reveal it, lock it for good, or delete a key
+// Global's runs use (the 2.5.1 review's A1, A2).
+//
+// It answers 404 first to a caller who cannot read the row, before any verb is
+// judged, so no 403 says whose a row is (question 72; C11's decision 109,
+// applied to these routes by question 140). A member agency reads a row Global
+// holds for it (heldByGlobalFor, SG-16), so it gets the 403: read only.
+//
+// The call site is `if !s.requireRowOwner(...) { return }`; the response is
+// written on refusal.
+func (s *Server) requireRowOwner(w http.ResponseWriter, r *http.Request, id auth.Identity,
+	perm, table, rowID, label string) bool {
+
+	m, known := ownedRowMembership[table]
+	if !known {
+		httpx.Fail500(w, s.log, "db_error", fmt.Errorf("requireRowOwner: unknown table %q", table))
+		return false
+	}
+	var owner string
+	err := s.db.QueryRowContext(r.Context(), `SELECT owner_agency FROM `+table+` WHERE id = ?`, rowID).Scan(&owner) //nolint:gosec // fixed identifiers
+	if errors.Is(err, sql.ErrNoRows) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", label+" not found")
+		return false
+	}
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if !readsAgency(r, owner) && !s.heldByGlobalFor(r, table, m.table, m.col, rowID) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", label+" not found")
+		return false
+	}
+	// A row with no membership rows is damage (LR-22), whoever owns it: the
+	// 500 every membership gate gives, so it is not changed as if it were whole.
+	var members int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM `+m.table+` WHERE `+m.col+` = ?`, rowID).Scan(&members); err != nil { //nolint:gosec // fixed identifiers
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if members == 0 {
+		httpx.Fail500(w, s.log, "db_error", fmt.Errorf("%w: %s %s — every row has at least Global's "+
+			"(migration 1220), so this one was changed outside the application", errInNoAgency, table, rowID))
+		return false
+	}
+	if id.CanAgency(perm, owner) {
+		return true
+	}
+	if owner == agencyid.Global {
+		s.denyEntityAgency(w, r, id, perm, auth.AllScopes,
+			label+" belongs to Global; only a global administrator may change or reveal it")
+		return false
+	}
+	s.denyEntityAgency(w, r, id, perm, owner, "you do not have "+perm+" on the agency that owns this "+label)
+	return false
+}
+
 // ownerAgencyFor picks the OWNER for a newly created secret / variable / SSH key
 // from the effective agency set requireCreationAgencies returned (RA-15, Phase E).
 //

@@ -73,6 +73,18 @@ func (s *Server) flagsByMembership(ctx context.Context, id auth.Identity, perm, 
 	return rowFlags{CanEdit: ok, CanDelete: ok, CanRepair: id.GlobalAdmin(auth.PermConfigureApp)}, nil
 }
 
+// flagsByOwner is requireRowOwner as flags, for a secret or an SSH key: perm on
+// the agency that owns the row, not on any agency it lists (2.5.1 SG-42), so a
+// row Global holds for an agency reads as not the agency's to change.
+func (s *Server) flagsByOwner(ctx context.Context, id auth.Identity, perm, table, rowID string) (rowFlags, error) {
+	owner, err := s.rowOwnerAgency(ctx, table, rowID)
+	if err != nil {
+		return rowFlags{}, err
+	}
+	ok := id.CanAgency(perm, owner)
+	return rowFlags{CanEdit: ok, CanDelete: ok, CanRepair: id.GlobalAdmin(auth.PermConfigureApp)}, nil
+}
+
 // flagsWithScope narrows a secret's or a variable's membership flags by the
 // scope check its write makes too (loadSecretWritable, loadEnvVarWritable).
 func (s *Server) flagsWithScope(ctx context.Context, id auth.Identity, fl rowFlags, table, rowID string, scope *string) (rowFlags, error) {

@@ -189,7 +189,7 @@ func (s *Server) updateSecretTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// RB-32 (RF-5): same departmental gate as the secret value write.
-	if !s.requireEntityAgency(w, r, actor, auth.PermManageEnvVars, "secret_agencies", "secret_id", id, "secret") {
+	if !s.requireRowOwner(w, r, actor, auth.PermManageEnvVars, "secrets", id, "secret") {
 		return
 	}
 	if _, ok := s.writeTagsUpdate(w, r, "secrets", "id = ?", "secret not found", id); !ok {
@@ -215,7 +215,7 @@ func (s *Server) updateCredentialTags(w http.ResponseWriter, r *http.Request) {
 	// RB-16 (RF-5): this handler previously had NO ownership guard at all —
 	// key-material writes are agency-gated, so the metadata beside them is too.
 	actor, _ := auth.IdentityFrom(r.Context())
-	if !s.requireEntityAgency(w, r, actor, auth.PermConfigureApp, "ssh_credential_agencies", "credential_id", id, "SSH key") {
+	if !s.requireRowOwner(w, r, actor, auth.PermConfigureApp, "ssh_credentials", id, "SSH key") {
 		return
 	}
 	if _, ok := s.writeTagsUpdate(w, r, "ssh_credentials", "id = ?", "ssh credential not found", id); !ok {

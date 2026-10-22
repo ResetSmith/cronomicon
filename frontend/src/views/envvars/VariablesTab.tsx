@@ -208,7 +208,7 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
       ),
     },
     { key: "usedBy", label: "Used by", sortKey: "usedBy", width: COL_W.usedBy, cell: (v) => <UsageCell {...usage.usageFor("var", v.key)} /> },
-    { key: "agencies", label: "Agencies", width: COL_W.agencies, cell: (v) => <AgencyCell names={v.id ? entityAgencies[v.id] : undefined} /> },
+    { key: "agencies", label: "Agencies", width: COL_W.agencies, cell: (v) => <AgencyCell names={v.id ? entityAgencies[v.id] : undefined} owner={v.ownerAgency} /> },
     { key: "description", label: "Description", width: COL_W.description, tdStyle: { color: c.textSec, fontSize: c.fontSm }, cell: (v) => v.description || <EmptyCell /> },
     { key: "tags", label: "Tags", width: COL_W.tags, cell: (v) => <InlineTags tags={tagState.tagsFor(v)} max={2} /> },
     {

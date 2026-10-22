@@ -498,8 +498,15 @@ export function useEntityAgencies(kind: "secret" | "env-var" | "ssh-credential",
   }, [agencyData, memberData]);
 }
 
-/** The Agencies cell: membership chips, or the word the empty set actually means. */
-export function AgencyCell({ names }: { names: string[] | undefined }) {
+/**
+ * The Agencies cell: membership chips, or the word the empty set actually means.
+ *
+ * `owner` (the owning agency's name) is named too when it is not among the
+ * agencies listed: a row several agencies shared before 2.3.0 is Global's and
+ * lists them, and only Global's runs use it (2.5.1 SG-44). Elsewhere the owner
+ * is one of the chips and is not repeated.
+ */
+export function AgencyCell({ names, owner }: { names: string[] | undefined; owner?: string }) {
   // UNKNOWN is not damage: until the membership read has answered (or if it
   // cannot), there is no entry for the row, and saying "no agency" in red about
   // every row on the page would be a false alarm. Only a row the server LISTED
@@ -517,8 +524,27 @@ export function AgencyCell({ names }: { names: string[] | undefined }) {
       </span>
     );
   }
+  const ownerApart = !!owner && !names.includes(owner);
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      {ownerApart && (
+        <span
+          title={`Owned by ${owner}: shared with the agencies beside it before 2.3.0, and used only by ${owner}'s runs. They read it; ${owner} changes it.`}
+          style={{
+            padding: "1px 7px",
+            borderRadius: c.radiusChip,
+            fontSize: c.fontXs,
+            fontFamily: c.mono,
+            background: c.panel2,
+            border: `1px dashed ${c.border}`,
+            color: c.textSec,
+            whiteSpace: "nowrap",
+            cursor: "help",
+          }}
+        >
+          {owner} (owner)
+        </span>
+      )}
       {names.map((n) => (
         <span
           key={n}
