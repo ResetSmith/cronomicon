@@ -107,8 +107,9 @@ func TestFailureNotificationCarriesCriticalAndContact(t *testing.T) {
 }
 
 // TestUnannotatedNotificationIsByteIdentical — the un-enriched body must not
-// drift by so much as a newline, since that is what every existing deployment
-// receives today.
+// drift by so much as a newline from what renderMessage says. 2.5.2 (OP-5)
+// changed that on purpose by one line, "Agency:" (these runs name no owner, so
+// Global's); nothing else may move.
 func TestUnannotatedNotificationIsByteIdentical(t *testing.T) {
 	e := newAnnEnv(t)
 	e.exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('backup','git','uid-backup','bash','t')`)
@@ -119,7 +120,7 @@ func TestUnannotatedNotificationIsByteIdentical(t *testing.T) {
 	if err := e.d.dispatch(t.Context(), runDispatchEvent(ev)); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	_, want := renderMessage(ev)
+	_, want := renderMessage(ev, msgContext{agencyName: "Global"})
 	if *e.body != want {
 		t.Errorf("un-annotated body drifted from renderMessage:\n got %q\nwant %q", *e.body, want)
 	}
@@ -190,7 +191,7 @@ func TestMissedRunAlertIsEnrichedThroughTheNameArm(t *testing.T) {
 
 	if err := e.d.dispatch(t.Context(), dispatchEvent{
 		jobName: "nightly", matchKey: TriggerMissedRun, isRunOutcome: false,
-		subject: "missed", body: "no run appeared\n",
+		render: fixed("missed", "no run appeared\n"),
 	}); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
@@ -211,7 +212,7 @@ func TestAmbiguousNameIsNotEnriched(t *testing.T) {
 
 	if err := e.d.dispatch(t.Context(), dispatchEvent{
 		jobName: "backup", matchKey: TriggerMissedRun, isRunOutcome: false,
-		subject: "missed", body: "no run appeared\n",
+		render: fixed("missed", "no run appeared\n"),
 	}); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
@@ -258,7 +259,7 @@ func TestAnnotationLookupFailureStillSends(t *testing.T) {
 	if *e.sends != 1 {
 		t.Fatalf("sends = %d, want 1 — an annotation must never cost a notification", *e.sends)
 	}
-	_, want := renderMessage(ev)
+	_, want := renderMessage(ev, msgContext{agencyName: "Global"})
 	if *e.body != want {
 		t.Errorf("body after a failed lookup = %q, want the un-enriched message %q", *e.body, want)
 	}

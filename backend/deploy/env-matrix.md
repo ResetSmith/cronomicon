@@ -335,6 +335,7 @@ it. `CRONOMICON_BACKUP_AT` therefore also decides when retention runs.
 | Var | Default | Notes |
 |---|---|---|
 | `CRONOMICON_APPRISE_URL` | _(empty)_ | Apprise gateway base URL, e.g. `http://apprise:8000` (an Apprise sidecar). Used as the push gateway when an alert rule includes a push/apprise channel. The per-config gateway override (`apprise_url` in notification settings) takes precedence if set. |
+| `CRONOMICON_PUBLIC_URL` | _(empty)_ | **rec** (2.5.2) The address people open Cronomicon at, e.g. `https://cronomicon.example.gov` (a path is allowed for an app served under one; a trailing slash is trimmed). A run alert, mail or push, then ends with an `Open:` link to the run in its agency. Empty: no link, and nothing else changes. Not an absolute `http://`/`https://` address with a host, or carrying a query or fragment ⇒ **refuse to boot**. |
 
 > SMTP server settings (host/port/encryption/username/from/recipients) are
 > operator-managed in **Settings → Notifications**, and each agency's Apprise

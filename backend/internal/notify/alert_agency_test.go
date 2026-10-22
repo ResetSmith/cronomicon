@@ -55,14 +55,14 @@ func TestAnAgencysRuleMatchesOnlyItsAgencysRuns(t *testing.T) {
 	}
 	// A missed fire of TAX's load: no run, placed by the job's uid.
 	if err := d.dispatch(t.Context(), dispatchEvent{jobName: "load", jobUID: "uid-tax", matchKey: TriggerMissedRun,
-		subject: "s", body: "b"}); err != nil {
+		render: fixed("s", "b")}); err != nil {
 		t.Fatal(err)
 	}
 	if g := got(); g != "" {
 		t.Errorf("TAX's missed fire mailed %q; want nothing (FIN's missed-run rule is FIN's)", g)
 	}
 	if err := d.dispatch(t.Context(), dispatchEvent{jobName: "load", jobUID: "uid-fin", matchKey: TriggerMissedRun,
-		subject: "s", body: "b"}); err != nil {
+		render: fixed("s", "b")}); err != nil {
 		t.Fatal(err)
 	}
 	if g := got(); g != "fin@example" {

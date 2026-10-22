@@ -138,6 +138,29 @@ func TestLogFilePathMustBeAbsolute(t *testing.T) {
 	}
 }
 
+// TestPublicURL (2.5.2 OP-7): an alert links to its run under this address, so
+// a value that is not an absolute web address stops the start rather than
+// sending every link somewhere wrong. A trailing slash is trimmed so the link
+// never doubles it; a path is kept, for an app served under one.
+func TestPublicURL(t *testing.T) {
+	for _, bad := range []string{"cronomicon.example.gov", "ftp://cronomicon.example.gov", "https://", "https://x.example/?a=1", "https://x.example/#top", "https://user:pw@x.example"} {
+		err := loadErrWith(t, map[string]string{"CRONOMICON_PUBLIC_URL": bad})
+		if !strings.Contains(err.Error(), "CRONOMICON_PUBLIC_URL") {
+			t.Errorf("%q: error %q should name CRONOMICON_PUBLIC_URL", bad, err)
+		}
+	}
+	for in, want := range map[string]string{
+		"":                                    "",
+		"https://cronomicon.example.gov/":     "https://cronomicon.example.gov",
+		"http://10.0.0.5:8080":                "http://10.0.0.5:8080",
+		"https://ops.example.gov/cronomicon/": "https://ops.example.gov/cronomicon",
+	} {
+		if c := loadWith(t, map[string]string{"CRONOMICON_PUBLIC_URL": in}); c.PublicURL != want {
+			t.Errorf("%q: PublicURL = %q, want %q", in, c.PublicURL, want)
+		}
+	}
+}
+
 // TestLogFileMaxMBMustBeAtLeastOne: zero (or negative) would mean "rotate before
 // every write", which produces a directory of empty generations and loses the
 // log entirely. Coercing it to the default instead of erroring would hide an

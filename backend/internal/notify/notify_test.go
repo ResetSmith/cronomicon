@@ -139,6 +139,13 @@ func TestAppriseSend(t *testing.T) {
 	}
 }
 
+// fixed is a hand-built event's renderer: the same subject and body whatever
+// the dispatcher knows (the agency and the link are tested through the real
+// renderers).
+func fixed(subject, body string) func(msgContext) (string, string) {
+	return func(msgContext) (string, string) { return subject, body }
+}
+
 func newDispatcherDB(t *testing.T) (*Dispatcher, *sql.DB) {
 	t.Helper()
 	pool, err := db.Open(filepath.Join(t.TempDir(), "notify.db"))
