@@ -125,4 +125,31 @@ describe("MoveAgency — a repair", () => {
     expect(screen.getByRole("alert").textContent).toMatch(/outside the Vault paths/);
     expect(moved).not.toHaveBeenCalled();
   });
+
+  // 2.5.1 SG6.2: a Vault-backed row moved to an owner on another Vault is
+  // refused 409 vault_changes until the move is confirmed.
+  it("says which Vault a Vault-backed row would be read from, and moves it anyway only when asked", async () => {
+    putError = {
+      code: "vault_changes",
+      message: "moving it changes the Vault its path is read from",
+      rows: [{ kind: "secret", id: "s1", name: "DB_PASS", from: "ag-fin", fromName: "Finance", fromVault: "own", to: "global", toName: "Global", toVault: "installation" }],
+    };
+    show();
+    fireEvent.change(await select(), { target: { value: "global" } });
+    await repair("wrong agency", "Move to Global");
+    expect(await screen.findByText(/DB_PASS: from Finance's own Vault to the installation's Vault/)).toBeTruthy();
+    expect(failed).not.toHaveBeenCalled();
+    expect(moved).not.toHaveBeenCalled();
+    putError = null;
+    // The reason stays; the confirm now sends the confirmation.
+    fireEvent.click(screen.getByRole("button", { name: "Move anyway" }));
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1].body).toEqual({
+      repair: true,
+      reason: "wrong agency",
+      confirmVaultChange: true,
+      assignments: [{ id: "s1", agencyIds: ["global"] }],
+    });
+    await waitFor(() => expect(moved).toHaveBeenCalledWith("DB_PASS now belongs to Global"));
+  });
 });

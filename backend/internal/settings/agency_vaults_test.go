@@ -37,6 +37,8 @@ func vaultHolding(t *testing.T, value string, tls bool) *httptest.Server {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"auth": map[string]any{"client_token": "tok-" + value, "lease_duration": 3600}})
+		case r.URL.Path == "/v1/sys/health": // unauthenticated, as Vault's is
+			_, _ = w.Write([]byte(`{"initialized":true,"sealed":false}`))
 		case r.Header.Get("X-Vault-Token") != "tok-"+value:
 			http.Error(w, `{"errors":["permission denied"]}`, http.StatusForbidden)
 		case strings.HasSuffix(r.URL.Path, "/auth/token/lookup-self"):
@@ -253,7 +255,9 @@ func TestSG3_TheCacheKeepsOneClientPerConnection(t *testing.T) {
 }
 
 // SG-28: agency_vault_unreachable is raised under the agency when its Vault
-// does not answer, and resolved when it does.
+// does not answer, and resolved when it does. Since SG6.2 the check asks
+// sys/health and never logs in, so a sealed Vault raises it and a refused
+// login does not (the next read reports that one).
 func TestSG3_UnreachableNotice(t *testing.T) {
 	f := newAgencyVaultFix(t)
 	f.connect(t)
@@ -271,12 +275,18 @@ func TestSG3_UnreachableNotice(t *testing.T) {
 	if n := open(); n != 0 {
 		t.Fatalf("open notices with the Vault answering = %d", n)
 	}
-	// A wrong secret id: the login is refused.
-	if _, err := f.pool.ExecContext(f.ctx, `DELETE FROM agency_vaults`); err != nil {
+	// A sealed Vault: sys/health answers 503.
+	sealed := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"sealed":true}`, http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(sealed.Close)
+	su, _ := url.Parse(sealed.URL)
+	ou, _ := url.Parse(f.own.URL)
+	if err := writeVaultAllowedHosts(f.ctx, f.pool, []string{ou.Host, su.Host}, "t", "t"); err != nil {
 		t.Fatal(err)
 	}
-	ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.own.Certificate().Raw}))
-	rt, err := PrepareAgencyVault(f.ctx, f.pool, f.cfg, "ag-fin", AgencyVaultInput{Addr: f.own.URL, RoleID: "role", SecretID: "wrong", CAPEM: &ca})
+	ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: sealed.Certificate().Raw}))
+	rt, err := PrepareAgencyVault(f.ctx, f.pool, f.cfg, "ag-fin", AgencyVaultInput{Addr: sealed.URL, RoleID: "role", SecretID: "secret", CAPEM: &ca})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +297,7 @@ func TestSG3_UnreachableNotice(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n := open(); n != 1 {
-		t.Fatalf("open notices with the login refused = %d, want 1", n)
+		t.Fatalf("open notices with the Vault sealed = %d, want 1", n)
 	}
 	f.connect(t)
 	if err := CheckAgencyVaults(f.ctx, f.pool, f.cfg); err != nil {

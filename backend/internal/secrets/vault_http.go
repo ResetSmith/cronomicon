@@ -190,6 +190,38 @@ func (v *httpVaultClient) Login() error {
 	return err
 }
 
+// Health asks Vault's unauthenticated sys/health whether the server answers,
+// as the installation's status probe does (settings.checkVaultStatus): no
+// login and no token, so a check mints no token and uses no secret-id (2.5.1
+// SG6.2, the review's A6). One request on the client's own transport (its CA,
+// the egress guard, no redirects), without the namespace header (sys/health
+// is the root namespace's) and without do's retries. 200 (active) and 429
+// (standby) answer; anything else is named. It does not prove the
+// credentials: a login that fails shows on the next read.
+func (v *httpVaultClient) Health() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.addr+"/v1/sys/health", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := v.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("vault: sys/health: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusTooManyRequests:
+		return nil
+	case http.StatusServiceUnavailable:
+		return fmt.Errorf("vault: it is sealed (sys/health answered 503)")
+	case http.StatusNotImplemented:
+		return fmt.Errorf("vault: it is not initialized (sys/health answered 501)")
+	}
+	return fmt.Errorf("vault: sys/health answered %d", resp.StatusCode)
+}
+
 // Fetch reads the field from the KV v2 secret named by vaultRef.
 func (v *httpVaultClient) Fetch(vaultRef string) (string, error) {
 	path, field := splitRef(vaultRef)

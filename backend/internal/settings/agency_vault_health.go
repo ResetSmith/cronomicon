@@ -11,21 +11,25 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 )
 
-// KindAgencyVaultUnreachable — an agency's own Vault did not answer a login
-// (2.5.1 SG-28): its Vault-backed secrets and SSH keys fail to resolve until
-// it does, and never fall back to the installation's Vault (SG-21). Subject:
-// the agency's id. Filed under that agency. It clears when the Vault answers
-// or the connection is removed.
+// KindAgencyVaultUnreachable — an agency's own Vault did not answer, or
+// answered that it cannot serve (sealed, not initialized) (2.5.1 SG-28): its
+// Vault-backed secrets and SSH keys fail to resolve until it does, and never
+// fall back to the installation's Vault (SG-21). Subject: the agency's id.
+// Filed under that agency. It clears when the Vault answers or the connection
+// is removed.
 const KindAgencyVaultUnreachable = "agency_vault_unreachable"
 
 // agencyVaultHealthWait is how long the check waits for one Vault.
 const agencyVaultHealthWait = 3 * time.Second
 
-// CheckAgencyVaults logs in to each agency's own Vault and reconciles
-// agency_vault_unreachable. The Vaults are asked at once, each given
+// CheckAgencyVaults asks each agency's own Vault's sys/health and reconciles
+// agency_vault_unreachable. It never logs in (2.5.1 SG6.2, the review's A6):
+// the notices refresher runs it up to twice a minute, and a login each time
+// was a Vault token each time and, under an AppRole secret_id_num_uses, a use
+// of the secret id. The Vaults are asked at once, each given
 // agencyVaultHealthWait; one that has not answered by then is reported as not
-// answering (its login goes on in the background and ends with the client's
-// own timeout).
+// answering (its request goes on in the background and ends with its own
+// timeout).
 func CheckAgencyVaults(ctx context.Context, database *sql.DB, appCfg *config.Config) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT v.agency_id, COALESCE(a.name, v.agency_id), v.addr
@@ -95,12 +99,14 @@ func agencyVaultProblem(ctx context.Context, database *sql.DB, appCfg *config.Co
 	if !found {
 		return ""
 	}
+	// The live client (from the cache, as the reads use it): building one
+	// does not log in, and asking its health does not either.
 	vc, err := AgencyVaultClient(ctx, database, appCfg, rt)
 	if err != nil {
 		return err.Error()
 	}
-	if l, ok := vc.(secrets.VaultLogin); ok {
-		if err := l.Login(); err != nil {
+	if hc, ok := vc.(secrets.VaultHealth); ok {
+		if err := hc.Health(); err != nil {
 			return err.Error()
 		}
 	}

@@ -24,11 +24,37 @@ export const REPAIR_REASON_MAX = 500;
 export const REPAIR_HINT =
   "Its agency does not change: another agency gets one by a copy. A global administrator can repair a placement that was a mistake.";
 
-export type RepairBody = { repair: true; reason: string };
+export type RepairBody = { repair: true; reason: string; confirmVaultChange?: true };
 
 /** The error a write answers when it changes an agency without `repair: true`. */
 export function isRepairRequired(error: unknown): boolean {
   return !!error && typeof error === "object" && (error as { code?: unknown }).code === "repair_required";
+}
+
+/** A Vault-backed row a move would take to another Vault (2.5.1 SG6.2). */
+export type VaultChange = {
+  kind: string;
+  id: string;
+  name: string;
+  fromName: string;
+  fromVault: "installation" | "own";
+  toName: string;
+  toVault: "installation" | "own";
+};
+
+/**
+ * The rows of a 409 `vault_changes`: a move of a Vault-backed secret or key to
+ * an owner on another Vault, refused until it is confirmed. Null for any other
+ * answer.
+ */
+export function vaultChangesOf(error: unknown): VaultChange[] | null {
+  if (!error || typeof error !== "object" || (error as { code?: unknown }).code !== "vault_changes") return null;
+  const rows = (error as { rows?: unknown }).rows;
+  return Array.isArray(rows) ? (rows as VaultChange[]) : [];
+}
+
+function vaultName(agency: string, vault: VaultChange["fromVault"]): string {
+  return vault === "own" ? `${agency}'s own Vault` : "the installation's Vault";
 }
 
 /**
@@ -60,6 +86,7 @@ export function RepairDialog({
   confirmLabel,
   busy,
   error,
+  vaultChanges,
   onConfirm,
   onCancel,
 }: {
@@ -69,6 +96,12 @@ export function RepairDialog({
   busy?: boolean;
   /** The server's refusal, when the repair was sent and refused. */
   error?: string;
+  /**
+   * The rows of a 409 `vault_changes` (vaultChangesOf): the dialog says which
+   * Vault each would be read from, and the confirm, "Move anyway", sends the
+   * repair again with `confirmVaultChange`.
+   */
+  vaultChanges?: VaultChange[] | null;
   onConfirm: (repair: RepairBody) => void;
   onCancel: () => void;
 }) {
@@ -76,6 +109,7 @@ export function RepairDialog({
   const trimmed = reason.trim();
   const tooLong = [...trimmed].length > REPAIR_REASON_MAX;
   const ready = trimmed !== "" && !tooLong;
+  const confirmVault = !!vaultChanges && vaultChanges.length > 0;
   return (
     <Modal
       title={title}
@@ -85,8 +119,12 @@ export function RepairDialog({
           <Btn onClick={onCancel} disabled={busy}>
             Cancel
           </Btn>
-          <Btn danger onClick={() => onConfirm({ repair: true, reason: trimmed })} disabled={busy || !ready}>
-            {busy ? "Working…" : confirmLabel}
+          <Btn
+            danger
+            onClick={() => onConfirm(confirmVault ? { repair: true, reason: trimmed, confirmVaultChange: true } : { repair: true, reason: trimmed })}
+            disabled={busy || !ready}
+          >
+            {busy ? "Working…" : confirmVault ? "Move anyway" : confirmLabel}
           </Btn>
         </div>
       }
@@ -125,6 +163,30 @@ export function RepairDialog({
         {error && (
           <div role="alert" style={{ marginTop: 8, color: c.danger, fontSize: c.fontXs }}>
             {error}
+          </div>
+        )}
+        {confirmVault && (
+          <div
+            role="alert"
+            style={{
+              marginTop: 10,
+              padding: "8px 12px",
+              background: c.warningBg,
+              border: `1px solid ${c.warning}55`,
+              borderRadius: c.radiusSurface,
+              color: c.text,
+              fontSize: c.fontXs,
+            }}
+          >
+            <strong>It changes the Vault its path is read from.</strong> The same path in the other Vault may hold another value, or
+            none.
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {vaultChanges!.map((v) => (
+                <li key={`${v.kind}-${v.id}`}>
+                  {v.name}: from {vaultName(v.fromName, v.fromVault)} to {vaultName(v.toName, v.toVault)}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </div>

@@ -141,7 +141,10 @@ func ListAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind
 // land on a name the target already owns is refused (ErrOwnerConflict), since
 // two rows of one agency with one name is the ambiguity the resolver refuses to
 // pick between.
-func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind, assignments []AgencyMembership, actor string) error {
+//
+// A move that would take a Vault-backed row to an owner on another Vault is
+// refused with a *VaultChangesError unless opts confirms it (2.5.1 SG6.2).
+func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind, assignments []AgencyMembership, actor string, opts ...MoveOptions) error {
 	// LR-78: this changes what an access grant reaches (or what it is shown as),
 	// so the grant snapshot is told on the way out — after the write, on every
 	// return path, a failed half-write included.
@@ -187,14 +190,14 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	var moves []ownerMove
+	var cms []catalogMove
 	for i, a := range assignments {
 		mv, err := moveOwner(ctx, tx, t, a.ID, targets[i])
 		if err != nil {
 			return err
 		}
 		if mv != nil {
-			moves = append(moves, *mv)
+			cms = append(cms, catalogMove{catalog: t.catalog, mv: *mv})
 		}
 		if kind == MemberScope {
 			if err := presetScopeOwner(ctx, tx, a.ID, targets[i]); err != nil {
@@ -208,6 +211,9 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 			`INSERT INTO `+t.join+` (`+t.col+`, agency_id) VALUES (?, ?)`, a.ID, targets[i]); err != nil {
 			return err
 		}
+	}
+	if err := checkVaultMoves(ctx, tx, cms, moveOptions(opts)); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
@@ -232,10 +238,6 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 	// 2.5.1 SG-12: a secret or an SSH key that changed hands is written in its
 	// own category, once in the agency it left and once in the one it reached,
 	// so each side's review shows it (a membership row is filed under one).
-	cms := make([]catalogMove, 0, len(moves))
-	for _, mv := range moves {
-		cms = append(cms, catalogMove{t.catalog, mv})
-	}
 	auditMoves(ctx, database, actor, cms)
 	return nil
 }
@@ -768,7 +770,10 @@ func ComputeAgencyMembersDelta(ctx context.Context, database *sql.DB, agencyID s
 // Only rows with agency_id = agencyID are deleted or inserted. An entity's
 // memberships in OTHER agencies are untouched — that isolation is this function's
 // reason to exist.
-func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, desired []AgencyMemberRef, actor string) (*AgencyMembersDelta, error) {
+//
+// The moves it makes, an addition's and a removal's that settles a held row,
+// are held to the Vault rule of SetAgencyMembership (2.5.1 SG6.2).
+func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, desired []AgencyMemberRef, actor string, opts ...MoveOptions) (*AgencyMembersDelta, error) {
 	// LR-78: this changes what an access grant reaches (or what it is shown as),
 	// so the grant snapshot is told on the way out — after the write, on every
 	// return path, a failed half-write included.
@@ -930,7 +935,7 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 			return nil, err
 		}
 		if mv != nil {
-			moved = append(moved, catalogMove{t.catalog, *mv})
+			moved = append(moved, catalogMove{catalog: t.catalog, mv: *mv})
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT OR IGNORE INTO `+t.join+` (`+t.col+`, agency_id) VALUES (?, ?)`, m.ID, agencyID); err != nil {
@@ -999,9 +1004,12 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 				return nil, err
 			}
 			if mv != nil {
-				moved = append(moved, catalogMove{t.catalog, *mv})
+				moved = append(moved, catalogMove{catalog: t.catalog, mv: *mv})
 			}
 		}
+	}
+	if err := checkVaultMoves(ctx, tx, moved, moveOptions(opts)); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -1022,6 +1030,9 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 type catalogMove struct {
 	catalog string
 	mv      ownerMove
+	// vaultConfirmed: the move took a Vault-backed row to another Vault, as
+	// the request confirmed (2.5.1 SG6.2).
+	vaultConfirmed bool
 }
 
 // auditMoves writes 2.5.1 SG-12's "moved" rows for the secrets and keys among
@@ -1033,8 +1044,12 @@ func auditMoves(ctx context.Context, database *sql.DB, actor string, moves []cat
 			continue
 		}
 		from, to := ownerOrGlobalAgency(m.mv.from), ownerOrGlobalAgency(m.mv.to)
-		audit(ctx, database, from, actor, cat, "moved", m.mv.name, "id="+m.mv.id+" to="+to)
-		audit(ctx, database, to, actor, cat, "moved", m.mv.name, "id="+m.mv.id+" from="+from)
+		vault := ""
+		if m.vaultConfirmed {
+			vault = " vault-change=confirmed"
+		}
+		audit(ctx, database, from, actor, cat, "moved", m.mv.name, "id="+m.mv.id+" to="+to+vault)
+		audit(ctx, database, to, actor, cat, "moved", m.mv.name, "id="+m.mv.id+" from="+from+vault)
 	}
 }
 

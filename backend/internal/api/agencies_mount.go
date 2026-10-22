@@ -410,8 +410,10 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
-	if err := settings.SetAgencyMembership(r.Context(), s.db, kind, body, id.Email); err != nil {
+	if err := settings.SetAgencyMembership(r.Context(), s.db, kind, body, id.Email,
+		settings.MoveOptions{ConfirmVaultChange: rep.ConfirmVaultChange}); err != nil {
 		switch {
+		case failVaultChanges(w, err):
 		case errors.Is(err, settings.ErrUnknownAgency):
 			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "a referenced agency does not exist")
 		case errors.Is(err, settings.ErrUnknownMember):
@@ -1079,8 +1081,10 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	if _, err := settings.SetAgencyMembers(r.Context(), s.db, agencyID, body.Members, id.Email); err != nil {
+	if _, err := settings.SetAgencyMembers(r.Context(), s.db, agencyID, body.Members, id.Email,
+		settings.MoveOptions{ConfirmVaultChange: body.ConfirmVaultChange}); err != nil {
 		switch {
+		case failVaultChanges(w, err):
 		case errors.Is(err, settings.ErrUnknownAgency):
 			httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
 		case errors.Is(err, settings.ErrUnknownMember):
@@ -1135,6 +1139,23 @@ func (s *Server) alertOwnerMoves(r *http.Request, table, noun string, ownersBefo
 		s.raiseSecretAlert(r, notify.TriggerSecretChanged, noun, name, before, "moved to "+s.agencyNameOr(r, after))
 		s.raiseSecretAlert(r, notify.TriggerSecretChanged, noun, name, after, "moved in from "+s.agencyNameOr(r, before))
 	}
+}
+
+// failVaultChanges answers a move refused for taking Vault-backed rows to
+// another Vault (2.5.1 SG6.2): 409 vault_changes with the rows, the shape of
+// the agency Vault's references_unresolved. It reports whether err was one.
+func failVaultChanges(w http.ResponseWriter, err error) bool {
+	var vc *settings.VaultChangesError
+	if !errors.As(err, &vc) {
+		return false
+	}
+	httpx.JSON(w, http.StatusConflict, map[string]any{
+		"code": "vault_changes",
+		"message": "moving it changes the Vault its path is read from: the same path in the other Vault may hold " +
+			"another value, or none. Confirm to move it anyway",
+		"rows": vc.Rows,
+	})
+	return true
 }
 
 // failAgencyRule answers the refusals that Global being a real agency introduced

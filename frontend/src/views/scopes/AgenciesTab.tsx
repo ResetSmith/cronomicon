@@ -9,7 +9,7 @@ import { c } from "../../theme";
 import { DOC_LINKS } from "../../components/docLinks";
 import { DetailPanel, ExpandChevron, InlineLoading, SkeletonRows, SortableLabel, DocLink } from "../../components/ui";
 import { RefreshScope } from "../../components/RefreshScope";
-import { REPAIR_HINT, RepairDialog, type RepairBody } from "../../components/RepairDialog";
+import { REPAIR_HINT, RepairDialog, vaultChangesOf, type RepairBody, type VaultChange } from "../../components/RepairDialog";
 import {
   Btn,
   Chevron,
@@ -525,6 +525,9 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
   // change waits here for the reason.
   const [pending, setPending] = useState<{ desired: { kind: string; id: string }[]; busyKey: string; title: string; message: string; confirm: string } | null>(null);
   const [repairErr, setRepairErr] = useState("");
+  // An addition or removal that takes a Vault-backed row to another Vault
+  // waits for "Move anyway" (2.5.1 SG6.2).
+  const [vaultChanges, setVaultChanges] = useState<VaultChange[] | null>(null);
   if (loading) return <InlineLoading />;
   if (error) return <div style={{ fontSize: c.fontSm, color: c.danger }}>Could not load this agency: {error}</div>;
 
@@ -552,11 +555,17 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
       body: { members: desired as MemberRef[], ...rep },
     });
     setBusy(null);
+    const changes = vaultChangesOf(e);
+    if (changes) {
+      setVaultChanges(changes);
+      return;
+    }
     if (e) {
       setRepairErr(errMsg(e));
       return;
     }
     setPending(null);
+    setVaultChanges(null);
     setSaved(next as Detail);
     // The parent's runner-count column derives from membership; nudge it.
     onMembersChanged?.();
@@ -564,6 +573,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
 
   const remove = (m: Member) => {
     setRepairErr("");
+    setVaultChanges(null);
     setPending({
       desired: members.filter((x) => !(x.kind === m.kind && x.id === m.id)).map((x) => ({ kind: x.kind, id: x.id })),
       busyKey: `${m.kind}-${m.id}`,
@@ -574,6 +584,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
   };
   const add = (kind: string, id: string, name: string) => {
     setRepairErr("");
+    setVaultChanges(null);
     setPending({
       desired: [...members.map((x) => ({ kind: x.kind, id: x.id })), { kind, id }],
       busyKey: `add-${kind}`,
@@ -760,7 +771,11 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
           confirmLabel={pending.confirm}
           busy={busy != null}
           error={repairErr}
-          onCancel={() => setPending(null)}
+          vaultChanges={vaultChanges}
+          onCancel={() => {
+            setPending(null);
+            setVaultChanges(null);
+          }}
           onConfirm={save}
         />
       )}

@@ -7644,6 +7644,12 @@ paths:
         Vault-backed secret or SSH key (409 `vault_in_use`, SG-27): they would
         all move to the installation's Vault at once. Deleting the agency
         deletes its connection. Logged as `vault-disconnected`. CSRF required.
+
+        The agency's Vault path prefixes are cleared with the connection
+        (v2.5.1 SG6.2), and the log row names them: in its own Vault they were
+        a limit it set itself, and in the installation's they are a global
+        administrator's to assign. Until one does, the agency names no Vault
+        path. 404 when the agency has no Vault of its own; its prefixes stay.
       parameters: [{ $ref: '#/components/parameters/agencyId' }, { $ref: '#/components/parameters/csrf' }]
       responses:
         '204': { description: Disconnected. }
@@ -7821,6 +7827,11 @@ paths:
         v2.3.0 that several agencies share may be removed from all but one, and
         the one that is left becomes its owner. A no-op save writes no audit row.
         Returns the resulting AgencyDetail.
+
+        An addition, or a removal that settles a shared row, that would take a
+        Vault-backed secret or SSH key to an owner on another Vault (an
+        agency's own, or the installation's) is refused 409 `vault_changes`
+        unless `confirmVaultChange` is set (v2.5.1 SG6.2).
       parameters: [{ $ref: '#/components/parameters/agencyId' }, { $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -7836,6 +7847,7 @@ paths:
                   items: { $ref: '#/components/schemas/AgencyMemberRef' }
                 repair: { type: boolean, description: "Required (true) when the list differs from the agency's: any addition or removal changes an object's agency, a global administrator's repair (v2.4.0, IN-7); 409 `repair_required` otherwise." }
                 reason: { type: string, maxLength: 500, description: The repair's reason, written to the audit log. Required with `repair`. }
+                confirmVaultChange: { type: boolean, description: "Confirms a move that takes a Vault-backed row to an owner on another Vault (v2.5.1 SG6.2); 409 `vault_changes` otherwise." }
       responses:
         '200':
           description: The agency's resulting contents and dispatch health.
@@ -7845,6 +7857,15 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: |
+            A move would take a Vault-backed row to an owner on another Vault
+            (`vault_changes`, v2.5.1 SG6.2). Nothing is written; send
+            `confirmVaultChange: true` to move it anyway. Also `owner_conflict`
+            and `scope_agency_fixed`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VaultChanges' }
         '422': { $ref: '#/components/responses/Validation' }
 
   /runner-agencies:
@@ -8037,6 +8058,12 @@ paths:
 
         Every change is written to the audit change log (membership is an
         access-control fact). Ids and counts only — never a value.
+
+        A move of a Vault-backed secret to an owner on another Vault (an
+        agency's own, or the installation's) is refused 409 `vault_changes`
+        unless the repair sets `confirmVaultChange` (v2.5.1 SG6.2); a confirmed
+        one is marked `vault-change=confirmed` on its two `moved` change-log
+        rows.
       parameters: [{ $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -8056,6 +8083,7 @@ paths:
                     assignments:
                       type: array
                       items: { $ref: '#/components/schemas/AgencyMembership' }
+                    confirmVaultChange: { type: boolean, description: "Confirms a move that takes a Vault-backed row to an owner on another Vault (v2.5.1 SG6.2); 409 `vault_changes` otherwise." }
       responses:
         '200':
           description: Updated matrix.
@@ -8066,6 +8094,15 @@ paths:
                 items: { $ref: '#/components/schemas/AgencyMembership' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: |
+            A move would take a Vault-backed row to an owner on another Vault
+            (`vault_changes`, v2.5.1 SG6.2): its path would be read in the
+            other Vault from then on. Nothing is written; send
+            `confirmVaultChange: true` to move it anyway. Also `owner_conflict`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VaultChanges' }
         '422': { $ref: '#/components/responses/Validation' }
 
   /env-var-agencies:
@@ -8183,6 +8220,10 @@ paths:
 
         Every change is written to the audit change log (membership is an
         access-control fact). Ids and counts only — never a value.
+
+        A move of a Vault-backed SSH key to an owner on another Vault is
+        refused 409 `vault_changes` unless the repair sets
+        `confirmVaultChange` (v2.5.1 SG6.2), as for a secret.
       parameters: [{ $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -8202,6 +8243,7 @@ paths:
                     assignments:
                       type: array
                       items: { $ref: '#/components/schemas/AgencyMembership' }
+                    confirmVaultChange: { type: boolean, description: "Confirms a move that takes a Vault-backed row to an owner on another Vault (v2.5.1 SG6.2); 409 `vault_changes` otherwise." }
       responses:
         '200':
           description: Updated matrix.
@@ -8212,6 +8254,15 @@ paths:
                 items: { $ref: '#/components/schemas/AgencyMembership' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: |
+            A move would take a Vault-backed row to an owner on another Vault
+            (`vault_changes`, v2.5.1 SG6.2): its path would be read in the
+            other Vault from then on. Nothing is written; send
+            `confirmVaultChange: true` to move it anyway. Also `owner_conflict`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VaultChanges' }
         '422': { $ref: '#/components/responses/Validation' }
 
   /agency-matrix:
@@ -9212,6 +9263,32 @@ components:
         traceId:
           type: string
           description: Server request correlation ID, if available.
+
+    VaultChanges:
+      type: object
+      description: |
+        A move refused because it would take Vault-backed rows to an owner on
+        another Vault (v2.5.1 SG6.2; `code` is `vault_changes`). Also the shape
+        of the route's other 409s, which carry no `rows`.
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        rows:
+          type: array
+          items:
+            type: object
+            required: [kind, id, name, from, fromName, fromVault, to, toName, toVault]
+            properties:
+              kind: { type: string, enum: [secret, ssh-credential] }
+              id: { type: string }
+              name: { type: string, description: The secret's key or the key's label. }
+              from: { type: string, description: The owner agency's id before the move. }
+              fromName: { type: string }
+              fromVault: { type: string, enum: [installation, own], description: "`own`: the from agency's own Vault." }
+              to: { type: string, description: The owner agency's id after it. }
+              toName: { type: string }
+              toVault: { type: string, enum: [installation, own], description: "`own`: the to agency's own Vault." }
 
     ValidationError:
       allOf:
@@ -12062,8 +12139,10 @@ components:
               grant's id. Filed under the grant's agency. It clears when the
               group is listed or the grant is deleted.
             - `agency_vault_unreachable` — an agency's own Vault did not
-              answer a login within three seconds, or refused it (v2.5.1,
-              SG-28). Its Vault-backed secrets and SSH keys fail until it
+              answer `sys/health` within three seconds, or answered that it
+              cannot serve (sealed, not initialized) (v2.5.1, SG-28; the check
+              never logs in since SG6.2, so refused credentials show on the
+              next read instead). Its Vault-backed secrets and SSH keys fail until it
               does; they are never read from the installation's Vault instead.
               Subject: the agency's id. Filed under that agency. It clears
               when the Vault answers or the connection is removed.
