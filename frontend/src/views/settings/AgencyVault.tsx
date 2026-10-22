@@ -272,7 +272,7 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
       {disconnecting && (
         <ConfirmDialog
           title={`Disconnect ${agencyName}'s Vault?`}
-          message={`${agencyName} goes back to the installation's Vault, inside the paths a global administrator assigns it.`}
+          message={`${agencyName} goes back to the installation's Vault, inside the paths a global administrator assigns it. The Vault path prefixes it set for its own Vault are cleared: until a global administrator assigns some, it names no Vault path.`}
           confirmLabel="Disconnect"
           busy={busy}
           onConfirm={disconnect}
