@@ -2142,7 +2142,7 @@ export function TagEditor({
 // Relocated here from views/history/shared.tsx (PP) so catalog pages no longer
 // reach into the history/ namespace for a pager; shared.tsx re-exports these as a
 // back-compat shim. usePager holds per-table state (default pageSize 25, options
-// 25/50/100). The <Pager> control is the canonical "Show 25 / 50 / 100 entries"
+// 25/50/100; a caller may start at another size and offer other sizes, or none). The <Pager> control is the canonical "Show 25 / 50 / 100 entries"
 // button group + ← Prev / Next → + an "x–y of N" label. The UI is 0-based and
 // callers add the +1 for a 1-based API. Pure math (clampPage/sliceForPage) lives
 // in utils/pager so it stays unit-testable; import it directly from there.
@@ -2154,9 +2154,9 @@ export interface PagerState {
 }
 
 /** Each table calls this once, so page/pageSize never leak across sibling tables. */
-export function usePager(): PagerState {
+export function usePager(initialPageSize = 25): PagerState {
   const [page, setPage] = useState(0);
-  const [pageSize, setPageSizeRaw] = useState(25);
+  const [pageSize, setPageSizeRaw] = useState(initialPageSize);
   return {
     page,
     setPage,
@@ -2186,6 +2186,7 @@ export function Pager({
   total,
   noun,
   shown,
+  sizes = [25, 50, 100],
 }: {
   pager: PagerState;
   page: number;
@@ -2195,6 +2196,8 @@ export function Pager({
    * fewer than the server returned for this page, the label says so honestly
    * rather than implying the page-position count reflects the filter (PP-H7). */
   shown?: number;
+  /** The page sizes offered; with fewer than two there is nothing to choose and the group is left out. */
+  sizes?: number[];
 }) {
   const { pageSize, setPage, setPageSize } = pager;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -2213,30 +2216,34 @@ export function Pager({
         fontVariantNumeric: "tabular-nums",
       }}
     >
-      <div role="group" aria-label="Rows per page" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span>Show</span>
-        {[25, 50, 100].map((n) => (
-          <button
-            key={n}
-            aria-pressed={pageSize === n}
-            onClick={() => setPageSize(n)}
-            style={{
-              padding: "3px 9px",
-              borderRadius: c.radiusChip,
-              cursor: "pointer",
-              fontFamily: c.sans,
-              fontSize: c.fontSm,
-              fontWeight: pageSize === n ? 600 : 400,
-              background: pageSize === n ? `${c.primary}1a` : "transparent",
-              color: pageSize === n ? c.primary : c.textSec,
-              border: `1px solid ${pageSize === n ? `${c.primary}40` : c.border}`,
-            }}
-          >
-            {n}
-          </button>
-        ))}
-        <span>entries</span>
-      </div>
+      {sizes.length < 2 ? (
+        <span />
+      ) : (
+        <div role="group" aria-label="Rows per page" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span>Show</span>
+          {sizes.map((n) => (
+            <button
+              key={n}
+              aria-pressed={pageSize === n}
+              onClick={() => setPageSize(n)}
+              style={{
+                padding: "3px 9px",
+                borderRadius: c.radiusChip,
+                cursor: "pointer",
+                fontFamily: c.sans,
+                fontSize: c.fontSm,
+                fontWeight: pageSize === n ? 600 : 400,
+                background: pageSize === n ? `${c.primary}1a` : "transparent",
+                color: pageSize === n ? c.primary : c.textSec,
+                border: `1px solid ${pageSize === n ? `${c.primary}40` : c.border}`,
+              }}
+            >
+              {n}
+            </button>
+          ))}
+          <span>entries</span>
+        </div>
+      )}
       <span>{pagerLabel(total, page, pageSize, noun, shown)}</span>
       <div style={{ display: "flex", gap: 6 }}>
         <button disabled={page === 0} onClick={() => setPage(Math.max(0, page - 1))} style={navBtn(page === 0)}>

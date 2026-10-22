@@ -227,8 +227,8 @@ export { rows, paged, type Paged } from "./utils/paging";
 // Used where the payload is small and already loaded (Jobs/Scripts catalogs,
 // Schedules › Upcoming). The returned `page` is the clamped index — pass it to
 // <Pager page={page} …> so the control and the slice agree.
-export function useClientPager<T>(items: T[]): { pageItems: T[]; total: number; page: number; pager: PagerState } {
-  const pager = usePager();
+export function useClientPager<T>(items: T[], pageSize?: number): { pageItems: T[]; total: number; page: number; pager: PagerState } {
+  const pager = usePager(pageSize);
   const total = items.length;
   const page = clampPage(pager.page, total, pager.pageSize);
   const pageItems = sliceForPage(items, page, pager.pageSize);

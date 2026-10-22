@@ -66,9 +66,10 @@ caution there); the schema goes from 1210 to 1660.
 - **Acknowledgement and notes on a run.** A panel on a run's detail, between
   its fields and its log: **Acknowledge** (with an optional first note),
   **Remove acknowledgement**, and an append-only thread of notes (at most 1,000
-  characters each), each with its author and how they stood to the run's
-  agency (the agency's name, *Global administrator*, or the built-in agency's
-  name). Anyone who can read the run may write, so a viewer whose access
+  characters each; newest first, about five in view with the rest scrolling,
+  paged ten at a time past ten), each with its author and how they stood to
+  the run's agency (the agency's name, *Global administrator*, or the built-in
+  agency's name). Anyone who can read the run may write, so a viewer whose access
   reaches every agency can acknowledge any agency's run. Each entry is
   recorded in the run's agency's change log (category `Runs`) and Activity.
   History has a **Notes** column (a tick and the count, or *Not
