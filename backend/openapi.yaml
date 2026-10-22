@@ -3901,9 +3901,9 @@ paths:
       summary: Update an agency
       description: |
         A rename is carried onto the runs that are waiting or running under the old
-        name, so they stay claimable. The built-in agency Global cannot be renamed
-        (422 `builtin_agency`), and no other agency may take its name (422
-        `name_reserved`).
+        name, so they stay claimable. Since 2.5.2 (GR) the built-in agency (id
+        `global`) is renamed like any other, and no name is reserved: names are
+        unique (409), and that is the only rule.
       parameters: [{ $ref: '#/components/parameters/agencyId' }, { $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -13097,11 +13097,12 @@ components:
               type: boolean
               readOnly: true
               description: >-
-                True for **Global** (id `global`), the one agency every installation has
-                (v2.3.0, LR-21). It cannot be renamed or deleted (422 `builtin_agency`), no
-                other agency may be called Global in any letter case (422 `name_reserved`),
-                and no access grant or service account may name it: it belongs to the global
-                administrators, and the way to be one is an all-scopes grant.
+                True for the built-in agency (id `global`), the one agency every installation
+                has (v2.3.0, LR-21): "Central" on an installation made with 2.5.2 or later,
+                "Global" on an older one until it is renamed (2.5.2 GR: it may be renamed; it
+                cannot be deleted, 422 `builtin_agency`). No access grant or service account may
+                name it: it belongs to the global administrators, and the way to be one is an
+                all-scopes grant.
         - $ref: '#/components/schemas/AuditFields'
 
     AgencyInput:
@@ -15664,6 +15665,7 @@ components:
         effectiveDefault: { type: string, description: Where a visit with no agency in its address starts. }
         workingAgency: { type: string, description: The agency the lists use; on the overview, the rule without it. }
         canOverview: { type: boolean, description: True when the caller's grant reaches every agency. }
+        globalName: { type: string, description: '2.5.2 (GR) — the built-in agency''s name now (id `global`): Central on a new installation, Global on an older one until renamed.' }
     OperationsOverview:
       type: object
       description: The Operations overview (v2.4.4; GET /overview).

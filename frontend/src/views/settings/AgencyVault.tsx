@@ -6,6 +6,7 @@ import { GLOBAL_AGENCY, agenciesFor, useMyAccess } from "../../api/access";
 import { useAgencyOptional } from "../../agency";
 import { Btn, Card, ReadOnlyFields, SettingRow, csrfHeader, errMsg, inputStyle, tdStyle, thStyle } from "./ui";
 import { ConfirmDialog, InlineLoading } from "../../components/ui";
+import { globalAgencyName } from "../../globalName";
 
 type AgencyVault = components["schemas"]["AgencyVault"];
 type VaultRef = components["schemas"]["AgencyVaultReference"];
@@ -21,7 +22,7 @@ export function AgencyVaultSection({ isGlobal }: { isGlobal: boolean }) {
   const access = useMyAccess();
   const mine = agenciesFor(access ?? null, "configureApp");
   const agency = ag?.agency ?? (isGlobal ? GLOBAL_AGENCY : mine.length === 1 ? mine[0].id : "");
-  const agencyName = ag?.agencyName ?? (agency === GLOBAL_AGENCY ? "Global" : mine.find((a) => a.id === agency)?.name ?? agency);
+  const agencyName = ag?.agencyName ?? (agency === GLOBAL_AGENCY ? globalAgencyName() : mine.find((a) => a.id === agency)?.name ?? agency);
   const canWrite = isGlobal || access == null || mine.some((a) => a.id === agency);
 
   if (agency === GLOBAL_AGENCY) {

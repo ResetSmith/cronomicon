@@ -828,7 +828,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	            JOIN scope_agencies sa ON sa.scope_id = s.id
 	            JOIN agencies a ON a.id = sa.agency_id
 	           WHERE s.name = runs.scope
-	          HAVING COUNT(*) > 0), '["Global"]')`)
+	          HAVING COUNT(*) > 0), json_array((SELECT name FROM agencies WHERE id = 'global')))`) // the built-in agency's name now (2.5.2 GR)
 	exec(`DELETE FROM run_agencies`)
 	exec(`INSERT INTO run_agencies (run_id, agency)
 	      SELECT r.id, je.value FROM runs r, json_each(r.agencies_json) je

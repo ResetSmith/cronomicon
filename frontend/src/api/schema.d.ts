@@ -2239,9 +2239,9 @@ export interface paths {
         /**
          * Update an agency
          * @description A rename is carried onto the runs that are waiting or running under the old
-         *     name, so they stay claimable. The built-in agency Global cannot be renamed
-         *     (422 `builtin_agency`), and no other agency may take its name (422
-         *     `name_reserved`).
+         *     name, so they stay claimable. Since 2.5.2 (GR) the built-in agency (id
+         *     `global`) is renamed like any other, and no name is reserved: names are
+         *     unique (409), and that is the only rule.
          */
         put: operations["updateAgency"];
         post?: never;
@@ -8809,7 +8809,7 @@ export interface components {
             readonly maxConcurrent?: number | null;
             /** @description 2.5.2 (OP-28) — who the central team calls about the agency's runs when the job or workflow names no contact of its own; empty is none. Free text, display-only. Set with PUT /agencies/{agencyId}/contact. */
             readonly contact?: string;
-            /** @description True for **Global** (id `global`), the one agency every installation has (v2.3.0, LR-21). It cannot be renamed or deleted (422 `builtin_agency`), no other agency may be called Global in any letter case (422 `name_reserved`), and no access grant or service account may name it: it belongs to the global administrators, and the way to be one is an all-scopes grant. */
+            /** @description True for the built-in agency (id `global`), the one agency every installation has (v2.3.0, LR-21): "Central" on an installation made with 2.5.2 or later, "Global" on an older one until it is renamed (2.5.2 GR: it may be renamed; it cannot be deleted, 422 `builtin_agency`). No access grant or service account may name it: it belongs to the global administrators, and the way to be one is an all-scopes grant. */
             readonly builtin?: boolean;
         } & components["schemas"]["AuditFields"];
         AgencyInput: {
@@ -10706,6 +10706,8 @@ export interface components {
             workingAgency: string;
             /** @description True when the caller's grant reaches every agency. */
             canOverview: boolean;
+            /** @description 2.5.2 (GR) — the built-in agency's name now (id `global`): Central on a new installation, Global on an older one until renamed. */
+            globalName?: string;
         };
         /** @description The Operations overview (v2.4.4; GET /overview). */
         OperationsOverview: {

@@ -6,6 +6,7 @@ import { useGet } from "../../hooks";
 import { c } from "../../theme";
 import { Btn, SectionLabel } from "../../components/ui";
 import { fmtTime } from "./shared";
+import { globalAgencyName } from "../../globalName";
 
 // The run's acknowledgement and notes (2.5.2 OP4; OP-8 to OP-19). What a shift
 // knew about a run, for the next one: an append-only thread shared by the
@@ -96,7 +97,7 @@ export function RunNotesPanel({
 }) {
   const ag = useAgencyOptional();
   const agencyName = agencyId ? (ag?.nameOf(agencyId) ?? agencyId) : "this agency";
-  const central = ag?.nameOf("global") ?? "Global";
+  const central = ag?.nameOf("global") ?? globalAgencyName();
   const q = useGet<RunNotes>(
     () =>
       kind === "workflow"

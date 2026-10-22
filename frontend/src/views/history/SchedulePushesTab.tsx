@@ -21,6 +21,7 @@ import {
 } from "./shared";
 import { Btn, SkeletonRows, TableSurface } from "../../components/ui";
 import { RepoSelect, repoLabel, useRepos } from "../../components/RepoPicker";
+import { globalAgencyName } from "../../globalName";
 
 interface SchedulePush {
   id?: string;
@@ -160,7 +161,7 @@ export function SchedulePushesTab() {
       tdStyle: { color: c.textSec, fontSize: c.fontSm },
       cell: (r) => {
         const row = repos.find((x) => x.id === (r.repoId || "global"));
-        return row ? repoLabel(row) : r.repoId || "Global";
+        return row ? repoLabel(row) : r.repoId || globalAgencyName();
       },
     },
     { key: "user", label: "User", sortKey: "user", width: COL_W.user, tdStyle: { color: c.textSec, fontSize: c.fontSm }, cell: (r) => r.userEmail ?? "—" },

@@ -1327,26 +1327,27 @@ func homeRepoSQL(home string) (string, any) {
 // Git workflow whose repository is gone has no agency to run for.
 // workflowAgencyOf is the agency a workflow belongs to, by id and by name. A
 // workflow that is not there is "" (nothing to compare); one whose agency
-// cannot be told (its repository is gone) is filed under Global's name.
+// cannot be told (its repository is gone) is filed under the built-in agency's
+// name, read by id (2.5.2 GR: it may be renamed).
 func (e *Engine) workflowAgencyOf(ctx context.Context, workflowID int64) (id, name string, err error) {
 	var agency sql.NullString
 	err = e.db.QueryRowContext(ctx,
 		`SELECT `+runref.WorkflowAgencySQL+` FROM workflows w WHERE w.rowid = ?`, workflowID).Scan(&agency)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", agencyid.GlobalName, nil
+		return "", agencyid.CurrentGlobalName(ctx, e.db), nil
 	}
 	if err != nil {
 		return "", "", err
 	}
 	if !agency.Valid {
-		return "", agencyid.GlobalName, nil
+		return "", agencyid.CurrentGlobalName(ctx, e.db), nil
 	}
 	var n sql.NullString
 	if err := e.db.QueryRowContext(ctx, `SELECT name FROM agencies WHERE id = ?`, agency.String).Scan(&n); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", "", err
 	}
 	if !n.Valid || n.String == "" {
-		return agency.String, agencyid.GlobalName, nil
+		return agency.String, agencyid.CurrentGlobalName(ctx, e.db), nil
 	}
 	return agency.String, n.String, nil
 }

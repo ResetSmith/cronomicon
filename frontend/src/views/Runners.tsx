@@ -42,6 +42,7 @@ import {
   provisionDockerRun,
   type ProvisionOptions,
 } from "./runner-provision";
+import { globalAgencyName } from "../globalName";
 
 // Ported from the prototype's RunnersSection (cronomicon-settings.jsx).
 // GET /runners, GET|POST /runners/registration-tokens (single-use, Phase 7),
@@ -1455,12 +1456,12 @@ export function Runners() {
             ) : (
               <>
                 {serves.map((a) => (
-                  <span key={a.id} title={`Serves ${a.name}; owned by ${owner?.name ?? "Global"}`} style={agencyChip()}>
+                  <span key={a.id} title={`Serves ${a.name}; owned by ${owner?.name ?? globalAgencyName()}`} style={agencyChip()}>
                     {a.name}
                   </span>
                 ))}
                 <span
-                  title={`A legacy placement: owned by ${owner?.name ?? "Global"}, serving agencies that are not its owner. Expand the row.`}
+                  title={`A legacy placement: owned by ${owner?.name ?? globalAgencyName()}, serving agencies that are not its owner. Expand the row.`}
                   style={{ fontSize: c.fontXs, fontWeight: 600, color: c.warning }}
                 >
                   legacy
@@ -1606,7 +1607,7 @@ export function Runners() {
   const ag = useAgencyOptional();
   const here: AgencyRef | null = ag ? { id: ag.agency, name: ag.agencyName } : null;
   const mayMintFor: AgencyRef[] = canConfigGlobal
-    ? [{ id: GLOBAL_AGENCY, name: "Global" }, ...availableAgencies.filter((a) => a.id !== GLOBAL_AGENCY)]
+    ? [{ id: GLOBAL_AGENCY, name: globalAgencyName() }, ...availableAgencies.filter((a) => a.id !== GLOBAL_AGENCY)]
     : agenciesFor(access ?? null, "configureApp");
   const tokenOwners: AgencyRef[] = here ? [here] : mayMintFor;
   const [mintAgencyPick, setMintAgency] = useState("");

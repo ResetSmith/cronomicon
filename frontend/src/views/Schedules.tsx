@@ -17,6 +17,7 @@ import { CalendarsTab } from "./scheduling/CalendarsTab";
 import { GlobalCalendarBanner } from "./scheduling/GlobalCalendarBanner";
 import { fmtInAppZone } from "../utils/datetime";
 import { RefreshScope } from "../components/RefreshScope";
+import { globalAgencyName } from "../globalName";
 
 type Schedule = components["schemas"]["Schedule"];
 // CO-4 — the table row: the schedule plus its per-render-mode display name.
@@ -167,7 +168,7 @@ function CatalogTab() {
   const composesOn = new Set(agenciesFor(access ?? null, "compose").map((a) => a.id));
   const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
   const agencyName = (id?: string | null) =>
-    !id || id === GLOBAL_AGENCY ? "Global" : (rows<{ id: string; name: string }>(catalogQ.data).find((a) => a.id === id)?.name ?? id);
+    !id || id === GLOBAL_AGENCY ? globalAgencyName() : (rows<{ id: string; name: string }>(catalogQ.data).find((a) => a.id === id)?.name ?? id);
   const whyFor = (sched: Schedule): string => {
     const owner = sched.ownerAgency || GLOBAL_AGENCY;
     // 2.4.2 (question 55): the row says what the caller may do; what follows is

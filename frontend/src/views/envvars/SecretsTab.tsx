@@ -45,6 +45,7 @@ import {
   valueBoxStyle,
 } from "./ui";
 import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
+import { globalAgencyName } from "../../globalName";
 
 type SecretSource = "stored" | "vault";
 
@@ -106,7 +107,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
   // anyone else, and it applies to Global's rows only (rowVaultWhy).
   const [vaultGlobal, setVaultGlobal] = useState(false);
   const vaultWhy = globalOnly(vaultGlobal, VAULT_SECRET_GLOBAL_ONLY);
-  const rowVaultWhy = (v: EnvSecretRow) => (!v.ownerAgency || v.ownerAgency === "Global" ? vaultWhy : "");
+  const rowVaultWhy = (v: EnvSecretRow) => (!v.ownerAgency || v.ownerAgency === globalAgencyName() ? vaultWhy : "");
   useEffect(() => {
     let cancelled = false;
     fetchCapabilities().then((caps) => {
@@ -697,10 +698,10 @@ function SecretFormModal({
   // LR-80 — whose Vault paths apply: the row's owner on an edit, the agency
   // chosen on a create. Global's rows have no path limit and are a global
   // administrator's; an agency's must lie inside that agency's prefixes.
-  const editOwnerId = useAgencyIdByName(isEdit ? initial?.ownerAgency || "Global" : undefined);
+  const editOwnerId = useAgencyIdByName(isEdit ? initial?.ownerAgency || globalAgencyName() : undefined);
   const ownerId = isEdit ? editOwnerId : agencyPick.selected || undefined;
   const ownerName = isEdit
-    ? initial?.ownerAgency || "Global"
+    ? initial?.ownerAgency || globalAgencyName()
     : agencyPick.agencies.find((a) => a.id === agencyPick.selected)?.name || "the agency";
   const prefixes = useVaultPrefixes(ownerId);
   // The owner's own Vault offers the source even where the installation has none.
@@ -958,7 +959,7 @@ function MigrateModal({
   const [formError, setFormError] = useState("");
   // LR-80 — the path must lie inside the Vault paths of the agency that owns
   // the row (no limit for one of Global's).
-  const ownerName = row.ownerAgency || "Global";
+  const ownerName = row.ownerAgency || globalAgencyName();
   const ownerId = useAgencyIdByName(ownerName);
   const prefixes = useVaultPrefixes(ownerId);
   const pathWhy = ownerId === GLOBAL_AGENCY ? "" : vaultPathWhy(prefixes, ownerName, vaultPath);

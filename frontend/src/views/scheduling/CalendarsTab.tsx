@@ -36,6 +36,7 @@ import {
 } from "./calendars";
 import { th, td } from "./ui";
 import { useNameDisambiguator } from "../../utils/disambiguate";
+import { globalAgencyName } from "../../globalName";
 
 // ExpiryBadge (CAL-16) — the only warning surface this feature has, since there
 // is no server-side Doctor to hang an operator-facing check on.
@@ -99,7 +100,7 @@ export function CalendarsTab() {
   const composesOn = new Set(agenciesFor(access ?? null, "compose").map((a) => a.id));
   const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
   const agencyName = (id?: string | null) =>
-    !id || id === GLOBAL_AGENCY ? "Global" : (rows<{ id: string; name: string }>(catalogQ.data).find((a) => a.id === id)?.name ?? id);
+    !id || id === GLOBAL_AGENCY ? globalAgencyName() : (rows<{ id: string; name: string }>(catalogQ.data).find((a) => a.id === id)?.name ?? id);
   // 2.4.2 (question 55): a row says canEdit; this is for a server that does not.
   const mayWrite = (owner?: string | null) => composeAdmin || access == null || composesOn.has(owner || GLOBAL_AGENCY);
   // The calendar open in the editor: its name and owner, or "" for a new one.
@@ -407,7 +408,7 @@ function CalendarEditor({
       </div>
       {readOnly && (
         <div role="note" style={{ fontSize: c.fontSm, color: c.textMuted }}>
-          Read-only. This calendar is {ownerName === "Global" ? "Global's — only a global composer (Compose on every agency)" : `${ownerName}'s — only that agency's composers`} can
+          Read-only. This calendar is {ownerName === globalAgencyName() ? `${ownerName}'s — only a global composer (Compose on every agency)` : `${ownerName}'s — only that agency's composers`} can
           change it.
         </div>
       )}

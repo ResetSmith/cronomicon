@@ -19,7 +19,7 @@ vi.mock("../../api/client", async (importOriginal) => {
         if (path === "/agencies")
           return {
             data: [
-              { id: "global", name: "Global", builtin: true, canEdit: false, canDelete: false, canRepair: true },
+              { id: "global", name: "Global", builtin: true, canEdit: true, canDelete: false, canRepair: true },
               { id: "ag-fin", name: "Finance", canEdit: true, canDelete: true, canRepair: true },
             ],
           };
@@ -43,17 +43,19 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Agencies — the row's own flags (R8)", () => {
-  it("offers a global administrator Edit and Delete on an agency, and neither on Global", async () => {
+  it("offers a global administrator Edit and Delete on an agency, and only Edit on the built-in one (2.5.2 GR)", async () => {
     render(<AgenciesTab canEdit globalAdmin />);
     await waitFor(() => expect(screen.getByText("Finance")).toBeTruthy());
     const rowOf = (name: string) =>
       within(screen.getAllByText(name).map((el) => el.closest("tr")).find((tr) => tr && within(tr).queryByRole("button", { name: "Edit" })) as HTMLElement);
     for (const label of ["Edit", "Delete"]) {
-      const g = rowOf("Global").getByRole("button", { name: label }) as HTMLButtonElement;
-      expect(g.disabled, label).toBe(true);
-      expect(g.title, label).toBe("Global is built in: it is neither renamed nor deleted.");
       expect((rowOf("Finance").getByRole("button", { name: label }) as HTMLButtonElement).disabled, label).toBe(false);
     }
+    // Renamed since 2.5.2 (GR), never deleted.
+    expect((rowOf("Global").getByRole("button", { name: "Edit" }) as HTMLButtonElement).disabled).toBe(false);
+    const del = rowOf("Global").getByRole("button", { name: "Delete" }) as HTMLButtonElement;
+    expect(del.disabled).toBe(true);
+    expect(del.title).toBe("Global is built in: it may be renamed, never deleted.");
   });
 });
 

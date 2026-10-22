@@ -47,7 +47,9 @@ func TestR8_EachRowsFlagsSayWhatItsRouteAnswers(t *testing.T) {
 				if r.CanRepair != global {
 					t.Errorf("%s %s %s: canRepair = %v, want %v", who, c.list, r.ID, r.CanRepair, global)
 				}
-				if r.CanEdit != r.CanDelete {
+				// The built-in agency is the one row whose two differ: renamed since
+				// 2.5.2 (GR), never deleted.
+				if r.CanEdit != r.CanDelete && !(c.list == "/api/v1/agencies" && r.ID == "global") {
 					t.Errorf("%s %s %s: canEdit %v and canDelete %v differ, and their routes have one gate", who, c.list, r.ID, r.CanEdit, r.CanDelete)
 				}
 				code := gateReq(t, h, http.MethodDelete, c.del+r.ID, who, "").Code

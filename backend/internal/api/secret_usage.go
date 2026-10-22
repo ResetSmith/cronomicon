@@ -184,7 +184,7 @@ type judgedJob struct {
 func (s *Server) resolvesHere(ctx context.Context, kind runref.Kind, refName, id string, j judgedJob) (bool, error) {
 	agency := j.agencyName
 	if agency == "" {
-		agency = agencyid.GlobalName
+		agency = agencyid.CurrentGlobalName(ctx, s.db) // the built-in agency's name now (2.5.2 GR)
 	}
 	got, found, err := runref.LookupEntityID(ctx, s.db, kind, refName, j.scope, []string{agency})
 	if errors.Is(err, runref.ErrAmbiguousReference) {

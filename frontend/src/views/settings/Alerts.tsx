@@ -9,6 +9,7 @@ import { useAgencyOptional } from "../../agency";
 import { Btn, Card, Chip, csrfHeader, errMsg, inputStyle, lblStyle, tdStyle, thStyle } from "./ui";
 import { AgencyContactCard } from "./AgencyContact";
 import { ConfirmDialog, SkeletonRows, SortableLabel, statusLabel } from "../../components/ui";
+import { globalAgencyName } from "../../globalName";
 
 type AlertRule = components["schemas"]["AlertRule"];
 type AlertRuleInput = components["schemas"]["AlertRuleInput"];
@@ -40,7 +41,7 @@ export function AlertsSection({ isGlobal }: { isGlobal: boolean }) {
   // cannot be told, and then the server decides.
   const agency = ag?.agency ?? (isGlobal ? GLOBAL_AGENCY : mine.length === 1 ? mine[0].id : "");
   const agencyName =
-    ag?.agencyName ?? (agency === GLOBAL_AGENCY ? "Global" : mine.find((a) => a.id === agency)?.name ?? agency);
+    ag?.agencyName ?? (agency === GLOBAL_AGENCY ? globalAgencyName() : mine.find((a) => a.id === agency)?.name ?? agency);
   // While /me/access loads, or if it cannot be read, nothing here claims the
   // agency is somebody else's: the controls stay live and the server decides.
   const known = isGlobal || access != null;

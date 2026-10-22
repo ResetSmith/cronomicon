@@ -5,6 +5,7 @@ import { REPAIR_HINT, RepairDialog, useRepairAllowed, vaultChangesOf, type Repai
 import { useGet, rows } from "../../hooks";
 import { c } from "../../theme";
 import { inputStyle } from "./ui";
+import { globalAgencyName } from "../../globalName";
 
 type Kind = "secret" | "env-var" | "ssh-credential";
 
@@ -61,9 +62,9 @@ export function MoveAgency({
   // (2.5.1 SG6.2).
   const [vaultChanges, setVaultChanges] = useState<VaultChange[] | null>(null);
 
-  const owner = ownerName || "Global";
-  const ownerId = owner === "Global" ? GLOBAL_AGENCY : catalog.find((a) => a.name === owner)?.id;
-  const candidates: AgencyRef[] = [{ id: GLOBAL_AGENCY, name: "Global" }, ...catalog.filter((a) => a.id !== GLOBAL_AGENCY)].filter(
+  const owner = ownerName || globalAgencyName();
+  const ownerId = owner === globalAgencyName() ? GLOBAL_AGENCY : catalog.find((a) => a.name === owner)?.id;
+  const candidates: AgencyRef[] = [{ id: GLOBAL_AGENCY, name: globalAgencyName() }, ...catalog.filter((a) => a.id !== GLOBAL_AGENCY)].filter(
     (a) => a.id !== ownerId,
   );
 
@@ -133,7 +134,7 @@ export function MoveAgency({
                   {target.name}'s administrators will manage it, and only {target.name}'s runs will resolve it.
                 </>
               )}{" "}
-              {owner === "Global" ? "Runs of every other agency" : `${owner}'s runs`} that bind this {NOUN[kind]} will stop resolving it
+              {owner === globalAgencyName() ? "Runs of every other agency" : `${owner}'s runs`} that bind this {NOUN[kind]} will stop resolving it
               the next time they start. Check where it is used before moving it.
             </>
           }

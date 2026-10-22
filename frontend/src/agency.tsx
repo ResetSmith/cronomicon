@@ -5,6 +5,7 @@ import { AGENCY_REFRESH_EVENT, api, csrfHeader, errMsg, setRequestAgency } from 
 import { useToast } from "./hooks";
 import { Toast } from "./components/ui";
 import { c } from "./theme";
+import { setGlobalAgencyName } from "./globalName";
 
 // The agency switcher (2.4.4; plan-2.4.4 §3, SW-1 to SW-19).
 //
@@ -22,6 +23,8 @@ import { c } from "./theme";
 
 export const OVERVIEW = "overview";
 export const AGENCY_PARAM = "agency";
+/** The built-in agency's id: fixed, whatever it is called (2.5.2 GR). */
+const GLOBAL_AGENCY_ID = "global";
 
 /**
  * VIEW_PARAMS are the query parameters that say how a page is shown, and are
@@ -45,6 +48,8 @@ type MeContext = {
   effectiveDefault: string;
   workingAgency: string;
   canOverview: boolean;
+  /** 2.5.2 GR — the built-in agency's name now (id "global"); absent from an older server. */
+  globalName?: string;
 };
 
 type AgencyCtx = {
@@ -54,6 +59,8 @@ type AgencyCtx = {
   onOverview: boolean;
   choices: AgencyChoice[];
   canOverview: boolean;
+  /** The built-in agency's name now (2.5.2 GR); read it with useGlobalName. */
+  globalName: string;
   /** The person's own default, as stored (null when none). */
   storedDefault: string | null;
   /** Where a visit with no agency in its address starts. */
@@ -81,6 +88,17 @@ export function useAgency(): AgencyCtx {
  * provider (a test, the login screen): null there. */
 export function useAgencyOptional(): AgencyCtx | null {
   return useContext(Ctx);
+}
+
+/**
+ * useGlobalName — the built-in agency's name now (2.5.2 GR): "Central" on a new
+ * installation, "Global" on an older one until a global administrator renames
+ * it. Read it here, never write the literal: an owner name compared with
+ * "Global" stops matching the day the agency is renamed. "Global" outside the
+ * provider (a test) or from a server that does not say.
+ */
+export function useGlobalName(): string {
+  return useContext(Ctx)?.globalName ?? "Global";
 }
 
 /**
@@ -136,7 +154,10 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
     [me],
   );
   const nameOf = useCallback(
-    (id: string) => (id === OVERVIEW ? "All agencies" : me?.choices.find((ch) => ch.id === id)?.name ?? id),
+    (id: string) =>
+      id === OVERVIEW
+        ? "All agencies"
+        : me?.choices.find((ch) => ch.id === id)?.name ?? (id === GLOBAL_AGENCY_ID ? (me?.globalName ?? "Global") : id),
     [me],
   );
 
@@ -253,6 +274,7 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
       onOverview,
       choices: me.choices,
       canOverview: me.canOverview,
+      globalName: me.globalName ?? "Global",
       storedDefault: me.storedDefault ?? null,
       effectiveDefault: me.effectiveDefault,
       nameOf,
@@ -276,6 +298,8 @@ export function AgencyProvider({ children }: { children: ReactNode }) {
   // Set during render, before any child's effect fetches, so a list never
   // asks without the agency.
   setRequestAgency(value.agency);
+  // 2.5.2 GR: the built-in agency's name for plain functions and labels (globalName.ts).
+  setGlobalAgencyName(value.globalName);
   return (
     <Ctx.Provider value={value}>
       {children}

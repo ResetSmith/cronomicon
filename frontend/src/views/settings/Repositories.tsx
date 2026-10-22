@@ -4,6 +4,7 @@ import type { components } from "../../api/schema";
 import { agenciesFor, useMyAccess } from "../../api/access";
 import { c } from "../../theme";
 import { Btn, Card, SettingRow, Toggle, csrfHeader, errMsg, fmtDateTime, inputStyle } from "./ui";
+import { globalAgencyName } from "../../globalName";
 
 type GitRepo = components["schemas"]["GitRepo"];
 type GitlabConfig = components["schemas"]["GitlabConfig"];
@@ -90,7 +91,7 @@ function RepoCard({ repo, onSaved, unconnected }: { repo: GitRepo; onSaved: () =
   const [problems, setProblems] = useState<{ path: string; kind: string; severity: string; message: string; firstSeen?: string }[] | null>(null);
   const patch = (p: Partial<GitlabConfig>) => setForm((f) => ({ ...f, ...p }));
   const agencyId = repo.agencyId;
-  const label = repo.agencyId === "global" ? "Global" : (repo.agencyName ?? repo.agencyId);
+  const label = repo.agencyId === "global" ? globalAgencyName() : (repo.agencyName ?? repo.agencyId);
 
   useEffect(() => {
     if (!repo.id) return;

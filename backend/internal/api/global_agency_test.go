@@ -12,33 +12,35 @@ import (
 // is nobody's to grant, a row is in it or in a department and never both, and
 // a row that is in no agency at all is a fault, not a meaning.
 
-// LR-21, LR-27 — the built-in agency cannot be renamed, deleted or imitated,
-// by anyone.
-func TestGlobalAgency_IsPermanentAndItsNameIsReserved(t *testing.T) {
+// LR-21, LR-27 — the built-in agency cannot be deleted, by anyone. Since 2.5.2
+// (GR) it may be renamed, by a global administrator, and no name is reserved:
+// names are unique, and that is the only rule.
+func TestGlobalAgency_IsPermanentAndRenamable(t *testing.T) {
 	h, pool := gateServer(t)
-	for _, c := range []struct {
-		name, method, path, body, code string
-	}{
-		{"rename Global", http.MethodPut, "/api/v1/agencies/global", `{"name":"Everyone"}`, "builtin_agency"},
-		{"delete Global", http.MethodDelete, "/api/v1/agencies/global", ``, "builtin_agency"},
-		{"create another Global", http.MethodPost, "/api/v1/agencies", `{"name":"gLOBAL","repository":{"repoUrl":"https://git.example.com/g.git"}}`, "name_reserved"},
-		{"rename an agency to Global", http.MethodPut, "/api/v1/agencies/ag:FIN", `{"name":"global"}`, "name_reserved"},
-	} {
-		rec := gateReq(t, h, c.method, c.path, gRoot, c.body)
-		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != c.code {
-			t.Errorf("%s = %d %s, want 422 %s (%s)", c.name, rec.Code, errCode(rec.Body.Bytes()), c.code, rec.Body)
-		}
+	if rec := gateReq(t, h, http.MethodDelete, "/api/v1/agencies/global", gRoot, ``); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "builtin_agency" {
+		t.Errorf("delete Global = %d %s, want 422 builtin_agency (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM agencies WHERE id='global' AND name='Global' AND builtin=1`); n != 1 {
-		t.Fatal("the Global row did not survive")
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/global", gFinAdmin, `{"name":"Central"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("FIN's admin renaming the built-in agency = %d, want 403 (%s)", rec.Code, rec.Body)
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM agencies WHERE lower(name)='global'`); n != 1 {
-		t.Fatalf("%d agencies are called Global", n)
-	}
-	// Its description is an ordinary field, for a global administrator.
-	rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/global", gRoot, `{"name":"Global","description":"the platform team"}`)
+	rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/global", gRoot, `{"name":"Central","description":"the platform team"}`)
 	if rec.Code != http.StatusOK {
-		t.Errorf("describing Global = %d, want 200 (%s)", rec.Code, rec.Body)
+		t.Fatalf("renaming the built-in agency = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM agencies WHERE id='global' AND name='Central' AND builtin=1`); n != 1 {
+		t.Fatal("the built-in row was not renamed, or lost its mark")
+	}
+	// "Global" is an ordinary name now, free for another agency…
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN", gRoot, `{"name":"Global"}`); rec.Code != http.StatusOK {
+		t.Errorf("renaming FIN to Global once it is free = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	// …and a name in use is refused, the built-in agency's included.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:TAX", gRoot, `{"name":"Central"}`); rec.Code/100 == 2 {
+		t.Errorf("renaming TAX to the built-in agency's name = %d, want a refusal (%s)", rec.Code, rec.Body)
+	}
+	// The database keeps the mark even for a write that does not come through the route.
+	if _, err := pool.Exec(`UPDATE agencies SET builtin = 0 WHERE id = 'global'`); err == nil {
+		t.Error("a raw write un-marked the built-in agency")
 	}
 }
 

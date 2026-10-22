@@ -697,11 +697,8 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "agency name is required")
 		return
 	}
-	// The name's own rules first: they need no remote.
-	if agencyid.IsGlobalName(strings.TrimSpace(inp.Name)) {
-		failAgencyRule(w, settings.ErrAgencyNameReserved)
-		return
-	}
+	// The name's own rule first: it needs no remote. Since 2.5.2 (GR) no name is
+	// reserved; a name is unique, and that is all.
 	var taken int
 	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE name = ?`, strings.TrimSpace(inp.Name)).Scan(&taken); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -1173,8 +1170,6 @@ func failAgencyRule(w http.ResponseWriter, err error) bool {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "global_mixed", err.Error())
 	case errors.Is(err, settings.ErrBuiltinAgency):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "builtin_agency", err.Error())
-	case errors.Is(err, settings.ErrAgencyNameReserved):
-		httpx.Fail(w, http.StatusUnprocessableEntity, "name_reserved", err.Error())
 	case errors.Is(err, settings.ErrOneAgency):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "one_agency", err.Error())
 	case errors.Is(err, settings.ErrScopeAgencyFixed):

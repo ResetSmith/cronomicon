@@ -175,6 +175,10 @@ func run() error {
 		return fmt.Errorf("open db: %w", err)
 	}
 	defer pool.Close()
+	// 2.5.2 GR: the schema version this start found. 0 is a database this start
+	// creates — a new installation, whose built-in agency is named "Central"
+	// below — which a migration cannot tell from an existing empty one.
+	startVersion, _, _ := db.Status(pool)
 	if err := db.Migrate(pool); err != nil {
 		return fmt.Errorf("migrate db: %w", err)
 	}
@@ -188,6 +192,17 @@ func run() error {
 	// setting / env_var write (secrets.RedactionSourceChanged) and reports a
 	// degraded build once per outage as an `Audit / redactor-unavailable` row.
 	redactdict.Install(pool, cfg, logger)
+
+	// 2.5.2 GR: a new installation calls its built-in agency "Central"; an
+	// existing one keeps "Global" until a global administrator renames it.
+	// After the masker (the rename is audited) and before the seed (whose runs
+	// carry the agency's name).
+	if startVersion == 0 {
+		if err := settings.NameNewInstallationAgency(context.Background(), pool); err != nil {
+			return err
+		}
+		logger.Info("new installation: the built-in agency is named " + settings.NewInstallationAgencyName)
+	}
 
 	// The "why can't this run be claimed" explainers apply the claim query's
 	// rules from places that hold no configuration; tell them whether the

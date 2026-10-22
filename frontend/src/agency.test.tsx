@@ -149,6 +149,23 @@ describe("the agency context (2.4.4 F1)", () => {
     expect(screen.getByTestId("agency").textContent).toBe("ag-b");
   });
 
+  it("names the built-in agency by its name now, to people who do not read its rows (2.5.2 GR)", async () => {
+    // FIN's admin: Global is not among their choices, and its name still shows.
+    CONTEXT = { ...CONTEXT, choices: agencies.slice(1), globalName: "Central" };
+    function Named() {
+      const ag = useAgency();
+      return <span data-testid="global-name">{ag.nameOf("global")}|{ag.globalName}</span>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/jobs"]}>
+        <AgencyProvider>
+          <Named />
+        </AgencyProvider>
+      </MemoryRouter>,
+    );
+    expect((await screen.findByTestId("global-name")).textContent).toBe("Central|Central");
+  });
+
   it("reads the choices again when a request is refused", async () => {
     renderAt("/jobs");
     await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("ag-a"));

@@ -132,10 +132,9 @@ func (s *Server) bastionFlags(ctx context.Context, id auth.Identity, bastionID s
 }
 
 // agencyFlags is the agency catalog's gate (requireGlobal): a global
-// administrator edits and deletes an agency; Global, the built-in agency, is
-// neither renamed nor deleted (422 builtin_agency).
+// administrator edits and deletes an agency; the built-in agency is edited
+// (renamed, since 2.5.2 GR) but never deleted (422 builtin_agency).
 func agencyFlags(id auth.Identity, agencyID string) rowFlags {
 	g := id.GlobalAdmin(auth.PermConfigureApp)
-	mutable := g && agencyID != agencyid.Global
-	return rowFlags{CanEdit: mutable, CanDelete: mutable, CanRepair: g}
+	return rowFlags{CanEdit: g, CanDelete: g && agencyID != agencyid.Global, CanRepair: g}
 }

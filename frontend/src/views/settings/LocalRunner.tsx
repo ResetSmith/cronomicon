@@ -7,6 +7,7 @@ import { c } from "../../theme";
 import { AlertBanner, ConfirmDialog, InlineLoading } from "../../components/ui";
 import { globalOnly } from "../../api/globalAdmin";
 import { Btn, Card, SettingRow, csrfHeader, errMsg, inputStyle } from "./ui";
+import { globalAgencyName } from "../../globalName";
 
 type LocalRunner = components["schemas"]["LocalRunner"];
 
@@ -122,7 +123,7 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
           hint="Global: the jobs with no scope and Global's own scopes. An agency's runs are claimed by an agent enrolled for that agency. Narrow a scope to particular runners by binding it, on the Scopes page."
           last
         >
-          <span style={{ fontWeight: 600, color: c.text }}>{serves.map((a) => a.name).join(", ") || "Global"}</span>
+          <span style={{ fontWeight: 600, color: c.text }}>{serves.map((a) => a.name).join(", ") || globalAgencyName()}</span>
         </SettingRow>
       </Card>
 
@@ -134,7 +135,7 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
           message={
             <>
               This server will hold SSH private keys in memory and open connections to job targets. It starts claiming at once:
-              queued shell runs of {serves.map((a) => a.name).join(", ") || "Global"} that no other runner has taken
+              queued shell runs of {serves.map((a) => a.name).join(", ") || globalAgencyName()} that no other runner has taken
               will run from here. The change is recorded with your name.
             </>
           }
