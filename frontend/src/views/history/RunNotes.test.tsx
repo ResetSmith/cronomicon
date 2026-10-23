@@ -2,10 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-// 2.5.2 OP4 — the run's acknowledgement and notes: the thread in order with
-// each author's label, acknowledging (with the draft as its first note),
-// adding a note, taking an acknowledgement back, and a draft that survives
-// the thread being read again.
+// 2.5.2 OP4 — the run's acknowledgement and notes: the thread newest first
+// with each author's label, about five in view and paged ten at a time,
+// acknowledging (with the draft as its first note), adding a note, taking an
+// acknowledgement back, and a draft that survives the thread being read again.
 
 type Entry = { id: number; kind: string; body: string; author: string; relation: string; at: string };
 let ENTRIES: Entry[] = [];
@@ -69,7 +69,7 @@ describe("the run notes panel (2.5.2 OP4)", () => {
     expect(relationLabel("outside", "Payroll", "Central")).toBe("Central");
   });
 
-  it("shows the thread oldest first, the state, and the labels", async () => {
+  it("shows the thread newest first, the state, and the labels", async () => {
     ENTRIES = [
       { id: 1, kind: "acknowledged", body: "Looking at it.", author: "j.ortiz@example.gov", relation: "outside", at: "2026-10-22T02:11:00Z" },
       { id: 2, kind: "note", body: "The bank added a header row.", author: "a.novak@example.gov", relation: "member", at: "2026-10-22T06:15:00Z" },
@@ -77,9 +77,9 @@ describe("the run notes panel (2.5.2 OP4)", () => {
     render(<RunNotesPanel kind="run" traceId="t-1" agencyId="Payroll" offerAck />);
     const items = await screen.findAllByTestId("run-note");
     expect(items).toHaveLength(2);
-    expect(items[0].textContent).toContain("j.ortiz@example.gov · Global");
-    expect(items[0].textContent).toContain("acknowledged");
-    expect(items[1].textContent).toContain("a.novak@example.gov · Payroll");
+    expect(items[0].textContent).toContain("a.novak@example.gov · Payroll");
+    expect(items[1].textContent).toContain("j.ortiz@example.gov · Global");
+    expect(items[1].textContent).toContain("acknowledged");
     expect(screen.getByTestId("run-ack-state").textContent).toContain("Acknowledged by j.ortiz@example.gov · Global");
     expect(screen.getByRole("button", { name: "Remove acknowledgement" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Acknowledge" })).toBeNull();
@@ -130,7 +130,65 @@ describe("the run notes panel (2.5.2 OP4)", () => {
     await waitFor(() => expect(screen.queryByTestId("run-ack-state")).toBeNull());
     expect((POST.mock.calls[0][1] as { body: { kind: string } }).body.kind).toBe("unacknowledged");
     expect((screen.getByLabelText("Add a note") as HTMLTextAreaElement).value).toBe("half-written");
-    const last = screen.getAllByTestId("run-note").at(-1) as HTMLElement;
-    expect(within(last).getByText("acknowledgement removed")).toBeTruthy();
+    const newest = screen.getAllByTestId("run-note")[0];
+    expect(within(newest).getByText("acknowledgement removed")).toBeTruthy();
+  });
+
+  it("keeps about five entries in view and scrolls the rest", async () => {
+    ENTRIES = notes(7);
+    render(<RunNotesPanel kind="run" traceId="t-1" agencyId="Payroll" offerAck={false} />);
+    expect(await screen.findAllByTestId("run-note")).toHaveLength(7);
+    const box = screen.getByTestId("run-notes-list");
+    expect(box.style.overflowY).toBe("auto");
+    expect(box.style.maxHeight).toBe("280px");
+    expect(screen.queryByRole("button", { name: "Next →" })).toBeNull();
+  });
+
+  it("pages ten at a time past ten, newest on the first page", async () => {
+    ENTRIES = notes(10);
+    const { unmount } = render(<RunNotesPanel kind="run" traceId="t-1" agencyId="Payroll" offerAck={false} />);
+    expect(await screen.findAllByTestId("run-note")).toHaveLength(10);
+    expect(screen.queryByRole("button", { name: "Next →" })).toBeNull();
+    unmount();
+
+    ENTRIES = notes(23);
+    render(<RunNotesPanel kind="run" traceId="t-1" agencyId="Payroll" offerAck={false} />);
+    let items = await screen.findAllByTestId("run-note");
+    expect(items).toHaveLength(10);
+    expect(items[0].textContent).toContain("Note 23");
+    expect(screen.getByText("1–10 of 23 notes")).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Rows per page" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Next →" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next →" }));
+    items = screen.getAllByTestId("run-note");
+    expect(items).toHaveLength(3);
+    expect(items[0].textContent).toContain("Note 3");
+    expect(items[2].textContent).toContain("Note 1");
+    expect(screen.getByText("21–23 of 23 notes")).toBeTruthy();
+  });
+
+  it("returns to the first page after adding a note, so the new note shows on top", async () => {
+    ENTRIES = notes(12);
+    render(<RunNotesPanel kind="run" traceId="t-1" agencyId="Payroll" offerAck={false} />);
+    await screen.findAllByTestId("run-note");
+    fireEvent.click(screen.getByRole("button", { name: "Next →" }));
+    expect(screen.getAllByTestId("run-note")).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText("Add a note"), { target: { value: "Rerun at 08:00." } });
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+    await waitFor(() => expect(screen.getAllByTestId("run-note")[0].textContent).toContain("Rerun at 08:00."));
+    expect(screen.getAllByTestId("run-note")).toHaveLength(10);
+    expect(screen.getByText("1–10 of 13 notes")).toBeTruthy();
   });
 });
+
+/** n plain notes, oldest first as the server sends them: "Note 1" … "Note n". */
+function notes(n: number): Entry[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: i + 1,
+    kind: "note",
+    body: `Note ${i + 1}`,
+    author: "a.novak@example.gov",
+    relation: "member",
+    at: `2026-10-22T06:${String(i).padStart(2, "0")}:00Z`,
+  }));
+}

@@ -66,9 +66,10 @@ caution there); the schema goes from 1210 to 1660.
 - **Acknowledgement and notes on a run.** A panel on a run's detail, between
   its fields and its log: **Acknowledge** (with an optional first note),
   **Remove acknowledgement**, and an append-only thread of notes (at most 1,000
-  characters each), each with its author and how they stood to the run's
-  agency (the agency's name, *Global administrator*, or the built-in agency's
-  name). Anyone who can read the run may write, so a viewer whose access
+  characters each; newest first, about five in view with the rest scrolling,
+  paged ten at a time past ten), each with its author and how they stood to
+  the run's agency (the agency's name, *Global administrator*, or the built-in
+  agency's name). Anyone who can read the run may write, so a viewer whose access
   reaches every agency can acknowledge any agency's run. Each entry is
   recorded in the run's agency's change log (category `Runs`) and Activity.
   History has a **Notes** column (a tick and the count, or *Not
@@ -102,6 +103,25 @@ caution there); the schema goes from 1210 to 1660.
   rename; a run that has started keeps the name it started with.
 - **A new installation calls the built-in agency *Central*.** An upgraded one
   keeps *Global* until someone renames it.
+
+### Fixed
+
+- **An opened row stays within the window when its table is wider than
+  the window.** A row that opens into a detail spans every column, so in a
+  narrower window its right side (a run's *Remove acknowledgement* and its
+  notes' *Next →*, a job's *Run*, a workflow's *Pause*, a secret's or a
+  scope's actions) sat off screen behind the table's sideways scroll, or the
+  whole page scrolled sideways. The opened row now fits the visible part of
+  its table and stays put while the row's cells scroll beneath it, and its
+  contents no longer widen the table. This covers History (Executions,
+  Workflow Runs, Git Sync), Jobs and a job's Recent runs, Scripts,
+  Schedules, Workflows, Env Vars (Variables, Secrets, SSH Keys), Scopes
+  (Scopes, Agencies), Runners and Settings → SSH Targets. Tables that had no
+  sideways scroll of their own (Workflows, Schedules' search results, Env
+  Vars, Scopes) now scroll inside the page instead of the page scrolling.
+- **Settings no longer widens the page for a wide table.** SSH Targets' host
+  and bastion tables pushed the whole Settings page past the window; they
+  now scroll inside their cards, as Recent Logins does on Users & Access.
 
 ### Known, and worth knowing
 

@@ -5,7 +5,7 @@ import { useGet, rows, useColumnWidths, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
-import { SkeletonRows } from "../../components/ui";
+import { DetailCell, SkeletonRows } from "../../components/ui";
 import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../../api/access";
 import { useAgencyOptional } from "../../agency";
 import { Btn, Card, StatusBadge, csrfHeader, errMsg, fmtDateTime, inputStyle } from "./ui";
@@ -954,11 +954,11 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
                       </tr>
                       {editing && (
                         <tr style={{ borderBottom: `1px solid ${c.border}` }}>
-                          <td colSpan={hostCols.visible.length} style={{ padding: "10px 14px", background: `${c.primary}0d` }}>
+                          <DetailCell colSpan={hostCols.visible.length} padding="10px 14px" background={`${c.primary}0d`}>
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                               {hostFields(editHostForm, (p) => setEditHostForm((f) => ({ ...f, ...p })), false)}
                             </div>
-                          </td>
+                          </DetailCell>
                         </tr>
                       )}
                     </Fragment>
@@ -1023,11 +1023,11 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
                       </tr>
                       {editing && (
                         <tr style={{ borderBottom: `1px solid ${c.border}` }}>
-                          <td colSpan={bastionCols.visible.length} style={{ padding: "10px 14px", background: `${c.primary}0d` }}>
+                          <DetailCell colSpan={bastionCols.visible.length} padding="10px 14px" background={`${c.primary}0d`}>
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                               {bastionFields(editBastionForm, (p) => setEditBastionForm((f) => ({ ...f, ...p })), false)}
                             </div>
-                          </td>
+                          </DetailCell>
                         </tr>
                       )}
                     </Fragment>

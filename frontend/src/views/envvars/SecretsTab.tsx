@@ -11,7 +11,7 @@ import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../comp
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
-import { DetailPanel, EmptyCell, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
+import { DetailCell, DetailPanel, EmptyCell, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
 import {
   Btn,
   Chevron,
@@ -432,165 +432,168 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         </div>
       )}
       {filtered.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
-          <thead>
-            <TableHead
-              columns={cols.visible}
-              sort={sort}
-              cw={cw}
-              trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
-            />
-          </thead>
-          <tbody>
-            {sort.sorted.map((v) => {
-              const isVault = v.source === "vault";
-              const shown = v.id != null ? revealed[v.id] : undefined;
-              const isExp = v.id != null && expanded === v.id;
-              const toggle = () => setExpanded(isExp ? null : (v.id ?? null));
-              const rowBg = isExp ? c.primaryBg : "transparent";
-              return (
-                <Fragment key={v.id ?? v.key}>
-                  <tr
-                    onClick={toggle}
-                    onMouseEnter={(e) => { if (!isExp) e.currentTarget.style.background = c.panelHover; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
-                    style={{ borderBottom: isExp ? "none" : `1px solid ${c.border}`, background: rowBg, cursor: "pointer", transition: "background 0.15s" }}
-                  >
-                    {renderCells(cols.visible, v, { rowStyle: { borderBottom: "none" } })}
-                  </tr>
-                  {isExp && (
-                    <tr style={{ background: rowBg, borderBottom: `1px solid ${c.border}` }}>
-                      <td style={{ borderBottom: "none" }} />
-                      <td colSpan={cols.visible.length - 1} style={{ padding: "2px 16px 16px", borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
-                        {/* EP-4 Shape B — this panel renders the LIST ROW, so
-                            "refresh this panel" means reload the list. Uses
-                            reloadList, not refetch: refetch also collapses the
-                            expansion, which would close the panel the button
-                            was asked to refresh. */}
-                        <DetailPanel also={reloadList}>
-                        <DetailGrid>
-                          <div>
-                            <DetailLabel
-                              action={
-                                !isVault && v.revealLocked ? (
-                                  <span
-                                    title={`Made unrevealable${v.revealLockedBy ? ` by ${v.revealLockedBy}` : ""}${v.revealLockedAt ? ` on ${fmtDate(v.revealLockedAt)}` : ""}: runs still use it, and nobody reveals it.`}
-                                    style={{ color: c.textMuted, fontSize: c.fontSm, whiteSpace: "nowrap", flexShrink: 0 }}
-                                  >
-                                    Not revealable
-                                  </span>
-                                ) : !isVault && canEdit ? (
-                                  <span
-                                    onClick={() => toggleReveal(v)}
-                                    style={{ cursor: "pointer", color: c.primary, fontSize: c.fontSm, whiteSpace: "nowrap", flexShrink: 0 }}
-                                  >
-                                    {revealBusy === v.id ? "…" : shown !== undefined ? "Hide" : "Reveal"}
-                                  </span>
-                                ) : undefined
-                              }
-                            >
-                              {isVault ? "Vault Reference" : "Secret Value"}
-                            </DetailLabel>
-                            <div
-                              style={{
-                                ...valueBoxStyle(),
-                                fontFamily: c.mono,
-                                fontSize: isVault ? c.fontXs : shown !== undefined ? c.fontSm : c.fontXs,
-                                color: isVault ? c.primary : shown !== undefined ? c.text : c.textMuted,
-                                letterSpacing: !isVault && shown === undefined ? 2 : 0,
-                              }}
-                              title={isVault ? "Vault reference — resolved at run time" : undefined}
-                            >
-                              {isVault ? v.vaultPath || "—" : shown !== undefined ? shown : MASK}
-                            </div>
-                          </div>
-                          <div>
-                            <DetailLabel>Details</DetailLabel>
-                            <div style={detailBoxStyle()}>
-                              <DetailRow label="Scope" value={v.scope || "global (injectable from every scope)"} />
-                              <DetailRow label="Used by" value={<UsageCell {...usage.usageFor("secret", v.key)} />} />
-                              <DetailRow label="Description" value={v.description || "—"} />
-                              <DetailRow
-                                label="Source"
-                                value={
-                                  <span
-                                    style={{
-                                      display: "inline-flex",
-                                      padding: "2px 7px",
-                                      borderRadius: c.radiusChip,
-                                      fontSize: c.fontXs,
-                                      fontWeight: 600,
-                                      background: isVault ? `${c.primary}22` : c.panel2,
-                                      color: isVault ? c.primary : c.textMuted,
-                                    }}
-                                  >
-                                    {isVault ? "Vault reference" : "Stored in Cronomicon"}
-                                  </span>
-                                }
-                              />
-                              <DetailRow label={isVault ? "Last Resolved" : "Last Rotated"} value={fmtDate(v.lastModifiedAt)} />
-                              <DetailRow label="Created By" value={v.createdBy || "—"} last />
-                              {canEdit && v.id && (
-                                <MoveAgency
-                                  kind="secret"
-                                  id={v.id}
-                                  name={v.key}
-                                  ownerName={v.ownerAgency}
-                                  canRepair={v.canRepair}
-                                  onMoved={(text) => {
-                                    setNotice({ kind: "info", text });
-                                    refetch();
-                                  }}
-                                  onError={(text) => setNotice({ kind: "error", text })}
-                                />
-                              )}
-                              {!isVault && canEdit && !v.revealLocked && (
-                                <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
-                                  {/* The row's own flag, as Edit and Delete: the lock is its
-                                      owner's (2.5.1 SG-42), not the page's verb anywhere. */}
-                                  <Btn
-                                    onClick={() => setLocking(v)}
-                                    disabled={!!rowFlagWhy(v.canEdit, v.ownerAgency, "secret")}
-                                    title={rowFlagWhy(v.canEdit, v.ownerAgency, "secret") || undefined}
-                                  >
-                                    Make unrevealable…
-                                  </Btn>
-                                  <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
-                                    Nobody can reveal it afterwards, global administrators included. Runs still use it.
-                                  </span>
-                                </div>
-                              )}
-                              {!isVault && vaultEnabled && (
-                                <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
-                                  <Btn onClick={() => setMigrating(v)} disabled={!!rowVaultWhy(v)} title={rowVaultWhy(v) || undefined}>
-                                    Migrate to Vault
-                                  </Btn>
-                                  <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
-                                    {rowVaultWhy(v) || "Converts this entry to a vault reference"}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </DetailGrid>
-                        {v.id && <RowUsagePanel kind="secret" id={v.id} />}
-                        </DetailPanel>
-                        <ReferenceField reference={v.reference} semantics="Resolves to the secret value at run time (always redacted in logs)." />
-                        <div style={{ marginTop: 12 }}>
-                          <DetailLabel>Tags</DetailLabel>
-                          <TagEditor tags={tagState.tagsFor(v)} onChange={(next) => tagState.save(v, next)} disabled={!canEdit} />
-                          {tagState.errors[String(v.id)] && (
-                            <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(v.id)]}</div>
-                          )}
-                        </div>
-                      </td>
+        <div style={{ overflowX: "auto" }}>
+          {/* The table's own sideways scroll, which an open row's DetailCell holds itself to (2.5.2). */}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
+            <thead>
+              <TableHead
+                columns={cols.visible}
+                sort={sort}
+                cw={cw}
+                trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
+              />
+            </thead>
+            <tbody>
+              {sort.sorted.map((v) => {
+                const isVault = v.source === "vault";
+                const shown = v.id != null ? revealed[v.id] : undefined;
+                const isExp = v.id != null && expanded === v.id;
+                const toggle = () => setExpanded(isExp ? null : (v.id ?? null));
+                const rowBg = isExp ? c.primaryBg : "transparent";
+                return (
+                  <Fragment key={v.id ?? v.key}>
+                    <tr
+                      onClick={toggle}
+                      onMouseEnter={(e) => { if (!isExp) e.currentTarget.style.background = c.panelHover; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
+                      style={{ borderBottom: isExp ? "none" : `1px solid ${c.border}`, background: rowBg, cursor: "pointer", transition: "background 0.15s" }}
+                    >
+                      {renderCells(cols.visible, v, { rowStyle: { borderBottom: "none" } })}
                     </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                    {isExp && (
+                      <tr style={{ background: rowBg, borderBottom: `1px solid ${c.border}` }}>
+                        <td style={{ borderBottom: "none" }} />
+                        <DetailCell colSpan={cols.visible.length - 1} padding="2px 16px 16px" cellStyle={{ borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
+                          {/* EP-4 Shape B — this panel renders the LIST ROW, so
+                              "refresh this panel" means reload the list. Uses
+                              reloadList, not refetch: refetch also collapses the
+                              expansion, which would close the panel the button
+                              was asked to refresh. */}
+                          <DetailPanel also={reloadList}>
+                          <DetailGrid>
+                            <div>
+                              <DetailLabel
+                                action={
+                                  !isVault && v.revealLocked ? (
+                                    <span
+                                      title={`Made unrevealable${v.revealLockedBy ? ` by ${v.revealLockedBy}` : ""}${v.revealLockedAt ? ` on ${fmtDate(v.revealLockedAt)}` : ""}: runs still use it, and nobody reveals it.`}
+                                      style={{ color: c.textMuted, fontSize: c.fontSm, whiteSpace: "nowrap", flexShrink: 0 }}
+                                    >
+                                      Not revealable
+                                    </span>
+                                  ) : !isVault && canEdit ? (
+                                    <span
+                                      onClick={() => toggleReveal(v)}
+                                      style={{ cursor: "pointer", color: c.primary, fontSize: c.fontSm, whiteSpace: "nowrap", flexShrink: 0 }}
+                                    >
+                                      {revealBusy === v.id ? "…" : shown !== undefined ? "Hide" : "Reveal"}
+                                    </span>
+                                  ) : undefined
+                                }
+                              >
+                                {isVault ? "Vault Reference" : "Secret Value"}
+                              </DetailLabel>
+                              <div
+                                style={{
+                                  ...valueBoxStyle(),
+                                  fontFamily: c.mono,
+                                  fontSize: isVault ? c.fontXs : shown !== undefined ? c.fontSm : c.fontXs,
+                                  color: isVault ? c.primary : shown !== undefined ? c.text : c.textMuted,
+                                  letterSpacing: !isVault && shown === undefined ? 2 : 0,
+                                }}
+                                title={isVault ? "Vault reference — resolved at run time" : undefined}
+                              >
+                                {isVault ? v.vaultPath || "—" : shown !== undefined ? shown : MASK}
+                              </div>
+                            </div>
+                            <div>
+                              <DetailLabel>Details</DetailLabel>
+                              <div style={detailBoxStyle()}>
+                                <DetailRow label="Scope" value={v.scope || "global (injectable from every scope)"} />
+                                <DetailRow label="Used by" value={<UsageCell {...usage.usageFor("secret", v.key)} />} />
+                                <DetailRow label="Description" value={v.description || "—"} />
+                                <DetailRow
+                                  label="Source"
+                                  value={
+                                    <span
+                                      style={{
+                                        display: "inline-flex",
+                                        padding: "2px 7px",
+                                        borderRadius: c.radiusChip,
+                                        fontSize: c.fontXs,
+                                        fontWeight: 600,
+                                        background: isVault ? `${c.primary}22` : c.panel2,
+                                        color: isVault ? c.primary : c.textMuted,
+                                      }}
+                                    >
+                                      {isVault ? "Vault reference" : "Stored in Cronomicon"}
+                                    </span>
+                                  }
+                                />
+                                <DetailRow label={isVault ? "Last Resolved" : "Last Rotated"} value={fmtDate(v.lastModifiedAt)} />
+                                <DetailRow label="Created By" value={v.createdBy || "—"} last />
+                                {canEdit && v.id && (
+                                  <MoveAgency
+                                    kind="secret"
+                                    id={v.id}
+                                    name={v.key}
+                                    ownerName={v.ownerAgency}
+                                    canRepair={v.canRepair}
+                                    onMoved={(text) => {
+                                      setNotice({ kind: "info", text });
+                                      refetch();
+                                    }}
+                                    onError={(text) => setNotice({ kind: "error", text })}
+                                  />
+                                )}
+                                {!isVault && canEdit && !v.revealLocked && (
+                                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
+                                    {/* The row's own flag, as Edit and Delete: the lock is its
+                                        owner's (2.5.1 SG-42), not the page's verb anywhere. */}
+                                    <Btn
+                                      onClick={() => setLocking(v)}
+                                      disabled={!!rowFlagWhy(v.canEdit, v.ownerAgency, "secret")}
+                                      title={rowFlagWhy(v.canEdit, v.ownerAgency, "secret") || undefined}
+                                    >
+                                      Make unrevealable…
+                                    </Btn>
+                                    <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+                                      Nobody can reveal it afterwards, global administrators included. Runs still use it.
+                                    </span>
+                                  </div>
+                                )}
+                                {!isVault && vaultEnabled && (
+                                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
+                                    <Btn onClick={() => setMigrating(v)} disabled={!!rowVaultWhy(v)} title={rowVaultWhy(v) || undefined}>
+                                      Migrate to Vault
+                                    </Btn>
+                                    <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+                                      {rowVaultWhy(v) || "Converts this entry to a vault reference"}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </DetailGrid>
+                          {v.id && <RowUsagePanel kind="secret" id={v.id} />}
+                          </DetailPanel>
+                          <ReferenceField reference={v.reference} semantics="Resolves to the secret value at run time (always redacted in logs)." />
+                          <div style={{ marginTop: 12 }}>
+                            <DetailLabel>Tags</DetailLabel>
+                            <TagEditor tags={tagState.tagsFor(v)} onChange={(next) => tagState.save(v, next)} disabled={!canEdit} />
+                            {tagState.errors[String(v.id)] && (
+                              <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(v.id)]}</div>
+                            )}
+                          </div>
+                        </DetailCell>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {(adding || editing) && (

@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, csrfHeader, errMsg } from "../../api/client";
 import type { components } from "../../api/schema";
 import { useAgencyOptional } from "../../agency";
-import { useGet } from "../../hooks";
+import { useClientPager, useGet } from "../../hooks";
 import { c } from "../../theme";
-import { Btn, SectionLabel } from "../../components/ui";
+import { Btn, Pager, SectionLabel } from "../../components/ui";
 import { fmtTime } from "./shared";
 import { globalAgencyName } from "../../globalName";
 
@@ -14,12 +14,20 @@ import { globalAgencyName } from "../../globalName";
 // hand. It sits between the run's fields and its log, on a job run's detail and
 // a workflow run's. The server keeps the record (OP3); this shows it, lets
 // anyone who can read the run add to it, and polls so a note another person
-// adds appears while the run is open. A draft survives the poll.
+// adds appears while the run is open. A draft survives the poll. The newest
+// entry is on top; about five show at once and the rest scroll, and past ten the
+// thread is paged ten at a time.
 
 type RunNotes = components["schemas"]["RunNotes"];
 
 /** How long between polls of the thread while it is open. */
 const POLL_MS = 15_000;
+
+/** Entries on a page of the thread; the pager appears only past this. */
+const PAGE_SIZE = 10;
+
+/** The thread's box: five one-line notes (about 53px each) and the top of a sixth, so it reads as scrollable. */
+const LIST_MAX_HEIGHT = 280;
 
 /**
  * The author's label (OP-14), from how they stood to the run's agency when
@@ -111,6 +119,12 @@ export function RunNotesPanel({
   const [err, setErr] = useState<string | null>(null);
   const acked = q.data?.acknowledged ?? null;
   const notes = q.data?.notes ?? [];
+  const newest = [...notes].reverse();
+  const { pageItems, total, page, pager } = useClientPager(newest, PAGE_SIZE);
+  const list = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    if (list.current) list.current.scrollTop = 0;
+  }, [page]);
 
   async function post(entry: "note" | "acknowledged" | "unacknowledged", body: string) {
     setBusy(true);
@@ -126,6 +140,9 @@ export function RunNotesPanel({
       return;
     }
     if (body) setDraft("");
+    // The entry just written is the newest: show the top of the first page.
+    pager.setPage(0);
+    if (list.current) list.current.scrollTop = 0;
     q.refetch();
   }
 
@@ -173,27 +190,30 @@ export function RunNotesPanel({
       {q.loading && !q.data ? null : notes.length === 0 ? (
         <div style={{ fontSize: c.fontSm, color: c.textMuted, padding: "4px 0 8px" }}>No notes on this run yet.</div>
       ) : (
-        <ol style={{ listStyle: "none", margin: "0 0 10px", padding: 0 }}>
-          {notes.map((n) => (
-            <li key={n.id} data-testid="run-note" style={{ display: "flex", gap: 14, padding: "8px 0", borderBottom: `1px solid ${c.borderLight}` }}>
-              <div style={{ width: 140, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ fontSize: c.fontSm, fontFamily: c.mono, color: c.textSec, fontVariantNumeric: "tabular-nums" }}>{fmtTime(n.at)}</span>
-                {n.kind !== "note" && (
-                  <span style={{ fontSize: c.fontXs, color: n.kind === "acknowledged" ? c.success : c.textMuted }}>
-                    {n.kind === "acknowledged" ? "acknowledged" : "acknowledgement removed"}
+        <div style={{ marginBottom: 10 }}>
+          <ol ref={list} data-testid="run-notes-list" style={{ listStyle: "none", margin: 0, padding: 0, maxHeight: LIST_MAX_HEIGHT, overflowY: "auto" }}>
+            {pageItems.map((n) => (
+              <li key={n.id} data-testid="run-note" style={{ display: "flex", gap: 14, padding: "8px 0", borderBottom: `1px solid ${c.borderLight}` }}>
+                <div style={{ width: 140, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ fontSize: c.fontSm, fontFamily: c.mono, color: c.textSec, fontVariantNumeric: "tabular-nums" }}>{fmtTime(n.at)}</span>
+                  {n.kind !== "note" && (
+                    <span style={{ fontSize: c.fontXs, color: n.kind === "acknowledged" ? c.success : c.textMuted }}>
+                      {n.kind === "acknowledged" ? "acknowledged" : "acknowledgement removed"}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                  <span style={{ fontSize: c.fontSm, fontWeight: 600, color: c.text }}>
+                    {n.author}
+                    {label(n.relation) && <span style={{ fontWeight: 400, color: c.textMuted }}> · {label(n.relation)}</span>}
                   </span>
-                )}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-                <span style={{ fontSize: c.fontSm, fontWeight: 600, color: c.text }}>
-                  {n.author}
-                  {label(n.relation) && <span style={{ fontWeight: 400, color: c.textMuted }}> · {label(n.relation)}</span>}
-                </span>
-                {n.body && <span style={{ fontSize: c.fontSm, color: c.text, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{n.body}</span>}
-              </div>
-            </li>
-          ))}
-        </ol>
+                  {n.body && <span style={{ fontSize: c.fontSm, color: c.text, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{n.body}</span>}
+                </div>
+              </li>
+            ))}
+          </ol>
+          {total > PAGE_SIZE && <Pager pager={pager} page={page} total={total} noun="notes" sizes={[]} />}
+        </div>
       )}
 
       <label htmlFor={`run-note-${traceId}`} style={{ display: "block", fontSize: c.fontXs, color: c.textSec, marginBottom: 4 }}>

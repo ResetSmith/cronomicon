@@ -12,7 +12,7 @@ import { DOC_LINKS } from "../components/docLinks";
 import { agencySuffix, ambiguousNames } from "../utils/disambiguate";
 import type { components } from "../api/schema";
 import { RefreshScope } from "../components/RefreshScope";
-import { Badge, Btn, ConfirmDialog, DerivedAgencies, Disclosure, EmptyCell, RefreshButton, EnvRowsEditor, Field, FormField, HoverTr, InlineTags, KILL_OUTCOMES, Modal, Pager, Rule, SearchBar, Section, SkeletonRows, SourceBadge, TabBar, TableSurface, TagEditor, TagFilterSelect, Toast, TypeBadge, type KillOutcome, agencySortKey, inputStyle, jobStatusLabel, matchesTags, usePager,
+import { Badge, Btn, ConfirmDialog, DerivedAgencies, DetailCell, Disclosure, EmptyCell, RefreshButton, EnvRowsEditor, Field, FormField, HoverTr, InlineTags, KILL_OUTCOMES, Modal, Pager, Rule, SearchBar, Section, SkeletonRows, SourceBadge, TabBar, TableSurface, TagEditor, TagFilterSelect, Toast, TypeBadge, type KillOutcome, agencySortKey, inputStyle, jobStatusLabel, matchesTags, usePager,
   DocLink,
 } from "../components/ui";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns, type TableColumn } from "../components/table";
@@ -706,7 +706,7 @@ export function Jobs() {
         </HoverTr>
         {isExp && (
           <tr id={`job-detail-${jobName(j)}`}>
-            <td colSpan={cols.visible.length} style={{ padding: "14px 18px", background: c.primaryBg, borderBottom: `1px solid ${c.border}` }}>
+            <DetailCell colSpan={cols.visible.length} padding="14px 18px" background={c.primaryBg} cellStyle={{ borderBottom: `1px solid ${c.border}` }}>
               {/* Row actions appear only once a job is expanded (V1.1), freeing
                   the table row for the Last Run column. EV-4: they are handed to
                   JobDetail, which renders them top-right of its header strip —
@@ -793,7 +793,7 @@ export function Jobs() {
                 ) : undefined}
               />
               </RefreshScope>
-            </td>
+            </DetailCell>
           </tr>
         )}
       </Fragment>

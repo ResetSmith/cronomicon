@@ -26,7 +26,7 @@ import {
   th,
   usePager,
 } from "../history/shared";
-import { Btn, ExpandChevron, HoverTr, SkeletonRows, TableSurface, statusLabel } from "../../components/ui";
+import { Btn, DetailCell, ExpandChevron, HoverTr, SkeletonRows, TableSurface, statusLabel } from "../../components/ui";
 import { RefreshScope } from "../../components/RefreshScope";
 
 interface WorkflowRun {
@@ -407,11 +407,11 @@ export function WorkflowRunsTable({
                     </HoverTr>
                     {isExp && (
                       <tr style={{ borderBottom: `1px solid ${c.border}` }}>
-                        <td colSpan={cols.visible.length} style={{ padding: "14px 16px 18px", background: c.primaryBg }}>
+                        <DetailCell colSpan={cols.visible.length} padding="14px 16px 18px" background={c.primaryBg}>
                           <RefreshScope>
                           <WorkflowRunDetail traceId={w.traceId} live={live} showOwner={!compact} />
                           </RefreshScope>
-                        </td>
+                        </DetailCell>
                       </tr>
                     )}
                   </Fragment>

@@ -20,7 +20,7 @@ import {
   th,
   usePager,
 } from "./shared";
-import { Btn, DetailPanel, SkeletonRows, TableSurface } from "../../components/ui";
+import { Btn, DetailCell, DetailPanel, SkeletonRows, TableSurface } from "../../components/ui";
 
 interface GitSyncEvent {
   id?: number;
@@ -298,7 +298,7 @@ export function GitSyncTab() {
                     </tr>
                     {isOpen && (
                       <tr style={{ borderBottom: `1px solid ${c.border}` }}>
-                        <td colSpan={cols.visible.length} style={{ padding: "16px 14px", background: c.bg }}>
+                        <DetailCell colSpan={cols.visible.length} padding="16px 14px" background={c.bg}>
                           <DetailPanel also={refetch}>
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 12 }}>
                             <Field label="Commit" isMono>
@@ -344,7 +344,7 @@ export function GitSyncTab() {
                             </div>
                           )}
                           </DetailPanel>
-                        </td>
+                        </DetailCell>
                       </tr>
                     )}
                   </Fragment>

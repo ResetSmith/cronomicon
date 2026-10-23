@@ -9,7 +9,7 @@ import { useColumnWidths, useGet, useInlineTags, rows, useTableSort } from "../.
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
-import { DetailPanel, EmptyCell, ExpandChevron, HoverTr, InlineLoading, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
+import { DetailCell, DetailPanel, EmptyCell, ExpandChevron, HoverTr, InlineLoading, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
 import {
   Btn,
   ConfirmDialog,
@@ -474,256 +474,259 @@ export function ScopesTab({
         </div>
       )}
       {filtered.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
-          <thead>
-            <TableHead
-              columns={cols.visible}
-              sort={sort}
-              cw={cw}
-              trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
-            />
-          </thead>
-          <tbody>
-            {sort.sorted.map((s) => {
-              const isExp = expanded === s.id;
-              const isLocal = s.source === "cronomicon";
-              const pragmaErrors = s.pragmaErrors ?? [];
-              return (
-                <Fragment key={s.id ?? s.scope}>
-                  <HoverTr
-                    onClick={() => setExpanded(isExp ? null : (s.id ?? null))}
-                    tint={isExp ? c.primaryBg : undefined}
-                    hoverTint={isExp ? c.primaryBg : c.panelHover}
-                    style={{ borderBottom: `1px solid ${c.border}` }}
-                  >
-                    {renderCells(cols.visible, s, {})}
-                  </HoverTr>
-                  {isExp && (
-                    <tr style={{ borderBottom: `1px solid ${c.border}`, background: c.primaryBg }}>
-                      <td style={tdStyle()}></td>
-                      <td colSpan={cols.visible.length - 1} style={{ ...tdStyle(), paddingBottom: 18 }}>
-                        {/* EP-4 Shape B — the panel renders list-row data, so its
-                            Refresh drives the view's list reload. `refetch` here is a
-                            pure dep bump in Scopes.tsx (it does not collapse the row). */}
-                        <DetailPanel also={refetch}>
-                        {pragmaErrors.length > 0 && (
-                          <div
-                            style={{
-                              marginBottom: 12,
-                              padding: "8px 12px",
-                              border: `1px solid ${c.warning}40`,
-                              borderLeft: `3px solid ${c.warning}`,
-                              borderRadius: c.radiusSurface,
-                              fontSize: c.fontSm,
-                              color: c.warning,
-                            }}
-                          >
-                            <strong>Pragma error{pragmaErrors.length === 1 ? "" : "s"}:</strong>{" "}
-                            {pragmaErrors.map((err, i) => (
-                              <span key={i} style={{ marginRight: 12 }}>
-                                {err.line != null && <code style={{ fontFamily: c.mono, fontSize: c.fontXs }}>line {err.line}</code>}{" "}
-                                {err.message}
-                              </span>
-                            ))}
+        <div style={{ overflowX: "auto" }}>
+          {/* The table's own sideways scroll, which an open row's DetailCell holds itself to (2.5.2). */}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
+            <thead>
+              <TableHead
+                columns={cols.visible}
+                sort={sort}
+                cw={cw}
+                trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
+              />
+            </thead>
+            <tbody>
+              {sort.sorted.map((s) => {
+                const isExp = expanded === s.id;
+                const isLocal = s.source === "cronomicon";
+                const pragmaErrors = s.pragmaErrors ?? [];
+                return (
+                  <Fragment key={s.id ?? s.scope}>
+                    <HoverTr
+                      onClick={() => setExpanded(isExp ? null : (s.id ?? null))}
+                      tint={isExp ? c.primaryBg : undefined}
+                      hoverTint={isExp ? c.primaryBg : c.panelHover}
+                      style={{ borderBottom: `1px solid ${c.border}` }}
+                    >
+                      {renderCells(cols.visible, s, {})}
+                    </HoverTr>
+                    {isExp && (
+                      <tr style={{ borderBottom: `1px solid ${c.border}`, background: c.primaryBg }}>
+                        <td style={tdStyle()}></td>
+                        <DetailCell colSpan={cols.visible.length - 1} padding="10px 16px 18px" cellStyle={tdStyle()}>
+                          {/* EP-4 Shape B — the panel renders list-row data, so its
+                              Refresh drives the view's list reload. `refetch` here is a
+                              pure dep bump in Scopes.tsx (it does not collapse the row). */}
+                          <DetailPanel also={refetch}>
+                          {pragmaErrors.length > 0 && (
+                            <div
+                              style={{
+                                marginBottom: 12,
+                                padding: "8px 12px",
+                                border: `1px solid ${c.warning}40`,
+                                borderLeft: `3px solid ${c.warning}`,
+                                borderRadius: c.radiusSurface,
+                                fontSize: c.fontSm,
+                                color: c.warning,
+                              }}
+                            >
+                              <strong>Pragma error{pragmaErrors.length === 1 ? "" : "s"}:</strong>{" "}
+                              {pragmaErrors.map((err, i) => (
+                                <span key={i} style={{ marginRight: 12 }}>
+                                  {err.line != null && <code style={{ fontFamily: c.mono, fontSize: c.fontXs }}>line {err.line}</code>}{" "}
+                                  {err.message}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "6px 16px", fontSize: c.fontSm }}>
+                            {s.owner && (
+                              <>
+                                <span style={{ color: c.textSec }}>Owner</span>
+                                <span>{s.owner}</span>
+                              </>
+                            )}
+                            {s.name && (
+                              <>
+                                <span style={{ color: c.textSec }}>Inventory file</span>
+                                <span style={{ fontFamily: c.mono, fontSize: c.fontSm }}>{s.name}</span>
+                              </>
+                            )}
+                            {s.sidecarPath && (
+                              <>
+                                <span style={{ color: c.textSec }}>Sidecar</span>
+                                <span style={{ fontFamily: c.mono, fontSize: c.fontSm }}>{s.sidecarPath}</span>
+                              </>
+                            )}
                           </div>
-                        )}
-                        <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "6px 16px", fontSize: c.fontSm }}>
-                          {s.owner && (
-                            <>
-                              <span style={{ color: c.textSec }}>Owner</span>
-                              <span>{s.owner}</span>
-                            </>
-                          )}
-                          {s.name && (
-                            <>
-                              <span style={{ color: c.textSec }}>Inventory file</span>
-                              <span style={{ fontFamily: c.mono, fontSize: c.fontSm }}>{s.name}</span>
-                            </>
-                          )}
-                          {s.sidecarPath && (
-                            <>
-                              <span style={{ color: c.textSec }}>Sidecar</span>
-                              <span style={{ fontFamily: c.mono, fontSize: c.fontSm }}>{s.sidecarPath}</span>
-                            </>
-                          )}
-                        </div>
-                        {/* T3.8 — a scope's FULL agency membership. The selector
-                            below is the 1:1 affordance this view has always had and
-                            still covers the common case; when a scope belongs to
-                            SEVERAL agencies it would silently truncate the set, so
-                            it is replaced by a read-only summary that names them and
-                            points at the matrix. */}
-                        {/* A scope belongs to ONE agency (v2.3.0, LR-7). Since
-                            2.4.0 changing it is a global administrator's repair,
-                            with a reason (I4, IN-7; question 48), and so is
-                            settling a scope still in several agencies from before
-                            2.3.0 on its one agency. Anyone else reads its agency. */}
-                        {s.id != null && (s.agencies?.length ?? 0) > 1 && (
-                          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <span style={{ ...labelStyle(), margin: 0 }}>Agencies</span>
-                            {(s.agencies ?? []).map((a) => (
-                              <span
-                                key={a.id}
-                                style={{ padding: "2px 9px", borderRadius: c.radiusChip, fontSize: c.fontXs, fontFamily: c.mono, background: `${c.primary}1a`, border: `1px solid ${c.primary}55`, color: c.text }}
-                              >
-                                {a.name}
+                          {/* T3.8 — a scope's FULL agency membership. The selector
+                              below is the 1:1 affordance this view has always had and
+                              still covers the common case; when a scope belongs to
+                              SEVERAL agencies it would silently truncate the set, so
+                              it is replaced by a read-only summary that names them and
+                              points at the matrix. */}
+                          {/* A scope belongs to ONE agency (v2.3.0, LR-7). Since
+                              2.4.0 changing it is a global administrator's repair,
+                              with a reason (I4, IN-7; question 48), and so is
+                              settling a scope still in several agencies from before
+                              2.3.0 on its one agency. Anyone else reads its agency. */}
+                          {s.id != null && (s.agencies?.length ?? 0) > 1 && (
+                            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                              <span style={{ ...labelStyle(), margin: 0 }}>Agencies</span>
+                              {(s.agencies ?? []).map((a) => (
+                                <span
+                                  key={a.id}
+                                  style={{ padding: "2px 9px", borderRadius: c.radiusChip, fontSize: c.fontXs, fontFamily: c.mono, background: `${c.primary}1a`, border: `1px solid ${c.primary}55`, color: c.text }}
+                                >
+                                  {a.name}
+                                </span>
+                              ))}
+                              <span style={{ color: c.warning, fontSize: c.fontSm }}>
+                                This scope is still in several agencies, from before 2.3.0. It runs for each of them until a
+                                global administrator settles its one agency, a repair.
                               </span>
-                            ))}
-                            <span style={{ color: c.warning, fontSize: c.fontSm }}>
-                              This scope is still in several agencies, from before 2.3.0. It runs for each of them until a
-                              global administrator settles its one agency, a repair.
-                            </span>
-                          </div>
-                        )}
-                        {s.id != null && (() => {
-                          const current = s.agencies ?? [];
-                          const single = current.length === 1 ? current[0].id : "";
-                          const effect =
-                            "Only a runner that serves this agency can execute this scope's jobs, and only this agency's secrets and keys are injectable.";
-                          if (!mayRepair(s)) {
+                            </div>
+                          )}
+                          {s.id != null && (() => {
+                            const current = s.agencies ?? [];
+                            const single = current.length === 1 ? current[0].id : "";
+                            const effect =
+                              "Only a runner that serves this agency can execute this scope's jobs, and only this agency's secrets and keys are injectable.";
+                            if (!mayRepair(s)) {
+                              return (
+                                <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                                  <span style={{ ...labelStyle(), margin: 0 }}>Agency</span>
+                                  <span style={{ fontFamily: c.mono, fontSize: c.fontSm }}>{current.map((a) => a.name).join(", ") || "none"}</span>
+                                  <span style={{ color: c.textSec, fontSize: c.fontSm }}>
+                                    {effect} {REPAIR_HINT}
+                                  </span>
+                                </div>
+                              );
+                            }
+                            const options = agencyOptionsFor(current);
                             return (
                               <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                                 <span style={{ ...labelStyle(), margin: 0 }}>Agency</span>
-                                <span style={{ fontFamily: c.mono, fontSize: c.fontSm }}>{current.map((a) => a.name).join(", ") || "none"}</span>
+                                <select
+                                  aria-label={`Agency for ${s.scope}`}
+                                  value={single}
+                                  onChange={(e) => {
+                                    if (!e.target.value || e.target.value === single) return;
+                                    const target = options.find((a) => a.id === e.target.value);
+                                    if (!target) return;
+                                    setRepairError("");
+                                    setScopeRepair({ scope: s, target });
+                                  }}
+                                  style={{ ...inputStyle(), cursor: "pointer", maxWidth: 260 }}
+                                >
+                                  {current.length !== 1 && <option value="">Choose its one agency…</option>}
+                                  {options.map((a) => (
+                                    <option key={a.id} value={a.id}>
+                                      {a.name}
+                                    </option>
+                                  ))}
+                                </select>
                                 <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-                                  {effect} {REPAIR_HINT}
+                                  {effect} Changing it is a repair of a placement that was a mistake.
                                 </span>
                               </div>
                             );
-                          }
-                          const options = agencyOptionsFor(current);
-                          return (
-                            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                              <span style={{ ...labelStyle(), margin: 0 }}>Agency</span>
-                              <select
-                                aria-label={`Agency for ${s.scope}`}
-                                value={single}
-                                onChange={(e) => {
-                                  if (!e.target.value || e.target.value === single) return;
-                                  const target = options.find((a) => a.id === e.target.value);
-                                  if (!target) return;
-                                  setRepairError("");
-                                  setScopeRepair({ scope: s, target });
-                                }}
-                                style={{ ...inputStyle(), cursor: "pointer", maxWidth: 260 }}
-                              >
-                                {current.length !== 1 && <option value="">Choose its one agency…</option>}
-                                {options.map((a) => (
-                                  <option key={a.id} value={a.id}>
-                                    {a.name}
-                                  </option>
+                          })()}
+                          {/* SB — the runners this scope is bound to, directly under
+                              its agency: department first, then which of that
+                              department's runners can reach these hosts. Shown to
+                              everyone who can see the scope; changed only with
+                              ConfigureApp. */}
+                          {s.id != null && (
+                            <ScopeRunnersField
+                              scope={s}
+                              canEdit={canEdit}
+                              onSaved={(text) => {
+                                setNotice({ kind: "info", text });
+                                refetch();
+                              }}
+                            />
+                          )}
+                          {/* SB — a bound runner uses ITS OWN known_hosts, so a
+                              host it has never been told to trust is a run that
+                              fails at the first connection. Shown only where the
+                              server will answer: the route needs ConfigureApp. */}
+                          {s.id != null && canEdit && (s.boundRunners ?? []).length > 0 && (
+                            <div style={{ marginTop: 12 }}>
+                              <div style={{ ...labelStyle(), marginBottom: 6 }}>Host keys on the bound runners</div>
+                              <ScopeKeyCoverage scopeId={String(s.id)} bound={(s.boundRunners ?? []).length} canConfig={canEdit} />
+                            </div>
+                          )}
+                          {/* An unbound scope has no fixed set of runners to show
+                              coverage for. Say instead who reviews which runner's
+                              keys — to everyone who can open the row, because the
+                              reader who needs it is the one who cannot act. */}
+                          {s.id != null && (s.boundRunners ?? []).length === 0 && (
+                            <div style={{ marginTop: 12 }}>
+                              <div style={{ ...labelStyle(), marginBottom: 6 }}>Host keys</div>
+                              <UnboundHostKeysNote />
+                            </div>
+                          )}
+                          {/* Tags are shown to everyone who can see the scope and
+                              edited only with ConfigureApp, like every other scope
+                              write. A missing permission is not a precondition the
+                              reader can fix, so the editor goes read-only rather
+                              than disabled-with-a-reason. */}
+                          {s.id != null && (
+                            <div style={{ marginTop: 12 }}>
+                              <div style={{ ...labelStyle(), marginBottom: 6 }}>
+                                Tags{tagState.tagsFor(s).length ? ` (${tagState.tagsFor(s).length})` : ""}
+                              </div>
+                              {canEdit || tagState.tagsFor(s).length > 0 ? (
+                                <TagEditor tags={tagState.tagsFor(s)} onChange={(next) => tagState.save(s, next)} disabled={!canEdit} />
+                              ) : (
+                                <span style={{ color: c.textSec, fontSize: c.fontSm, fontStyle: "italic" }}>No tags</span>
+                              )}
+                              {tagState.errors[String(s.id)] && (
+                                <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(s.id)]}</div>
+                              )}
+                            </div>
+                          )}
+                          {canEdit && s.id != null && <InventoryPanel scopeId={s.id} />}
+                          {isLocal && (s.hosts?.length ?? 0) > 0 && (
+                            <div style={{ marginTop: 12 }}>
+                              <div style={{ ...labelStyle(), marginBottom: 6 }}>Hosts ({s.hosts!.length})</div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                {s.hosts!.map((h) => (
+                                  <code
+                                    key={h}
+                                    style={{
+                                      padding: "3px 8px",
+                                      background: c.panel2,
+                                      border: `1px solid ${c.border}`,
+                                      borderRadius: c.radiusChip,
+                                      fontSize: c.fontXs,
+                                      fontFamily: c.mono,
+                                      color: c.textSec,
+                                    }}
+                                  >
+                                    {h}
+                                  </code>
                                 ))}
-                              </select>
-                              <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-                                {effect} Changing it is a repair of a placement that was a mistake.
-                              </span>
+                              </div>
                             </div>
-                          );
-                        })()}
-                        {/* SB — the runners this scope is bound to, directly under
-                            its agency: department first, then which of that
-                            department's runners can reach these hosts. Shown to
-                            everyone who can see the scope; changed only with
-                            ConfigureApp. */}
-                        {s.id != null && (
-                          <ScopeRunnersField
-                            scope={s}
-                            canEdit={canEdit}
-                            onSaved={(text) => {
-                              setNotice({ kind: "info", text });
-                              refetch();
-                            }}
-                          />
-                        )}
-                        {/* SB — a bound runner uses ITS OWN known_hosts, so a
-                            host it has never been told to trust is a run that
-                            fails at the first connection. Shown only where the
-                            server will answer: the route needs ConfigureApp. */}
-                        {s.id != null && canEdit && (s.boundRunners ?? []).length > 0 && (
-                          <div style={{ marginTop: 12 }}>
-                            <div style={{ ...labelStyle(), marginBottom: 6 }}>Host keys on the bound runners</div>
-                            <ScopeKeyCoverage scopeId={String(s.id)} bound={(s.boundRunners ?? []).length} canConfig={canEdit} />
-                          </div>
-                        )}
-                        {/* An unbound scope has no fixed set of runners to show
-                            coverage for. Say instead who reviews which runner's
-                            keys — to everyone who can open the row, because the
-                            reader who needs it is the one who cannot act. */}
-                        {s.id != null && (s.boundRunners ?? []).length === 0 && (
-                          <div style={{ marginTop: 12 }}>
-                            <div style={{ ...labelStyle(), marginBottom: 6 }}>Host keys</div>
-                            <UnboundHostKeysNote />
-                          </div>
-                        )}
-                        {/* Tags are shown to everyone who can see the scope and
-                            edited only with ConfigureApp, like every other scope
-                            write. A missing permission is not a precondition the
-                            reader can fix, so the editor goes read-only rather
-                            than disabled-with-a-reason. */}
-                        {s.id != null && (
-                          <div style={{ marginTop: 12 }}>
-                            <div style={{ ...labelStyle(), marginBottom: 6 }}>
-                              Tags{tagState.tagsFor(s).length ? ` (${tagState.tagsFor(s).length})` : ""}
+                          )}
+                          {/* Cronomicon-authored scopes only, and only for callers who
+                              may configure the app — every other mutation control in
+                              this view is canEdit-gated, and without it a viewer saw a
+                              Delete button that could only ever 403. Quiet danger here;
+                              the solid fill is reserved for the confirm (VC.6). */}
+                          {canEdit && s.id != null && (
+                            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                              {/* 2.4.0 (R8) — another agency gets a scope by a clone; the scope stays. */}
+                              {s.canEdit !== false && <Btn onClick={() => setCloning(s)}>Clone to an agency…</Btn>}
+                              {isLocal && s.canDelete !== false && (
+                                <Btn dangerQuiet onClick={() => setDeleting(s)}>
+                                  Delete Scope
+                                </Btn>
+                              )}
                             </div>
-                            {canEdit || tagState.tagsFor(s).length > 0 ? (
-                              <TagEditor tags={tagState.tagsFor(s)} onChange={(next) => tagState.save(s, next)} disabled={!canEdit} />
-                            ) : (
-                              <span style={{ color: c.textSec, fontSize: c.fontSm, fontStyle: "italic" }}>No tags</span>
-                            )}
-                            {tagState.errors[String(s.id)] && (
-                              <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(s.id)]}</div>
-                            )}
-                          </div>
-                        )}
-                        {canEdit && s.id != null && <InventoryPanel scopeId={s.id} />}
-                        {isLocal && (s.hosts?.length ?? 0) > 0 && (
-                          <div style={{ marginTop: 12 }}>
-                            <div style={{ ...labelStyle(), marginBottom: 6 }}>Hosts ({s.hosts!.length})</div>
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                              {s.hosts!.map((h) => (
-                                <code
-                                  key={h}
-                                  style={{
-                                    padding: "3px 8px",
-                                    background: c.panel2,
-                                    border: `1px solid ${c.border}`,
-                                    borderRadius: c.radiusChip,
-                                    fontSize: c.fontXs,
-                                    fontFamily: c.mono,
-                                    color: c.textSec,
-                                  }}
-                                >
-                                  {h}
-                                </code>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {/* Cronomicon-authored scopes only, and only for callers who
-                            may configure the app — every other mutation control in
-                            this view is canEdit-gated, and without it a viewer saw a
-                            Delete button that could only ever 403. Quiet danger here;
-                            the solid fill is reserved for the confirm (VC.6). */}
-                        {canEdit && s.id != null && (
-                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-                            {/* 2.4.0 (R8) — another agency gets a scope by a clone; the scope stays. */}
-                            {s.canEdit !== false && <Btn onClick={() => setCloning(s)}>Clone to an agency…</Btn>}
-                            {isLocal && s.canDelete !== false && (
-                              <Btn dangerQuiet onClick={() => setDeleting(s)}>
-                                Delete Scope
-                              </Btn>
-                            )}
-                          </div>
-                        )}
-                        </DetailPanel>
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                          )}
+                          </DetailPanel>
+                        </DetailCell>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       <div style={{ marginTop: 12, fontSize: c.fontXs, color: c.textSec, display: "flex", gap: 6, alignItems: "center" }}>

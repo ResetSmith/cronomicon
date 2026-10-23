@@ -3,7 +3,7 @@
 // app keeps one visual language. Everything reads the mutable `c` tokens during
 // render (theme.ts), so components repaint on theme toggle via the Outlet
 // remount in Shell.
-import { useEffect, useRef, useState, type CSSProperties, type InputHTMLAttributes, type KeyboardEvent, type ReactNode, type SelectHTMLAttributes } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type InputHTMLAttributes, type KeyboardEvent, type ReactNode, type SelectHTMLAttributes } from "react";
 import { c } from "../theme";
 import { useTheme } from "../theme-context";
 import { useRefreshAction } from "./RefreshScope";
@@ -241,6 +241,87 @@ export function TableSurface({ children, style }: { children: ReactNode; style?:
     >
       {children}
     </div>
+  );
+}
+
+// DetailCell is an expanded row's cell, its content held to the part of the
+// table the window shows (2.5.2). A cell spanning every column is as wide as the
+// table, so when the columns were wider than the window its right side (a run's
+// Remove acknowledgement, a job's Run, a scope's Delete) sat off screen behind
+// the table's sideways scroll. The content box sticks to the left edge of the
+// table's scroll box and is measured to its visible width, so it stays in view
+// while the row's cells scroll beneath it.
+//
+// It measures (a ResizeObserver on the scroll box and the table) rather than
+// using container query units because inline-size containment would make the
+// scroll box the containing block of every position: fixed element in the row,
+// and Modal, ConfirmDialog and Toast are fixed and not portaled: a Move agency
+// or Host keys dialog opened from a row would have been trapped in the table.
+//
+// The table needs its own `overflowX: auto` box (TableSurface is one). Where
+// the nearest one is the page's <main>, the cell does not pin and behaves as a
+// plain cell. A cell that starts after a column (the Env Vars and Scopes rows
+// leave the chevron column empty) keeps that indent: it sticks that far in and
+// is that much narrower. Before the first measurement, and where there is no
+// ResizeObserver (tests), the box fills the cell without letting its contents
+// widen the table (width 0, min-width 100%). The padding lives on the box, not
+// the cell, or the box would start that far in and overshoot by as much.
+export function DetailCell({
+  colSpan,
+  padding,
+  background,
+  cellStyle,
+  onClick,
+  children,
+}: {
+  colSpan: number;
+  padding: string;
+  background?: string;
+  /** Anything else the cell carried (a border); its padding is always 0. */
+  cellStyle?: CSSProperties;
+  onClick?: (e: React.MouseEvent<HTMLTableCellElement>) => void;
+  children: ReactNode;
+}) {
+  const cell = useRef<HTMLTableCellElement>(null);
+  const [fit, setFit] = useState<{ left: number; width: number } | null>(null);
+  useLayoutEffect(() => {
+    const td = cell.current;
+    const table = td?.closest("table");
+    if (!td || !table || typeof ResizeObserver === "undefined") return;
+    let box: HTMLElement | null = table.parentElement;
+    while (box && box.tagName !== "MAIN" && box !== document.body) {
+      const ox = getComputedStyle(box).overflowX;
+      if (ox === "auto" || ox === "scroll") break;
+      box = box.parentElement;
+    }
+    if (!box || box.tagName === "MAIN" || box === document.body) return;
+    const scroller = box;
+    const measure = () => {
+      const left = Math.max(0, Math.round(td.getBoundingClientRect().left - table.getBoundingClientRect().left));
+      const width = Math.max(0, scroller.clientWidth - left);
+      setFit((f) => (f && f.left === left && f.width === width ? f : { left, width }));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(scroller);
+    ro.observe(table);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <td ref={cell} colSpan={colSpan} onClick={onClick} style={{ ...cellStyle, padding: 0, background }}>
+      <div
+        data-testid="detail-cell"
+        style={{
+          position: "sticky",
+          left: fit?.left ?? 0,
+          boxSizing: "border-box",
+          padding,
+          ...(fit ? { width: fit.width } : { width: 0, minWidth: "100%" }),
+        }}
+      >
+        {children}
+      </div>
+    </td>
   );
 }
 
@@ -2142,7 +2223,7 @@ export function TagEditor({
 // Relocated here from views/history/shared.tsx (PP) so catalog pages no longer
 // reach into the history/ namespace for a pager; shared.tsx re-exports these as a
 // back-compat shim. usePager holds per-table state (default pageSize 25, options
-// 25/50/100). The <Pager> control is the canonical "Show 25 / 50 / 100 entries"
+// 25/50/100; a caller may start at another size and offer other sizes, or none). The <Pager> control is the canonical "Show 25 / 50 / 100 entries"
 // button group + ← Prev / Next → + an "x–y of N" label. The UI is 0-based and
 // callers add the +1 for a 1-based API. Pure math (clampPage/sliceForPage) lives
 // in utils/pager so it stays unit-testable; import it directly from there.
@@ -2154,9 +2235,9 @@ export interface PagerState {
 }
 
 /** Each table calls this once, so page/pageSize never leak across sibling tables. */
-export function usePager(): PagerState {
+export function usePager(initialPageSize = 25): PagerState {
   const [page, setPage] = useState(0);
-  const [pageSize, setPageSizeRaw] = useState(25);
+  const [pageSize, setPageSizeRaw] = useState(initialPageSize);
   return {
     page,
     setPage,
@@ -2186,6 +2267,7 @@ export function Pager({
   total,
   noun,
   shown,
+  sizes = [25, 50, 100],
 }: {
   pager: PagerState;
   page: number;
@@ -2195,6 +2277,8 @@ export function Pager({
    * fewer than the server returned for this page, the label says so honestly
    * rather than implying the page-position count reflects the filter (PP-H7). */
   shown?: number;
+  /** The page sizes offered; with fewer than two there is nothing to choose and the group is left out. */
+  sizes?: number[];
 }) {
   const { pageSize, setPage, setPageSize } = pager;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -2213,30 +2297,34 @@ export function Pager({
         fontVariantNumeric: "tabular-nums",
       }}
     >
-      <div role="group" aria-label="Rows per page" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span>Show</span>
-        {[25, 50, 100].map((n) => (
-          <button
-            key={n}
-            aria-pressed={pageSize === n}
-            onClick={() => setPageSize(n)}
-            style={{
-              padding: "3px 9px",
-              borderRadius: c.radiusChip,
-              cursor: "pointer",
-              fontFamily: c.sans,
-              fontSize: c.fontSm,
-              fontWeight: pageSize === n ? 600 : 400,
-              background: pageSize === n ? `${c.primary}1a` : "transparent",
-              color: pageSize === n ? c.primary : c.textSec,
-              border: `1px solid ${pageSize === n ? `${c.primary}40` : c.border}`,
-            }}
-          >
-            {n}
-          </button>
-        ))}
-        <span>entries</span>
-      </div>
+      {sizes.length < 2 ? (
+        <span />
+      ) : (
+        <div role="group" aria-label="Rows per page" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span>Show</span>
+          {sizes.map((n) => (
+            <button
+              key={n}
+              aria-pressed={pageSize === n}
+              onClick={() => setPageSize(n)}
+              style={{
+                padding: "3px 9px",
+                borderRadius: c.radiusChip,
+                cursor: "pointer",
+                fontFamily: c.sans,
+                fontSize: c.fontSm,
+                fontWeight: pageSize === n ? 600 : 400,
+                background: pageSize === n ? `${c.primary}1a` : "transparent",
+                color: pageSize === n ? c.primary : c.textSec,
+                border: `1px solid ${pageSize === n ? `${c.primary}40` : c.border}`,
+              }}
+            >
+              {n}
+            </button>
+          ))}
+          <span>entries</span>
+        </div>
+      )}
       <span>{pagerLabel(total, page, pageSize, noun, shown)}</span>
       <div style={{ display: "flex", gap: 6 }}>
         <button disabled={page === 0} onClick={() => setPage(Math.max(0, page - 1))} style={navBtn(page === 0)}>

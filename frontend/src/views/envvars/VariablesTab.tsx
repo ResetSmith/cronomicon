@@ -6,7 +6,7 @@ import { CreationAgencyPicker, useCreationAgencies } from "../../components/Crea
 import { MoveAgency } from "./MoveAgency";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
-import { DetailPanel, EmptyCell, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
+import { DetailCell, DetailPanel, EmptyCell, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
 import {
   Btn,
   Chevron,
@@ -314,92 +314,95 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
         </div>
       )}
       {filtered.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
-          <thead>
-            <TableHead
-              columns={cols.visible}
-              sort={sort}
-              cw={cw}
-              trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
-            />
-          </thead>
-          <tbody>
-            {sort.sorted.map((v) => {
-              const isExp = v.id != null && expanded === v.id;
-              const toggle = () => setExpanded(isExp ? null : (v.id ?? null));
-              const rowBg = isExp ? c.primaryBg : "transparent";
-              return (
-                <Fragment key={v.id ?? v.key}>
-                  <tr
-                    onClick={toggle}
-                    onMouseEnter={(e) => { if (!isExp) e.currentTarget.style.background = c.panelHover; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
-                    style={{ borderBottom: isExp ? "none" : `1px solid ${c.border}`, background: rowBg, cursor: "pointer", transition: "background 0.15s" }}
-                  >
-                    {renderCells(cols.visible, v, { rowStyle: { borderBottom: "none" } })}
-                  </tr>
-                  {isExp && (
-                    <tr style={{ background: rowBg, borderBottom: `1px solid ${c.border}` }}>
-                      <td style={{ borderBottom: "none" }} />
-                      <td colSpan={cols.visible.length - 1} style={{ padding: "2px 16px 16px", borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
-                        {/* EP-4 Shape B — this panel renders the LIST ROW, so
-                            "refresh this panel" means reload the list. Uses
-                            reloadList, not refetch: refetch also collapses the
-                            expansion, which would close the panel the button
-                            was asked to refresh. */}
-                        <DetailPanel also={reloadList}>
-                        <DetailGrid>
-                          <div>
-                            <DetailLabel>Value</DetailLabel>
-                            <div style={{ ...valueBoxStyle(), fontFamily: c.mono, fontSize: c.fontSm, color: v.value ? c.text : c.textMuted }}>
-                              {v.value || "—"}
-                            </div>
-                          </div>
-                          <div>
-                            <DetailLabel>Details</DetailLabel>
-                            <div style={detailBoxStyle()}>
-                              <DetailRow label="Scope" value={v.scope || "global (injects into every scope)"} />
-                              <DetailRow
-                                label="Used by"
-                                value={<UsageCell {...usage.usageFor("var", v.key)} />}
-                              />
-                              <DetailRow label="Description" value={v.description || "—"} />
-                              <DetailRow label="Last Modified" value={fmtDate(v.lastModifiedAt)} />
-                              <DetailRow label="Created By" value={v.createdBy || "—"} last />
-                              {canEdit && v.id && (
-                                <MoveAgency
-                                  kind="env-var"
-                                  id={v.id}
-                                  name={v.key}
-                                  ownerName={v.ownerAgency}
-                                  canRepair={v.canRepair}
-                                  onMoved={(text) => {
-                                    setNotice({ kind: "info", text });
-                                    refetch();
-                                  }}
-                                  onError={(text) => setNotice({ kind: "error", text })}
-                                />
-                              )}
-                            </div>
-                          </div>
-                        </DetailGrid>
-                        </DetailPanel>
-                        <ReferenceField reference={v.reference} semantics="Resolves to the variable's plaintext value at run time (log-safe)." />
-                        <div style={{ marginTop: 12 }}>
-                          <DetailLabel>Tags</DetailLabel>
-                          <TagEditor tags={tagState.tagsFor(v)} onChange={(next) => tagState.save(v, next)} disabled={!canEdit} />
-                          {tagState.errors[String(v.id)] && (
-                            <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(v.id)]}</div>
-                          )}
-                        </div>
-                      </td>
+        <div style={{ overflowX: "auto" }}>
+          {/* The table's own sideways scroll, which an open row's DetailCell holds itself to (2.5.2). */}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
+            <thead>
+              <TableHead
+                columns={cols.visible}
+                sort={sort}
+                cw={cw}
+                trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
+              />
+            </thead>
+            <tbody>
+              {sort.sorted.map((v) => {
+                const isExp = v.id != null && expanded === v.id;
+                const toggle = () => setExpanded(isExp ? null : (v.id ?? null));
+                const rowBg = isExp ? c.primaryBg : "transparent";
+                return (
+                  <Fragment key={v.id ?? v.key}>
+                    <tr
+                      onClick={toggle}
+                      onMouseEnter={(e) => { if (!isExp) e.currentTarget.style.background = c.panelHover; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
+                      style={{ borderBottom: isExp ? "none" : `1px solid ${c.border}`, background: rowBg, cursor: "pointer", transition: "background 0.15s" }}
+                    >
+                      {renderCells(cols.visible, v, { rowStyle: { borderBottom: "none" } })}
                     </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                    {isExp && (
+                      <tr style={{ background: rowBg, borderBottom: `1px solid ${c.border}` }}>
+                        <td style={{ borderBottom: "none" }} />
+                        <DetailCell colSpan={cols.visible.length - 1} padding="2px 16px 16px" cellStyle={{ borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
+                          {/* EP-4 Shape B — this panel renders the LIST ROW, so
+                              "refresh this panel" means reload the list. Uses
+                              reloadList, not refetch: refetch also collapses the
+                              expansion, which would close the panel the button
+                              was asked to refresh. */}
+                          <DetailPanel also={reloadList}>
+                          <DetailGrid>
+                            <div>
+                              <DetailLabel>Value</DetailLabel>
+                              <div style={{ ...valueBoxStyle(), fontFamily: c.mono, fontSize: c.fontSm, color: v.value ? c.text : c.textMuted }}>
+                                {v.value || "—"}
+                              </div>
+                            </div>
+                            <div>
+                              <DetailLabel>Details</DetailLabel>
+                              <div style={detailBoxStyle()}>
+                                <DetailRow label="Scope" value={v.scope || "global (injects into every scope)"} />
+                                <DetailRow
+                                  label="Used by"
+                                  value={<UsageCell {...usage.usageFor("var", v.key)} />}
+                                />
+                                <DetailRow label="Description" value={v.description || "—"} />
+                                <DetailRow label="Last Modified" value={fmtDate(v.lastModifiedAt)} />
+                                <DetailRow label="Created By" value={v.createdBy || "—"} last />
+                                {canEdit && v.id && (
+                                  <MoveAgency
+                                    kind="env-var"
+                                    id={v.id}
+                                    name={v.key}
+                                    ownerName={v.ownerAgency}
+                                    canRepair={v.canRepair}
+                                    onMoved={(text) => {
+                                      setNotice({ kind: "info", text });
+                                      refetch();
+                                    }}
+                                    onError={(text) => setNotice({ kind: "error", text })}
+                                  />
+                                )}
+                              </div>
+                            </div>
+                          </DetailGrid>
+                          </DetailPanel>
+                          <ReferenceField reference={v.reference} semantics="Resolves to the variable's plaintext value at run time (log-safe)." />
+                          <div style={{ marginTop: 12 }}>
+                            <DetailLabel>Tags</DetailLabel>
+                            <TagEditor tags={tagState.tagsFor(v)} onChange={(next) => tagState.save(v, next)} disabled={!canEdit} />
+                            {tagState.errors[String(v.id)] && (
+                              <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(v.id)]}</div>
+                            )}
+                          </div>
+                        </DetailCell>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {(adding || editing) && (

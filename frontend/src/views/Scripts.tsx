@@ -8,7 +8,7 @@ import { c } from "../theme";
 import { useNameDisambiguator } from "../utils/disambiguate";
 import type { components } from "../api/schema";
 import { RefreshScope } from "../components/RefreshScope";
-import { AlertBanner, Btn, CopyButton, RefreshButton, ExpandChevron, Field, HoverTr, InlineLoading, InlineTags, Pager, SearchBar, SectionLabel, SkeletonRows, TableSurface, TagEditor, TagFilterSelect, TypeBadge, WarningChip, WarningSummaryChip, matchesTags, tdStyle } from "../components/ui";
+import { AlertBanner, Btn, CopyButton, DetailCell, RefreshButton, ExpandChevron, Field, HoverTr, InlineLoading, InlineTags, Pager, SearchBar, SectionLabel, SkeletonRows, TableSurface, TagEditor, TagFilterSelect, TypeBadge, WarningChip, WarningSummaryChip, matchesTags, tdStyle } from "../components/ui";
 import { ScriptVariablesPanel } from "../components/ScriptVariables";
 import { ReferenceBindingsEditor } from "../components/ReferenceBindings";
 import { FolderBrowser } from "../components/FolderBrowser";
@@ -318,7 +318,7 @@ export function Scripts() {
         </HoverTr>
         {isExp && (
           <tr>
-            <td colSpan={cols.visible.length} style={{ padding: "14px 18px", background: c.primaryBg, borderBottom: `1px solid ${c.border}` }}>
+            <DetailCell colSpan={cols.visible.length} padding="14px 18px" background={c.primaryBg} cellStyle={{ borderBottom: `1px solid ${c.border}` }}>
               <RefreshScope>
               <ScriptDetail
                 listRow={s}
@@ -328,7 +328,7 @@ export function Scripts() {
                 canCompose={canCompose}
               />
               </RefreshScope>
-            </td>
+            </DetailCell>
           </tr>
         )}
       </Fragment>

@@ -32,7 +32,7 @@ import {
   th,
   usePager,
 } from "./shared";
-import { Btn, DetailPanel, EmptyCell, HoverTr, SkeletonRows, TableSurface, TypeBadge, matchesStatus, statusLabel } from "../../components/ui";
+import { Btn, DetailCell, DetailPanel, EmptyCell, HoverTr, SkeletonRows, TableSurface, TypeBadge, matchesStatus, statusLabel } from "../../components/ui";
 import { RunReferences } from "../../components/ReferenceBindings";
 import { CalendarFilterSelect } from "../scheduling/CalendarFilterSelect";
 import { RunLog } from "./RunLog";
@@ -816,11 +816,11 @@ export function ExecutionsTab() {
                   </HoverTr>
                   {expanded === r.traceId && (
                     <tr style={{ borderBottom: `1px solid ${c.border}` }}>
-                      <td colSpan={cols.visible.length} style={{ padding: "16px 14px", background: c.bg }}>
+                      <DetailCell colSpan={cols.visible.length} padding="16px 14px" background={c.bg}>
                         <RefreshScope>
                         <RunDetail traceId={r.traceId} />
                         </RefreshScope>
-                      </td>
+                      </DetailCell>
                     </tr>
                   )}
                 </Fragment>

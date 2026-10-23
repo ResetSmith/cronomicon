@@ -9,7 +9,7 @@ import { HeldByGlobal, RowUsagePanel, SecretsReportButton } from "./RowUsage";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { pubKeyFilename, toOpenSSH, toRFC4716 } from "../../utils/sshpubkey";
-import { CopyButton, CopyText, DetailPanel, EmptyCell, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
+import { CopyButton, CopyText, DetailCell, DetailPanel, EmptyCell, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
 import {
   Btn,
   Chevron,
@@ -348,124 +348,127 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
         </div>
       )}
       {filtered.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
-          <thead>
-            <TableHead
-              columns={cols.visible}
-              sort={sort}
-              cw={cw}
-              trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
-            />
-          </thead>
-          <tbody>
-            {sort.sorted.map((v) => {
-              const isVault = v.source === "vault";
-              const isExp = expanded === v.id;
-              const toggle = () => setExpanded(isExp ? null : v.id);
-              const rowBg = isExp ? c.primaryBg : "transparent";
-              const uses = usedBy(v.id);
-              return (
-                <Fragment key={v.id}>
-                  <tr
-                    onClick={toggle}
-                    onMouseEnter={(e) => { if (!isExp) e.currentTarget.style.background = c.panelHover; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
-                    style={{ borderBottom: isExp ? "none" : `1px solid ${c.border}`, background: rowBg, cursor: "pointer", transition: "background 0.15s" }}
-                  >
-                    {renderCells(cols.visible, v, { rowStyle: { borderBottom: "none" } })}
-                  </tr>
-                  {isExp && (
-                    <tr style={{ background: rowBg, borderBottom: `1px solid ${c.border}` }}>
-                      <td style={{ borderBottom: "none" }} />
-                      <td colSpan={cols.visible.length - 1} style={{ padding: "2px 16px 16px", borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
-                        {/* EP-4 Shape B — this panel renders the LIST ROW, so
-                            "refresh this panel" means reload the list. Uses
-                            reloadList, not refetch: refetch also collapses the
-                            expansion, which would close the panel the button
-                            was asked to refresh. */}
-                        <DetailPanel also={reloadList}>
-                        <DetailGrid>
-                          <div>
-                            <DetailLabel
-                              action={
-                                v.publicKey ? (
-                                  <CopyButton
-                                    text={v.publicKey}
-                                    variant="text"
-                                    ariaLabel="Copy public key to clipboard"
-                                    onCopied={() => setNotice({ kind: "info", text: "Public key copied" })}
-                                    style={{ fontSize: c.fontSm, flexShrink: 0 }}
-                                  />
-                                ) : undefined
-                              }
-                            >
-                              Public Key
-                            </DetailLabel>
-                            <div style={{ ...valueBoxStyle(), fontFamily: c.mono, fontSize: c.fontXs, color: v.publicKey ? c.text : c.textMuted, lineHeight: 1.5 }}>
-                              {v.publicKey || (isVault ? "(resolved from Vault at run time)" : "—")}
-                            </div>
-                            <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>Add this line to the target account's authorized_keys.</div>
-                            {v.publicKey && (
-                              <PubKeyDownload publicKey={v.publicKey} label={v.label} onError={(text) => setNotice({ kind: "error", text })} />
-                            )}
-                          </div>
-                          <div>
-                            <DetailLabel>Details</DetailLabel>
-                            <div style={detailBoxStyle()}>
-                              <DetailRow label="Key Type" value={v.keyType || "—"} />
-                              <DetailRow
-                                label="Fingerprint"
-                                value={
-                                  v.fingerprint ? (
-                                    <CopyText
-                                      text={v.fingerprint}
-                                      style={{ fontFamily: c.mono, fontSize: c.fontXs, color: c.primary }}
+        <div style={{ overflowX: "auto" }}>
+          {/* The table's own sideways scroll, which an open row's DetailCell holds itself to (2.5.2). */}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
+            <thead>
+              <TableHead
+                columns={cols.visible}
+                sort={sort}
+                cw={cw}
+                trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
+              />
+            </thead>
+            <tbody>
+              {sort.sorted.map((v) => {
+                const isVault = v.source === "vault";
+                const isExp = expanded === v.id;
+                const toggle = () => setExpanded(isExp ? null : v.id);
+                const rowBg = isExp ? c.primaryBg : "transparent";
+                const uses = usedBy(v.id);
+                return (
+                  <Fragment key={v.id}>
+                    <tr
+                      onClick={toggle}
+                      onMouseEnter={(e) => { if (!isExp) e.currentTarget.style.background = c.panelHover; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
+                      style={{ borderBottom: isExp ? "none" : `1px solid ${c.border}`, background: rowBg, cursor: "pointer", transition: "background 0.15s" }}
+                    >
+                      {renderCells(cols.visible, v, { rowStyle: { borderBottom: "none" } })}
+                    </tr>
+                    {isExp && (
+                      <tr style={{ background: rowBg, borderBottom: `1px solid ${c.border}` }}>
+                        <td style={{ borderBottom: "none" }} />
+                        <DetailCell colSpan={cols.visible.length - 1} padding="2px 16px 16px" cellStyle={{ borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
+                          {/* EP-4 Shape B — this panel renders the LIST ROW, so
+                              "refresh this panel" means reload the list. Uses
+                              reloadList, not refetch: refetch also collapses the
+                              expansion, which would close the panel the button
+                              was asked to refresh. */}
+                          <DetailPanel also={reloadList}>
+                          <DetailGrid>
+                            <div>
+                              <DetailLabel
+                                action={
+                                  v.publicKey ? (
+                                    <CopyButton
+                                      text={v.publicKey}
+                                      variant="text"
+                                      ariaLabel="Copy public key to clipboard"
+                                      onCopied={() => setNotice({ kind: "info", text: "Public key copied" })}
+                                      style={{ fontSize: c.fontSm, flexShrink: 0 }}
                                     />
-                                  ) : (
-                                    "—"
-                                  )
+                                  ) : undefined
                                 }
-                              />
-                              <DetailRow label="Description" value={v.description || "—"} />
-                              <DetailRow label="Used By" value={`${uses} host(s) / bastion(s)`} />
-                              <DetailRow label="Bound By" value={<UsageCell {...usage.usageFor("key", v.label)} />} />
-                              <DetailRow label="Last Rotated" value={fmtDate(v.lastModifiedAt)} />
-                              <DetailRow label="Created By" value={v.createdBy || "—"} last />
-                              {canEdit && v.id && (
-                                <MoveAgency
-                                  kind="ssh-credential"
-                                  id={v.id}
-                                  name={v.label}
-                                  ownerName={v.ownerAgency}
-                                  canRepair={v.canRepair}
-                                  onMoved={(text) => {
-                                    setNotice({ kind: "info", text });
-                                    refetch();
-                                  }}
-                                  onError={(text) => setNotice({ kind: "error", text })}
-                                />
+                              >
+                                Public Key
+                              </DetailLabel>
+                              <div style={{ ...valueBoxStyle(), fontFamily: c.mono, fontSize: c.fontXs, color: v.publicKey ? c.text : c.textMuted, lineHeight: 1.5 }}>
+                                {v.publicKey || (isVault ? "(resolved from Vault at run time)" : "—")}
+                              </div>
+                              <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>Add this line to the target account's authorized_keys.</div>
+                              {v.publicKey && (
+                                <PubKeyDownload publicKey={v.publicKey} label={v.label} onError={(text) => setNotice({ kind: "error", text })} />
                               )}
                             </div>
+                            <div>
+                              <DetailLabel>Details</DetailLabel>
+                              <div style={detailBoxStyle()}>
+                                <DetailRow label="Key Type" value={v.keyType || "—"} />
+                                <DetailRow
+                                  label="Fingerprint"
+                                  value={
+                                    v.fingerprint ? (
+                                      <CopyText
+                                        text={v.fingerprint}
+                                        style={{ fontFamily: c.mono, fontSize: c.fontXs, color: c.primary }}
+                                      />
+                                    ) : (
+                                      "—"
+                                    )
+                                  }
+                                />
+                                <DetailRow label="Description" value={v.description || "—"} />
+                                <DetailRow label="Used By" value={`${uses} host(s) / bastion(s)`} />
+                                <DetailRow label="Bound By" value={<UsageCell {...usage.usageFor("key", v.label)} />} />
+                                <DetailRow label="Last Rotated" value={fmtDate(v.lastModifiedAt)} />
+                                <DetailRow label="Created By" value={v.createdBy || "—"} last />
+                                {canEdit && v.id && (
+                                  <MoveAgency
+                                    kind="ssh-credential"
+                                    id={v.id}
+                                    name={v.label}
+                                    ownerName={v.ownerAgency}
+                                    canRepair={v.canRepair}
+                                    onMoved={(text) => {
+                                      setNotice({ kind: "info", text });
+                                      refetch();
+                                    }}
+                                    onError={(text) => setNotice({ kind: "error", text })}
+                                  />
+                                )}
+                              </div>
+                            </div>
+                          </DetailGrid>
+                          {v.id && <RowUsagePanel kind="key" id={v.id} />}
+                          </DetailPanel>
+                          <ReferenceField reference={v.reference} semantics="Resolves to a key-file path on the executing host (not the key bytes)." />
+                          <div style={{ marginTop: 12 }}>
+                            <DetailLabel>Tags</DetailLabel>
+                            <TagEditor tags={tagState.tagsFor(v)} onChange={(next) => tagState.save(v, next)} disabled={!canEdit} />
+                            {tagState.errors[v.id] && (
+                              <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[v.id]}</div>
+                            )}
                           </div>
-                        </DetailGrid>
-                        {v.id && <RowUsagePanel kind="key" id={v.id} />}
-                        </DetailPanel>
-                        <ReferenceField reference={v.reference} semantics="Resolves to a key-file path on the executing host (not the key bytes)." />
-                        <div style={{ marginTop: 12 }}>
-                          <DetailLabel>Tags</DetailLabel>
-                          <TagEditor tags={tagState.tagsFor(v)} onChange={(next) => tagState.save(v, next)} disabled={!canEdit} />
-                          {tagState.errors[v.id] && (
-                            <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[v.id]}</div>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                        </DetailCell>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {(adding || editing) && (
