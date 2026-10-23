@@ -87,7 +87,7 @@ func TestScopeBindingReasonsAreToldApart(t *testing.T) {
 
 	// 3. In the agency, but offline.
 	f.exec(`INSERT INTO runner_agencies(runner_id,agency_id) VALUES('r-gone','a1')`)
-	f.exec(`UPDATE runners SET status='offline' WHERE id='r-gone'`)
+	f.exec(`UPDATE runners SET status='offline', owner_agency = 'a1' WHERE id='r-gone'`) // alpha's agent (§0a)
 	got = f.reason(t, "run-1")
 	if !strings.Contains(got, "online and otherwise eligible") {
 		t.Errorf("offline binding = %q, want it to say no bound runner is online and eligible", got)
@@ -103,15 +103,16 @@ func TestScopeBindingReasonsAreToldApart(t *testing.T) {
 	}
 }
 
-// A run frozen onto the ssh executor needs no runner, so it gets no runner
-// reason — not even "no runner is online" in a deployment that has none.
-func TestUnclaimableReasonIgnoresSSHRuns(t *testing.T) {
+// Nothing claims a row frozen onto the SSH executor since 2.3.0 (LR-42), and a
+// queued one says so: the upgrade converts the rows that were waiting, so one
+// that is still here would otherwise wait in silence.
+func TestUnclaimableReasonForALeftoverSSHRun(t *testing.T) {
 	f := newUnclaimFixture(t)
 	f.exec(`INSERT INTO runs(id, job_name, job_source, run_type, status, triggered_by, trigger_kind,
 	                         executor, agencies_json, requires_json, created_at)
 	        VALUES('run-ssh', 'j', 'git', 'bash', 'queued', 'seed', 'manual', 'ssh', '[]', '[]', 't')`)
-	if got := f.reason(t, "run-ssh"); got != "" {
-		t.Errorf("reason on an ssh run = %q, want none", got)
+	if got := f.reason(t, "run-ssh"); got != ReasonQueuedForSSHExecutor {
+		t.Errorf("reason on a leftover ssh run = %q, want %q", got, ReasonQueuedForSSHExecutor)
 	}
 }
 
@@ -120,7 +121,7 @@ func TestScopeBindingPermits(t *testing.T) {
 	ctx := context.Background()
 	permits := func(scope, runnerID string) bool {
 		t.Helper()
-		ok, err := ScopeBindingPermits(ctx, f.pool, scope, runnerID)
+		ok, err := ScopeBindingPermits(ctx, f.pool, mustOwner(t, f.pool, scope), scope, runnerID)
 		if err != nil {
 			t.Fatalf("ScopeBindingPermits: %v", err)
 		}

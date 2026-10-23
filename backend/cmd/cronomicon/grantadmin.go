@@ -49,8 +49,9 @@ Break-glass admin recovery. STOP THE SERVER FIRST if it is running against the
 same database file.
 
   <ad-group>  writes an unrestricted admin grant for this AD group. Everyone the
-              identity provider places in the group holds full admin on their
-              next login.
+              identity provider places in the group holds full admin from their
+              next request once the server is running again (a session that
+              already carries the group need not sign in again).
   <email>     looks the user up in recent logins and prints their recorded AD
               groups, so you can re-run with the one you mean. Nothing is written.`)
 	}

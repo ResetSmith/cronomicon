@@ -6,14 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/metrics"
+	"github.com/ResetSmith/cronomicon/internal/runcap"
 	"github.com/ResetSmith/cronomicon/internal/runnerproto"
 )
 
@@ -116,6 +120,34 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A poll from an agent process that has not been answered yet (2.3.2,
+	// runnerproto.PollParamStarted). That process holds no run, so every run
+	// still `running` here belonged to the process before it and will never be
+	// reported on: close them now. Nothing else would — the reaper closes a
+	// runner's runs only once the runner has been quiet for RunnerOfflineAfter,
+	// and an agent that is restarted, upgraded or crashes and comes back is
+	// never quiet that long. Before the claim below, so a run handed out by
+	// this very poll is not among them.
+	//
+	// Unless the identity is in use twice (2.5.0 C6a, processes.go): the poll
+	// names its process, and another process was seen on this runner within
+	// the hold window. Then this may be a copy's start beside a live process
+	// that holds those runs, and they are closed only once that process stays
+	// silent (a crash's case); never if it polls again (a copy's).
+	started := r.URL.Query().Get(runnerproto.PollParamStarted) == "1"
+	deferClose := s.noteProcess(r.Context(), runnerID, r.URL.Query().Get(runnerproto.PollParamProcess),
+		httpx.ClientIP(r, s.cfg.TrustedProxyNets()), started)
+	if started && !deferClose {
+		if n := s.failRunningRuns(r.Context(), runnerID); n > 0 {
+			if _, err := s.db.ExecContext(r.Context(),
+				`UPDATE runners SET load = 0 WHERE id = ?`, runnerID); err != nil {
+				s.log.Error("restarted runner: reset load", "runner_id", runnerID, "error", err)
+			}
+			s.log.Warn("runner restarted with runs still marked running — closed them as runner_lost",
+				"runner_id", runnerID, "runs", n)
+		}
+	}
+
 	// ET-D — the file-arrival specs this agent should poll. Resolved once, HERE,
 	// before any early return: writePoll attaches them to every exit, so an
 	// agent's watch set is refreshed by any poll outcome including a 204 or a
@@ -214,12 +246,24 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An agent that can start no run now (2.3.2, runnerproto.PollParamClaim):
+	// it was told to stop and is finishing its runs, or all its slots are
+	// taken. The poll has done its work above: the heartbeat, and any kill,
+	// settings change or host-key op. It is handed no run, and it is not held:
+	// the agent comes back when a slot opens, or on its next tick. Nothing
+	// below this point knows how many runs the agent holds, so without this a
+	// full agent is claimed a run it cannot start.
+	if r.URL.Query().Get(runnerproto.PollParamClaim) == "0" {
+		respondControlOr204(w, control, settingsPayload, watches)
+		return
+	}
+
 	var caps []string
 	_ = json.Unmarshal([]byte(capsJSON), &caps)
 	// Subtract the server-managed capability mask (Phase 4, D3): the run-types it
 	// lists are removed from the runner's effective claim set. Enforced here at
 	// claim time (the real gate); the agent honors it too for symmetry.
-	caps = effectiveClaimCaps(caps, managedVals.CapabilityMask)
+	caps = execspec.EffectiveCaps(caps, managedVals.CapabilityMask)
 	if len(caps) == 0 {
 		respondControlOr204(w, control, settingsPayload, watches)
 		return
@@ -383,6 +427,7 @@ func (s *Service) readmitRunner(ctx context.Context, runnerID string) bool {
 	_ = s.db.QueryRowContext(ctx,
 		`SELECT name FROM runners WHERE id = ?`, runnerID).Scan(&name)
 	_ = auditlog.WriteActivity(ctx, s.db, auditlog.ActivityParams{
+		AgencyID:   runnerAgency(ctx, s.db, runnerID),
 		At:         now(),
 		Kind:       "config",
 		Actor:      "runner:" + runnerID,
@@ -463,6 +508,64 @@ func respondControlOr204(w http.ResponseWriter, control []runnerproto.PollContro
 // The len(caps)==0 early-return avoids a pointless query for a runner with no
 // capabilities at all.
 func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, allowSecretInjection bool) (*runnerproto.PollAssignment, error) {
+	c, err := Claim(ctx, s.db, s.log, ClaimRequest{
+		RunnerID: runnerID,
+		Caps:     caps,
+		// The injection fence is DISARMED when the global kill switch is off
+		// (see Claim): any runner may then take a binding-bearing run.
+		InjectionOK: !s.cfg.SecretsInjectionEnabled || allowSecretInjection,
+		Actor:       "runner:" + runnerID,
+	})
+	if err != nil || c == nil {
+		return nil, err
+	}
+	return &runnerproto.PollAssignment{
+		TraceID: c.TraceID,
+		JobName: c.JobName,
+		RunType: c.RunType,
+		Scope:   c.Scope,
+		Payload: map[string]any{
+			"jobName": c.JobName,
+			"type":    c.RunType,
+			"scope":   c.Scope,
+		},
+		LiveLog: true, // v12: this server accepts mid-run partial log chunks
+	}, nil
+}
+
+// ClaimRequest is one runner asking for one run.
+type ClaimRequest struct {
+	RunnerID string
+	// Caps are the runner's EFFECTIVE capability tokens: declared, minus the
+	// operator's mask (execspec.EffectiveCaps).
+	Caps []string
+	// InjectionOK: this runner may take a run that injects secret material
+	// (it is flagged allow_secret_injection, or the kill switch is off and
+	// nothing is injected).
+	InjectionOK bool
+	// Local is the local runner — the server itself (LR-40). It claims by this
+	// same rule, with one more clause: it does not take a run whose job or
+	// script binds an SSH key (LR-47, execspec.RunBindsKeySQL).
+	Local bool
+	// Actor is the activity row's actor: "runner:<id>" for an agent,
+	// "local-runner" for the server (LR-53).
+	Actor string
+}
+
+// Claimed is the run a Claim moved from queued to running.
+type Claimed struct {
+	TraceID, JobName, RunType, Scope string
+	// StartedAt is the claim instant, as written to runs.started_at.
+	StartedAt string
+}
+
+// Claim is THE claim: the one statement that moves a queued run to running,
+// for an agent's poll and for the local runner's loop alike (2.3.0, LR-40;
+// until then the server's SSH pool had a query of its own that knew nothing of
+// agencies, scope bindings or requirements). It returns nil when nothing
+// queued matches.
+func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimRequest) (*Claimed, error) {
+	runnerID, caps := req.RunnerID, req.Caps
 	if len(caps) == 0 {
 		return nil, nil
 	}
@@ -486,8 +589,13 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 	// registered agent speaks the current protocol.) The kill-switch-off case is
 	// unaffected: nothing is injected, so any runner may claim it.
 	injectFlag := 0
-	if !s.cfg.SecretsInjectionEnabled || allowSecretInjection {
+	if req.InjectionOK {
 		injectFlag = 1
+	}
+	// LR-47: 1 keeps this claim away from a run that binds an SSH key.
+	localFlag := 0
+	if req.Local {
+		localFlag = 1
 	}
 
 	// Match against the EFFECTIVE caps passed in (already masked by the caller,
@@ -503,17 +611,27 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 	// Atomic claim: find the oldest queued, capability-matched, requirement-
 	// satisfied, agency-eligible, scope-bound, injection-gated run and
 	// transition it to running in a single UPDATE ... RETURNING (SQLite 3.35+).
-	// Placeholders in order: runner_id, started-at ts, caps (run_type), caps
-	// (requires⊆), agency runnerID ×2, binding runnerID, injectFlag.
+	// Placeholders in order: runner_id, runner_id (the name stamp), started-at
+	// ts, caps (run_type), caps (requires⊆), agency runnerID, binding runnerID,
+	// injectFlag, localFlag, the installation's cap (runcap.ClaimSQL).
 	var (
 		traceID string
 		jobName string
 		runType string
 		scope   sql.NullString
 	)
-	err = s.db.QueryRowContext(ctx, `
+	err = database.QueryRowContext(ctx, `
 		UPDATE runs
-		SET status = 'running', runner_id = ?, started_at = ?
+		-- queued_reason is the "why is this waiting" sentence; it stops being
+		-- true here. Left in place it would follow a run that waited and then
+		-- succeeded into History (the finalizers only ever overwrite it with
+		-- a reason of their own).
+		-- runner_name is the run's own copy of the runner's name (migration
+		-- 1280): runner_id is ON DELETE SET NULL, and History must still say
+		-- which runner took a run after that runner is reaped or re-enrolled.
+		SET status = 'running', runner_id = ?,
+		    runner_name = (SELECT rn.name FROM runners rn WHERE rn.id = ?),
+		    started_at = ?, queued_reason = NULL
 		WHERE id = (
 			SELECT id FROM runs
 			WHERE status = 'queued' AND executor = 'runner'
@@ -530,34 +648,32 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 			  -- run_agencies (mig. 690) purely so this probe is a keyed lookup
 			  -- rather than a per-row JSON parse — agencies_json stays authoritative.
 			  --
-			  -- BOTH branches are deliberately shaped to stay cheap, and the shape is
-			  -- load-bearing (see poll_claim_bench_test.go for the measurements):
-			  --   · the membership branch's inner IN is UNCORRELATED, so SQLite
-			  --     materializes the runner's agency names once per statement;
-			  --   · the general-pool branch tests the compact-JSON column with a byte
-			  --     comparison instead of a correlated NOT EXISTS, which is what the
-			  --     legacy predicate got for free from a plain IS NULL test.
-			  AND (
-			    -- tagged run → this runner must be a member of AT LEAST ONE of the
-			    -- agencies the run requires
-			    (COALESCE(runs.agencies_json, '[]') <> '[]'
-			     AND EXISTS (SELECT 1 FROM run_agencies rag
-			                 WHERE rag.run_id = runs.id
-			                   AND rag.agency IN (SELECT a.name FROM runner_agencies ra
-			                                      JOIN agencies a ON a.id = ra.agency_id
-			                                      WHERE ra.runner_id = ?)))
-			    -- untagged run → ONLY a runner with no agencies. This disjoint
-			    -- general-pool rule is UNCHANGED (AG-Q3a): it is an isolation
-			    -- invariant, not an implementation detail, and relaxing it in passing
-			    -- would silently let agency-bound runners start taking general work.
-			    OR (COALESCE(runs.agencies_json, '[]') = '[]'
-			        AND NOT EXISTS (SELECT 1 FROM runner_agencies WHERE runner_id = ?))
-			  )
+			  -- ONE rule since migration 1220: the runner serves at least one of
+			  -- the agencies the run requires. There used to be a second, disjoint
+			  -- arm for "the general pool" (a run with agencies_json '[]' → only a
+			  -- runner with no agencies). Global is a row now: a run with no scope
+			  -- carries ["Global"], a runner with no other agency serves Global,
+			  -- and this arm says both. A row that still carries '[]' is no
+			  -- agency's and nothing claims it — the writer and the birth trigger
+			  -- make that unreachable; it must never read as "anyone's".
+			  --
+			  -- The inner IN is UNCORRELATED on purpose (see
+			  -- poll_claim_bench_test.go): SQLite materializes the runner's agency
+			  -- names once per statement, and the probe of run_agencies is keyed.
+			  AND EXISTS (SELECT 1 FROM run_agencies rag
+			              WHERE rag.run_id = runs.id
+			                AND rag.agency IN (SELECT a.name FROM runner_agencies ra
+			                                   JOIN agencies a ON a.id = ra.agency_id
+			                                   -- §0a (IN-6): its owner's work only. A
+			                                   -- legacy placement's other agencies (MA-9)
+			                                   -- are listed, and not served.
+			                                   JOIN runners rown ON rown.id = ra.runner_id AND rown.owner_agency = ra.agency_id
+			                                   WHERE ra.runner_id = ?))
 			  -- SB-1 scope binding (mig. 1180). A scope with rows in scope_runners
 			  -- is claimable only by a runner named there; a scope with none, and
 			  -- a run with no scope, behave exactly as before.
 			  --
-			  -- ANDed with the agency branch above, deliberately and permanently
+			  -- ANDed with the agency rule above, deliberately and permanently
 			  -- (the RT-Q2 rule, inherited from the runner-tag pin this
 			  -- replaced): a binding NARROWS the eligible set and must never
 			  -- widen it. Written as an OR — or moved inside the agency
@@ -576,15 +692,15 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 			  -- NOT IN (scopes bound to somebody else)" — rebuilds three list
 			  -- subqueries and two bloom filters on every poll and cost +40%,
 			  -- with nothing bound at all. These two probes are keyed seeks
-			  -- (scopes.name is UNIQUE, scope_runners' PK leads with scope_id)
+			  -- (scopes is UNIQUE on (owner_agency, name) since 1420, scope_runners' PK leads with scope_id)
 			  -- that run only for candidate rows, and cost ~10%.
 			  AND (runs.scope IS NULL
 			       OR NOT EXISTS (SELECT 1 FROM scope_runners sr
 			                        JOIN scopes sc ON sc.id = sr.scope_id
-			                       WHERE sc.name = runs.scope)
+			                       WHERE sc.name = runs.scope AND sc.owner_agency = `+agencyid.RunScopeOwnerSQL("runs.agencies_json")+`)
 			       OR EXISTS (SELECT 1 FROM scope_runners sr
 			                    JOIN scopes sc ON sc.id = sr.scope_id
-			                   WHERE sc.name = runs.scope AND sr.runner_id = ?))
+			                   WHERE sc.name = runs.scope AND sc.owner_agency = `+agencyid.RunScopeOwnerSQL("runs.agencies_json")+` AND sr.runner_id = ?))
 			  -- secret-injection gate: a run whose job/script declares reference
 			  -- bindings — or that carries a per-run ssh_credential (CA-3b, an
 			  -- implicit key binding whose material ships in the manifest) — is
@@ -603,9 +719,19 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 			                         THEN rb.owner_uid = runs.job_uid
 			                         ELSE rb.owner_source = COALESCE(NULLIF(runs.job_source, ''), 'git')
 			                              AND rb.owner_name = runs.job_name END)
-			           OR (rb.owner_kind = 'script' AND rb.owner_name = runs.script_ref))
+			           -- The script by the run's frozen script_uid, never by its
+			           -- name (1290): a name is a script in every repository that
+			           -- has one. NULL matches nothing.
+			           OR (rb.owner_kind = 'script' AND rb.owner_uid = runs.script_uid))
 			    )
 			  )
+			  -- LR-47: the local runner does not take a run that binds an SSH key
+			  AND (? = 0 OR NOT `+execspec.RunBindsKeySQL("runs")+`)
+			  -- 2.5.0 C6 (question 17): the concurrency cap at the claim. Every
+			  -- agency's running runs against the installation's cap, and the run's
+			  -- agency's against its own; waiting runs are not counted here, so an
+			  -- agent that comes back takes its backlog a slot at a time.
+			  `+runcap.ClaimSQL+`
 			-- QP: highest priority first, then oldest. The index
 			-- idx_runs_claimable is cut (status, executor, priority DESC,
 			-- created_at ASC) to match this mixed-direction sort exactly; a
@@ -616,7 +742,8 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 			LIMIT 1
 		)
 		RETURNING id, job_name, run_type, scope`,
-		runnerID, ts, string(capsJSON), string(capsJSON), runnerID, runnerID, runnerID, injectFlag,
+		runnerID, runnerID, ts, string(capsJSON), string(capsJSON), runnerID, runnerID, injectFlag, localFlag,
+		runcap.Max(ctx, database),
 	).Scan(&traceID, &jobName, &runType, &scope)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -627,35 +754,26 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 	}
 
 	// Increment runner load counter.
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := database.ExecContext(ctx,
 		`UPDATE runners SET load = load + 1 WHERE id = ?`, runnerID); err != nil {
-		s.log.Error("increment runner load", "runner_id", runnerID, "error", err)
+		log.Error("increment runner load", "runner_id", runnerID, "error", err)
 	}
 
 	// Emit run-start activity (B4 seam: B4 owns queued→running transition).
 	scopeVal := scope.String
+	var runnerName string
+	_ = database.QueryRowContext(ctx, `SELECT name FROM runners WHERE id = ?`, runnerID).Scan(&runnerName)
 	// At is the claim ts also written to runs.started_at — a fresh stamp here
 	// could order the run-start after its own run row.
-	_ = auditlog.WriteActivity(ctx, s.db, auditlog.ActivityParams{
+	_ = auditlog.WriteActivity(ctx, database, auditlog.ActivityParams{
 		At:         ts,
 		Kind:       "run-start",
-		Actor:      "runner:" + runnerID,
-		RunnerName: s.runnerNameOf(ctx, runnerID),
+		Actor:      req.Actor,
+		RunnerName: runnerName,
 		JobName:    jobName,
 		Scope:      scopeVal,
 		TraceID:    traceID,
 	})
 
-	return &runnerproto.PollAssignment{
-		TraceID: traceID,
-		JobName: jobName,
-		RunType: runType,
-		Scope:   scopeVal,
-		Payload: map[string]any{
-			"jobName": jobName,
-			"type":    runType,
-			"scope":   scopeVal,
-		},
-		LiveLog: true, // v12: this server accepts mid-run partial log chunks
-	}, nil
+	return &Claimed{TraceID: traceID, JobName: jobName, RunType: runType, Scope: scopeVal, StartedAt: ts}, nil
 }

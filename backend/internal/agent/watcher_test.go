@@ -41,7 +41,7 @@ func pollingAgent(t *testing.T, h http.HandlerFunc) *Agent {
 		client: c,
 		log:    discardLogger(),
 		id:     Identity{ID: "r1", APIKey: "crn_run_x"},
-		active: map[string]context.CancelFunc{},
+		active: map[string]context.CancelCauseFunc{},
 	}
 	a.watcher = newWatcher(a)
 	return a

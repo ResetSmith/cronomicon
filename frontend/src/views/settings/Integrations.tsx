@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import type { components } from "../../api/schema";
 import { c } from "../../theme";
@@ -7,7 +7,6 @@ import { Btn, Card, ReadOnlyFields, SaveBtn, SettingRow, Status, Toggle, csrfHea
 import { Rule } from "../../components/ui";
 import { fmtInAppZone } from "../../utils/datetime";
 
-type GitlabConfig = components["schemas"]["GitlabConfig"];
 type VaultConfig = components["schemas"]["VaultConfig"];
 type LogStorageConfig = components["schemas"]["LogStorageConfig"];
 type ObservabilityConfig = components["schemas"]["ObservabilityConfig"];
@@ -29,7 +28,7 @@ const VAULT_STATUS: Record<string, string> = {
 // useSettingForm / SaveBtn / Status moved to ./ui when the retention card became
 // their third consumer — same behaviour, one copy.
 
-// GC (v2.2.2) — GET /settings/gitlab and GET /settings/vault are refused for
+// GC (v2.2.2) — GET /settings/vault is refused for
 // anyone but a global administrator (they expose connection config), so these two
 // sections must not fetch at all for an administrator of one agency: the card
 // would load, 403, and show "Error: forbidden" for a rule the caller cannot fix.
@@ -39,127 +38,59 @@ function GlobalOnlyCard({ title }: { title: string }) {
   return (
     <Card title={title}>
       <div role="note" style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-        {GLOBAL_ADMIN_VIEW_ONLY} The connection is shared by every agency, and its settings are not shown to an
-        administrator of one.
+        {GLOBAL_ADMIN_VIEW_ONLY} The connection is used by Global and by every agency without one of its own, and
+        its settings are not shown to an administrator of one agency.
       </div>
-    </Card>
-  );
-}
-
-// ── GitLab Connection ────────────────────────────────────────────────────────
-export function GitlabSection({ canWrite }: { canWrite: boolean }) {
-  return canWrite ? <GitlabForm /> : <GlobalOnlyCard title="GitLab Connection" />;
-}
-
-function GitlabForm() {
-  const s = useSettingForm<GitlabConfig>(() => api.GET("/settings/gitlab"), (body) =>
-    api.PUT("/settings/gitlab", { params: { header: csrfHeader }, body }),
-  );
-  // PAT is masked on read; only send when the operator types a new one.
-  const [newPat, setNewPat] = useState("");
-  const [rotating, setRotating] = useState(false);
-  const [rotateMsg, setRotateMsg] = useState<string | null>(null);
-  const { form, patch } = s;
-
-  // LB7: the receiver URL operators paste into GitLab. Fixed route, derived from
-  // wherever the UI is being served, so it's correct behind any proxy/host.
-  const webhookUrl = `${window.location.origin}/api/v1/webhooks/gitlab`;
-  const [copied, setCopied] = useState(false);
-  async function copyWebhookUrl() {
-    try {
-      await navigator.clipboard.writeText(webhookUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard API unavailable (e.g. insecure context); the field stays selectable.
-    }
-  }
-
-  async function rotate() {
-    setRotating(true);
-    setRotateMsg(null);
-    const { error: err } = await api.POST("/settings/gitlab/webhook-secret/rotate", { params: { header: csrfHeader } });
-    setRotating(false);
-    setRotateMsg(err ? `Rotate failed: ${errMsg(err)}` : "Webhook secret rotated.");
-    if (!err) s.refetch();
-  }
-
-  return (
-    <Card title="GitLab Connection" action={<SaveBtn onClick={() => s.save({ ...form!, ...(newPat ? { pat: newPat } : {}) })} saving={s.saving} saved={s.saved} disabled={!form} />}>
-      <Status loading={s.loading} error={s.error} saveErr={s.saveErr} />
-      {form && (
-        <div style={{ fontSize: c.fontSm }}>
-          <SettingRow label="Repository URL">
-            <input value={form.repoUrl ?? ""} onChange={(e) => patch({ repoUrl: e.target.value })} style={wide()} />
-          </SettingRow>
-          <SettingRow label="Bot PAT" hint="Stored masked. Leave blank to keep the current token.">
-            <input type="password" value={newPat} onChange={(e) => setNewPat(e.target.value)} placeholder="•••• (set)" style={wide()} />
-          </SettingRow>
-          <SettingRow label="Bot Name">
-            <input value={form.botName ?? ""} onChange={(e) => patch({ botName: e.target.value })} style={wide()} />
-          </SettingRow>
-          <SettingRow label="Bot Email">
-            <input value={form.botEmail ?? ""} onChange={(e) => patch({ botEmail: e.target.value })} style={wide()} />
-          </SettingRow>
-          {/* G-3 (VF-12) — it was "Write Branch", which named half of what it does:
-              writeBranch (gitlab/sync.go:618) resolves the branch for sync-READ
-              as well as publish-write, so an operator reading the old label had
-              no reason to think changing it would re-point where definitions are
-              read from. VU-16 corrected the hint; the label is the other half.
-              The wire field stays `writeBranch` — that is the API, not the UI. */}
-          <SettingRow label="Working Branch" hint="The branch Cronomicon syncs definitions from, and writes schedule changes back to.">
-            <input value={form.writeBranch ?? ""} onChange={(e) => patch({ writeBranch: e.target.value })} style={{ ...inputStyle(), width: 160 }} />
-          </SettingRow>
-          {/* F2-1 — "Token Expiry Notice" stood here, promising a warning this
-              many days before the PAT expires. It was stored
-              (tokenExpiryNotifyDays) and there is no warning code anywhere: no
-              banner, no notification, no scheduled check. The field and its
-              schema stay so nothing stored is lost; re-add the control with the
-              feature that honours it. */}
-          <SettingRow label="Webhook URL" hint="Set this as the URL in GitLab → Settings → Webhooks">
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input readOnly value={webhookUrl} onFocus={(e) => e.target.select()} style={wide()} />
-              <Btn onClick={copyWebhookUrl}>{copied ? "✓ Copied" : "Copy"}</Btn>
-            </div>
-          </SettingRow>
-          <SettingRow label="Webhook Enabled" hint="Pick up repository changes as soon as they are pushed to GitLab.">
-            <Toggle on={form.webhookEnabled ?? false} onChange={() => patch({ webhookEnabled: !form.webhookEnabled })} />
-          </SettingRow>
-          <SettingRow label="Webhook Events">
-            <div style={{ display: "flex", gap: 14, fontSize: c.fontSm, color: c.textSec }}>
-              {(["push", "mr", "tag"] as const).map((ev) => (
-                <label key={ev} style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={form.webhookEvents?.[ev] ?? false}
-                    onChange={() => patch({ webhookEvents: { ...form.webhookEvents, [ev]: !form.webhookEvents?.[ev] } })}
-                  />
-                  {ev}
-                </label>
-              ))}
-            </div>
-          </SettingRow>
-          <SettingRow label="Webhook Secret" hint="Shared secret GitLab signs deliveries with" last>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {form.webhookSecretEnvPinned ? (
-                <span style={{ fontSize: c.fontSm, color: c.textSec }}>
-                  Pinned by <code style={{ fontFamily: c.mono }}>CRONOMICON_GITLAB_WEBHOOK_SECRET</code> — unset it to rotate via the API.
-                </span>
-              ) : (
-                rotateMsg && <span style={{ fontSize: c.fontSm, color: rotateMsg.startsWith("Rotate failed") ? c.danger : c.success }}>{rotateMsg}</span>
-              )}
-              <Btn onClick={rotate} disabled={rotating || !!form.webhookSecretEnvPinned}>{rotating ? "Rotating…" : "Rotate secret"}</Btn>
-            </div>
-          </SettingRow>
-        </div>
-      )}
     </Card>
   );
 }
 
 // ── Vault ────────────────────────────────────────────────────────────────────
 export function VaultSection({ canWrite }: { canWrite: boolean }) {
-  return canWrite ? <VaultForm /> : <GlobalOnlyCard title="Vault" />;
+  if (!canWrite) return <GlobalOnlyCard title="Vault" />;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
+        The installation's Vault, used by Global and by every agency without a Vault of its own (each inside the path
+        prefixes assigned on Scopes → Agencies). An agency connects its own on Settings → Agency Vault, on
+        a host listed below.
+      </div>
+      <VaultForm />
+      <VaultAllowedHostsCard />
+    </div>
+  );
+}
+
+// The hosts an agency's own Vault may be on (2.5.1 SG-22): a global
+// administrator's, in the general settings, as the allowed Git hosts are.
+function VaultAllowedHostsCard() {
+  const [general, setGeneral] = useState<Record<string, unknown> | null>(null);
+  const [text, setText] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    api.GET("/settings/general").then(({ data }) => {
+      if (!data) return;
+      setGeneral(data as Record<string, unknown>);
+      setText(((data as { vaultAllowedHosts?: string[] }).vaultAllowedHosts ?? []).join("\n"));
+    });
+  }, []);
+  async function save() {
+    if (!general) return;
+    const hosts = text.split("\n").map((h) => h.trim()).filter(Boolean);
+    const { error } = await api.PUT("/settings/general", { params: { header: csrfHeader }, body: { ...general, vaultAllowedHosts: hosts } as never });
+    setMsg(error ? { ok: false, text: errMsg(error) } : { ok: true, text: "Saved." });
+  }
+  return (
+    <Card title="Allowed hosts for an agency's own Vault" action={<Btn small onClick={save} disabled={!general}>Save</Btn>}>
+      <div style={{ fontSize: c.fontSm, color: c.textSec, marginBottom: 8, lineHeight: 1.6 }}>
+        One per line: a host name (any port) or <code style={{ fontFamily: c.mono }}>host:port</code>. With none, no agency
+        can connect a Vault of its own. Taking a host off the list stops that agency's Vault being reached, and its
+        Vault-backed secrets and keys fail rather than being read from this Vault. The installation's own is exempt.
+      </div>
+      <textarea aria-label="Allowed Vault hosts" value={text} onChange={(e) => setText(e.target.value)} rows={3} style={{ ...inputStyle(), width: 300, fontFamily: c.mono }} />
+      {msg && <div role={msg.ok ? "status" : "alert"} style={{ color: msg.ok ? c.success : c.danger }}>{msg.text}</div>}
+    </Card>
+  );
 }
 
 function VaultForm() {
@@ -167,11 +98,32 @@ function VaultForm() {
     api.PUT("/settings/vault", { params: { header: csrfHeader }, body }),
   );
   const [newSecretId, setNewSecretId] = useState("");
+  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const { form, patch } = s;
+  // 2.5.1 SG3: an authenticated login with the STORED connection (save first).
+  async function test() {
+    setTestMsg(null);
+    const { data, error } = await api.POST("/settings/vault/test", { params: { header: csrfHeader } });
+    if (error) setTestMsg({ ok: false, text: errMsg(error) });
+    else setTestMsg(data?.ok ? { ok: true, text: "The Vault accepted the login." } : { ok: false, text: `The login failed: ${data?.problem ?? "no answer"}` });
+  }
   const statusColor = form?.status === "ok" ? c.success : form?.status === "degraded" ? c.warning : c.textMuted;
 
   return (
-    <Card title="Vault" action={<SaveBtn onClick={() => s.save({ ...form!, ...(newSecretId ? { secretId: newSecretId } : {}) })} saving={s.saving} saved={s.saved} disabled={!form} />}>
+    <Card
+      title="Vault"
+      action={
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn small onClick={test} disabled={!form} title="Logs in with the saved connection">Test</Btn>
+          <SaveBtn onClick={() => s.save({ ...form!, ...(newSecretId ? { secretId: newSecretId } : {}) })} saving={s.saving} saved={s.saved} disabled={!form} />
+        </div>
+      }
+    >
+      {testMsg && (
+        <div role={testMsg.ok ? "status" : "alert"} style={{ marginBottom: 10, fontSize: c.fontSm, color: testMsg.ok ? c.success : c.danger }}>
+          {testMsg.text}
+        </div>
+      )}
       <Status loading={s.loading} error={s.error} saveErr={s.saveErr} />
       {form && (
         <div style={{ fontSize: c.fontSm }}>

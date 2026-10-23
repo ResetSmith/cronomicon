@@ -27,13 +27,15 @@ RUN npm ci
 # guides it bundles at build time (frontend/vite-manuals-plugin.js reads
 # ../documentation/*.html — user/administrator manuals + runner-*.html guides).
 # The plugin's FILES class also publishes backend/deploy/runner-install.sh to
-# /runner-install.sh (the Runners view's Download button + install one-liner) and
+# /runner-install.sh (the Runners view's Download button + install one-liner),
+# backend/deploy/runner-isolation-check.sh to /runner-isolation-check.sh and
 # backend/deploy/cronomicon-runner.env.example to /cronomicon-runner.env.example,
 # so those files must exist in this stage too — the plugin fails the build if a
 # FILES source is missing.
 COPY frontend/ ./
 COPY documentation/ /repo/documentation/
 COPY backend/deploy/runner-install.sh /repo/backend/deploy/runner-install.sh
+COPY backend/deploy/runner-isolation-check.sh /repo/backend/deploy/runner-isolation-check.sh
 COPY backend/deploy/cronomicon-runner.env.example /repo/backend/deploy/cronomicon-runner.env.example
 # ── Bundle the frontend. NOTE: `vite build`, not `npm run build` (v0.52.27).
 #
@@ -106,6 +108,19 @@ RUN CGO_ENABLED=1 go build -trimpath \
 
 # Pre-create data directory with nonroot UID/GID (65532)
 RUN mkdir -p /out/var/lib/cronomicon && chown 65532:65532 /out/var/lib/cronomicon
+
+# ── The validation image (2.5.0; R7, question 23): `cronomicon validate` for a
+# CI job, which runs its script: in a shell. The server image is distroless and
+# has none, so this one is Debian 12, the glibc the binary is built against (an
+# Alpine base does not run it), with the binary on the PATH and curl for the
+# template's optional merge-request comment. Built with --target validate and
+# published as ghcr.io/resetsmith/cronomicon-validate; the CI template
+# (deploy/ci-validate-template.yml) names it. A stage before the last, so a
+# plain build is still the server.
+FROM debian:bookworm-slim AS validate
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/cronomicon /usr/local/bin/cronomicon
 
 # ── Stage 4: minimal runtime. Distroless has glibc (cgo sqlite) and NO shell.
 FROM gcr.io/distroless/base-debian12

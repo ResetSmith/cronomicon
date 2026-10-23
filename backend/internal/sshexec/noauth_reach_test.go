@@ -65,8 +65,9 @@ func TestNoAuthErrorNeverReachesCredMsg(t *testing.T) {
 	t.Run("ProbeBastion routes a keyless bastion to the reachability tier", func(t *testing.T) {
 		svc, pool := probeFixture(t)
 		client, _ := newKey(t)
-		addr, _ := testSSHServer(t, client.PublicKey(), "x")
+		addr, hostKey := testSSHServer(t, client.PublicKey(), "x")
 		host, port, _ := net.SplitHostPort(addr)
+		trustHostKey(t, pool, host, atoiPort(port), hostKey)
 		if _, err := pool.Exec(`
 			INSERT INTO bastions(id, hostname, name, address, port, username, created_at)
 			VALUES('bk','bk','bk',?,?,'tester','2026-09-18T00:00:00Z')`, host, atoiPort(port)); err != nil {

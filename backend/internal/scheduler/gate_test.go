@@ -425,8 +425,8 @@ func seedGlobalFreezeToday(t *testing.T, pool *sql.DB, s *Scheduler) {
 		t.Fatalf("seed calendar: %v", err)
 	}
 	if _, err := pool.Exec(
-		`INSERT INTO calendar_days (calendar_source, calendar_name, day, label)
-		 VALUES ('cronomicon','change-freeze',?,'Change freeze')`, day); err != nil {
+		`INSERT INTO calendar_days (calendar_owner, calendar_source, calendar_name, day, label)
+		 VALUES ('global','cronomicon','change-freeze',?,'Change freeze')`, day); err != nil {
 		t.Fatalf("seed calendar day: %v", err)
 	}
 }

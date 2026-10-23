@@ -14,15 +14,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
-	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/inventory"
 )
-
-// allScopes aliases the A5 unrestricted sentinel so the seed cannot drift from
-// the resolver's definition of it.
-const allScopes = auth.AllScopes
 
 // Seed inserts demo data when the database is empty. It is a no-op when the
 // jobs cache already has rows, so it is safe to call on every boot and never
@@ -196,6 +192,11 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		exec(`INSERT INTO access_grants (id, ad_group, role, agency_id, all_scopes, created_by, created_at, last_modified_by, last_modified_at)
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			db.NewID(), g.group, g.role, agency, all, dev, ago(20*day), dev, ago(20*day))
+		// 2.5.0 C5 (GA-1): an agency grant's group is on that agency's list.
+		if g.agency != "" {
+			exec(`INSERT OR IGNORE INTO agency_groups (agency_id, ad_group, created_by, created_at) VALUES (?, ?, ?, ?)`,
+				g.agency, g.group, dev, ago(20*day))
+		}
 	}
 
 	// ── Recent logins (A3.2 Honest View) ───────────────────────────────────────
@@ -230,7 +231,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		{"python-metrics-export", "python", "Reporting", "report-01", "0 6 * * *", `["reporting","monitoring"]`, 1},
 		{"k8s-node-drain", "bash", "Cluster-A", "", "", `["k8s","maintenance"]`, 1},
 		{"ansible-deploy-app", "ansible", "Staging", "", "", `["deploy","staging"]`, 1},
-		{"disk-usage-audit", "bash", "", "", "*/30 * * * *", `["monitoring"]`, 1},
+		{"disk-usage-audit", "bash", "Production", "", "*/30 * * * *", `["monitoring"]`, 1}, // agency-alpha's, as prod-release is (§0a)
 		{"vault-token-rotate", "bash", "Production", "vault-01", "0 1 * * *", `["security","secrets"]`, 0},
 	}
 	for _, j := range jobs {
@@ -271,8 +272,8 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	}{
 		{"prod-release", "Plan → apply → smoke test the production release",
 			`[{"type":"job","name":"terraform-plan-prod","label":"Plan"},{"type":"job","name":"terraform-apply-prod","label":"Apply"},{"type":"job","name":"disk-usage-audit","label":"Verify"}]`, "", 1},
-		{"patch-and-report", "Patch the fleet then generate the compliance report",
-			`[{"type":"job","name":"ansible-patch-tuesday","label":"Patch"},{"type":"job","name":"perl-report-gen","label":"Report"}]`, "0 3 * * 2", 1},
+		{"patch-and-report", "Patch the fleet then check the Windows hosts (one agency's jobs, §0a)",
+			`[{"type":"job","name":"ansible-patch-tuesday","label":"Patch"},{"type":"job","name":"win-update-check","label":"Windows"}]`, "0 3 * * 2", 1},
 		{"nightly-maintenance", "Backups, log rotation and cert checks",
 			`[{"type":"parallel","jobs":[{"type":"job","name":"nightly-db-backup","label":"Backup"},{"type":"job","name":"log-rotate-web","label":"Rotate"}]},{"type":"job","name":"cert-renewal","label":"Certs"}]`, "0 0 * * *", 1},
 	}
@@ -380,9 +381,9 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		// R2-2: seeded history carries the job's uid, exactly as a real enqueue
 		// would. Without it the job-detail panel — which asks by uid — would show
 		// an empty history for every demo job.
-		exec(`INSERT INTO runs (id, job_name, run_type, scope, status, queued_reason, triggered_by, trigger_kind, created_at, job_uid)
+		exec(`INSERT INTO runs (id, job_name, run_type, scope, status, queued_reason, triggered_by, trigger_kind, created_at, job_uid, executor)
 		      VALUES (?, ?, ?, ?, 'queued', ?, 'alice@corp.example', 'manual', ?,
-		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'))`,
+		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'), 'runner')`,
 			db.NewTraceID(), q.job, q.runType, q.scope, q.reason, ago(3*minute), q.job)
 	}
 
@@ -401,7 +402,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			[][2]string{{"terraform-plan-prod", "terraform"}, {"terraform-apply-prod", "terraform"}, {"disk-usage-audit", "bash"}},
 			[]string{"success", "success", "success"}, 26 * hour},
 		{"patch-and-report", 2, "warning", "Production", "default",
-			[][2]string{{"ansible-patch-tuesday", "ansible"}, {"perl-report-gen", "perl"}},
+			[][2]string{{"ansible-patch-tuesday", "ansible"}, {"win-update-check", "powershell"}},
 			[]string{"success", "warning"}, 50 * hour},
 		{"nightly-maintenance", 3, "failure", "Production", "default",
 			[][2]string{{"nightly-db-backup", "bash"}, {"log-rotate-web", "bash"}, {"cert-renewal", "bash"}},
@@ -418,9 +419,9 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		for ci, ch := range wr.children {
 			cStart := start.Add(time.Duration(ci) * 4 * minute)
 			cEnd := cStart.Add(3 * minute)
-			exec(`INSERT INTO runs (id, job_name, run_type, scope, status, triggered_by, trigger_kind, workflow_run_id, started_at, completed_at, duration_ms, exit_code, created_at, job_uid)
+			exec(`INSERT INTO runs (id, job_name, run_type, scope, status, triggered_by, trigger_kind, workflow_run_id, started_at, completed_at, duration_ms, exit_code, created_at, job_uid, executor)
 			      VALUES (?, ?, ?, ?, ?, 'alice@corp.example', 'workflow', ?, ?, ?, ?, ?, ?,
-			              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'))`,
+			              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'), 'runner')`,
 				db.NewTraceID(), ch[0], ch[1], wr.scope, wr.childStatus[ci], wfTrace,
 				iso(cStart), iso(cEnd), 180000, exitFor(wr.childStatus[ci]), iso(cStart), ch[0])
 		}
@@ -444,7 +445,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		{"gitsync", "failure", "poll", "", "", "", "Git", "sync", "Clone failed: auth error", "infra/job-defs", "main", "", 10 * hour},
 		{"push", "success", "alice@corp.example", "", "", "Production", "Schedule", "publish", "Published nightly-db-backup schedule", "infra/job-defs", "main", "f00ba12", 3 * hour},
 		{"run-end", "failure", "bob@corp.example", "k8s-node-drain", "", "Cluster-A", "", "", "Run killed by operator", "", "", "", 6 * hour},
-		{"run-end", "success", "scheduler@cronomicon", "disk-usage-audit", "", "", "", "", "All hosts under threshold", "", "", "", 30 * minute},
+		{"run-end", "success", "scheduler@cronomicon", "disk-usage-audit", "", "Production", "", "", "All hosts under threshold", "", "", "", 30 * minute},
 		{"run-end", "warning", "scheduler@cronomicon", "win-update-check", "", "Windows-Fleet", "", "", "Reboot pending on win-app-01", "", "", "", 12 * hour},
 	}
 	for _, a := range acts {
@@ -452,6 +453,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		// Dashboard's "last 24h" panels and the History timeline render.
 		audit("INSERT INTO activity", func() error {
 			return auditlog.WriteActivity(ctx, tx, auditlog.ActivityParams{
+				AgencyID:     agencyid.Global, // the demo's history is Global's
 				At:           ago(a.age),
 				Kind:         a.kind,
 				Outcome:      a.outcome,
@@ -487,7 +489,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	}
 	for _, c := range changes {
 		audit("INSERT INTO change_log", func() error {
-			return auditlog.WriteChangeLogAt(ctx, tx, ago(c.age),
+			return auditlog.WriteChangeLogAt(ctx, tx, ago(c.age), agencyid.Global, // the demo's history is Global's
 				c.actor, c.category, c.action, c.target, c.details)
 		})
 	}
@@ -528,7 +530,9 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			s.by, nullStr(s.sha), s.status, s.jobs, s.wfs, s.scopes, nullStr(s.errMsg), iso(start), iso(start.Add(8*time.Second)))
 	}
-	exec(`INSERT INTO git_sync_state (id, last_sha, last_synced_at, last_status) VALUES (1, ?, ?, 'success')`, "a1b2c3d", ago(90*minute))
+	// What the last sync saw, on Global's repository row (migration 1310 writes
+	// that row on every installation; this was the singleton git_sync_state).
+	exec(`UPDATE git_repos SET last_sha = ?, last_synced_at = ?, last_status = 'success' WHERE id = 'global'`, "a1b2c3d", ago(90*minute))
 
 	// ── Runners ────────────────────────────────────────────────────────────────
 	runners := []struct {
@@ -538,14 +542,21 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		// toolchains is the display-only detected-toolchain blob (RX.7/R6); "" ⇒
 		// NULL (a pre-Phase-4 agent, so the detail shows "—").
 		toolchains string
+		// agency is the agency that OWNS the runner, and so the one it serves
+		// (migration 1250): what the registration token of a real agent names.
+		// "" is Global's own. Every seeded scope belongs to an agency, so a fleet
+		// left entirely in Global — what this seed wrote until 2.3.0 — could
+		// claim none of the seeded work.
+		agency string
 	}{
 		{"runner-linux-01", "online", "Linux", `["bash","ansible","terraform","perl","python"]`, 2, 5, 20 * time.Second,
-			`{"ansibleCore":"2.16.3","collections":{"community.general":"8.5.0","ansible.posix":"1.5.4"},"checkout":true,"vault":true,"sandboxed":true,"keyNames":["ansible_rh8_key","bastion_key","prod_deploy"]}`},
+			`{"ansibleCore":"2.16.3","collections":{"community.general":"8.5.0","ansible.posix":"1.5.4"},"checkout":true,"vault":true,"sandboxed":true,"keyNames":["ansible_rh8_key","bastion_key","prod_deploy"]}`, agencies[0].id},
 		{"runner-linux-02", "online", "Linux", `["bash","ansible"]`, 0, 5, 15 * time.Second,
-			`{"ansibleCore":"2.15.9","sandboxed":true,"keyNames":["ansible_rh8_key"]}`},
-		{"runner-win-01", "online", "Windows", `["powershell"]`, 1, 3, 45 * time.Second, ""},
-		{"runner-linux-03", "draining", "Linux", `["bash","terraform"]`, 1, 5, 2 * minute, ""},
-		{"runner-linux-04", "offline", "Linux", `["bash"]`, 0, 5, 3 * hour, ""},
+			`{"ansibleCore":"2.15.9","sandboxed":true,"keyNames":["ansible_rh8_key"]}`, agencies[1].id},
+		{"runner-win-01", "online", "Windows", `["powershell"]`, 1, 3, 45 * time.Second, "", agencies[0].id},
+		// Global's own runner: it takes the jobs that have no scope.
+		{"runner-linux-03", "draining", "Linux", `["bash","terraform"]`, 1, 5, 2 * minute, "", ""},
+		{"runner-linux-04", "offline", "Linux", `["bash"]`, 0, 5, 3 * hour, "", agencies[1].id},
 	}
 	for _, r := range runners {
 		var drain any
@@ -556,9 +567,16 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		if r.toolchains != "" {
 			toolchains = r.toolchains
 		}
-		exec(`INSERT INTO runners (id, name, status, capabilities, load, last_seen_at, drain_deadline_at, registered_at, created_at, os, version, max_concurrent, toolchains)
-		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '1.4.0', ?, ?)`,
-			db.NewID(), r.name, r.status, r.caps, r.load, ago(r.lastSeen), drain, ago(15*day), ago(15*day), r.os, r.maxConc, toolchains)
+		rid := db.NewID()
+		owner := r.agency
+		if owner == "" {
+			owner = agencyid.Global
+		}
+		// The one serve row is written by the trigger that reads the owner, as it
+		// is for a registering agent.
+		exec(`INSERT INTO runners (id, name, status, capabilities, load, last_seen_at, drain_deadline_at, registered_at, created_at, os, version, max_concurrent, toolchains, owner_agency)
+		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '1.4.0', ?, ?, ?)`,
+			rid, r.name, r.status, r.caps, r.load, ago(r.lastSeen), drain, ago(15*day), ago(15*day), r.os, r.maxConc, toolchains, owner)
 	}
 
 	// ── Env vars ───────────────────────────────────────────────────────────────
@@ -580,9 +598,13 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		if e.desc != "" {
 			desc = e.desc
 		}
+		// A scoped row belongs to its scope's agency, as owner and as member; a
+		// global one is born Global's on both counts (migration 1220). An agency
+		// member that Global still owned is the unresolved shape an upgrade can
+		// leave behind, not one a demo should start in.
 		vid := db.NewID()
-		exec(`INSERT INTO env_vars (id, key, scope, value, description, created_by, created_at, last_modified_by, last_modified_at)
-		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, vid, e.key, scope, e.value, desc, dev, ago(18*day), dev, ago(2*day))
+		exec(`INSERT INTO env_vars (id, key, scope, value, description, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, vid, e.key, scope, e.value, desc, dev, ago(18*day), dev, ago(2*day), scopeAgency[e.scope])
 		if aid := scopeAgency[e.scope]; aid != "" {
 			exec(`INSERT INTO env_var_agencies (env_var_id, agency_id) VALUES (?, ?)`, vid, aid)
 		}
@@ -602,16 +624,25 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			scope = s.scope
 		}
 		sid := db.NewID()
-		exec(`INSERT INTO secrets (id, key, scope, description, source, vault_ref, created_by, created_at, last_modified_by, last_modified_at)
-		      VALUES (?, ?, ?, ?, 'vault', ?, ?, ?, ?, ?)`, sid, s.key, scope, s.desc, s.ref, dev, ago(18*day), dev, ago(5*day))
-		// T2.10 — membership mirroring exactly what migration 670's backfill computes
-		// for an existing database: a SCOPED secret inherits its scope's agency, an
-		// UNSCOPED (global) one gets no rows at all. Seeding global secrets into every
-		// agency would demo a narrower model than the one that actually ships.
+		exec(`INSERT INTO secrets (id, key, scope, description, source, vault_ref, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+		      VALUES (?, ?, ?, ?, 'vault', ?, ?, ?, ?, ?, ?)`, sid, s.key, scope, s.desc, s.ref, dev, ago(18*day), dev, ago(5*day), scopeAgency[s.scope])
+		// A SCOPED secret is its scope's agency's, owner and member; an UNSCOPED
+		// (global) one is Global's, which every agency's runs may use. Seeding
+		// global secrets into every agency would demo a narrower model than the
+		// one that actually ships.
 		if aid := scopeAgency[s.scope]; aid != "" {
 			exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES (?, ?)`, sid, aid)
 		}
 	}
+
+	// LR-80: an agency names Vault paths only inside the prefixes a global
+	// administrator assigned it. agency-alpha owns the three scoped secrets above
+	// and is given the path they live under; agency-beta has a path of its own
+	// and nothing under it yet. The two global secrets are Global's and need none.
+	exec(`INSERT INTO agency_vault_prefixes (agency_id, prefix, created_by, created_at) VALUES (?, 'secret/data/cronomicon', ?, ?)`,
+		agencies[0].id, dev, ago(18*day))
+	exec(`INSERT INTO agency_vault_prefixes (agency_id, prefix, created_by, created_at) VALUES (?, 'secret/data/agency-beta', ?, ?)`,
+		agencies[1].id, dev, ago(18*day))
 
 	// ── SSH key credential (SK.13) ─────────────────────────────────────────────
 	// A first-class SSH key the cronomicon hosts + bastions below attach to via FK,
@@ -623,26 +654,23 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	// The git-imported host further down stays on the legacy auth_key_env_var NAME
 	// path to demonstrate dual-read.
 	sshCredID := db.NewID()
-	exec(`INSERT INTO ssh_credentials (id, label, description, source, key_type, fingerprint, public_key, created_by, created_at, last_modified_by, last_modified_at)
-	      VALUES (?, ?, ?, 'stored', 'ssh-ed25519', ?, ?, ?, ?, ?, ?)`,
+	exec(`INSERT INTO ssh_credentials (id, label, description, source, key_type, fingerprint, public_key, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+	      VALUES (?, ?, ?, 'stored', 'ssh-ed25519', ?, ?, ?, ?, ?, ?, ?)`,
 		sshCredID, "prod_deploy_ed25519", "Primary deploy key for the Production fleet (demo).",
 		"SHA256:Jm6h0vQ2nC8x7yQk9rTfLwApZ3Bd1sEoUvHnMxRkY4w",
 		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINrQ2vJk8hPzXmC5dLwoYbApZ3Bd1sEoUvHnMxRkY4w cronomicon-deploy",
-		dev, ago(18*day), dev, ago(5*day))
+		dev, ago(18*day), dev, ago(5*day), agencies[0].id)
 
-	// T2.10 — a SECOND key so the membership matrix has one per agency. Note that
-	// migration 670 deliberately backfills NO key membership (ssh_credentials has no
-	// scope to infer from, and AG-Q5's tightening is Phase 3 behind the T2.12
-	// report), so these two rows are OPERATOR-ASSIGNED membership — exactly what an
-	// admin would create by hand, and the only way Phase 4's matrix has key data to
-	// render before the tightening lands.
+	// T2.10 — a SECOND key so the membership matrix has one per agency. A key has
+	// no scope to infer an agency from, so these two are OPERATOR-ASSIGNED: each
+	// is owned by, and a member of, the agency whose fleet it deploys to.
 	stagingCredID := db.NewID()
-	exec(`INSERT INTO ssh_credentials (id, label, description, source, key_type, fingerprint, public_key, created_by, created_at, last_modified_by, last_modified_at)
-	      VALUES (?, ?, ?, 'stored', 'ssh-ed25519', ?, ?, ?, ?, ?, ?)`,
+	exec(`INSERT INTO ssh_credentials (id, label, description, source, key_type, fingerprint, public_key, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+	      VALUES (?, ?, ?, 'stored', 'ssh-ed25519', ?, ?, ?, ?, ?, ?, ?)`,
 		stagingCredID, "staging_deploy_ed25519", "Deploy key for the Staging fleet (demo).",
 		"SHA256:Qw3rTy7uIoP2aSdFgHjKlZxCvBnM4eRt6YuIoP8aSdF",
 		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKp7QwErTyUiOpAsDfGhJkLzXcVbNm4eRt6YuIoP8aSd cronomicon-staging",
-		dev, ago(16*day), dev, ago(4*day))
+		dev, ago(16*day), dev, ago(4*day), agencies[1].id)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES (?, ?)`, sshCredID, agencies[0].id)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES (?, ?)`, stagingCredID, agencies[1].id)
 
@@ -650,30 +678,37 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	// Seeded as 'verified' with a recent last_checked_at so the SSH Targets UI is
 	// browsable in dev preview; a real "Test connection" only downgrades these if
 	// it fails (ssh-update.md TC.7). Both bastions reference the credential above.
+	//
+	// LR-69: a bastion and a hand-written host record belong to an agency, and
+	// name a key that agency may use (LR-72). Both bastions and the production
+	// hosts are agency-alpha's, with its key; the reporting host is agency-beta's,
+	// with beta's. Left unowned they would be Global's records naming an agency's
+	// key — what an upgrade can leave behind and the inbox reports, not a demo's
+	// starting state.
 	bastionID := db.NewID()
-	exec(`INSERT INTO bastions (id, hostname, name, address, port, username, zone, auth_credential_id, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at)
-	      VALUES (?, ?, ?, ?, 22, 'jump', ?, ?, 'verified', ?, ?, ?, ?, ?)`,
-		bastionID, "bastion-prod.corp.example", "prod-bastion", "bastion-prod.corp.example", "prod", sshCredID, ago(2*day), dev, ago(20*day), dev, ago(20*day))
-	exec(`INSERT INTO bastions (id, hostname, name, address, port, username, zone, auth_credential_id, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at)
-	      VALUES (?, ?, ?, ?, 22, 'jump', ?, ?, 'verified', ?, ?, ?, ?, ?)`,
-		db.NewID(), "bastion-dmz.corp.example", "dmz-bastion", "bastion-dmz.corp.example", "dmz", sshCredID, ago(2*day), dev, ago(20*day), dev, ago(20*day))
+	exec(`INSERT INTO bastions (id, hostname, name, address, port, username, zone, auth_credential_id, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+	      VALUES (?, ?, ?, ?, 22, 'jump', ?, ?, 'verified', ?, ?, ?, ?, ?, ?)`,
+		bastionID, "bastion-prod.corp.example", "prod-bastion", "bastion-prod.corp.example", "prod", sshCredID, ago(2*day), dev, ago(20*day), dev, ago(20*day), agencies[0].id)
+	exec(`INSERT INTO bastions (id, hostname, name, address, port, username, zone, auth_credential_id, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+	      VALUES (?, ?, ?, ?, 22, 'jump', ?, ?, 'verified', ?, ?, ?, ?, ?, ?)`,
+		db.NewID(), "bastion-dmz.corp.example", "dmz-bastion", "bastion-dmz.corp.example", "dmz", sshCredID, ago(2*day), dev, ago(20*day), dev, ago(20*day), agencies[0].id)
 
-	sshHosts := []struct{ host, addr, os, via string }{
-		{"db-01", "10.0.1.10", "Linux", "prod-bastion"},
-		{"lb-01", "10.0.1.20", "Linux", "prod-bastion"},
-		{"vault-01", "10.0.1.30", "Linux", "prod-bastion"},
-		{"web-01", "10.0.2.10", "Linux", ""},
-		{"win-dc-01", "10.0.3.10", "Windows", "dmz-bastion"},
-		{"report-01", "10.0.4.10", "Linux", ""},
+	sshHosts := []struct{ host, addr, os, via, cred, owner string }{
+		{"db-01", "10.0.1.10", "Linux", "prod-bastion", sshCredID, agencies[0].id},
+		{"lb-01", "10.0.1.20", "Linux", "prod-bastion", sshCredID, agencies[0].id},
+		{"vault-01", "10.0.1.30", "Linux", "prod-bastion", sshCredID, agencies[0].id},
+		{"web-01", "10.0.2.10", "Linux", "", sshCredID, agencies[0].id},
+		{"win-dc-01", "10.0.3.10", "Windows", "dmz-bastion", sshCredID, agencies[0].id},
+		{"report-01", "10.0.4.10", "Linux", "", stagingCredID, agencies[1].id},
 	}
 	for _, h := range sshHosts {
 		var via any
 		if h.via != "" {
 			via = h.via
 		}
-		exec(`INSERT INTO ssh_hosts (id, hostname, address, port, os, via, auth_credential_id, username, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at)
-		      VALUES (?, ?, ?, 22, ?, ?, ?, 'cronomicon', 'verified', ?, ?, ?, ?, ?)`,
-			db.NewID(), h.host, h.addr, h.os, via, sshCredID, ago(2*day), dev, ago(16*day), dev, ago(3*day))
+		exec(`INSERT INTO ssh_hosts (id, hostname, address, port, os, via, auth_credential_id, username, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+		      VALUES (?, ?, ?, 22, ?, ?, ?, 'cronomicon', 'verified', ?, ?, ?, ?, ?, ?)`,
+			db.NewID(), h.host, h.addr, h.os, via, h.cred, ago(2*day), dev, ago(16*day), dev, ago(3*day), h.owner)
 	}
 	// One git-IMPORTED host (M4) so the demo shows the read-only "git" badge + the
 	// dual-source precedence in Settings → SSH Targets. Tied to Production; starts
@@ -734,10 +769,39 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	}
 
 	// ── Singleton configs + global settings ────────────────────────────────────
-	exec(`INSERT INTO notification_config (id, smtp_host, smtp_port, smtp_from, apprise_targets, last_modified_by, last_modified_at)
-	      VALUES (1, 'smtp.corp.example', 587, 'cronomicon@corp.example', '[{"label":"On-call","service":"email","url":"mailto://oncall@corp.example","enabled":true}]', ?, ?)`, dev, ago(9*day))
-	exec(`INSERT INTO gitlab_config (id, base_url, project_path, webhook_secret, branch, last_modified_by, last_modified_at)
-	      VALUES (1, 'https://gitlab.corp.example', 'infra/job-defs', 'demo-webhook-secret', 'main', ?, ?)`, dev, ago(9*day))
+	exec(`INSERT INTO notification_config (id, smtp_host, smtp_port, smtp_from, last_modified_by, last_modified_at)
+	      VALUES (1, 'smtp.corp.example', 587, 'cronomicon@corp.example', ?, ?)`, dev, ago(9*day))
+	// Global's push target (1540), named by every rule above, as the upgrade
+	// names every target from every rule.
+	exec(`INSERT INTO alert_targets (id, owner_agency, label, service, url, enabled, position, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('demo-oncall', 'global', 'On-call', 'email', 'mailto://oncall@corp.example', 1, 0, ?, ?, ?, ?)`, dev, ago(9*day), dev, ago(9*day))
+	exec(`INSERT INTO alert_rule_targets (rule_id, target_id) SELECT id, 'demo-oncall' FROM alert_config`)
+	// The connection of Global's repository. The URL is left EMPTY on purpose:
+	// the demo data is not in a repository, and a URL here would send the sync
+	// service off to clone a host that does not exist. (The four columns this
+	// used to fill, of the old gitlab_config, were read by nothing.)
+	exec(`UPDATE git_repos SET branch = 'main', last_modified_by = ?, last_modified_at = ? WHERE id = 'global'`, dev, ago(9*day))
+	// Whatever the demo shows as coming from Git came from Global's repository
+	// (GR-3): a Git row always says which repository it is from.
+	for _, tbl := range []string{"jobs", "workflows", "scopes"} {
+		exec(`UPDATE ` + tbl + ` SET repo_id = 'global' WHERE source = 'git' AND repo_id IS NULL`)
+	}
+	// Each agency's definitions are its own repository's (§0a, IN-1, IN-3):
+	// Global's repository supplies Global's alone. Each agency has a
+	// repository, its URL left empty as Global's is, and what is an agency's
+	// in Git (a scope it owns, a job on such a scope, a workflow of such jobs)
+	// is that repository's.
+	for _, a := range agencies {
+		exec(`INSERT INTO git_repos (id, agency_id, url, branch, last_modified_by, last_modified_at) VALUES (?, ?, '', 'main', ?, ?)`,
+			"repo-"+a.name, a.id, dev, ago(9*day))
+	}
+	const scopeRepo = `(SELECT g.id FROM git_repos g JOIN scope_agencies sa ON sa.agency_id = g.agency_id
+	                     JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = %s AND g.agency_id <> 'global')`
+	exec(`UPDATE scopes SET repo_id = COALESCE(` + fmt.Sprintf(scopeRepo, "scopes.name") + `, repo_id) WHERE source = 'git'`)
+	exec(`UPDATE jobs SET repo_id = COALESCE(` + fmt.Sprintf(scopeRepo, "jobs.scope") + `, repo_id) WHERE source = 'git'`)
+	exec(`UPDATE workflows SET repo_id = COALESCE((SELECT j.repo_id FROM jobs j, json_each(workflows.steps) s
+	                                             WHERE s.value ->> 'type' = 'job' AND j.name = s.value ->> 'name' AND j.source = 'git'
+	                                             LIMIT 1), repo_id) WHERE source = 'git'`)
 
 	settings := map[string]string{
 		"appName":           "Cronomicon",
@@ -749,6 +813,26 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	for k, v := range settings {
 		exec(`INSERT INTO settings (key, value, last_modified_by, last_modified_at) VALUES (?, ?, ?, ?)`, k, v, dev, nowStr)
 	}
+
+	// ── Every run's agency snapshot (migration 680), in one pass ───────────────
+	// The run writers above insert history by hand and none of them names an
+	// agency. A real enqueue snapshots its scope's agencies onto the run, by
+	// NAME, and a run with no scope is Global's — so do that here for all of
+	// them, and index the ones still waiting (run_agencies is what the claim
+	// reads). Left alone, the birth trigger would have stamped every queued and
+	// running row Global, on scopes that belong to an agency: work no seeded
+	// runner could ever claim, which is the state this seed was in until 2.3.0.
+	exec(`UPDATE runs SET agencies_json = COALESCE((
+	          SELECT json_group_array(a.name)
+	            FROM scopes s
+	            JOIN scope_agencies sa ON sa.scope_id = s.id
+	            JOIN agencies a ON a.id = sa.agency_id
+	           WHERE s.name = runs.scope
+	          HAVING COUNT(*) > 0), json_array((SELECT name FROM agencies WHERE id = 'global')))`) // the built-in agency's name now (2.5.2 GR)
+	exec(`DELETE FROM run_agencies`)
+	exec(`INSERT INTO run_agencies (run_id, agency)
+	      SELECT r.id, je.value FROM runs r, json_each(r.agencies_json) je
+	       WHERE r.status IN ('queued', 'running')`)
 
 	if execErr != nil {
 		return execErr
@@ -808,9 +892,14 @@ func seedRun(exec func(string, ...any), r runRow) {
 	switch r.status {
 	case "running":
 		started := r.created
-		exec(`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, schedule_name, env_json, started_at, created_at, job_uid)
+		// Every run is the runner executor's (LR-42), and a running one is
+		// somebody's: without a runner on the row no sweep would ever close a
+		// seeded "running" run, and it would sit against the fleet cap for good.
+		exec(`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, schedule_name, env_json, started_at, created_at, job_uid, executor, runner_id, runner_name)
 		      VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?,
-		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'))`,
+		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'), 'runner',
+		              (SELECT id FROM runners WHERE kind = 'agent' AND status = 'online' ORDER BY name LIMIT 1),
+		              (SELECT name FROM runners WHERE kind = 'agent' AND status = 'online' ORDER BY name LIMIT 1))`,
 			r.id, r.job, r.runType, scope, host, r.triggeredBy, r.triggerKind,
 			nullStr(r.scheduleName), nullStr(r.envJSON), iso(started), iso(r.created), r.job)
 	default:
@@ -821,9 +910,13 @@ func seedRun(exec func(string, ...any), r runRow) {
 		if r.status == "killed" {
 			killedBy = "bob@corp.example"
 		}
-		exec(`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, killed_by, schedule_name, env_json, started_at, completed_at, duration_ms, exit_code, created_at, job_uid)
+		// A finished run names the runner that took it (migration 1280): the
+		// name is the run's own copy, as the claim would have left it, so the
+		// demo's History has a Runner column to show.
+		exec(`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, killed_by, schedule_name, env_json, started_at, completed_at, duration_ms, exit_code, created_at, job_uid, executor, runner_name)
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'))`,
+		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'), 'runner',
+		              (SELECT name FROM runners WHERE kind = 'agent' AND status = 'online' ORDER BY name LIMIT 1))`,
 			r.id, r.job, r.runType, scope, host, r.status, r.triggeredBy, r.triggerKind, killedBy,
 			nullStr(r.scheduleName), nullStr(r.envJSON),
 			iso(started), iso(completed), dur, exitFor(r.status), iso(r.created), r.job)

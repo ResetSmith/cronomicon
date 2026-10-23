@@ -11,6 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/settings"
+
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -127,10 +131,17 @@ func (s *Server) listServiceAccounts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		it.AllScopes = allScopes == 1
-		// GC-5: a delegate sees the accounts of the agencies they administer.
-		// CanAgency(perm, "") is the all-scopes case, so an all-scopes account —
-		// and every account — is listed only for a global administrator.
-		if !viewer.CanAgency(auth.PermManageRoles, agencyID.String) {
+		// GC-5: a delegate sees the accounts of the agencies they administer; an
+		// all-scopes account (no agency) is listed only for a global administrator.
+		// Written as two cases: the empty agency of an all-scopes account must not
+		// be handed to CanAgency to mean "everywhere".
+		visible := viewer.GlobalAdmin(auth.PermManageRoles)
+		if !visible && agencyID.String != "" {
+			visible = viewer.CanAgency(auth.PermManageRoles, agencyID.String)
+		}
+		// 2.4.4: and in the agency the request works in; an all-scopes account
+		// names none, and is Global's.
+		if !visible || !agencyctx.In(r, agencyID.String) {
 			continue
 		}
 		it.Status = serviceAccountStatus(revoked, expires, now)
@@ -221,12 +232,26 @@ func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.AgencyID != "" {
+		// LR-9, LR-25: a service account is a grant, and Global is not grantable
+		// by itself — the account for every agency is the all-scopes one.
+		if in.AgencyID == agencyid.Global {
+			httpx.Fail(w, http.StatusBadRequest, "validation",
+				"Global cannot be named for a service account: use allScopes for one that reaches every agency")
+			return
+		}
 		var n int
 		_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, in.AgencyID).Scan(&n)
 		if n == 0 {
 			httpx.Fail(w, http.StatusBadRequest, "validation", "unknown agency")
 			return
 		}
+	}
+	// In the agency the request works in, as every creation (2.5.0 C11, defect
+	// 87; question 108): an account of another agency, or of every agency
+	// (Global's), was made and never listed, the list being narrowed to the
+	// agency in use.
+	if !s.ownerMatchesContext(w, r, in.AgencyID, "service account") {
+		return
 	}
 	// GC-5 — minting a service account IS granting a role (this file's own
 	// header says so), so it gets the grant's rules: own agencies only, never
@@ -276,10 +301,11 @@ func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = auditlog.WriteChangeLog(r.Context(), s.db, id.Email, "Access", "Created", in.Name,
+	saAgency := agencyOrGlobal(in.AgencyID) // the account's; one that reaches every agency is Global's (C1)
+	_ = auditlog.WriteChangeLog(r.Context(), s.db, saAgency, id.Email, "Access", "Created", in.Name,
 		"Service account created (role "+in.Role+")")
 	_ = auditlog.WriteActivity(r.Context(), s.db, auditlog.ActivityParams{
-		Kind: "config", Actor: id.Email, Category: "Access", Action: "Created", Target: in.Name,
+		AgencyID: saAgency, Kind: "config", Actor: id.Email, Category: "Access", Action: "Created", Target: in.Name,
 		Summary: "Service account created",
 	})
 
@@ -351,9 +377,10 @@ func (s *Server) revokeServiceAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = auditlog.WriteChangeLog(r.Context(), s.db, id.Email, "Access", "Revoked", name, "Service account revoked")
+	saAgency := settings.RowAgency(r.Context(), s.db, "service_accounts", "agency_id", rowID)
+	_ = auditlog.WriteChangeLog(r.Context(), s.db, saAgency, id.Email, "Access", "Revoked", name, "Service account revoked")
 	_ = auditlog.WriteActivity(r.Context(), s.db, auditlog.ActivityParams{
-		Kind: "config", Actor: id.Email, Category: "Access", Action: "Revoked", Target: name,
+		AgencyID: saAgency, Kind: "config", Actor: id.Email, Category: "Access", Action: "Revoked", Target: name,
 		Summary: "Service account revoked",
 	})
 	w.WriteHeader(http.StatusNoContent)
@@ -379,7 +406,22 @@ func (s *Server) resolveDefinitionByName(w http.ResponseWriter, r *http.Request,
 	// RH: a recycle-binned definition resolves as absent. Without this the name
 	// stays claimed (PRIMARY KEY (source, name)) but resolves to a rowid the
 	// session routes would 404 on — a machine caller could fire a binned job.
-	query := `SELECT rowid, source FROM ` + table + ` WHERE name = ? AND deleted_at IS NULL`
+	//
+	// Whose (2.5.0 C11, defect 77, question 107): a token of an agency resolves
+	// the name among that agency's definitions only, so another agency's of the
+	// same name neither breaks it (409 ambiguous_name, which ?source= could not
+	// settle) nor is confirmed by it. A token that reaches every agency
+	// (Global's) resolves among Global's first, and among every agency's only
+	// when Global has none.
+	owner := agencyid.JobOwnerSQL("d")
+	if table == "workflows" {
+		owner = agencyid.WorkflowOwnerSQL // reads the alias w
+	}
+	alias := "d"
+	if table == "workflows" {
+		alias = "w"
+	}
+	query := `SELECT rowid, source, ` + owner + ` FROM ` + table + ` ` + alias + ` WHERE name = ? AND deleted_at IS NULL`
 	args := []any{name}
 	if source != "" {
 		query += ` AND source = ?`
@@ -394,17 +436,38 @@ func (s *Server) resolveDefinitionByName(w http.ResponseWriter, r *http.Request,
 	}
 	defer rows.Close()
 	type hit struct {
-		id  int64
-		src string
+		id     int64
+		src    string
+		agency string
 	}
-	var hits []hit
+	var all []hit
 	for rows.Next() {
 		var h hit
-		if err := rows.Scan(&h.id, &h.src); err != nil {
+		if err := rows.Scan(&h.id, &h.src, &h.agency); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return 0, "", false
 		}
-		hits = append(hits, h)
+		all = append(all, h)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return 0, "", false
+	}
+	everywhere := false
+	if id, ok := auth.IdentityFrom(r.Context()); ok {
+		everywhere, _ = id.AgenciesRead()
+	}
+	var hits, global []hit
+	for _, h := range all {
+		switch {
+		case everywhere && h.agency == agencyid.Global:
+			global = append(global, h)
+		case everywhere || readsAgency(r, h.agency):
+			hits = append(hits, h)
+		}
+	}
+	if len(global) > 0 {
+		hits = global
 	}
 	switch len(hits) {
 	case 0:

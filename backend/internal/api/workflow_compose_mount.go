@@ -4,12 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -17,6 +20,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/envref"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/notices"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 )
 
@@ -50,6 +54,10 @@ type workflowComposeInput struct {
 	// steps_hash. The graph editor sends it; the linear editor omits it (and an
 	// omitted layout preserves any existing one — see writeComposedWorkflow).
 	Layout json.RawMessage `json:"layout"`
+	// OwnerAgency is whose a workflow being CREATED is while it has no jobs
+	// (question 52): read on a create only, as a job's and a schedule's are.
+	// A workflow's agency follows its jobs once it has any (GR-6).
+	OwnerAgency string `json:"ownerAgency,omitempty"`
 }
 
 // validateWorkflow is the dry-run endpoint (WB-A1): it runs the same structural,
@@ -63,6 +71,7 @@ func (s *Server) validateWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid request body")
 		return
 	}
+	r = withComposeAgency(r, creationComposeAgency(r, in.OwnerAgency)) // 2.5.0 C11 (compose_home.go)
 	errs := []workflow.ValidationError{}
 	if name := strings.TrimSpace(in.Name); name != "" && !composeNameRe.MatchString(name) {
 		errs = append(errs, workflow.ValidationError{Field: "name", Message: "invalid workflow name (want " + composeNameRe.String() + ")"})
@@ -101,13 +110,17 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid workflow name (want "+composeNameRe.String()+")")
 		return
 	}
+	r = withComposeAgency(r, creationComposeAgency(r, in.OwnerAgency)) // 2.5.0 C11 (compose_home.go)
 	// RH: a binned workflow still holds its name — see createJob.
 	// R2-5 — per-agency uniqueness, derived from the graph's jobs (a workflow
 	// has no scope of its own). Same generic-refusal rule as jobs.
 	steps, perr := workflow.ParseSteps(string(in.Steps))
 	if perr == nil {
-		scopes := s.collectStepScopes(r, steps)
-		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", in.Name, scopes, "")
+		owner, _, ok := s.workflowSaveOwner(w, r, id, steps, in.OwnerAgency, "")
+		if !ok {
+			return
+		}
+		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", in.Name, owner, "")
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return
@@ -117,7 +130,7 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.writeComposedWorkflow(w, r, in, id.Email, true, db.NewID())
+	s.writeComposedWorkflow(w, r, in, id.Email, true, db.NewID(), repairInput{})
 }
 
 func (s *Server) updateWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +141,7 @@ func (s *Server) updateWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
 		return
 	}
+	r = withComposeAgency(r, existing.OwnerAgency) // at home in its agency (2.5.0 C11, compose_home.go)
 	if existing.Source != "cronomicon" {
 		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source workflows are editable in-app")
 		return
@@ -139,16 +153,45 @@ func (s *Server) updateWorkflow(w http.ResponseWriter, r *http.Request) {
 	// AF-2 — the graph being REPLACED. writeComposedWorkflow checks the incoming
 	// one; both must pass, or a departmental composer could take over a workflow
 	// driving out-of-reach jobs simply by sending a graph of their own jobs.
-	if !s.requireComposeStepScopes(w, r, id, existing.Steps) {
+	if !s.requireComposeStepScopes(w, r, id, existing.Steps, workflow.New(s.db, s.log).Home(r.Context(), existing.ID)) {
 		return
 	}
-	var in workflowComposeInput
+	if !s.requireJoblessWorkflowOwner(w, r, id, existing) {
+		return
+	}
+	// The input, and beside it a repair's fields (question 46): an edit that
+	// makes the workflow another agency's is a repair. Kept out of the input
+	// itself, which the revision snapshot records whole.
+	var in struct {
+		workflowComposeInput
+		repairInput
+	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid request body")
 		return
 	}
 	in.Name = existing.Name // identity is immutable on edit
-	s.writeComposedWorkflow(w, r, in, id.Email, false, existing.UID)
+	// The name pool, as createWorkflow asks it (R2-5), with this workflow's own
+	// row left out (present defect 35). A workflow's agency follows its steps,
+	// so an edit can move it to an agency that already has a workflow of the
+	// name: that agency then had two, which creating either would have refused,
+	// and whatever finds a workflow by its name could not tell them apart.
+	if steps, perr := workflow.ParseSteps(string(in.Steps)); perr == nil {
+		owner, _, ok := s.workflowSaveOwner(w, r, id, steps, "", existing.OwnerAgency)
+		if !ok {
+			return
+		}
+		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", in.Name, owner, existing.UID)
+		if cerr != nil {
+			httpx.Fail500(w, s.log, "db_error", cerr)
+			return
+		}
+		if conflict {
+			httpx.Fail(w, http.StatusConflict, "conflict", execspec.NamePoolRefusal)
+			return
+		}
+	}
+	s.writeComposedWorkflow(w, r, in.workflowComposeInput, id.Email, false, existing.UID, in.repairInput)
 }
 
 func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -159,12 +202,16 @@ func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
 		return
 	}
+	r = withComposeAgency(r, existing.OwnerAgency) // at home in its agency (2.5.0 C11, compose_home.go)
 	if existing.Source != "cronomicon" {
 		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source workflows are deletable in-app")
 		return
 	}
 	// AF-2 — deleting is authoring: same per-job authority as editing the graph.
-	if !s.requireComposeStepScopes(w, r, id, existing.Steps) {
+	if !s.requireComposeStepScopes(w, r, id, existing.Steps, workflow.New(s.db, s.log).Home(r.Context(), existing.ID)) {
+		return
+	}
+	if !s.requireJoblessWorkflowOwner(w, r, id, existing) {
 		return
 	}
 	// RX-24 — refuse while reactions WATCH this workflow, unless forced. Its own
@@ -208,7 +255,7 @@ func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	s.auditDefinitionDelete(r.Context(), id.Email, "workflow", "Workflows", existing.Name, nil)
+	s.auditDefinitionDelete(r.Context(), s.workflowAgency(r.Context(), existing.UID), id.Email, "workflow", "Workflows", existing.Name, nil)
 	s.forceScheduleReload(r.Context())
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -231,6 +278,10 @@ func unauthoredStepJobs(r *http.Request, s *Server, id auth.Identity, steps []wo
 		if !found {
 			continue // unknown job: the existence validator already reported it
 		}
+		// Whose scope it is (I2). Not known (the job went between the two
+		// reads, or the read failed) is not authored: an empty agency would
+		// be judged by the name alone.
+		stepAgency, known := s.stepJobAgency(r, ref)
 		// AllScopes for the All pool, mirroring requireComposeScope — Can(perm, "")
 		// is the permissive Q-F7 reading and would report every departmental
 		// composer as authorized for an unscoped job.
@@ -238,7 +289,7 @@ func unauthoredStepJobs(r *http.Request, s *Server, id auth.Identity, steps []wo
 		if strings.TrimSpace(scope.String) == "" {
 			ok = id.Can(auth.PermCompose, auth.AllScopes)
 		} else {
-			ok = id.Can(auth.PermCompose, scope.String)
+			ok = known && id.CanIn(auth.PermCompose, stepAgency, scope.String)
 		}
 		if !ok {
 			out = append(out, ref.Name)
@@ -257,7 +308,12 @@ func unauthoredStepJobs(r *http.Request, s *Server, id auth.Identity, steps []wo
 // A job the graph names but that does not exist is left to the existence
 // validator, which has already run and produced a precise 422; skipping it here
 // avoids answering "does a job by this name exist in another agency?" with a 403.
-func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request, id auth.Identity, steps []workflow.Step) bool {
+//
+// home is where the graph's unpinned sub-workflows are looked up, as the engine
+// runs them (workflow.Engine.Home; 2.5.0 C11, defect 79): the existing
+// workflow's, for the graph being replaced; "" for the incoming graph, whose
+// sub-workflow steps the save has just pinned.
+func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request, id auth.Identity, steps []workflow.Step, home string) bool {
 	seenScope := map[string]bool{}
 	for _, ref := range workflow.CollectStepRefs(steps) {
 		if ref.Name == "" {
@@ -269,11 +325,18 @@ func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request
 		}
 		// One check per distinct scope, not per job: a ten-step graph in one scope
 		// should not write ten identical denial audit rows.
-		if seenScope[scope.String] {
+		stepAgency, known := s.stepJobAgency(r, ref)
+		if !known {
+			// The job went between the two reads, or the read failed: not an
+			// empty agency, which the grant check would judge by the name alone.
+			httpx.Fail500(w, s.log, "db_error", fmt.Errorf("the agency of the job %s could not be read", ref.Name))
+			return false
+		}
+		if seenScope[stepAgency+"\x00"+scope.String] {
 			continue
 		}
-		seenScope[scope.String] = true
-		if !s.requireComposeScope(w, r, id, scope.String) {
+		seenScope[stepAgency+"\x00"+scope.String] = true
+		if !s.requireComposeScope(w, r, id, stepAgency, scope.String) {
 			return false
 		}
 	}
@@ -281,24 +344,24 @@ func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request
 	// jobs it will run. Composing a workflow that reaches another agency's jobs
 	// through a child is authoring over those jobs, and takes the same
 	// per-scope compose check. Composed workflows are cronomicon-source.
-	nested, err := workflow.New(s.db, s.log).SubWorkflowJobScopes(r.Context(), steps, "cronomicon")
+	nested, err := workflow.New(s.db, s.log).SubWorkflowJobAgencyScopesAt(r.Context(), steps, "cronomicon", home)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
 	}
-	for _, scope := range nested {
-		if seenScope[scope] {
+	for _, pair := range nested {
+		if seenScope[pair.Agency+"\x00"+pair.Scope] {
 			continue
 		}
-		seenScope[scope] = true
-		if !s.requireComposeScope(w, r, id, scope) {
+		seenScope[pair.Agency+"\x00"+pair.Scope] = true
+		if !s.requireComposeScope(w, r, id, pair.Agency, pair.Scope) {
 			return false
 		}
 	}
 	return true
 }
 
-func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, in workflowComposeInput, actor string, isCreate bool, uid string) {
+func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, in workflowComposeInput, actor string, isCreate bool, uid string, rep repairInput) {
 	// Validate the step graph parses, and that each referenced job resolves to an
 	// existing job (in either source — the A11 precedence picks the effective one
 	// at run time, defaulting to the workflow's own cronomicon source).
@@ -314,15 +377,74 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 		httpx.FailDetails(w, http.StatusUnprocessableEntity, "validation_failed", verrs[0].Message, map[string]any{"errors": verrs})
 		return
 	}
+	// Each sub-workflow step is pinned to the workflow it runs (present defect
+	// 50), before anything below walks the graph, so that what is authorized
+	// and owned is what will run.
+	saver, _ := auth.IdentityFrom(r.Context())
+	pinned, why, perr := s.pinChildWorkflows(r.Context(), in.Steps, saver)
+	if perr != nil {
+		httpx.Fail500(w, s.log, "db_error", perr)
+		return
+	}
+	if why != "" {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", why)
+		return
+	}
+	in.Steps = pinned
+	if steps, err = workflow.ParseSteps(string(in.Steps)); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid steps: "+err.Error())
+		return
+	}
 	// AF-2 — a workflow has no scope of its own; its authority comes from the jobs
 	// it drives, because triggering it triggers them. So every job the incoming
 	// graph names must be one this actor could author. updateWorkflow separately
 	// checks the graph being REPLACED, for the same both-sides reason job edits do.
 	actorID, _ := auth.IdentityFrom(r.Context())
-	if !s.requireComposeStepScopes(w, r, actorID, steps) {
+	if !s.requireComposeStepScopes(w, r, actorID, steps, "") {
 		return
 	}
-	entries, verr := s.resolveComposeSchedules(r.Context(), jobComposeInput{ScheduleRefs: in.ScheduleRefs, Schedules: in.Schedules})
+	// GR-7 — whose the workflow is: the one agency its jobs belong to. One whose
+	// jobs are several agencies' is refused, for everyone (§0a, IN-8: a
+	// workflow's jobs are its agency's). Until §0a it was Global's, and saving
+	// it a global administrator's.
+	var storedOwner, storedSteps string
+	if !isCreate {
+		if err := s.db.QueryRowContext(r.Context(), `SELECT owner_agency, COALESCE(steps, '[]') FROM workflows WHERE uid = ?`, uid).
+			Scan(&storedOwner, &storedSteps); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+	}
+	owner, spans, ok := s.workflowSaveOwner(w, r, actorID, steps, in.OwnerAgency, storedOwner)
+	if !ok {
+		return
+	}
+	if spans {
+		httpx.Fail(w, http.StatusConflict, CodeWorkflowSpansAgencies, MsgWorkflowSpansAgencies)
+		return
+	}
+	// A save that changes a workflow's agency — an edit, or a revision
+	// restored, whose jobs are another agency's than the ones it ran — moves a
+	// definition between agencies: a global administrator's repair (§0a,
+	// IN-7; the owner's answer to question 46). Until then an editor who could
+	// compose both agencies' jobs made it the other agency's with no word.
+	//
+	// Asked whatever the stored graph's jobs are now (present defect 52): it
+	// was asked only when they still resolved, so binning a workflow's jobs
+	// first made the change free. A workflow whose stored graph holds no step
+	// at all is still being built, and takes its first jobs' agency.
+	repaired := false
+	if storedOwner != "" && storedOwner != owner {
+		prev, perr := workflow.ParseSteps(storedSteps)
+		if perr != nil || len(prev) > 0 {
+			if !s.requireRepair(w, r, actorID, rep, "this workflow (its jobs are another agency's than the ones it ran)") {
+				return
+			}
+			repaired = true
+		}
+	}
+	entries, verr := s.resolveComposeSchedules(r.Context(), jobComposeInput{ScheduleRefs: in.ScheduleRefs, Schedules: in.Schedules},
+		ownerOrGlobal(owner))
 	if verr != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
 		return
@@ -364,19 +486,26 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	defer tx.Rollback()
+	spanned, ok := s.spanningBefore(w, r, tx, actorID)
+	if !ok {
+		return
+	}
 
 	_, err = tx.ExecContext(r.Context(), `
 		INSERT INTO workflows(name, source, description, steps, schedule, enabled,
-		                      created_by, created_at, last_modified_by, last_modified_at, layout_json, uid)
-		VALUES(?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                      created_by, created_at, last_modified_by, last_modified_at, layout_json, uid, owner_agency)
+		VALUES(?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uid) DO UPDATE SET
 			description=excluded.description, steps=excluded.steps, schedule=excluded.schedule,
 			enabled=excluded.enabled, last_modified_by=excluded.last_modified_by, last_modified_at=excluded.last_modified_at,
-			layout_json=COALESCE(excluded.layout_json, workflows.layout_json)`,
+			layout_json=COALESCE(excluded.layout_json, workflows.layout_json),
+			owner_agency=excluded.owner_agency`,
 		in.Name, nullStrIf(in.Description), stepsJSON, nullStrIf(legacyMirror), enabled, actor, now, actor, now, layoutJSON,
 		// R2-5 — the identity IS the conflict target: create inserts fresh,
 		// edit collides on the existing uid and lands in DO UPDATE.
-		uid)
+		uid,
+		// GR-6 — the owner follows the steps, so it is written at every save.
+		owner)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -405,12 +534,13 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 				owner_uid, schedule_uid)
 			VALUES('cronomicon','workflow',?,?,?,?,?,?,?,?,?,?,?,
 				?,
-				(SELECT s.uid FROM schedules s WHERE s.name = ?
-				   AND (SELECT COUNT(*) FROM schedules s2 WHERE s2.name = s.name) = 1))`,
+				-- The schedule the entry was expanded from, by uid (1300), as in
+				-- writeComposedJob.
+				?)`,
 			in.Name, e.Name, e.Cron, envJSON, i, nullStrIf(e.SourceRef),
 			windowArg(e.StartAt), windowArg(e.EndAt), windowArg(e.Interval),
 			nullStrIf(calendar.MarshalNames(e.SkipCalendars)), nullStrIf(calendar.MarshalNames(e.OnlyCalendars)),
-			uid, nullStrIf(e.SourceRef)); err != nil {
+			uid, nullStrIf(e.SourceUID)); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
@@ -424,6 +554,11 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
+	// GR-7 after the save: this workflow's own jobs were asked above; a
+	// workflow that runs THIS one as a step is asked here.
+	if !s.refuseNewSpan(w, r, tx, actorID, spanned, uid) {
+		return
+	}
 
 	if err := tx.Commit(); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -434,14 +569,19 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	if !isCreate {
 		auditAction = "Updated"
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Workflows", auditAction, in.Name, "Cronomicon workflow "+strings.ToLower(auditAction))
+	_ = workflow.InsertChangeLog(r.Context(), s.db, s.workflowAgency(r.Context(), uid), actor, "Workflows", auditAction, in.Name, "Cronomicon workflow "+strings.ToLower(auditAction))
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Workflows", Action: auditAction, Target: in.Name,
+		Kind: "config", Actor: actor, Category: "Workflows", Action: auditAction, Target: in.Name, WorkflowUID: uid,
 	})
+	if repaired {
+		s.auditRepair(r.Context(), s.workflowAgency(r.Context(), uid), actor, "workflow "+uid, "owner set to "+owner, rep)
+	}
 	s.forceScheduleReload(r.Context())
 
 	var rowid int64
-	_ = s.db.QueryRowContext(r.Context(), `SELECT rowid FROM workflows WHERE source='cronomicon' AND name=?`, in.Name).Scan(&rowid)
+	// The workflow this save wrote, by its uid (present defect 49), not the
+	// first of its name, which may be another agency's.
+	_ = s.db.QueryRowContext(r.Context(), `SELECT rowid FROM workflows WHERE uid = ?`, uid).Scan(&rowid)
 	wr := s.fetchWorkflowByID(r, strconv.FormatInt(rowid, 10))
 	status := http.StatusOK
 	if isCreate {
@@ -488,9 +628,7 @@ func (s *Server) validateComposedWorkflowSteps(ctx context.Context, selfName str
 			}
 			continue
 		}
-		var n int
-		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE name=? AND deleted_at IS NULL`, ref.Name).Scan(&n)
-		if n == 0 {
+		if _, _, found := s.stepJobRow(ctx, ref); !found {
 			errs = append(errs, workflow.ValidationError{Step: ref.Name, Message: "step references unknown job: " + ref.Name})
 		}
 	}
@@ -695,37 +833,379 @@ func copySeen(m map[string]bool) map[string]bool {
 // whichever source sorted first rather than the one that will actually run.
 func (s *Server) stepJobScope(r *http.Request, ref workflow.StepRef) (sql.NullString, bool) {
 	// R2F-2 — a pinned step resolves by identity alone, exactly as the engine's
-	// resolveJobDef does. Falling back to the name here would authorize against a
-	// sibling department's job and then run the pinned one.
-	if ref.UID != "" {
-		var scope sql.NullString
-		err := s.db.QueryRowContext(r.Context(),
-			`SELECT scope FROM jobs WHERE uid = ? AND deleted_at IS NULL`, ref.UID).Scan(&scope)
-		return scope, err == nil
-	}
-	for _, src := range workflow.StepSourceOrder(ref.Source, "cronomicon") {
-		var scope sql.NullString
-		err := s.db.QueryRowContext(r.Context(),
-			`SELECT scope FROM jobs WHERE name = ? AND source = ? AND deleted_at IS NULL`,
-			ref.Name, src).Scan(&scope)
-		if err == nil {
-			return scope, true
-		}
-	}
-	return sql.NullString{}, false
+	// resolveJobDef does; a name-only one in the workflow's agency, as the
+	// engine looks it up (stepJobRow; 2.5.0 C11).
+	scope, _, ok := s.stepJobRow(r.Context(), ref)
+	return scope, ok
 }
 
-// collectStepScopes resolves each step job's scope through the same A11
-// precedence execution uses (R2-5) — the input to the workflow name-pool check.
-func (s *Server) collectStepScopes(r *http.Request, steps []workflow.Step) []string {
-	var out []string
+// workflowOwner works out whose a workflow built in the app is, from the jobs
+// its steps run, sub-workflows followed (GR-6, GR-7): the one agency they all
+// belong to, and Global when there is none to say or more than one. spans is
+// the second case, which is a global administrator's to save.
+//
+// Whose each job is is its owner (agencyid.JobSQL; an in-app job's since
+// 1400): until I2 it was worked out from the job's scope's name, which cannot
+// say whose once a scope's name is unique within an agency only. A job whose
+// owner cannot be read is Global's, as its runs are.
+func (s *Server) workflowOwner(r *http.Request, steps []workflow.Step) (owner string, spans bool, err error) {
+	agencies, err := s.workflowJobAgencies(r, steps)
+	if err != nil {
+		return "", false, err
+	}
+	switch len(agencies) {
+	case 0:
+		return "", false, nil
+	case 1:
+		for id := range agencies {
+			return id, false, nil
+		}
+	}
+	return agencyid.Global, true, nil
+}
+
+// workflowSaveOwner is whose a workflow being saved is (GR-6; the owner's
+// answer to question 52). With jobs, the one agency they belong to (spans when
+// several: owner Global, and the caller refuses). With none, the workflow keeps
+// the agency it has (stored, on an edit); a new one is the agency the request
+// names (ownerAgency), else its creator's one agency to compose in, else
+// Global's for a global administrator. Until 2.4.2 a workflow with no jobs was
+// Global's whoever built it: its creator's agency could not empty it again
+// (the change was a repair), and any agency's composer could edit it. false
+// after a refusal is written.
+func (s *Server) workflowSaveOwner(w http.ResponseWriter, r *http.Request, id auth.Identity, steps []workflow.Step, named, stored string) (owner string, spans bool, ok bool) {
+	// 2.4.4 S3: a workflow being created in an agency context is that agency's:
+	// a jobless one takes it, and one whose jobs are another agency's is
+	// refused. An edit keeps the owner it has.
+	if stored == "" {
+		if named, ok = s.ownerInContext(w, r, named, "workflow"); !ok {
+			return "", false, false
+		}
+		owner, spans, ok = s.workflowSaveOwnerResolved(w, r, id, steps, named, stored)
+		if ok && !spans && !s.ownerMatchesContext(w, r, owner, "workflow") {
+			return "", false, false
+		}
+		return owner, spans, ok
+	}
+	return s.workflowSaveOwnerResolved(w, r, id, steps, named, stored)
+}
+
+// workflowSaveOwnerResolved is workflowSaveOwner before the agency context.
+func (s *Server) workflowSaveOwnerResolved(w http.ResponseWriter, r *http.Request, id auth.Identity, steps []workflow.Step, named, stored string) (owner string, spans bool, ok bool) {
+	owner, spans, err := s.workflowOwner(r, steps)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return "", false, false
+	}
+	if owner != "" {
+		return owner, spans, true
+	}
+	if stored != "" {
+		return stored, false, true
+	}
+	if a := strings.TrimSpace(named); a != "" {
+		var n int
+		if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, a).Scan(&n); err != nil || n == 0 {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "the referenced agency does not exist")
+			return "", false, false
+		}
+		if !id.CanAgency(auth.PermCompose, a) {
+			s.denyEntityAgency(w, r, id, auth.PermCompose, a, "you do not have "+auth.PermCompose+" on the agency named for this workflow")
+			return "", false, false
+		}
+		return a, false, true
+	}
+	if id.GlobalAdmin(auth.PermCompose) {
+		return agencyid.Global, false, true
+	}
+	switch mine := id.AgenciesFor(auth.PermCompose); len(mine) {
+	case 1:
+		return mine[0], false, true
+	case 0:
+		return agencyid.Global, false, true
+	default:
+		httpx.Fail(w, http.StatusUnprocessableEntity, "ambiguous_owner",
+			"you compose in more than one agency and this workflow has no jobs yet; say whose with ownerAgency")
+		return "", false, false
+	}
+}
+
+// requireJoblessWorkflowOwner is the authority over a workflow that has no
+// jobs (question 52): requireComposeStepScopes asks about its jobs, so with
+// none it asked nothing, and any agency's composer could edit or bin it. Such
+// a workflow is its owner agency's to change.
+func (s *Server) requireJoblessWorkflowOwner(w http.ResponseWriter, r *http.Request, id auth.Identity, wf *workflowRow) bool {
+	agencies, err := s.workflowJobAgencies(r, wf.Steps)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if len(agencies) > 0 || id.CanAgency(auth.PermCompose, wf.OwnerAgency) {
+		return true
+	}
+	s.denyEntityAgency(w, r, id, auth.PermCompose, wf.OwnerAgency, "you do not have "+auth.PermCompose+" on the agency that owns this workflow")
+	return false
+}
+
+// workflowJobAgencies is the set of agencies the jobs a step graph runs
+// belong to, sub-workflows followed: workflowOwner's question, and the one a
+// save that would change a workflow's agency asks of the graph it replaces
+// (empty: the workflow had no jobs, and its agency was only the default).
+func (s *Server) workflowJobAgencies(r *http.Request, steps []workflow.Step) (map[string]bool, error) {
+	nested, err := workflow.New(s.db, s.log).SubWorkflowJobAgencyScopesAt(r.Context(), steps, "cronomicon", "")
+	if err != nil {
+		return nil, err
+	}
+	agencies := map[string]bool{}
+	for _, a := range nested {
+		agencies[a.Agency] = true
+	}
 	for _, ref := range workflow.CollectStepRefs(steps) {
 		if ref.Name == "" {
 			continue
 		}
-		if scope, ok := s.stepJobScope(r, ref); ok {
-			out = append(out, scope.String)
+		if a, ok := s.stepJobAgency(r, ref); ok {
+			agencies[a] = true
 		}
 	}
-	return out
+	return agencies, nil
+}
+
+// pinChildWorkflows writes into a workflow's steps, as it is saved, the
+// identity of the workflow each sub-workflow step runs (workflowUid; 2.4.0,
+// present defect 50, the owner's yes to question 25). By its name alone a step
+// ran whichever workflow of the name the database returned, another agency's
+// among them, and when its own was binned, the other agency's on that agency's
+// hosts. A pinned step runs its child or fails.
+//
+// A step that already carries an identity keeps it, if it names a workflow of
+// that name that is not in the recycle bin (the authorization below walks what
+// it runs). Otherwise its child is chosen among the workflows of the name the
+// saver may compose: one built in the app of an agency they hold compose on
+// (any, for a global administrator), else a Git one of such an agency's
+// repository (Global's included, for one who holds compose on Global; until
+// §0a, Global's for anybody). A child of another agency than the parent's is
+// then refused as a span (refuseNewSpan). One is pinned; several are refused, naming the step, for
+// the saver to give the identity; none leaves the step by name (validation has
+// said the name exists, and the authorization below refuses a child whose jobs
+// the saver may not compose).
+//
+// The steps are rewritten as JSON maps, so every other field of a step, the
+// editor's included, is kept as it was sent.
+func (s *Server) pinChildWorkflows(ctx context.Context, raw json.RawMessage, id auth.Identity) (json.RawMessage, string, error) {
+	var steps []any
+	if len(raw) == 0 || json.Unmarshal(raw, &steps) != nil {
+		return raw, "", nil // parse errors were the validator's to report
+	}
+	var why string
+	var ferr error
+	var walk func([]any)
+	walk = func(ss []any) {
+		for _, x := range ss {
+			m, ok := x.(map[string]any)
+			if !ok || why != "" || ferr != nil {
+				continue
+			}
+			if t, _ := m["type"].(string); t == "workflow" {
+				name, _ := m["workflow"].(string)
+				given, _ := m["workflowUid"].(string)
+				if name = strings.TrimSpace(name); name != "" {
+					step, _ := m["name"].(string)
+					uid, msg, err := s.childToPin(ctx, step, name, strings.TrimSpace(given), id)
+					switch {
+					case err != nil:
+						ferr = err
+					case msg != "":
+						why = msg
+					case uid != "":
+						m["workflowUid"] = uid
+					default:
+						delete(m, "workflowUid")
+					}
+				}
+			}
+			for _, key := range []string{"jobs", "steps"} {
+				if nested, ok := m[key].([]any); ok {
+					walk(nested)
+				}
+			}
+			for _, key := range []string{"pass", "fail"} {
+				if arm, ok := m[key].(map[string]any); ok {
+					if nested, ok := arm["steps"].([]any); ok {
+						walk(nested)
+					}
+				}
+			}
+		}
+	}
+	walk(steps)
+	if ferr != nil || why != "" {
+		return raw, why, ferr
+	}
+	out, err := json.Marshal(steps)
+	return out, "", err
+}
+
+// childToPin is pinChildWorkflows' choice for one step: the identity to pin,
+// or the reason the save is refused, or neither (left by name).
+func (s *Server) childToPin(ctx context.Context, step, name, given string, id auth.Identity) (string, string, error) {
+	if given != "" {
+		var have string
+		var binned bool
+		err := s.db.QueryRowContext(ctx, `SELECT name, deleted_at IS NOT NULL FROM workflows WHERE uid = ?`, given).Scan(&have, &binned)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return "", fmt.Sprintf("step %q: workflowUid %q names no workflow", step, given), nil
+		case err != nil:
+			return "", "", err
+		case have != name:
+			return "", fmt.Sprintf("step %q: workflowUid %q is the workflow %q, not %q", step, given, have, name), nil
+		case binned:
+			return "", fmt.Sprintf("step %q: the workflow %q it names is in the recycle bin", step, name), nil
+		}
+		return given, "", nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT w.uid, w.source, COALESCE(w.owner_agency, ''), COALESCE(w.repo_id, ''), COALESCE(g.agency_id, '')
+		  FROM workflows w LEFT JOIN git_repos g ON g.id = w.repo_id
+		 WHERE w.name = ? AND w.deleted_at IS NULL AND COALESCE(w.uid, '') <> ''
+		 ORDER BY w.rowid`, name)
+	if err != nil {
+		return "", "", err
+	}
+	defer rows.Close()
+	everywhere := id.GlobalAdmin(auth.PermCompose)
+	var inApp, fromGit []string
+	for rows.Next() {
+		var uid, source, owner, repo, repoAgency string
+		if err := rows.Scan(&uid, &source, &owner, &repo, &repoAgency); err != nil {
+			return "", "", err
+		}
+		if source == "cronomicon" {
+			if everywhere || (owner != "" && id.CanAgency(auth.PermCompose, owner)) {
+				inApp = append(inApp, uid)
+			}
+			continue
+		}
+		// A Git row with no repository is Global's repository's. Global's is
+		// one agency's like the others (§0a, IN-3): until then anybody might
+		// choose its workflows.
+		if repo == "" {
+			repoAgency = agencyid.Global
+		}
+		if everywhere || (repoAgency != "" && id.CanAgency(auth.PermCompose, repoAgency)) {
+			fromGit = append(fromGit, uid)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", err
+	}
+	for _, pool := range [][]string{inApp, fromGit} {
+		switch len(pool) {
+		case 0:
+			continue
+		case 1:
+			return pool[0], "", nil
+		default:
+			return "", fmt.Sprintf("step %q: more than one workflow you may use is named %q; "+
+				"set the step's workflowUid to the one it should run", step, name), nil
+		}
+	}
+	return "", "", nil
+}
+
+// CodeWorkflowSpansAgencies (409, `crosses_agencies`: a code that names no
+// workflow, for the saver who may not be told of one) refuses a save that would make a workflow
+// run jobs of more than one agency (§0a, IN-8), whoever asks.
+const CodeWorkflowSpansAgencies = "crosses_agencies"
+
+// MsgWorkflowSpansAgencies is its message for the workflow being saved.
+const MsgWorkflowSpansAgencies = "this workflow runs jobs of more than one agency: a workflow runs its own agency's jobs " +
+	"and workflows only. Copy what it needs into this agency"
+
+// spanningBefore and refuseNewSpan are GR-7 held AFTER a save (2.4.0; the
+// owner's decision on R4's question 9, built when question 21 was answered).
+//
+// A workflow whose jobs are several agencies' is refused
+// (writeComposedWorkflow). That asks about the workflow being saved. The same
+// graph is reached two other ways: by saving a CHILD workflow, or a JOB, that
+// a workflow already saved runs, so that the parent comes to span.
+//
+// So a save reads which workflows span before it writes (spanningBefore) and
+// again before it commits (refuseNewSpan), in its own transaction, and is
+// refused and rolled back when a workflow spans that did not. The reading is
+// the notice's (notices.SpanningWorkflows): sub-workflows followed to the
+// depth the engine follows them, so the walk is bounded as the engine's is.
+// Until §0a (IN-8) a global administrator's save was not asked, and the
+// workflow it made was Global's; now nobody's is exempt.
+//
+// The other way a workflow came to span, a scope given to another agency, is
+// a global administrator's alone since bee2b35 (and a repair from I4).
+func (s *Server) spanningBefore(w http.ResponseWriter, r *http.Request, tx *sql.Tx, _ auth.Identity) (map[string]bool, bool) {
+	spanning, err := notices.SpanningWorkflows(r.Context(), tx)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return nil, false
+	}
+	before := make(map[string]bool, len(spanning))
+	for _, wf := range spanning {
+		before[wf.UID] = true
+	}
+	return before, true
+}
+
+// refuseNewSpan reports whether the save in tx may be committed: false, with
+// the refusal written, when it makes a workflow span agencies that did not
+// (see spanningBefore). self is the uid of a workflow the save itself writes,
+// which has been asked on its own account; "" for a job's save.
+//
+// The refusal names the workflow only to somebody who holds compose on the
+// agency it belongs to, who may read it. That is the usual saver: the job or
+// the child being saved was among the parent's, all of one agency's. Not
+// always: a composer of ANOTHER agency who creates a job, or a workflow, of a
+// name that one of the parent's steps names and nothing holds yet makes the
+// parent span too (found by the review of R7). Such a saver is given words
+// that say neither which workflow nor that there is one; that the save was
+// refused at all still tells them something waits on the name, which is one
+// bit, and is left so.
+func (s *Server) refuseNewSpan(w http.ResponseWriter, r *http.Request, tx *sql.Tx, id auth.Identity, before map[string]bool, self string) bool {
+	spanning, err := notices.SpanningWorkflows(r.Context(), tx)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	var named []string
+	newly := 0
+	for _, wf := range spanning {
+		if before[wf.UID] || wf.UID == self {
+			continue
+		}
+		newly++
+		var owner sql.NullString
+		if err := tx.QueryRowContext(r.Context(), `SELECT owner_agency FROM workflows WHERE uid = ?`, wf.UID).Scan(&owner); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return false
+		}
+		if owner.String != "" && id.CanAgency(auth.PermCompose, owner.String) {
+			named = append(named, wf.Name)
+		}
+	}
+	if newly == 0 {
+		return true
+	}
+	// Words that say neither which workflow nor that there is one (see above).
+	msg := "this change is refused: it would take a definition across agencies"
+	if len(named) == newly {
+		msg = "this change would make the workflow " + strings.Join(named, ", ") + " run jobs of more than one agency, " +
+			"which is refused: a workflow runs its own agency's jobs and workflows only"
+	}
+	_ = tx.Rollback()
+	httpx.Fail(w, http.StatusConflict, CodeWorkflowSpansAgencies, msg)
+	return false
+}
+
+// stepJobAgency is stepJobScope for the step job's agency (agencyid.JobSQL).
+func (s *Server) stepJobAgency(r *http.Request, ref workflow.StepRef) (string, bool) {
+	_, agency, ok := s.stepJobRow(r.Context(), ref)
+	return agency, ok
 }

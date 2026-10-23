@@ -1,10 +1,14 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, csrfHeader, errMsg, fetchCapabilities, fetchVersion, type BuildInfo } from "../api/client";
+import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../api/access";
+import { useAgencyOptional } from "../agency";
 import { useGet, rows, paged, useColumnWidths, useTableSort, useToast } from "../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../components/table";
 import { RefreshScope } from "../components/RefreshScope";
-import { AlertBanner, Badge, Btn, ConfirmDialog, CopyButton, CopyText, EmptyCell, Field, HoverTr, InlineLoading, Modal, RefreshButton, Rule, Section, SkeletonRows, StatTile, TableSurface, TagEditor, Toast, SortableLabel, TypeBadge, statusLabel, usePager } from "../components/ui";
+import { repoLabel, useRepoConnections } from "../components/RepoPicker";
+import { REPAIR_HINT, RepairDialog, useRepairAllowed, type RepairBody } from "../components/RepairDialog";
+import { AlertBanner, Badge, Btn, ConfirmDialog, CopyButton, CopyText, DetailCell, EmptyCell, Field, HoverTr, InlineLoading, Modal, RefreshButton, Rule, Section, SkeletonRows, StatTile, TableSurface, TagEditor, Toast, SortableLabel, TypeBadge, statusLabel, usePager } from "../components/ui";
 import { RecentRuns, DurationTrend } from "../components/RecentRuns";
 import { TraceId } from "./history/shared";
 import { ReplaceRunnerDialog, type BindableScope } from "./scopes/ScopeRunners";
@@ -21,8 +25,14 @@ import {
   installTwoStep,
   personalizedInstallOneLiner,
   personalizedInstallTwoStep,
+  INSTANCE_NAME_MAX,
+  validInstanceName,
+  validLimit,
+  type LimitField,
+  type UnitLimits,
 } from "./runner-install-cmd";
 import { AGENT_BIN_PATH, upgradeCommand } from "./runner-upgrade-cmd";
+import { NO_LIMIT, limitsCommand, validLimitChange } from "./runner-limits-cmd";
 import {
   ENV_EXAMPLE_PATH,
   RUN_TYPES,
@@ -32,6 +42,7 @@ import {
   provisionDockerRun,
   type ProvisionOptions,
 } from "./runner-provision";
+import { globalAgencyName } from "../globalName";
 
 // Ported from the prototype's RunnersSection (cronomicon-settings.jsx).
 // GET /runners, GET|POST /runners/registration-tokens (single-use, Phase 7),
@@ -56,20 +67,37 @@ interface Runner {
   protocolVersion?: number;
   lastHeartbeatAt?: string | null;
   registeredAt?: string;
-  agencies?: { id: string; name: string }[]; // network-isolation membership (M2)
-  // DR-7 — a prior placement offered for confirmation, present ONLY on a runner
-  // in no agency whose name matches a retained snapshot. NEVER auto-applied: the
-  // name is self-declared by the agent, so healing on it alone would let any
-  // agent inherit another runner's placement by claiming its name.
+  // `agent` for a runner that registered with a token; `server` for the LOCAL
+  // RUNNER — this server running shell jobs itself (v2.3.0). There is at most
+  // one. It has no agent: nothing to deregister, drain, re-declare, test or
+  // upgrade, and it is turned on and off under Settings → Local runner.
+  kind?: "agent" | "server" | string;
+  // What the runner SERVES: the agencies whose runs it claims. For an agent this
+  // is exactly its owner (v2.3.0).
+  agencies?: { id: string; name: string }[];
+  // Who OWNS it: the agency whose administrators manage it. Set by the
+  // registration token, never by the agent.
+  ownerAgency?: { id: string; name: string };
+  // The serve list is not exactly the owner: a runner that served several
+  // agencies before 2.3.0. It works as it did and can only be narrowed.
+  legacyPlacement?: boolean;
+  // Per-row authority, computed by the server: may this caller manage the
+  // runner (its owner's administrators), and may they review its host keys
+  // (the owner, or an administrator of an agency it serves and does not own).
+  canManage?: boolean;
+  canReviewHostKeys?: boolean;
+  // DR-7 / MA-32 — an offer to re-point the scope bindings a previous enrolment
+  // under the same name left behind, for this runner's own agency. NEVER
+  // auto-applied: the name is self-declared by the agent.
   placementSuggestion?: {
     historyId: number;
     previousRunnerId: string;
+    // The one agency the offer is for: this runner's owner.
     agencies: { id: string; name: string }[];
     tags: string[];
-    // SB — scopes still bound to the PREVIOUS runner id. A binding outlives its
-    // runner, so these are closed until the placement is restored; accepting
-    // re-points them here. A general-pool runner has no agencies, so for one
-    // the offer may carry scopes and nothing else.
+    // SB — the scopes of this runner's agency still bound to the PREVIOUS
+    // runner id. A binding outlives its runner, so these are closed until
+    // accepting re-points them here.
     scopes?: string[];
     deregisteredAt: string;
     deregisteredVia: "operator" | "reaper";
@@ -93,6 +121,10 @@ interface Runner {
     // Credential NAMES the runner can resolve to a local key (R6/Phase 4);
     // display-only, names only. Absent until a post-Phase-4 agent re-declares.
     keyNames?: string[];
+    // Local run-types the agent could not LOOK for: its PATH lookup never
+    // returned. Not "not installed" — the agent does not claim them, and says
+    // why it cannot tell. Absent from an agent older than 2.3.0.
+    undetermined?: string[];
   } | null;
   // Server-managed operational overrides (Phase 4). settingsVersion >
   // settingsAckedVersion ⇒ a change is still propagating to the agent.
@@ -108,10 +140,25 @@ interface Runner {
 // RunTypeName is the closed run-type vocabulary (matches the openapi RunType).
 type RunTypeName = (typeof RUN_TYPES)[number];
 
+// The bounds the server holds a managed poll interval within
+// (runnerproto.Min/MaxManagedPollIntervalSeconds; openapi ManagedRunnerSettings).
+// The ceiling stays under the two minutes after which a runner is shown as
+// degraded. The floor is the server's own hold on a poll (below).
+export const POLL_INTERVAL_MIN_SECONDS = 30;
+export const POLL_INTERVAL_MAX_SECONDS = 90;
+// How long the server holds a poll waiting for work (runner.pollTimeout). The
+// interval is how often a poll STARTS, so an idle agent with a free slot is
+// connected for this much of every interval: at this value, all the time. A
+// lower interval would change nothing (an agent with a run in flight asks
+// again every few seconds whatever its interval), which is why this is also
+// the field's floor.
+export const POLL_HOLD_SECONDS = 30;
+
 // ManagedSettings is the tri-state override set edited in the Settings drawer.
 // A field present overrides the runner's local value; absent = no server opinion.
 interface ManagedSettings {
   maxConcurrent?: number;
+  pollIntervalSeconds?: number;
   sandboxMemoryMax?: string;
   sandboxCpuQuota?: string;
   sandboxTasksMax?: string;
@@ -154,6 +201,12 @@ function toolchainSummary(tc: Runner["toolchains"]): string {
   if (tc.checkout) parts.push(tc.sandboxed ? "sandboxed" : "unsandboxed");
   return parts.join(" · ");
 }
+
+// What the row says when an agent could not look for its local toolchains. An
+// agent in this state is online and takes shell runs, so nothing else on the
+// row distinguishes it from one that simply has no Ansible.
+const UNDETERMINED_HOW =
+  "This agent's lookup for the toolchain on its own host never returned, so it does not claim the run type and those runs stay queued. On RHEL 8 (systemd 239) its unit needs SystemCallErrorNumber=EPERM: run Copy upgrade command on the host, which adds it. Otherwise a directory on the agent's PATH is on a hung mount. The agent's journal names the lookup.";
 
 type Run = components["schemas"]["Run"];
 
@@ -225,9 +278,9 @@ function PlacementOffer({ runner, onSaved }: { runner: Runner; onSaved: () => vo
       </div>
       <p style={{ margin: "0 0 8px", fontSize: c.fontSm, color: c.text }}>
         A runner named <strong>{runner.name}</strong> was removed {when ? <>on {when}</> : "previously"}
-        {sugg.deregisteredVia === "reaper" ? " by the offline sweep" : " by an operator"} while{" "}
-        {sugg.agencies.length > 0 ? <>placed in {sugg.agencies.map((a) => a.name).join(", ")}</> : "in the general pool"}
-        {sugg.tags.length > 0 ? <> with tags {sugg.tags.join(", ")}</> : null}.
+        {sugg.deregisteredVia === "reaper" ? " by the offline sweep" : " by an operator"}
+        {sugg.tags.length > 0 ? <>, with tags {sugg.tags.join(", ")}</> : null}. This runner already serves{" "}
+        {sugg.agencies.map((a) => a.name).join(", ") || "its agency"}; restoring changes nothing about that.
       </p>
       {/* SB — the scopes that runner was bound to are still bound to it, and
           closed: nothing can claim their runs. That is the most urgent thing
@@ -283,14 +336,17 @@ function PlacementOffer({ runner, onSaved }: { runner: Runner; onSaved: () => vo
 function ScopesServed({
   runner,
   scopes,
-  canConfig,
+  canReplace,
   successor,
   onSuccessor,
   onSaved,
 }: {
   runner: Runner;
   scopes: string[];
-  canConfig: boolean;
+  /** The caller holds configureApp somewhere. Replace is judged by the server on the
+   *  SCOPES this runner is bound to (LR-62), not on who owns the runner, so the
+   *  button follows the flat permission and the server decides. */
+  canReplace: boolean;
   /**
    * The runner that just took over, until the operator has dealt with its host
    * keys. It has the scopes now and none of this runner's trust: the copy is
@@ -357,7 +413,7 @@ function ScopesServed({
     // runner serves nothing, and that is exactly when the message is wanted.
     return (
       <span style={{ color: c.textMuted }}>
-        None — this runner serves whatever its groups allow. Bind it to a scope on the{" "}
+        None — this runner takes any run of the agency it serves. Bind it to a scope on the{" "}
         <Link to="/scopes" style={{ color: c.primary }}>
           Scopes page
         </Link>
@@ -375,7 +431,7 @@ function ScopesServed({
             {name}
           </span>
         ))}
-        {canConfig && (
+        {canReplace && (
           <Btn small onClick={() => setReplacing(true)} title="Hand these scopes to another runner in one step">
             Replace this runner…
           </Btn>
@@ -403,87 +459,231 @@ function ScopesServed({
   );
 }
 
-// GroupEditor edits a runner's agency ("group") membership inline (0..many),
-// relocated from the former standalone Agency Membership matrix. Each add/remove
-// commits immediately via PUT /runner-agencies with a SINGLE-runner body — the
-// endpoint replaces only the posted runners' sets, so this never disturbs any
-// other runner. Optimistic: reverts on error.
-function GroupEditor({ runner, available, onSaved }: { runner: Runner; available: { id: string; name: string }[]; onSaved: () => void }) {
-  const [ids, setIds] = useState<string[]>((runner.agencies ?? []).map((a) => a.id));
+/** The local runner: this server itself, listed with the agents. */
+const isLocal = (r: Runner) => r.kind === "server";
+
+// Where the local runner is turned on and off (it serves Global only, §0a).
+const LOCAL_RUNNER_SETTINGS = "/settings?tab=localrunner";
+
+// Where the local runner is turned on and off. That Settings section is listed
+// for a global administrator only, so nobody else is LINKED to it (G4: do not
+// send an agency administrator to an Installation section — they would land on
+// some other section, or on "you don't administer anything here"). Everyone
+// else reads the same words, unlinked.
+function LocalRunnerSettingsLink({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  const [global, setGlobal] = useState(false);
+  useEffect(() => {
+    let live = true;
+    fetchCapabilities().then((caps) => {
+      if (live) setGlobal(!!caps.configureAppGlobal);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (!global) return <>{children}</>;
+  return (
+    <Link to={LOCAL_RUNNER_SETTINGS} style={{ color: c.primary, ...style }}>
+      {children}
+    </Link>
+  );
+}
+
+// Why the local runner's row reads offline: turned off, or forbidden by the
+// host. The row's status cannot tell the two apart, and only one of them is
+// something a global administrator can change in the app.
+function LocalRunnerState() {
+  const q = useGet<components["schemas"]["LocalRunner"]>(() => api.GET("/local-runner"), []);
+  if (!q.data) return null;
+  if (q.data.forbidden) {
+    return <>It is forbidden on this host (CRONOMICON_LOCAL_RUNNER=forbid is set there), so it cannot be turned on from the app. </>;
+  }
+  return <>It is turned {q.data.enabled ? "on" : "off"}. </>;
+}
+
+// notOwnerWhy is the reason a control on a runner row is disabled for a caller
+// who holds configureApp somewhere and does not administer this runner's owner
+// (LR-59). "" when they may act. An older server sends no flag; the server
+// decides either way, so that reads as allowed.
+function notOwnerWhy(runner: Runner): string {
+  if (runner.canManage ?? true) return "";
+  const owner = runner.ownerAgency;
+  return !owner || owner.id === GLOBAL_AGENCY
+    ? "This runner is Global's — only a global administrator (a role on every agency) can manage it."
+    : `This runner belongs to ${owner.name} — only that agency's administrators can manage it.`;
+}
+
+const agencyChip = (): React.CSSProperties => ({
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 5,
+  padding: "3px 8px",
+  borderRadius: c.radiusChip,
+  fontSize: c.fontXs,
+  fontWeight: 600,
+  background: `${c.primary}1f`,
+  color: c.primary,
+  border: `1px solid ${c.primary}30`,
+});
+
+// OwnerAndServes shows a runner's placement (v2.3.0, MA-26): who OWNS it and
+// what it SERVES. For an agent the two are one fact, fixed by the registration
+// token it enrolled with, so there is nothing to edit: to serve another agency,
+// enrol an agent for that agency.
+//
+// The one runner with something to change is a LEGACY PLACEMENT — a runner that
+// served several agencies before 2.3.0. It keeps working; an agency can be
+// taken off it and none can be added (PUT /runner-agencies refuses the rest),
+// and once it serves a single agency it can be handed to that agency, which
+// ends it. Since 2.4.0 both change the runner's agency: a global
+// administrator's repair, with a reason (I4, IN-7; questions 43 and 48).
+function OwnerAndServes({ runner, onSaved }: { runner: Runner; onSaved: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [repairErr, setRepairErr] = useState("");
+  const repairAllowed = useRepairAllowed();
+  const [confirmHand, setConfirmHand] = useState(false);
+  const [confirmNarrow, setConfirmNarrow] = useState<{ id: string; name: string } | null>(null);
+  const owner = runner.ownerAgency;
+  const serves = runner.agencies ?? [];
+  const legacy = !!runner.legacyPlacement;
+  const local = isLocal(runner);
+  const why = notOwnerWhy(runner) || (repairAllowed ? "" : `Changing what a runner serves is a repair. ${REPAIR_HINT}`);
+  // Hand-over: Global's, serving exactly one agency that is not Global.
+  const handTo = legacy && owner?.id === GLOBAL_AGENCY && serves.length === 1 && serves[0].id !== GLOBAL_AGENCY ? serves[0] : null;
 
-  // Re-seed from the server's view whenever the list refetches (post-save).
-  useEffect(() => {
-    setIds((runner.agencies ?? []).map((a) => a.id));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify((runner.agencies ?? []).map((a) => a.id))]);
-
-  const nameOf = (id: string) => available.find((a) => a.id === id)?.name ?? id;
-  const unassigned = available.filter((a) => !ids.includes(a.id));
-
-  const commit = async (next: string[]) => {
-    const prev = ids;
-    setIds(next); // optimistic
+  const narrow = async (removeId: string, rep: RepairBody) => {
     setBusy(true);
     setErr(null);
+    setRepairErr("");
     const { error } = await api.PUT("/runner-agencies", {
       params: { header: csrfHeader },
-      body: [{ runnerId: String(runner.id), agencyIds: next }],
+      body: { ...rep, assignments: [{ runnerId: String(runner.id), agencyIds: serves.filter((a) => a.id !== removeId).map((a) => a.id) }] } as never,
     });
     setBusy(false);
     if (error) {
-      setIds(prev);
-      setErr(errMsg(error));
-    } else {
-      onSaved();
+      setRepairErr(errMsg(error));
+      return;
     }
+    setConfirmNarrow(null);
+    onSaved();
+  };
+  const hand = async (rep: RepairBody) => {
+    if (!handTo) return;
+    setBusy(true);
+    setErr(null);
+    setRepairErr("");
+    const { error } = await api.POST("/runners/{runnerId}/owner", {
+      params: { path: { runnerId: String(runner.id) }, header: csrfHeader },
+      body: { agencyId: handTo.id, ...rep },
+    });
+    setBusy(false);
+    if (error) {
+      setRepairErr(errMsg(error));
+      return;
+    }
+    setConfirmHand(false);
+    onSaved();
   };
 
-  if (available.length === 0) {
-    // VU-14 — the pointer was stale: the Agencies catalog moved off Env Vars onto
-    // the Scopes page (SC2), so the old copy named a tab that no longer exists.
-    return (
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap", color: c.textMuted }}>
-        No groups defined yet — a runner with no group serves the general pool.
-        <Link to="/scopes?tab=agencies" style={{ textDecoration: "none" }}>
-          <Btn small>Manage agencies</Btn>
-        </Link>
-      </span>
-    );
-  }
   return (
     <div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-        {ids.length === 0 && <span style={{ color: c.textMuted }}>General pool (no group binding)</span>}
-        {ids.map((id) => (
-          <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 8px", borderRadius: c.radiusChip, fontSize: c.fontXs, fontWeight: 600, background: `${c.primary}1f`, color: c.primary, border: `1px solid ${c.primary}30` }}>
-            {nameOf(id)}
-            <button
-              onClick={() => commit(ids.filter((x) => x !== id))}
-              disabled={busy}
-              title="Remove from group"
-              style={{ background: "none", border: "none", padding: 0, margin: 0, color: c.primary, cursor: busy ? "default" : "pointer", fontSize: c.fontSm, lineHeight: 1 }}
+      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 12, rowGap: 6, alignItems: "center", fontSize: c.fontSm }}>
+        <span style={{ color: c.textSec }}>Owner</span>
+        <span style={{ color: c.text, fontWeight: 600 }}>{owner?.name || owner?.id || "—"}</span>
+        <span style={{ color: c.textSec }}>Serves</span>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {serves.length === 0 && <span style={{ color: c.danger }}>No agency — this runner can claim nothing. See Notices.</span>}
+          {serves.map((a) => (
+            <span key={a.id} style={agencyChip()}>
+              {a.name}
+              {legacy && serves.length > 1 && (
+                <button
+                  onClick={() => {
+                    setRepairErr("");
+                    setConfirmNarrow(a);
+                  }}
+                  disabled={busy || !!why}
+                  aria-label={`Stop serving ${a.name}`}
+                  title={why || `Take ${a.name} off this runner. It cannot be added back: an agent serves the agency that owns it.`}
+                  style={{ background: "none", border: "none", padding: 0, margin: 0, color: c.primary, cursor: busy || why ? "not-allowed" : "pointer", fontSize: c.fontSm, lineHeight: 1 }}
+                >
+                  ×
+                </button>
+              )}
+            </span>
+          ))}
+          {legacy && (
+            <Link
+              to="/notices"
+              title="This runner served several agencies before 2.3.0. It keeps working, can be narrowed and never widened. Open Notices for how to settle it."
+              style={{ fontSize: c.fontXs, fontWeight: 600, padding: "2px 7px", borderRadius: c.radiusChip, background: `${c.warning}1f`, color: c.warning, border: `1px solid ${c.warning}40`, textDecoration: "none" }}
             >
-              ×
-            </button>
-          </span>
-        ))}
-        {unassigned.length > 0 && (
-          <select
-            value=""
-            disabled={busy}
-            onChange={(e) => { if (e.target.value) void commit([...ids, e.target.value]); }}
-            style={{ fontSize: c.fontSm, padding: "3px 6px", borderRadius: c.radiusChip, background: c.panelInput, color: c.text, border: `1px solid ${c.borderStrong}`, cursor: "pointer" }}
-          >
-            <option value="">+ Add group…</option>
-            {unassigned.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-        )}
+              Legacy placement
+            </Link>
+          )}
+        </div>
       </div>
-      {err && <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 4 }}>Save failed: {err}</div>}
+      {local ? (
+        <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6 }}>
+          The local runner is this server, and serves Global only. A global administrator turns it on or off under{" "}
+          <LocalRunnerSettingsLink>Settings → Local runner</LocalRunnerSettingsLink>.
+        </div>
+      ) : (
+        !legacy && (
+          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6 }}>
+            An agent serves the agency that owns it, set by the registration token it enrolled with. To serve another agency, enrol
+            an agent for that agency.
+          </div>
+        )
+      )}
+      {handTo && (
+        <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <Btn
+            small
+            onClick={() => {
+              setRepairErr("");
+              setConfirmHand(true);
+            }}
+            disabled={busy || !!why}
+            title={why || undefined}
+          >
+            Hand to {handTo.name}
+          </Btn>
+          <span style={{ fontSize: c.fontXs, color: c.textSec }}>
+            It serves only {handTo.name} now. Handing it over makes {handTo.name} its owner and settles the notice.
+          </span>
+        </div>
+      )}
+      {err && <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{err}</div>}
+      {confirmNarrow && (
+        <RepairDialog
+          title={`Stop ${runner.name} serving ${confirmNarrow.name}?`}
+          message={
+            <>
+              {confirmNarrow.name}'s runs will no longer be claimed by this runner, and any of {confirmNarrow.name}'s scopes still
+              bound to it will wait until they are bound to another. <strong>This cannot be undone:</strong> an agency cannot be added
+              back to a runner. Enrol an agent for {confirmNarrow.name} and re-bind its scopes first.
+            </>
+          }
+          confirmLabel={`Stop serving ${confirmNarrow.name}`}
+          busy={busy}
+          error={repairErr}
+          onCancel={() => setConfirmNarrow(null)}
+          onConfirm={(rep) => narrow(confirmNarrow.id, rep)}
+        />
+      )}
+      {confirmHand && handTo && (
+        <RepairDialog
+          title={`Hand ${runner.name} to ${handTo.name}?`}
+          message={`${handTo.name}'s administrators will manage this runner from now on, and global administrators will keep their access. This cannot be undone here: to move a runner back, deregister it and enrol it again.`}
+          confirmLabel={`Hand to ${handTo.name}`}
+          busy={busy}
+          error={repairErr}
+          onCancel={() => setConfirmHand(false)}
+          onConfirm={hand}
+        />
+      )}
     </div>
   );
 }
@@ -518,7 +718,10 @@ function RunnerTagsEditor({ runner, onSaved }: { runner: Runner; onSaved: () => 
 
   return (
     <div>
-      <TagEditor tags={tags} onChange={save} />
+      {/* Tags are the owner's to edit, like every write on the row (LR-59). */}
+      <div title={notOwnerWhy(runner) || undefined}>
+        <TagEditor tags={tags} onChange={save} disabled={!!notOwnerWhy(runner)} />
+      </div>
       {err && <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 4 }}>Save failed: {err}</div>}
     </div>
   );
@@ -561,7 +764,7 @@ function SecretInjectionEditor({ runner, canConfig, onSaved }: { runner: Runner;
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
       <div
         onClick={toggle}
-        title={canConfig ? undefined : "Requires the Configure App permission"}
+        title={canConfig ? undefined : notOwnerWhy(runner) || "Requires the Configure App permission"}
         style={{
           width: 36,
           height: 20,
@@ -601,11 +804,11 @@ function SecretInjectionEditor({ runner, canConfig, onSaved }: { runner: Runner;
 function RunnerDetail({
   runner,
   serverVersion,
-  availableAgencies,
   servedScopes,
   successor,
   onSuccessor,
   canConfig,
+  canConfigAnywhere,
   actions,
   onEditSettings,
   onScrollToToken,
@@ -613,13 +816,15 @@ function RunnerDetail({
 }: {
   runner: Runner;
   serverVersion?: string | null;
-  availableAgencies: { id: string; name: string }[];
   /** SB — the scopes bound to this runner, by name. */
   servedScopes: string[];
   /** SB — the runner this one's scopes were just handed to; see ScopesServed. */
   successor: KeyRunner | null;
   onSuccessor: (to: KeyRunner | null) => void;
+  /** configureApp held AND this runner is the caller's to manage (its owner's). */
   canConfig: boolean;
+  /** configureApp held somewhere, whoever owns this runner. */
+  canConfigAnywhere: boolean;
   actions?: React.ReactNode;
   onEditSettings: () => void;
   onScrollToToken: (tokenId: string) => void;
@@ -658,6 +863,7 @@ function RunnerDetail({
   const max = runner.maxConcurrent ?? 0;
   const sc = statusColor(runner.status);
   const sandboxed = tc == null || tc.sandboxed == null ? null : tc.sandboxed;
+  const local = isLocal(runner);
   const ms = runner.managedSettings ?? null;
   const pendingAck = (runner.settingsVersion ?? 0) > (runner.settingsAckedVersion ?? 0);
   const behind = !!(runner.version && serverVersion && runner.version !== serverVersion);
@@ -781,22 +987,37 @@ function RunnerDetail({
 
           {/* Managed settings summary (read-only) + Edit. The former standalone
               "Agent version" section is folded into the overview's Version field
-              (R4) — the upgrade chip carries the how-to as its tooltip. */}
-          <Section
+              (R4) — the upgrade chip carries the how-to as its tooltip.
+              Not for the local runner: there is no agent to push overrides to;
+              its one setting, how many runs at once, is on its card. */}
+          {local && (
+            <Section title="Settings">
+              <span style={{ color: c.textSec, fontSize: c.fontSm }}>
+                <LocalRunnerState />A global administrator turns it on or off, and sets how many runs it takes at once, under{" "}
+                <LocalRunnerSettingsLink>Settings → Local runner</LocalRunnerSettingsLink>. It serves Global only.
+              </span>
+            </Section>
+          )}
+          {!local && <Section
             title={
               <>
                 Managed settings
                 {pendingAck && <span title="A change is still propagating to the agent" style={{ marginLeft: 6, color: c.warning }}>● pending</span>}
               </>
             }
-            info="Server-managed overrides pushed to the agent: max concurrent jobs, sandbox caps, checkout policy and capability mask. When none are set the runner uses its local config."
-            actions={<Btn small onClick={onEditSettings}>⚙ Edit</Btn>}
+            info="Server-managed overrides pushed to the agent: max concurrent jobs, poll interval, sandbox caps, checkout policy and capability mask. When none are set the runner uses its local config."
+            actions={
+              <Btn small onClick={onEditSettings} disabled={!!notOwnerWhy(runner)} title={notOwnerWhy(runner) || undefined}>
+                ⚙ Edit
+              </Btn>
+            }
           >
             {ms == null ? (
               <span style={{ color: c.textMuted }}>No server-managed overrides — the runner uses its local config.</span>
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: "14px 24px" }}>
                 <Field label="Max concurrent" value={ms.maxConcurrent != null ? String(ms.maxConcurrent) : "—"} mono />
+                <Field label="Poll interval" value={ms.pollIntervalSeconds != null ? `${ms.pollIntervalSeconds}s` : "—"} mono />
                 <Field label="Capability mask" value={ms.capabilityMask && ms.capabilityMask.length ? ms.capabilityMask.join(", ") : "—"} />
                 <Field
                   label="Sandbox caps"
@@ -809,7 +1030,7 @@ function RunnerDetail({
                 />
               </div>
             )}
-          </Section>
+          </Section>}
 
           {/* Full capabilities (incl. collection: tokens hidden in the compact row) */}
           <Section title={`Capabilities (${caps.length})`}>
@@ -824,22 +1045,23 @@ function RunnerDetail({
             )}
           </Section>
 
-          {/* Groups (agencies) — editable inline, 0..many (relocated from the
-              former standalone Agency Membership matrix). */}
+          {/* Owner and serves (v2.3.0) — replaces the "Groups" editor, which
+              placed a runner in any number of agencies. */}
           <Section
-            title="Groups"
+            title="Agency"
             info={
               <>
-                Groups are network-isolation <strong>agencies</strong> (managed on the Scopes page). A runner in one
-                or more groups only claims runs targeting those groups; a runner in none serves the general pool.
+                The <strong>owner</strong> is the agency whose administrators manage this runner. What it{" "}
+                <strong>serves</strong> is the agencies whose runs it claims: for an agent, exactly its owner. Agencies are managed on
+                the Scopes page.
               </>
             }
           >
-            <PlacementOffer runner={runner} onSaved={onSaved} />
-            <GroupEditor runner={runner} available={availableAgencies} onSaved={onSaved} />
+            {canConfig && <PlacementOffer runner={runner} onSaved={onSaved} />}
+            <OwnerAndServes runner={runner} onSaved={onSaved} />
           </Section>
 
-          {/* SB — the scopes bound to this runner. Under Groups because it is the
+          {/* SB — the scopes bound to this runner. Under Agency because it is the
               same fact at finer grain: which department's work, then which
               scopes' work within it. Bindings are edited on the scope (that is
               where "these hosts are reached from here" belongs); what this
@@ -855,7 +1077,7 @@ function RunnerDetail({
               </>
             }
           >
-            <ScopesServed runner={runner} scopes={servedScopes} canConfig={canConfig} successor={successor} onSuccessor={onSuccessor} onSaved={onSaved} />
+            <ScopesServed runner={runner} scopes={servedScopes} canReplace={canConfigAnywhere} successor={successor} onSuccessor={onSuccessor} onSaved={onSaved} />
           </Section>
 
           {/* Tags — operator-authored, editable inline like other catalog items */}
@@ -880,8 +1102,14 @@ function RunnerDetail({
               </>
             }
           >
-            <SecretInjectionEditor runner={runner} canConfig={canConfig} onSaved={onSaved} />
-            {!!runner.allowSecretInjection && (
+            {local ? (
+              <span style={{ color: c.textSec, fontSize: c.fontSm }}>
+                Always on. This server is the secret store: a run it executes gets its secrets without their leaving the process.
+              </span>
+            ) : (
+              <SecretInjectionEditor runner={runner} canConfig={canConfig} onSaved={onSaved} />
+            )}
+            {!local && !!runner.allowSecretInjection && (
               <div style={{ fontSize: c.fontXs, color: c.warning, background: c.warningBg, border: `1px solid ${c.warning}30`, borderRadius: c.radiusSurface, padding: "8px 10px", marginTop: 8, maxWidth: "70ch" }}>
                 ⚠ This runner receives resolved secret values in its manifests. Keep this enabled only for runners you
                 trust with the secrets in the scopes it serves.
@@ -947,16 +1175,27 @@ function RunnerDetail({
         <Section
           title="Trusted host keys"
           info={
-            <>
-              A runner connects only to hosts whose SSH key is in its <code>known_hosts</code> file. Keys are added by approving them
-              here, after the runner scans a scope or hosts, or after you paste lines you already have. Every approval, rejection and
-              removal is recorded with who made it.
-            </>
+            local ? (
+              <>
+                The local runner — this server — connects only to hosts whose SSH key has been approved for it here. Keys are added
+                by approving them after the server scans a scope or hosts, or after you paste lines you already have; an approved
+                key is in force at once. Nothing is captured on first connect. Every approval, rejection and removal is recorded
+                with who made it.
+              </>
+            ) : (
+              <>
+                A runner connects only to hosts whose SSH key is in its <code>known_hosts</code> file. Keys are added by approving
+                them here, after the runner scans a scope or hosts, or after you paste lines you already have. Every approval,
+                rejection and removal is recorded with who made it.
+              </>
+            )
           }
         >
           <TrustedHostKeys
-            runner={{ id: String(runner.id), name: runner.name }}
-            canScan={isReachable(runner.status)}
+            runner={{ id: String(runner.id), name: runner.name, local }}
+            // The local runner scans from this server, on or off: scanning is
+            // not running a job.
+            canScan={local || isReachable(runner.status)}
             // A runner that re-enrolled has a new id; what was approved for it
             // before sits under the old one, and can be copied back on review.
             previous={
@@ -984,6 +1223,10 @@ interface RegTokenInfo {
   usedAt?: string | null;
   usedByRunnerId?: string | null;
   usedByRunnerName?: string | null;
+  // The agency that will own the agent this token enrols (v2.3.0). The name is
+  // empty when that agency has since been deleted: the token enrols nothing.
+  agencyId?: string;
+  agencyName?: string;
   status?: "active" | "used" | "expired" | "revoked" | string;
 }
 
@@ -1003,6 +1246,7 @@ const TOK_SORT_COLS: SortColumn<RegTokenInfo>[] = [
   { key: "status", get: (tk) => tk.status, type: "rank", rank: TOK_STATUS_RANK },
   { key: "usedBy", get: (tk) => tk.usedByRunnerName ?? tk.usedByRunnerId, type: "text" },
   { key: "label", get: (tk) => tk.label, type: "text" },
+  { key: "owner", get: (tk) => tk.agencyName || tk.agencyId, type: "text" },
   { key: "createdAt", get: (tk) => tk.createdAt, type: "date" },
   { key: "expiresAt", get: (tk) => tk.expiresAt, type: "date" },
 ];
@@ -1088,8 +1332,12 @@ export function Runners() {
   const [refresh, setRefresh] = useState(0);
   const [tokenV, setTokenV] = useState(0);
   const [canConfig, setCanConfig] = useState(false);
+  const [canConfigGlobal, setCanConfigGlobal] = useState(false);
   useEffect(() => {
-    fetchCapabilities().then((caps) => setCanConfig(caps.configureApp));
+    fetchCapabilities().then((caps) => {
+      setCanConfig(caps.configureApp);
+      setCanConfigGlobal(!!caps.configureAppGlobal);
+    });
   }, []);
 
   const list = useGet<unknown>(() => api.GET("/runners"), [refresh]);
@@ -1112,7 +1360,16 @@ export function Runners() {
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontWeight: 600 }}>{r.name}</span>
-            {(r.inventory === "cronomicon" || r.inventory === "local") && <InventoryChip mode={r.inventory} />}
+            {isLocal(r) ? (
+              <span
+                title="The local runner: this server running shell jobs itself. Turned on and off under Settings → Local runner."
+                style={{ fontSize: c.fontXs, fontWeight: 600, padding: "1px 6px", borderRadius: c.radiusChip, background: c.panel2, color: c.textSec, border: `1px solid ${c.border}` }}
+              >
+                this server
+              </span>
+            ) : (
+              (r.inventory === "cronomicon" || r.inventory === "local") && <InventoryChip mode={r.inventory} />
+            )}
           </div>
           {r.version && <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 1 }}>v{r.version}</div>}
           {(r.tags ?? []).length > 0 && (
@@ -1172,44 +1429,53 @@ export function Runners() {
           {toolchainSummary(r.toolchains) && (
             <div style={{ color: c.textMuted, fontSize: c.fontXs, marginTop: 3 }}>{toolchainSummary(r.toolchains)}</div>
           )}
+          {(r.toolchains?.undetermined ?? []).length > 0 && (
+            <div title={UNDETERMINED_HOW} style={{ color: c.warning, fontSize: c.fontXs, fontWeight: 600, marginTop: 3, cursor: "help" }}>
+              could not check for {(r.toolchains?.undetermined ?? []).join(", ")}
+            </div>
+          )}
         </>
       ),
     },
     {
       key: "agencies",
-      label: "Agencies",
+      label: "Agency",
       width: COL_W.agencies,
       fixed: true,
-      cell: (r) =>
-        (r.agencies ?? []).length === 0 ? (
-          // RB-22 — say what the empty set MEANS. A runner in no agency serves
-          // the GENERAL POOL: every department's unscoped and system work. That
-          // is more reach than a departmental runner, and "—" reads as missing.
-          <span
-            title={
-              r.placementSuggestion
-                ? "In no agency — serving the general pool. A previous placement was found; expand the row to review and restore it."
-                : "In no agency — serves the general pool, so it may claim every department's unscoped and system work."
-            }
-            style={{ color: c.textSec, fontSize: c.fontXs, fontStyle: "italic", cursor: "help" }}
-          >
-            general pool
-            {r.placementSuggestion ? (
-              <span style={{ color: c.warning, fontStyle: "normal", fontWeight: 600 }}> · was placed</span>
-            ) : null}
-          </span>
-        ) : (
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-            {(r.agencies ?? []).map((a) => (
-              <span
-                key={a.id}
-                style={{ display: "inline-flex", padding: "2px 7px", borderRadius: c.radiusChip, fontSize: c.fontXs, fontWeight: 600, background: `${c.primary}1f`, color: c.primary, border: `1px solid ${c.primary}20` }}
-              >
-                {a.name}
+      // Owner, and what it serves when that is anything else (v2.3.0). For an
+      // agent the two are one, so one chip says both.
+      cell: (r) => {
+        const owner = r.ownerAgency;
+        const serves = r.agencies ?? [];
+        return (
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+            {!r.legacyPlacement ? (
+              <span title={`Owned by ${owner?.name ?? "—"}, and serves it`} style={agencyChip()}>
+                {owner?.name ?? serves[0]?.name ?? "—"}
               </span>
-            ))}
+            ) : (
+              <>
+                {serves.map((a) => (
+                  <span key={a.id} title={`Serves ${a.name}; owned by ${owner?.name ?? globalAgencyName()}`} style={agencyChip()}>
+                    {a.name}
+                  </span>
+                ))}
+                <span
+                  title={`A legacy placement: owned by ${owner?.name ?? globalAgencyName()}, serving agencies that are not its owner. Expand the row.`}
+                  style={{ fontSize: c.fontXs, fontWeight: 600, color: c.warning }}
+                >
+                  legacy
+                </span>
+              </>
+            )}
+            {r.placementSuggestion && (r.canManage ?? true) ? (
+              <span title="A previous enrolment under this name left scopes bound to it. Expand the row to review." style={{ color: c.warning, fontSize: c.fontXs, fontWeight: 600 }}>
+                · bindings to restore
+              </span>
+            ) : null}
           </div>
-        ),
+        );
+      },
     },
     {
       key: "load",
@@ -1256,14 +1522,26 @@ export function Runners() {
         // Compact row keeps only Test + Deregister; the rest moved into the
         // expanded detail (v0.47.20). stopPropagation so a button click doesn't
         // also toggle the row.
+        // The local runner has no agent to test or deregister (irrelevance
+        // hides): its row links to where it is turned on and off instead.
+        isLocal(r) ? (
+          <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", justifyContent: "flex-end" }}>
+            {canConfigGlobal && (
+              <Link to={LOCAL_RUNNER_SETTINGS} style={{ fontSize: c.fontSm, color: c.primary, whiteSpace: "nowrap" }}>
+                Settings
+              </Link>
+            )}
+          </div>
+        ) : (
         <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-          <Btn small onClick={() => testRunner(r)} disabled={testingId === r.id || busy}>
+          <Btn small onClick={() => testRunner(r)} disabled={testingId === r.id || busy || !!notOwnerWhy(r)} title={notOwnerWhy(r) || undefined}>
             {testingId === r.id ? "Testing…" : "Test"}
           </Btn>
-          <Btn small dangerQuiet onClick={() => setDeregTarget(r)} disabled={busy}>
+          <Btn small dangerQuiet onClick={() => setDeregTarget(r)} disabled={busy || !!notOwnerWhy(r)} title={notOwnerWhy(r) || undefined}>
             Deregister
           </Btn>
         </div>
+        )
       ),
     },
   ]);
@@ -1310,7 +1588,44 @@ export function Runners() {
   // one baked-in line on the host.
   const [addOpen, setAddOpen] = useState(false);
   const [addShowTwoStep, setAddShowTwoStep] = useState(false);
+  // MA-24 — the instance name for a machine that already runs an agent. One
+  // value for both install helpers: it describes the machine being installed
+  // on, not the token.
+  const [instanceName, setInstanceName] = useState("");
+  // 2.3.1 — limits for the unit the installer writes. Like the instance name
+  // they describe the machine, so both install helpers share them.
+  const [unitLimits, setUnitLimits] = useState<UnitLimits>({});
   const [mintLabel, setMintLabel] = useState("");
+  // LR-61 — a token names the agency that will OWN the agent it enrols. The
+  // caller is offered the agencies they administer; a global administrator is
+  // offered Global and every agency. One option is not a choice and is chosen.
+  const access = useMyAccess();
+  // 2.5.0 C11, defect 86: a token is minted in the agency the person works in
+  // (the server refuses another, agency_context_mismatch). A global
+  // administrator working in Finance was offered every agency, Global by
+  // default, and refused. Outside a provider the choice stays as it was.
+  const ag = useAgencyOptional();
+  const here: AgencyRef | null = ag ? { id: ag.agency, name: ag.agencyName } : null;
+  const mayMintFor: AgencyRef[] = canConfigGlobal
+    ? [{ id: GLOBAL_AGENCY, name: globalAgencyName() }, ...availableAgencies.filter((a) => a.id !== GLOBAL_AGENCY)]
+    : agenciesFor(access ?? null, "configureApp");
+  const tokenOwners: AgencyRef[] = here ? [here] : mayMintFor;
+  const [mintAgencyPick, setMintAgency] = useState("");
+  const mintAgency = here
+    ? here.id
+    : tokenOwners.some((a) => a.id === mintAgencyPick)
+      ? mintAgencyPick
+      : canConfigGlobal
+        ? GLOBAL_AGENCY
+        : tokenOwners.length === 1
+          ? tokenOwners[0].id
+          : "";
+  const mintBlocked =
+    here && !canConfigGlobal && access != null && !mayMintFor.some((a) => a.id === here.id)
+      ? `You do not administer ${here.name}: switch to an agency you administer to mint a token there`
+      : !here && !canConfigGlobal && tokenOwners.length > 1 && !mintAgency
+        ? "Choose the agency this runner is for"
+        : "";
   // The plaintext token is returned by the mint POST only once; the list never
   // carries it. Hold the freshly minted token locally so it stays copyable.
   const [minted, setMinted] = useState<MintedToken | null>(null);
@@ -1328,6 +1643,23 @@ export function Runners() {
   // lives here because the hand-over reloads the list, which remounts the row.
   const [handover, setHandover] = useState<{ from: string; to: KeyRunner } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const tokenOwnerSelect = (
+    <select
+      aria-label="Agency the runner is for"
+      value={mintAgency}
+      disabled={busy || tokenOwners.length <= 1}
+      onChange={(e) => setMintAgency(e.target.value)}
+      title="The agency that will own the runner this token enrols. Its administrators manage the runner, and it serves that agency's runs and no other's."
+      style={{ padding: "7px 8px", background: c.panel2, border: `1px solid ${c.borderStrong}`, borderRadius: c.radiusChip, fontSize: c.fontSm, color: c.text, maxWidth: 220 }}
+    >
+      {!here && !canConfigGlobal && tokenOwners.length !== 1 && <option value="">Runner for…</option>}
+      {tokenOwners.map((a) => (
+        <option key={a.id} value={a.id}>
+          For {a.name}
+        </option>
+      ))}
+    </select>
+  );
   // FX-16 — the shared toast + its timer, replacing a hand-rolled success
   // banner the operator had to dismiss by hand.
   const [actionOk, setActionOk] = useToast();
@@ -1443,7 +1775,7 @@ export function Runners() {
     setActionError(null);
     const { data, error } = await api.POST("/runners/registration-tokens", {
       params: { header: csrfHeader },
-      body: mintLabel.trim() ? { label: mintLabel.trim() } : {},
+      body: { ...(mintLabel.trim() ? { label: mintLabel.trim() } : {}), ...(mintAgency ? { agencyId: mintAgency } : {}) },
     });
     setBusy(false);
     if (error) {
@@ -1477,6 +1809,9 @@ export function Runners() {
   const degraded = runners.filter((r) => r.status === "degraded").length;
   const draining = runners.filter((r) => r.status === "draining").length;
   const offline = runners.filter((r) => r.status === "offline").length;
+  // Off, the local runner's row reads offline; an agent of any status counts as
+  // "there is something to look at" and gets its own row instead of this note.
+  const nothingRuns = runners.length > 0 && runners.every((r) => isLocal(r) && r.status === "offline");
 
   const token = minted?.token ?? "";
   // LB8: a usable, copyable plaintext exists only when freshly minted — the
@@ -1613,9 +1948,11 @@ export function Runners() {
                         </HoverTr>
                         {isExp && (
                           <tr>
-                            <td
+                            <DetailCell
                               colSpan={cols.visible.length}
-                              style={{ padding: "14px 18px", background: c.primaryBg, borderBottom: `1px solid ${c.border}` }}
+                              padding="14px 18px"
+                              background={c.primaryBg}
+                              cellStyle={{ borderBottom: `1px solid ${c.border}` }}
                             >
                               {/* Actions relocated out of the compact row (v0.47.20):
                                   Resync, Scan keys, Drain, Copy upgrade — shown only once
@@ -1627,16 +1964,20 @@ export function Runners() {
                               <RunnerDetail
                                 runner={r}
                                 serverVersion={serverBuild?.version}
-                                availableAgencies={availableAgencies}
                                 servedScopes={servedBy(r.id)}
                                 successor={handover && handover.from === String(r.id) ? handover.to : null}
                                 onSuccessor={(to) => setHandover(to ? { from: String(r.id), to } : null)}
-                                canConfig={canConfig}
+                                canConfig={canConfig && (r.canManage ?? true)}
+                                canConfigAnywhere={canConfig}
                                 onEditSettings={() => setSettingsTarget(r)}
                                 onScrollToToken={scrollToToken}
                                 onSaved={refetchList}
                                 actions={
-                                  <>
+                                  // Nothing here is for the local runner: there is no
+                                  // agent to resync, drain or upgrade. (Its host keys
+                                  // are in its own section below, like an agent's.)
+                                  // Irrelevance hides.
+                                  isLocal(r) ? undefined : <>
                                 {/* FX-7 — these three are gated on the runner being
                                     REACHABLE, not on it being healthy. They were gated on
                                     `online`, which took Resync, Scan keys and Drain away
@@ -1649,12 +1990,17 @@ export function Runners() {
                                     with an explanation; only irrelevance hides. (The
                                     per-button protocol gates that once sat here went with
                                     the server's protocol floor, v1.5.40.) */}
+                                {/* LR-59 — these are the runner's OWNER's. A caller who
+                                    holds configureApp elsewhere sees them disabled with
+                                    whose runner it is (FX-7). Scan keys is the exception
+                                    (LR-63): an administrator of an agency the runner
+                                    serves may scan their own scopes with it. */}
                                 {isReachable(r.status) && (
                                   <Btn
                                     small
                                     onClick={() => setResyncTarget(r)}
-                                    disabled={busy}
-                                    title="Force a re-declare of this runner's current local config now (config changes usually propagate automatically on the next poll after a restart)"
+                                    disabled={busy || !!notOwnerWhy(r)}
+                                    title={notOwnerWhy(r) || "Force a re-declare of this runner's current local config now (config changes usually propagate automatically on the next poll after a restart)"}
                                   >
                                     Resync
                                   </Btn>
@@ -1663,14 +2009,20 @@ export function Runners() {
                                   <Btn
                                     small
                                     onClick={() => setScanTarget(r)}
-                                    disabled={busy}
-                                    title="Get SSH host keys onto this runner: scan a scope, scan hosts, or paste keys, then review every fingerprint"
+                                    disabled={busy || !(r.canReviewHostKeys ?? r.canManage ?? true)}
+                                    title={
+                                      !(r.canReviewHostKeys ?? r.canManage ?? true)
+                                        ? notOwnerWhy(r)
+                                        : (r.canManage ?? true)
+                                          ? "Get SSH host keys onto this runner: scan a scope, scan hosts, or paste keys, then review every fingerprint"
+                                          : "Scan one of your agency's scopes with this runner and review the keys it finds"
+                                    }
                                   >
                                     Scan keys
                                   </Btn>
                                 )}
                                 {isReachable(r.status) && (
-                                  <Btn small onClick={() => setDrainTarget(r)} disabled={busy}>
+                                  <Btn small onClick={() => setDrainTarget(r)} disabled={busy || !!notOwnerWhy(r)} title={notOwnerWhy(r) || undefined}>
                                     Drain
                                   </Btn>
                                 )}
@@ -1690,12 +2042,44 @@ export function Runners() {
                                 }
                               />
                               </RefreshScope>
-                            </td>
+                            </DetailCell>
                           </tr>
                         )}
                         </Fragment>
                       );
                     })
+                    )}
+                    {/* The local runner is always listed, so the registry is never
+                        empty; what can be empty is the set of things that run
+                        jobs. With no agent and the local runner off, say so and
+                        point at both ways out (LR-38). */}
+                    {nothingRuns && (
+                      <tr>
+                        <td
+                          colSpan={cols.visible.length}
+                          style={{ color: c.textSec, padding: "16px 14px", textAlign: "center", fontSize: c.fontSm }}
+                        >
+                          Nothing can run a job yet: no agent is registered and the local runner is off.{" "}
+                          <button
+                            onClick={openAddRunner}
+                            style={{ background: "none", border: "none", padding: 0, color: c.primary, cursor: "pointer", fontSize: c.fontSm, textDecoration: "underline", fontFamily: "inherit" }}
+                          >
+                            Add Runner
+                          </button>{" "}
+                          to install an agent
+                          {canConfigGlobal ? (
+                            <>
+                              , or{" "}
+                              <Link to={LOCAL_RUNNER_SETTINGS} style={{ color: c.primary }}>
+                                turn on the local runner
+                              </Link>{" "}
+                              to have this server run shell jobs itself.
+                            </>
+                          ) : (
+                            <>; a global administrator can also turn on the local runner, so that this server runs shell jobs itself.</>
+                          )}
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </table>
@@ -1737,7 +2121,8 @@ export function Runners() {
                   color: c.text,
                 }}
               />
-              <button style={btnStyle("primary")} onClick={mint} disabled={busy}>
+              {tokenOwnerSelect}
+              <button style={btnStyle("primary")} onClick={mint} disabled={busy || !!mintBlocked} title={mintBlocked || undefined}>
                 {busy ? "Minting…" : "Mint token"}
               </button>
             </div>
@@ -1785,6 +2170,8 @@ export function Runners() {
             )}
             {minted && (
               <div>
+                <InstanceNameField value={instanceName} onChange={setInstanceName} />
+                <UnitLimitsFields value={unitLimits} onChange={setUnitLimits} />
                 <div style={{ ...fieldLabel(), minWidth: undefined, marginBottom: 6 }}>Install Command</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <code
@@ -1800,16 +2187,16 @@ export function Runners() {
                       wordBreak: "break-all",
                     }}
                   >
-                    {installOneLiner(origin, revealable && tokenRevealed ? token : "<TOKEN>")}
+                    {installOneLiner(origin, revealable && tokenRevealed ? token : "<TOKEN>", undefined, instanceName, unitLimits)}
                   </code>
-                  <CopyButton text={installOneLiner(origin, token)} ariaLabel="Copy the install command to clipboard" />
+                  <CopyButton text={installOneLiner(origin, token, undefined, instanceName, unitLimits)} ariaLabel="Copy the install command to clipboard" />
                 </div>
                 <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6, lineHeight: 1.5 }}>
                   Run on the target host. <code>--download</code> fetches the agent binary from this server with
                   checksum verification (deployments without bundled binaries fall back to a local{" "}
-                  <code>cronomicon-runner</code> / <code>-b &lt;path&gt;</code>). Capabilities are auto-detected from
-                  the host's toolchains at startup; add <code>-c</code> only to narrow them — see the Install
-                  Guide.{" "}
+                  <code>cronomicon-runner</code> / <code>-b &lt;path&gt;</code>). Capabilities are auto-detected at
+                  startup (the shell types always; Ansible and Terraform when the host has them); add{" "}
+                  <code>-c</code> only to narrow them — see the Install Guide.{" "}
                   <button
                     onClick={() => setShowTwoStep((v) => !v)}
                     style={{
@@ -1841,9 +2228,9 @@ export function Runners() {
                         wordBreak: "break-all",
                       }}
                     >
-                      {installTwoStep(origin, revealable && tokenRevealed ? token : "<TOKEN>")}
+                      {installTwoStep(origin, revealable && tokenRevealed ? token : "<TOKEN>", undefined, instanceName, unitLimits)}
                     </code>
-                    <CopyButton text={installTwoStep(origin, token)} ariaLabel="Copy the install command to clipboard" />
+                    <CopyButton text={installTwoStep(origin, token, undefined, instanceName, unitLimits)} ariaLabel="Copy the install command to clipboard" />
                   </div>
                 )}
               </div>
@@ -1869,6 +2256,7 @@ export function Runners() {
                           ["Status", "status"],
                           ["Used by", "usedBy"],
                           ["Label", "label"],
+                          ["For", "owner"],
                           ["Created", "createdAt"],
                           ["Expires", "expiresAt"],
                         ] as [string, string][]
@@ -1940,6 +2328,13 @@ export function Runners() {
                           <td style={{ ...tdStyle, color: statusColor }}>{tokenStatusLabel}</td>
                           <td style={tdStyle}>{usedBy ?? <span style={{ color: c.textSec }}>—</span>}</td>
                           <td style={{ ...tdStyle, color: c.text }}>{tk.label || <span style={{ color: c.textSec }}>—</span>}</td>
+                          <td style={tdStyle}>
+                            {tk.agencyName || (
+                              <span title="The agency this token was minted for has been deleted. It no longer enrols anything." style={{ color: c.warning }}>
+                                deleted agency
+                              </span>
+                            )}
+                          </td>
                           <td style={tdStyle}>{fmtDate(tk.createdAt)}</td>
                           <td style={tdStyle}>{fmtDate(tk.expiresAt)}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>
@@ -1996,7 +2391,7 @@ export function Runners() {
             {!tokList.loading && !tokList.error && regTokens.length === 0 && !minted && (
               <div style={{ fontSize: c.fontSm, color: c.textSec, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 No registration tokens yet — a runner needs one to register.
-                <Btn small onClick={mint} disabled={busy}>
+                <Btn small onClick={mint} disabled={busy || !!mintBlocked} title={mintBlocked || undefined}>
                   {busy ? "Minting…" : "Mint a token"}
                 </Btn>
               </div>
@@ -2038,7 +2433,7 @@ export function Runners() {
               <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
                 Mint a <strong>single-use</strong> registration token, then paste one line on the runner host.
                 The server URL, token, and agent-binary download are baked into the script — no flags to carry,
-                and capabilities auto-detect from the host's toolchains.
+                and capabilities auto-detect at startup.
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <input
@@ -2048,7 +2443,8 @@ export function Runners() {
                   maxLength={120}
                   style={{ flex: 1, padding: "7px 10px", background: c.panel2, border: `1px solid ${c.borderStrong}`, borderRadius: c.radiusChip, fontSize: c.fontSm, color: c.text }}
                 />
-                <Btn primary onClick={mint} disabled={busy}>
+                {tokenOwnerSelect}
+                <Btn primary onClick={mint} disabled={busy || !!mintBlocked} title={mintBlocked || undefined}>
                   {busy ? "Minting…" : "Mint & build command"}
                 </Btn>
               </div>
@@ -2068,12 +2464,14 @@ export function Runners() {
                 )}
               </div>
               <div>
+                <InstanceNameField value={instanceName} onChange={setInstanceName} />
+                <UnitLimitsFields value={unitLimits} onChange={setUnitLimits} />
                 <div style={{ ...fieldLabel(), minWidth: undefined, marginBottom: 6 }}>Run this on the runner host (as root)</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                   <code style={{ flex: 1, padding: "10px 12px", background: c.panel2, border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, fontSize: c.fontSm, fontFamily: c.mono, color: c.text, wordBreak: "break-all" }}>
-                    {personalizedInstallOneLiner(origin, token)}
+                    {personalizedInstallOneLiner(origin, token, instanceName, unitLimits)}
                   </code>
-                  <CopyButton text={personalizedInstallOneLiner(origin, token)} ariaLabel="Copy the install command to clipboard" />
+                  <CopyButton text={personalizedInstallOneLiner(origin, token, instanceName, unitLimits)} ariaLabel="Copy the install command to clipboard" />
                 </div>
                 <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6, lineHeight: 1.5 }}>
                   Thirty seconds later the runner appears in the registry above with its detected run-types. The
@@ -2088,9 +2486,9 @@ export function Runners() {
                 {addShowTwoStep && (
                   <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 8 }}>
                     <code style={{ flex: 1, padding: "10px 12px", background: c.panel2, border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, fontSize: c.fontSm, fontFamily: c.mono, color: c.text, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-                      {personalizedInstallTwoStep(origin, token)}
+                      {personalizedInstallTwoStep(origin, token, instanceName, unitLimits)}
                     </code>
-                    <CopyButton text={personalizedInstallTwoStep(origin, token)} ariaLabel="Copy the install command to clipboard" />
+                    <CopyButton text={personalizedInstallTwoStep(origin, token, instanceName, unitLimits)} ariaLabel="Copy the install command to clipboard" />
                   </div>
                 )}
               </div>
@@ -2155,6 +2553,7 @@ export function Runners() {
       {scanTarget && scanTarget.id != null && (
         <HostKeysDialog
           runner={{ id: String(scanTarget.id), name: scanTarget.name }}
+          guest={!(scanTarget.canManage ?? true)}
           onClose={() => {
             setScanTarget(null);
             refetchList();
@@ -2170,6 +2569,128 @@ export function Runners() {
 // (Phase 4) and PATCHes them. Each override is optional: blank/inherit means
 // "no server opinion — use the runner's own local value". The change rides the
 // runner's next poll and applies in-memory (no restart).
+// 2.3.1 — resource limits for an agent's systemd unit: memory, CPU and tasks
+// for the agent and everything it runs, together. One group of three fields,
+// used where an install command is built (the installer's --memory-max,
+// --cpu-quota, --tasks-max) and, with `change`, in the settings drawer, where
+// the same three become a `systemctl set-property` command and a field may
+// also say `none` to remove a limit. The shapes are the installer's
+// (runner-install-cmd.ts): checked here so a bad value is refused on the page.
+const LIMIT_INPUTS: { field: LimitField; label: string; placeholder: string }[] = [
+  { field: "memoryMax", label: "Memory", placeholder: "e.g. 4G" },
+  { field: "cpuQuota", label: "CPU", placeholder: "e.g. 200%" },
+  { field: "tasksMax", label: "Tasks", placeholder: "e.g. 1024" },
+];
+
+function UnitLimitsFields({ value, onChange, change = false }: { value: UnitLimits; onChange: (v: UnitLimits) => void; change?: boolean }) {
+  const groupId = useId();
+  const ok = (f: LimitField) => {
+    const v = (value[f] ?? "").trim();
+    return change ? validLimitChange(f, v) : v === "" || validLimit(f, v);
+  };
+  const bad = LIMIT_INPUTS.some(({ field }) => !ok(field));
+  return (
+    <div style={{ marginBottom: 12 }} role="group" aria-labelledby={`${groupId}-label`}>
+      <div id={`${groupId}-label`} style={{ ...fieldLabel(), minWidth: undefined, display: "block", marginBottom: 6 }}>
+        {change ? "New limits" : "Resource limits"}{" "}
+        <span style={{ textTransform: "none", fontWeight: 400 }}>{change ? "(fill in what you want to change)" : "(optional)"}</span>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {LIMIT_INPUTS.map(({ field, label, placeholder }) => (
+          <label key={field} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: c.fontSm, color: c.textSec }}>
+            {label}
+            <input
+              value={value[field] ?? ""}
+              onChange={(e) => onChange({ ...value, [field]: e.target.value })}
+              placeholder={placeholder}
+              spellCheck={false}
+              autoComplete="off"
+              aria-invalid={!ok(field)}
+              aria-describedby={`${groupId}-help`}
+              style={{ width: 110, padding: "7px 10px", background: c.panel2, border: `1px solid ${ok(field) ? c.borderStrong : c.danger}`, borderRadius: c.radiusChip, fontSize: c.fontSm, fontFamily: c.mono, color: c.text }}
+            />
+          </label>
+        ))}
+      </div>
+      <div id={`${groupId}-help`} style={{ fontSize: c.fontXs, color: bad ? c.danger : c.textSec, marginTop: 4, lineHeight: 1.5, maxWidth: "75ch" }}>
+        {bad ? (
+          <>
+            Memory is a whole number with K, M, G or T (<code style={{ fontFamily: c.mono }}>4G</code>); CPU is a percentage of one
+            CPU (<code style={{ fontFamily: c.mono }}>200%</code> is two); tasks is a whole number
+            {change && (
+              <>
+                ; or <code style={{ fontFamily: c.mono }}>{NO_LIMIT}</code> to remove a limit
+              </>
+            )}
+            . No command is shown until every field is valid, or empty.
+          </>
+        ) : change ? (
+          <>
+            Memory as <code style={{ fontFamily: c.mono }}>4G</code>, CPU as a percentage of one CPU (
+            <code style={{ fontFamily: c.mono }}>200%</code> is two), tasks as a count. Type{" "}
+            <code style={{ fontFamily: c.mono }}>{NO_LIMIT}</code> in a field to remove that limit; leave it empty to keep what the
+            unit has.
+          </>
+        ) : (
+          <>
+            For this agent and everything it runs, together: the unit's MemoryMax, CPUQuota and TasksMax. Set them when the
+            machine runs more than one agent, since an agent that is not root cannot cap its own runs and nothing else keeps one
+            agency's run from taking the machine from the next. Empty means no limit. They can be changed later from the runner's
+            ⚙ Edit.
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// MA-24 — the install helper's Instance name. Optional: a machine's first agent
+// is the default one and needs none. Filled in, every form of the command gains
+// `--instance <name>` and the runner is named <hostname>-<name>, so two agents
+// on one machine never share an OS user, a directory, a unit or a name. The
+// rule is the installer's own (runner-install-cmd.ts), checked here so a bad
+// name is refused on the page, not halfway through a paste on the host.
+function InstanceNameField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const name = value.trim();
+  const bad = name !== "" && !validInstanceName(name);
+  // The field can be on screen in more than one helper at once.
+  const fieldId = useId();
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <label htmlFor={fieldId} style={{ ...fieldLabel(), minWidth: undefined, display: "block", marginBottom: 6 }}>
+        Instance name <span style={{ textTransform: "none", fontWeight: 400 }}>(optional)</span>
+      </label>
+      <input
+        id={fieldId}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="e.g. tax"
+        maxLength={INSTANCE_NAME_MAX + 8}
+        spellCheck={false}
+        autoComplete="off"
+        aria-invalid={bad}
+        aria-describedby={`${fieldId}-help`}
+        style={{ width: 220, padding: "7px 10px", background: c.panel2, border: `1px solid ${bad ? c.danger : c.borderStrong}`, borderRadius: c.radiusChip, fontSize: c.fontSm, fontFamily: c.mono, color: c.text }}
+      />
+      <div id={`${fieldId}-help`} style={{ fontSize: c.fontXs, color: bad ? c.danger : c.textSec, marginTop: 4, lineHeight: 1.5, maxWidth: "75ch" }}>
+        {bad ? (
+          <>
+            Lower-case letters, digits and hyphens, starting with a letter, {INSTANCE_NAME_MAX} characters at most. No
+            install command is shown until this is a valid name, or empty.
+          </>
+        ) : (
+          <>
+            Fill this in when the machine already runs an agent. The new one gets an OS user, a unit and directories of its own
+            (<code style={{ fontFamily: c.mono }}>cronomicon-runner-{name || "<name>"}</code>) and is named{" "}
+            <code style={{ fontFamily: c.mono }}>&lt;hostname&gt;-{name || "<name>"}</code>. An agent serves one agency, so a
+            machine that serves two runs two.
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RunnerSettingsDrawer({
   runner,
   onClose,
@@ -2181,14 +2702,35 @@ function RunnerSettingsDrawer({
 }) {
   const ms = runner.managedSettings ?? {};
   const [maxJobs, setMaxJobs] = useState(ms.maxConcurrent != null ? String(ms.maxConcurrent) : "");
+  // 2.3.2 — how often the agent asks for work when its last poll gave it none.
+  // The server refuses a value outside the bounds; the field says so first, so
+  // that Save is never the way to find out.
+  const [pollSecs, setPollSecs] = useState(ms.pollIntervalSeconds != null ? String(ms.pollIntervalSeconds) : "");
+  const pollBad =
+    pollSecs.trim() !== "" && (Number(pollSecs) < POLL_INTERVAL_MIN_SECONDS || Number(pollSecs) > POLL_INTERVAL_MAX_SECONDS);
   const [sbMem, setSbMem] = useState(ms.sandboxMemoryMax ?? "");
   const [sbCpu, setSbCpu] = useState(ms.sandboxCpuQuota ?? "");
   const [sbTasks, setSbTasks] = useState(ms.sandboxTasksMax ?? "");
   const [checkout, setCheckout] = useState<"inherit" | "on" | "off">(
     ms.allowCheckout == null ? "inherit" : ms.allowCheckout ? "on" : "off",
   );
-  const [repos, setRepos] = useState((ms.checkoutRepos ?? []).join("\n"));
+  // 2.4.0 (R8; the owner's decision of 2026-10-13) — the repositories an agent
+  // may check out are PICKED, not typed: an agent compares the URL a manifest
+  // names with its allowlist as text, so a URL typed slightly differently is a
+  // run taken and failed. Offered: the repositories of the agent's agency (an
+  // agency's agents check out its own, §0a), written exactly as each
+  // connection has it. A URL already listed that is no connected repository's
+  // stays shown and removable.
+  const [repos, setRepos] = useState<string[]>(ms.checkoutRepos ?? []);
+  const { repos: connected } = useRepoConnections();
+  const ownerId = runner.ownerAgency?.id ?? GLOBAL_AGENCY;
+  const offered = connected.filter((r) => r.agencyId === ownerId && r.repoUrl);
+  const toggleRepo = (url: string) => setRepos((cur) => (cur.includes(url) ? cur.filter((u) => u !== url) : [...cur, url]));
   const [mask, setMask] = useState<RunTypeName[]>(ms.capabilityMask ?? []);
+  // 2.3.1 — not a managed setting: nothing here is saved or sent to the agent.
+  // The fields only build the command an administrator runs on the machine.
+  const [newLimits, setNewLimits] = useState<UnitLimits>({});
+  const limitsCmd = limitsCommand(runner.id ?? "", newLimits);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -2197,12 +2739,12 @@ function RunnerSettingsDrawer({
   const build = (): ManagedSettings => {
     const body: ManagedSettings = {};
     if (maxJobs.trim()) body.maxConcurrent = Number(maxJobs);
+    if (pollSecs.trim()) body.pollIntervalSeconds = Number(pollSecs);
     if (sbMem.trim()) body.sandboxMemoryMax = sbMem.trim();
     if (sbCpu.trim()) body.sandboxCpuQuota = sbCpu.trim();
     if (sbTasks.trim()) body.sandboxTasksMax = sbTasks.trim();
     if (checkout !== "inherit") body.allowCheckout = checkout === "on";
-    const repoList = repos.split("\n").map((s) => s.trim()).filter(Boolean);
-    if (repoList.length) body.checkoutRepos = repoList;
+    if (repos.length) body.checkoutRepos = repos;
     if (mask.length) body.capabilityMask = mask;
     return body;
   };
@@ -2267,7 +2809,12 @@ function RunnerSettingsDrawer({
               <Btn onClick={onClose} disabled={busy}>
                 Cancel
               </Btn>
-              <Btn primary onClick={() => save(false)} disabled={busy}>
+              <Btn
+                primary
+                onClick={() => save(false)}
+                disabled={busy || pollBad}
+                title={pollBad ? `The poll interval must be between ${POLL_INTERVAL_MIN_SECONDS} and ${POLL_INTERVAL_MAX_SECONDS} seconds.` : undefined}
+              >
                 {busy ? "Saving…" : "Save"}
               </Btn>
             </div>
@@ -2301,13 +2848,58 @@ function RunnerSettingsDrawer({
       )}
 
       {row(
+        "Poll interval",
+        <>
+          <input
+            style={{ ...inputStyle, width: 90, ...(pollBad ? { borderColor: c.danger } : {}) }}
+            value={pollSecs}
+            onChange={(e) => setPollSecs(e.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="inherit"
+            aria-label="Poll interval in seconds"
+            aria-invalid={pollBad || undefined}
+          />
+          <span style={{ fontSize: c.fontSm, color: c.textSec }}>seconds</span>
+        </>,
+        <>
+          How often the agent starts asking for work: {POLL_INTERVAL_MIN_SECONDS}–{POLL_INTERVAL_MAX_SECONDS} seconds.
+          The agent's own setting is 60 unless its configuration says otherwise, and the app cannot read it. The
+          server holds each request for up to {POLL_HOLD_SECONDS} seconds and hands over a run the moment one
+          arrives, so <strong>the longest a new run waits is this value less {POLL_HOLD_SECONDS}</strong>: nothing at{" "}
+          {POLL_HOLD_SECONDS}, where the agent is connected all the time; about 30 seconds at 60; a minute at 90.
+          This does not decide how soon a <strong>Stop</strong> reaches a job, nor how fast a queue is taken: an
+          agent with a run in flight checks in every few seconds, and one that is given a run asks for the next at
+          once, whatever this is set to.
+          {pollBad && (
+            <div role="alert" style={{ color: c.danger, marginTop: 4 }}>
+              Between {POLL_INTERVAL_MIN_SECONDS} and {POLL_INTERVAL_MAX_SECONDS} seconds: a runner that has not asked
+              for two minutes is shown as degraded.
+            </div>
+          )}
+        </>,
+      )}
+
+      {row(
         "Sandbox caps",
         <>
           <input style={{ ...inputStyle, width: 100 }} value={sbMem} onChange={(e) => setSbMem(e.target.value)} placeholder="memory (2G)" />
           <input style={{ ...inputStyle, width: 100 }} value={sbCpu} onChange={(e) => setSbCpu(e.target.value)} placeholder="cpu (150%)" />
           <input style={{ ...inputStyle, width: 100 }} value={sbTasks} onChange={(e) => setSbTasks(e.target.value)} placeholder="tasks (512)" />
         </>,
-        <>Per-run cgroup MemoryMax / CPUQuota / TasksMax. Blank ⇒ the runner's own value (or uncapped).</>,
+        <>
+          Per-run cgroup MemoryMax / CPUQuota / TasksMax. Blank ⇒ the runner's own value (or uncapped).
+          {/* The caps ride on a per-run systemd scope, and only an agent that
+              runs as root can create one. On every other agent they are sent,
+              stored and never applied — which this dialog must say, since it is
+              where they are typed. */}
+          {runner.toolchains?.sandboxed === false && (
+            <>
+              {" "}
+              <strong style={{ color: c.warning }}>This runner reports no sandbox, so these caps do nothing on it.</strong> An agent
+              that does not run as root cannot cap its runs one by one. Limit the agent's unit instead:{" "}
+              <strong>Unit limits</strong>, below.
+            </>
+          )}
+        </>,
       )}
 
       {row(
@@ -2325,13 +2917,29 @@ function RunnerSettingsDrawer({
 
       {row(
         "Checkout repos",
-        <textarea
-          style={{ ...inputStyle, width: 360, height: 60, resize: "vertical" }}
-          value={repos}
-          onChange={(e) => setRepos(e.target.value)}
-          placeholder={"one clone URL per line\n(blank ⇒ runner's own allowlist)"}
-        />,
-        <>The allowlist of repo clone URLs this runner may check out — one per line. A repo outside it is refused.</>,
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {offered.map((r) => (
+            <label key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: c.fontSm, color: c.text }}>
+              <input type="checkbox" checked={repos.includes(r.repoUrl!)} onChange={() => toggleRepo(r.repoUrl!)} />
+              {repoLabel(r)} repository <span style={{ fontFamily: c.mono, fontSize: c.fontXs, color: c.textMuted }}>{r.repoUrl}</span>
+            </label>
+          ))}
+          {repos
+            .filter((u) => !offered.some((r) => r.repoUrl === u))
+            .map((u) => (
+              <span key={u} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: c.fontSm, color: c.textSec }}>
+                <span style={{ fontFamily: c.mono, fontSize: c.fontXs }}>{u}</span>
+                <span style={{ fontSize: c.fontXs, color: c.warning }}>no connected repository of this agency</span>
+                <button type="button" aria-label={`Remove ${u}`} onClick={() => toggleRepo(u)} style={{ background: "none", border: "none", color: c.primary, cursor: "pointer", padding: 0 }}>
+                  ×
+                </button>
+              </span>
+            ))}
+          {offered.length === 0 && repos.length === 0 && (
+            <span style={{ fontSize: c.fontXs, color: c.textMuted }}>Its agency has no connected repository; the runner's own allowlist applies.</span>
+          )}
+        </div>,
+        <>The repositories this runner may check out, as their connections name them. None ticked ⇒ the runner's own allowlist. A repo outside it is refused.</>,
       )}
 
       {row(
@@ -2355,6 +2963,49 @@ function RunnerSettingsDrawer({
         </div>,
         <>Subtract-only: masked run-types are removed from what this runner will claim (server-enforced). Use it to quiesce a run-type without touching the host.</>,
       )}
+
+      {/* 2.3.1 — the limit that does bound an agent that is not root: one on
+          its systemd unit. The server cannot set it and neither can the agent
+          (systemd refuses both a new scope and a change to its own unit), so
+          this section prepares the command and root on the machine runs it,
+          as with the upgrade command. (This drawer is an agent's: the local
+          runner, which is the server's own process, is never offered it.) */}
+      <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${c.border}` }}>
+        <div style={{ fontSize: c.fontHead, fontWeight: 600, color: c.text, marginBottom: 4 }}>Unit limits</div>
+        <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.5, marginBottom: 10, maxWidth: "80ch" }}>
+          Memory, CPU and task limits on the agent's systemd unit bound the agent and everything it runs, together. They are
+          set <strong>on the runner's machine</strong>, not from here: fill in the limits and run the command there as root.
+          It takes effect at once, with no restart, and is kept across restarts. <strong>Save does not apply this section.</strong>
+        </div>
+        <UnitLimitsFields value={newLimits} onChange={setNewLimits} change />
+        {limitsCmd && (
+          <>
+            <div style={{ ...fieldLabel(), minWidth: undefined, marginBottom: 6 }}>Run this on the runner's machine</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <code
+                aria-label="Limits command"
+                style={{ flex: 1, padding: "10px 12px", background: c.panel2, border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, fontSize: c.fontSm, fontFamily: c.mono, color: c.text, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 220, overflowY: "auto" }}
+              >
+                {limitsCmd}
+              </code>
+              <CopyButton text={limitsCmd} ariaLabel="Copy the limits command to clipboard" />
+            </div>
+            <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6, lineHeight: 1.5, maxWidth: "80ch" }}>
+              The command finds this runner's agent on the machine by its ID and changes that unit only. On a machine where
+              this runner is not installed it changes nothing and says so.
+            </div>
+          </>
+        )}
+        <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 10, lineHeight: 1.5, maxWidth: "80ch" }}>
+          <strong>If this runner is a container</strong>, it has no unit and the command above finds nothing to change. Limit
+          the container instead. In a compose file, on the runner's service:{" "}
+          <code style={{ fontFamily: c.mono }}>mem_limit</code>, <code style={{ fontFamily: c.mono }}>memswap_limit</code>,{" "}
+          <code style={{ fontFamily: c.mono }}>cpus</code>, <code style={{ fontFamily: c.mono }}>pids_limit</code>, then redeploy. For
+          a container started by hand:{" "}
+          <code style={{ fontFamily: c.mono }}>docker update --memory 4g --memory-swap 4g --cpus 2 --pids-limit 1024 &lt;container&gt;</code>
+          , which applies at once and is lost when the container is recreated.
+        </div>
+      </div>
 
     </Modal>
   );
@@ -2391,6 +3042,8 @@ function ProvisionPanel({
   const [exampleErr, setExampleErr] = useState<string | null>(null);
 
   const [name, setName] = useState("");
+  const [instance, setInstance] = useState("");
+  const [limits, setLimits] = useState<UnitLimits>({});
   // Default: no explicit capabilities — the agent auto-detects the host's
   // toolchains at startup (D1: 1B). The chips only appear under an explicit
   // "Override" toggle, and narrow what the runner claims.
@@ -2422,6 +3075,8 @@ function ProvisionPanel({
     origin,
     token,
     name: name.trim(),
+    instance: instance.trim() || undefined,
+    limits,
     capabilities: capsOverride ? caps : [],
     inventory,
     localInventorySrc: localInventorySrc.trim() || undefined,
@@ -2593,15 +3248,33 @@ function ProvisionPanel({
                 style={{ ...inputStyle, width: 200 }}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="$(hostname)"
+                placeholder={instance.trim() && validInstanceName(instance.trim()) ? `$(hostname)-${instance.trim()}` : "$(hostname)"}
               />
             </div>
             <div style={hintStyle}>
               The name shown in the registry — it must stay <strong>stable across restarts</strong> (the saved
-              identity file re-pairs to the same registry row by it). Empty ⇒ the host's hostname.{" "}
+              identity file re-pairs to the same registry row by it). Empty ⇒ the host's hostname, with the
+              instance name after it when one is given below.{" "}
               <strong>Max jobs, sandbox caps, and checkout policy are now set per-runner on its row</strong>{" "}
               (the <strong>⚙ Settings</strong> button) after it registers — and take effect on the next poll, no
               reinstall (v0.47.12).
+            </div>
+            {/* MA-24 — applies to the install command and the env file. The
+                container command ignores it: a container runs one agent. */}
+            <div style={{ marginTop: 12 }}>
+              <InstanceNameField value={instance} onChange={setInstance} />
+            </div>
+            {/* 2.3.1 — the install command writes these into the UNIT; the
+                container command carries them as the runtime's own limits.
+                The env file has no variable for them. */}
+            <div style={{ marginTop: 12 }}>
+              <UnitLimitsFields value={limits} onChange={setLimits} />
+              <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: -6, lineHeight: 1.5, maxWidth: "75ch" }}>
+                In the install command and the container command, not the env file. The container command writes them as{" "}
+                <code style={{ fontFamily: c.mono }}>--memory</code> (with swap off, so a run that goes over is stopped),{" "}
+                <code style={{ fontFamily: c.mono }}>--cpus</code> and <code style={{ fontFamily: c.mono }}>--pids-limit</code>. For
+                a manual install put the same three lines in the unit.
+              </div>
             </div>
           </div>
 
@@ -2645,9 +3318,10 @@ function ProvisionPanel({
             </div>
             <div style={hintStyle}>
               The run-types this runner claims — jobs of other types are never offered to it.{" "}
-              <strong>Auto-detect</strong> (recommended): the agent probes the host's toolchains at startup and
-              claims what it finds — install a toolchain later and a restart picks it up. <strong>Override</strong>{" "}
-              to narrow the claim set (e.g. the host has python but must not run python jobs). Solid buttons
+              <strong>Auto-detect</strong> (recommended): the agent claims bash, perl, powershell and python
+              whatever its host holds, and claims ansible and terraform when it finds them on its host at
+              startup — install one later and a restart picks it up. <strong>Override</strong>{" "}
+              to narrow the claim set (e.g. this agent must not run python jobs). Solid buttons
               (bash, perl, powershell, python) execute <strong>over SSH on the target hosts</strong>; the runner
               needs no local toolchain (slim container image). Dashed buttons (ansible, terraform) run{" "}
               <strong>local toolchains on the runner itself</strong> — use the fat image, or a host with the
@@ -2826,8 +3500,8 @@ function ProvisionPanel({
                     <>Image is derived from the capability pick ({dockerCmd.includes("-fat:") ? "fat" : "slim"});</>
                   ) : (
                     <>
-                      With auto-detect the agent claims the image's toolchains (slim shown; switch to{" "}
-                      <code>cronomicon-runner-fat</code> for ansible/terraform);
+                      With auto-detect the agent claims the shell types in either image (slim shown; switch to{" "}
+                      <code>cronomicon-runner-fat</code> to add ansible/terraform);
                     </>
                   )}{" "}
                   identity and keys persist on the named volume. Place any referenced files (known_hosts, keys,

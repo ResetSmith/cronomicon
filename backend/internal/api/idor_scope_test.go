@@ -101,8 +101,10 @@ func TestIDORScopeGates(t *testing.T) {
 	const runStageID = "run-stage-1"
 	exec(`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, executor, scope, created_at)
 	      VALUES (?, 'job-prod', 'bash', 'success', 't', 'manual', 'ssh', 'Production', '2026-01-01T00:00:00Z')`, runProdID)
+	stampRunAgencies(exec)
 	exec(`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, executor, scope, created_at)
 	      VALUES (?, 'job-stage', 'bash', 'success', 't', 'manual', 'ssh', 'Staging', '2026-01-01T00:00:00Z')`, runStageID)
+	stampRunAgencies(exec)
 
 	// Create dummy log files
 	err = os.WriteFile(filepath.Join(logDir, runProdID+".log"), []byte("prod output"), 0644)
@@ -124,8 +126,8 @@ func TestIDORScopeGates(t *testing.T) {
 
 		// Viewer requesting Production run -> 403 Forbidden
 		rec = dispatch(http.MethodGet, "/api/v1/runs/"+runProdID, "run-viewers")
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("viewer get Production run: status = %d, want 403", rec.Code)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("viewer get Production run: status = %d, want 404 (question 72)", rec.Code)
 		}
 
 		// Admin requesting Production run -> 200 OK
@@ -145,8 +147,8 @@ func TestIDORScopeGates(t *testing.T) {
 
 		// Viewer requesting Production log -> 403 Forbidden
 		rec = dispatch(http.MethodGet, "/api/v1/runs/"+runProdID+"/log", "run-viewers")
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("viewer get Production log: status = %d, want 403", rec.Code)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("viewer get Production log: status = %d, want 404 (question 72)", rec.Code)
 		}
 
 		// Admin requesting Production log -> 200 OK
@@ -161,13 +163,13 @@ func TestIDORScopeGates(t *testing.T) {
 		// Seed workflow run A: steps snapshot contains prod job, no child runs yet
 		const wfProdID = "wf-prod-run"
 		snapshotProd := `[{"type":"job","name":"job-prod","id":"r-prod"}]`
-		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot)
-		      VALUES (?, 1, 'wf-prod', 'success', 't', 'manual', '2026-01-01T00:00:00Z', ?)`, wfProdID, snapshotProd)
+		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot, agency_id)
+		      VALUES (?, 1, 'wf-prod', 'success', 't', 'manual', '2026-01-01T00:00:00Z', ?, (SELECT owner_agency FROM scopes WHERE name = 'Production'))`, wfProdID, snapshotProd)
 
 		// Viewer requesting Prod workflow run (due to steps snapshot) -> 403 Forbidden
 		rec := dispatch(http.MethodGet, "/api/v1/workflow-runs/"+wfProdID, "run-viewers")
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("viewer get Prod workflow run (snapshot): status = %d, want 403", rec.Code)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("viewer get Prod workflow run (snapshot): status = %d, want 404 (question 72)", rec.Code)
 		}
 
 		// Admin requesting Prod workflow run -> 200 OK
@@ -179,8 +181,8 @@ func TestIDORScopeGates(t *testing.T) {
 		// Seed workflow run B: steps snapshot contains stage job, no child runs yet
 		const wfStageID = "wf-stage-run"
 		snapshotStage := `[{"type":"job","name":"job-stage","id":"r-stage"}]`
-		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot)
-		      VALUES (?, 2, 'wf-stage', 'success', 't', 'manual', '2026-01-01T00:00:00Z', ?)`, wfStageID, snapshotStage)
+		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot, agency_id)
+		      VALUES (?, 2, 'wf-stage', 'success', 't', 'manual', '2026-01-01T00:00:00Z', ?, (SELECT owner_agency FROM scopes WHERE name = 'Staging'))`, wfStageID, snapshotStage)
 
 		// Viewer requesting Stage workflow run -> 200 OK
 		rec = dispatch(http.MethodGet, "/api/v1/workflow-runs/"+wfStageID, "run-viewers")
@@ -190,24 +192,27 @@ func TestIDORScopeGates(t *testing.T) {
 
 		// Seed workflow run C: steps snapshot is empty/invalid, but child run has scope Production
 		const wfChildProdID = "wf-child-prod-run"
-		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot)
-		      VALUES (?, 3, 'wf-child-prod', 'success', 't', 'manual', '2026-01-01T00:00:00Z', '')`, wfChildProdID)
+		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot, agency_id)
+		      VALUES (?, 3, 'wf-child-prod', 'success', 't', 'manual', '2026-01-01T00:00:00Z', '', (SELECT owner_agency FROM scopes WHERE name = 'Production'))`, wfChildProdID)
 		exec(`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, executor, scope, workflow_run_id, created_at)
 		      VALUES ('c-run-prod', 'job-prod', 'bash', 'success', 't', 'workflow', 'ssh', 'Production', ?, '2026-01-01T00:00:00Z')`, wfChildProdID)
+		stampRunAgencies(exec)
 
 		// Viewer requesting Stage workflow run with a Prod child -> 403 Forbidden
 		rec = dispatch(http.MethodGet, "/api/v1/workflow-runs/"+wfChildProdID, "run-viewers")
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("viewer get workflow run with Prod child: status = %d, want 403", rec.Code)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("viewer get workflow run with Prod child: status = %d, want 404 (question 72)", rec.Code)
 		}
 	})
 
 	// 5. Test cancelWorkflowRun (POST /api/v1/workflows/runs/{traceId}/cancel)
 	t.Run("cancelWorkflowRun scope gate", func(t *testing.T) {
-		// Viewer cancelling Prod workflow run (due to steps snapshot) -> 403 Forbidden
+		// Viewer cancelling Prod workflow run (another agency's) -> 404, as its GET
+		// answers (question 72; 2.5.0 C11, question 109: it was 403, which said the
+		// run is there).
 		rec := dispatch(http.MethodPost, "/api/v1/workflows/runs/wf-prod-run/cancel", "run-viewers")
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("viewer cancel Prod workflow run (snapshot): status = %d, want 403", rec.Code)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("viewer cancel Prod workflow run (snapshot): status = %d, want 404", rec.Code)
 		}
 
 		// Viewer cancelling Stage workflow run -> 403: cancel is run suppression and
@@ -285,10 +290,12 @@ func TestIDORScopeGates(t *testing.T) {
 
 	// 8. SU-2: listWorkflowRuns filters scope-bearing rows (mirrors getWorkflowRun).
 	t.Run("listWorkflowRuns scope filter", func(t *testing.T) {
-		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot, scope)
-		      VALUES ('wf-scoped-prod', 10, 'wf-scoped-prod', 'success', 't', 'manual', '2026-01-02T00:00:00Z', '', 'Production')`)
-		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot, scope)
-		      VALUES ('wf-scoped-stage', 11, 'wf-scoped-stage', 'success', 't', 'manual', '2026-01-02T00:00:00Z', '', 'Staging')`)
+		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot, scope, agency_id)
+		      VALUES ('wf-scoped-prod', 10, 'wf-scoped-prod', 'success', 't', 'manual', '2026-01-02T00:00:00Z', '', 'Production',
+		              (SELECT owner_agency FROM scopes WHERE name = 'Production'))`) // its scope's agency's (1520; no workflow names one)
+		exec(`INSERT INTO workflow_runs(id, workflow_id, workflow_name, status, triggered_by, trigger_kind, created_at, steps_snapshot, scope, agency_id)
+		      VALUES ('wf-scoped-stage', 11, 'wf-scoped-stage', 'success', 't', 'manual', '2026-01-02T00:00:00Z', '', 'Staging',
+		              (SELECT owner_agency FROM scopes WHERE name = 'Staging'))`) // its scope's agency's (1520; no workflow names one)
 
 		rec := dispatch(http.MethodGet, "/api/v1/workflow-runs", "run-viewers")
 		if rec.Code != http.StatusOK {

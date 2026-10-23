@@ -143,9 +143,9 @@ func TestResolveServerURLScheme(t *testing.T) {
 }
 
 func TestResolveEmptyCapabilitiesIsAutoDetect(t *testing.T) {
-	// Unset capabilities is no longer a config error — it means "probe the
-	// host's toolchains at startup" (D1: 1B). detectCapabilities owns the
-	// zero-run-types failure instead.
+	// Unset capabilities is not a config error — it means "decide at startup"
+	// (D1: 1B): detectRunTypes grants the shell types and probes this host for
+	// ansible and terraform.
 	cfg, err := Resolve([]string{"-server", "s", "-name", "r"}, noEnv)
 	if err != nil {
 		t.Fatalf("unset capabilities must resolve (auto-detect): %v", err)

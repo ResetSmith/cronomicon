@@ -21,8 +21,10 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/config"
+	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/logarchive"
 	"github.com/ResetSmith/cronomicon/internal/metrics"
+	"github.com/ResetSmith/cronomicon/internal/notices"
 	"github.com/ResetSmith/cronomicon/internal/runner"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/sshexec"
@@ -51,7 +53,15 @@ type Server struct {
 	// sshexec.Service (no claim loop / Start), kept as one long-lived instance so
 	// its per-target in-flight guard is shared across requests.
 	sshProbe *sshexec.Service
-	// scheduleReload, when set, is handed to the gitlab Service as its
+	// git owns the sync service of every repository (2.4.0, GR-11): built by
+	// mountGit, asked by the Git routes at each request, and told when a
+	// repository's connection has been written so that the write takes effect
+	// without a restart of the server.
+	git *gitlab.Registry
+	// repoTest is Options.RepoTest: a connection's test, and the check a save
+	// of a connection must pass (IN-2).
+	repoTest func(ctx context.Context, cfg *config.Config, url, token, branch string) gitlab.ConnectionTest
+	// scheduleReload, when set, is handed to every gitlab Service as its
 	// onSyncComplete hook so a git sync triggers an immediate scheduler reload.
 	// Set from Options (main.go wires it to scheduler.ReloadIfChanged).
 	scheduleReload func(ctx context.Context, sha string)
@@ -64,6 +74,9 @@ type Server struct {
 	// saves a changed timezone (timezone-update §4.2). Wired to
 	// scheduler.RebuildWithLocation in main.go.
 	scheduleTimezoneReload func(ctx context.Context, loc *time.Location) error
+	// noticeRefresh runs the notices checks when the inbox is opened, at most
+	// once per interval however many sessions ask (LR-85).
+	noticeRefresh notices.Refresher
 	// logDirChanged notifies main that the run-log directory moved (LU-5), so it
 	// can re-point the process log when that file is derived from this path.
 	logDirChanged func(ctx context.Context, dir string)
@@ -140,6 +153,10 @@ type Options struct {
 	// LogArchiveChanged is called after the archive store is rebuilt from a
 	// settings save, so the sweep re-reads its schedule (SL-2). Optional.
 	LogArchiveChanged func()
+	// RepoTest tests a repository's connection: it lists the remote's refs and
+	// asks whether the token may push (2.4.0 Phase I3). gitlab.TestConnection
+	// when nil; a test replaces it rather than reach a remote.
+	RepoTest func(ctx context.Context, cfg *config.Config, url, token, branch string) gitlab.ConnectionTest
 }
 
 // LogArchiveSyncer is what the api needs from the archive sweep. Defined here
@@ -174,7 +191,13 @@ func New(o Options) *Server {
 		logDirChanged:          o.LogDirChanged,
 		logArchiveSync:         o.LogArchiveSync,
 		logArchiveChanged:      o.LogArchiveChanged,
+		repoTest:               o.RepoTest,
 	}
+	if s.repoTest == nil {
+		s.repoTest = gitlab.TestConnection
+	}
+	// The notice agency_no_repository is given the database only (I3).
+	notices.SetGlobalRepoFromEnvironment(o.Config != nil && strings.TrimSpace(o.Config.GitLabBaseURL) != "")
 	// RB-7: point the role registry at THIS server's database. The registry is a
 	// process-wide cache (requirePerm is mount-time middleware with no context and
 	// no DB handle), so binding it here rather than only at boot matters for tests:
@@ -327,6 +350,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	// just calls them. Slices meet on shared DB tables, not on each other's Go
 	// packages, so they can be built independently and in parallel.
 	s.mountAuth(mux)                 // B2: /me, /auth/*, /access/recent-logins
+	s.mountMeContext(mux)            // 2.4.4 S4: /me/context, /me/preferences (the agency switcher)
+	s.mountOverview(mux)             // 2.4.4 S5: /overview, /overview/search, /me/agency-badges
 	s.mountGit(mux)                  // B3: /schedules/*, /git/*, /webhooks/gitlab, scopes-from-git
 	s.mountRunners(mux)              // B4: /runners/*, /runs/{traceId}/log (ingest + stream)
 	execEng := s.mountExecution(mux) // B5: /jobs/*, /workflows/*, /runs, /history, /activity, /change-log
@@ -335,6 +360,12 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.mountScheduleDefs(mux)         // A10a: /schedule-defs, /schedule-defs/{name} (first-class Schedules catalog)
 	s.mountScheduleCompose(mux)      // schedule-builder.md: POST/PUT/DELETE /schedule-defs (in-app cronomicon-source Schedule authoring; Compose RBAC)
 	s.mountCalendars(mux)            // CAL-4: /calendars/* (working calendars — holiday skip / run-day sets bound to schedule entries)
+	s.mountFreeze(mux)               // §0a: the installation-wide freeze (/settings/freeze)
+	s.mountAlertLink(mux)            // 2.5.2 OP2.1: the address alerts link to (/settings/alert-link-address)
+	s.mountRunNotes(mux)             // 2.5.2 OP3: run notes and acknowledgements (/runs/{id}/notes, /workflow-runs/{id}/notes)
+	s.mountBackupSettings(mux)       // 2.5.1 SG1: the backup keys (/settings/backup)
+	s.mountSecretsReport(mux)        // 2.5.1 SG2.5: an agency's secrets report
+	s.mountAgencyVaults(mux)         // 2.5.1 SG3: a Vault per agency
 	s.mountReactions(mux)            // RX-12: /reactions/* (a definition runs when another definition finishes)
 	s.mountFileSightings(mux)        // FX-E1: GET /jobs/{jobId}/file-sightings (the arrival ledger's read surface)
 	s.mountJobCompose(mux)           // A11: POST/PUT/DELETE /jobs (in-app cronomicon-source Job composition; Compose RBAC)
@@ -344,7 +375,9 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.mountAccess(mux)               // LB3: /roles, /ad-group-mappings/*, /scope-restrictions
 	s.mountAccessGrants(mux)         // RB-18: /access-grants (INERT — nothing authorizes on it yet)
 	s.mountAgencies(mux)             // agency-support.md M1: /agencies/*, /scopes/{id}/agency (network-isolation zones)
+	s.mountGitRepos(mux)             // 2.4.0 R6: /git-repos, /agencies/{id}/git-repo (a repository per agency)
 	s.mountScopeRunners(mux)         // SB-1: /scopes/{id}/runners, /scope-runners/replace, /scope-binding-notices (scope↔runner bindings)
+	s.mountNotices(mux)              // LR-85: /notices, /notices/dismiss (the one inbox for standing conditions)
 	// ET-A/B: /service-accounts (machine principals) + /trigger/* (the only
 	// token-authenticated, session-less route family). Shares mountExecution's
 	// engine so a workflow triggered by a token is cancellable like any other.

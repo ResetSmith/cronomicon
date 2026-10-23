@@ -1,6 +1,8 @@
 import { type CSSProperties, type ReactNode } from "react";
 import { c } from "../../theme";
-import { CopyText, Field as UIField, InlineLoading, statusLabel, statusTone } from "../../components/ui";
+import { CopyText, EmptyCell, Field as UIField, InlineLoading, statusLabel, statusTone } from "../../components/ui";
+import { runnerLabel } from "../../components/score-model";
+import { CriticalChip } from "../../components/Annotation";
 import { fmtInAppZone } from "../../utils/datetime";
 
 // ── formatting ──────────────────────────────────────────────────────────────
@@ -137,32 +139,30 @@ export function StatusBadge({ status }: { status?: string | null }) {
   );
 }
 
-// Executor badge — surfaces how a run was executed (R5.3). EX.10 introduced the
-// `ssh` variant as the extension point; `runner` is the new sibling. Subtle, pill-
-// shaped, tinted to match the existing chip vocabulary (cf. the workflow/Test chips).
-export function ExecutorBadge({ executor }: { executor?: string | null }) {
-  if (executor !== "ssh" && executor !== "runner") return null;
-  const isRunner = executor === "runner";
-  const color = isRunner ? c.primary : c.info;
+// Runner cell — which runner took a run (LR-50). It stands where the Executor
+// badge stood: every run is the runner executor's since 2.3.0, so "Runner" on
+// every row said nothing, and the name says where the run's connections came
+// from. A run from before 2.3.0 that the in-app SSH executor ran had no runner
+// and reads "Server (SSH)". The name is the run's own copy (migration 1280),
+// so it stays when the runner is deregistered; a run nobody has claimed shows
+// the empty cell.
+export function RunnerCell({ executor, runnerName }: { executor?: string | null; runnerName?: string | null }) {
+  const label = runnerLabel({ executor, runnerName });
+  if (!label) return <EmptyCell />;
+  const old = !runnerName;
   return (
     <span
-      title={isRunner ? "Executed by a runner agent" : "Executed by the in-app SSH executor"}
+      title={old ? "Ran from the server, by the in-app SSH executor (before v2.3.0)" : `Taken by runner ${label}`}
       style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "2px 7px",
-        // Chip, not pill: the executor is a *kind*, not a status (B-3/VU-17).
-        borderRadius: c.radiusChip,
-        fontSize: c.fontXs,
-        fontWeight: 600,
-        background: `${color}1a`,
-        color,
-        border: `1px solid ${color}30`,
+        fontSize: c.fontSm,
+        color: old ? c.textSec : c.text,
         whiteSpace: "nowrap",
-        letterSpacing: 0.3,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        display: "block",
       }}
     >
-      {isRunner ? "Runner" : "SSH"}
+      {label}
     </span>
   );
 }
@@ -313,6 +313,41 @@ export function EmptyRow({ colSpan, title, hint, action }: { colSpan: number; ti
 // anywhere rather than at word boundaries.
 export function Field({ label, isMono, children }: { label: string; isMono?: boolean; children: ReactNode }) {
   return <UIField label={label} value={children} mono={isMono} breakAll />;
+}
+
+/**
+ * Where a run's job or workflow is opened (2.5.2 OP-2/OP-3): its row on the
+ * Jobs or Workflows page, expanded, in the run's agency when the run says it.
+ */
+export function definitionHref(kind: "job" | "workflow", uid: string, agency?: string | null): string {
+  const q = new URLSearchParams({ [kind]: uid });
+  if (agency) q.set("agency", agency);
+  return `/${kind === "job" ? "jobs" : "workflows"}?${q.toString()}`;
+}
+
+/**
+ * RunContact — who to call about a run (2.5.2 OP-2): the job's or workflow's
+ * annotation contact, else the agency's (OP-28, marked so), "None set" when
+ * neither has one, and the Critical chip.
+ */
+export function RunContact({ contact, critical, agencyContact }: { contact: string; critical: boolean; agencyContact?: string }) {
+  return (
+    <>
+      {contact ||
+        (agencyContact ? (
+          <>
+            {agencyContact} <span style={{ color: c.textMuted }}>(agency)</span>
+          </>
+        ) : (
+          <span style={{ color: c.textMuted }}>None set</span>
+        ))}
+      {critical && (
+        <span style={{ marginLeft: 8, display: "inline-flex", verticalAlign: "middle" }}>
+          <CriticalChip />
+        </span>
+      )}
+    </>
+  );
 }
 
 // ── pagination (per-tab state — fixes prototype X3) ──────────────────────────

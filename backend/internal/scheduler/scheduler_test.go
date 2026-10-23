@@ -285,15 +285,15 @@ func TestSchedulerNew(t *testing.T) {
 
 // TestEnqueueRun_CheckoutSnapshot verifies the §7/RX.2 pin: a project job
 // (project_root set) snapshots the sync clone's current commit
-// (git_sync_state.last_sha) and its entry (script_path) onto the run at enqueue,
+// (Global's git_repos.last_sha) and its entry (script_path) onto the run at enqueue,
 // while a body-only job leaves both NULL.
 func TestEnqueueRun_CheckoutSnapshot(t *testing.T) {
 	pool := openPool(t)
 	ctx := context.Background()
 
 	if _, err := pool.ExecContext(ctx,
-		`INSERT INTO git_sync_state (id, last_sha) VALUES (1, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef')`); err != nil {
-		t.Fatalf("seed git_sync_state: %v", err)
+		`UPDATE git_repos SET last_sha = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' WHERE id = 'global'`); err != nil {
+		t.Fatalf("seed the last synced SHA: %v", err)
 	}
 	// A checkout project job: project_root set, script_path = entry.
 	if _, err := pool.ExecContext(ctx, `

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 )
 
 // AuditCompliance maps the openapi AuditComplianceSettings schema: the A4
@@ -72,6 +74,11 @@ type RetentionDays struct {
 	// default, matching changeLog: the change-log row for a batch names the
 	// batch, and the ledger rows are what that name expands into.
 	HostKeyLedger int `json:"hostKeyLedger"`
+	// SecretUses bounds the record of which runs used which stored secret and
+	// SSH key (2.5.1 SG2.1, question 127): the thirteenth knob. A year by
+	// default, deliberately its own and not the runs window: an agency reviews
+	// who used a secret long after the runs themselves are pruned.
+	SecretUses int `json:"secretUses"`
 }
 
 const auditComplianceKey = "auditCompliance"
@@ -93,6 +100,8 @@ func defaultAuditCompliance() AuditCompliance {
 			ArchivedLogFiles: 0,
 			// Matches ChangeLog deliberately — see the field comment.
 			HostKeyLedger: 365,
+			// Its own year — see the field comment.
+			SecretUses: 365,
 		},
 	}
 }
@@ -133,6 +142,7 @@ func (a AuditCompliance) validate() error {
 		{"retentionDays.runnerPlacementHistory", a.RetentionDays.RunnerPlacementHistory},
 		{"retentionDays.archivedLogFiles", a.RetentionDays.ArchivedLogFiles},
 		{"retentionDays.hostKeyLedger", a.RetentionDays.HostKeyLedger},
+		{"retentionDays.secretUses", a.RetentionDays.SecretUses},
 	} {
 		if f.days < 0 {
 			return &ValidationError{Field: f.field, Message: f.field + " must be 0 (keep forever) or a positive number of days"}
@@ -250,7 +260,7 @@ func UpdateAuditCompliance(ctx context.Context, db *sql.DB, inp AuditCompliance,
 		auditComplianceKey, string(b), actor, now); err != nil {
 		return nil, err
 	}
-	_ = WriteChangeLog(ctx, db, actor, "Settings", "updated", "Audit & Compliance", "")
+	_ = WriteChangeLog(ctx, db, agencyid.Global, actor, "Settings", "updated", "Audit & Compliance", "")
 	out := inp
 	return &out, nil
 }

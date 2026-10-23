@@ -108,7 +108,19 @@ type Binding struct {
 	// an operator who echoes it into `sudo -S` puts it in the process table. A file
 	// the agent wipes at run end is a materially smaller window.
 	File bool `json:"file,omitempty"`
+	// Origin is how the run came to carry this binding, for the record of
+	// which runs used which secret and key (2.5.1 SG2.2): "" (a binding the job
+	// or its script declares), OriginBecome, OriginOverride or OriginConnectAs.
+	// Set where the run's bindings are put together; never stored or sent.
+	Origin string `json:"-"`
 }
+
+// The origins of a binding that is not one a job or script declares (SG2.2).
+const (
+	OriginBecome    = "become"     // the job's become password (RA-12)
+	OriginOverride  = "override"   // an operator's per-run reference (V2-11)
+	OriginConnectAs = "connect_as" // a run's connect-as SSH key (CA-3b)
+)
 
 // InjectName is the bare name this binding's value is injected under: the alias
 // when one is declared, the row's own name otherwise.
@@ -244,13 +256,17 @@ type Owner struct {
 	UID    string
 }
 
-// UIDKey is the identity the binding store keys this owner by: the job uid when
-// the caller resolved one, "" otherwise. A uid set on a SCRIPT owner is ignored
-// rather than written — scripts are name-identified permanently, and honouring a
-// stray uid would file a script's bindings under a job's identity where nothing
-// would ever read them back.
+// UIDKey is the identity the binding store keys this owner by: the uid of the
+// job or of the script, when the caller resolved one, "" otherwise.
+//
+// A script's uid is honoured since migration 1290 (2.4.0, GR-5). Until then a
+// script was its name and a uid set on a script owner was discarded here; now
+// two repositories may each hold a script of one name, and the name alone
+// would mean both. A script owner with NO uid matches nothing in the store
+// (see ownerMatch): there is no name-keyed namespace left for scripts to fall
+// back to, and falling back would read another repository's bindings.
 func (o Owner) UIDKey() string {
-	if o.Kind != "job" {
+	if o.Kind != "job" && o.Kind != "script" {
 		return ""
 	}
 	return o.UID

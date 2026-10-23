@@ -20,31 +20,16 @@ import (
 // puts the app back to where it was, with every test still green unless the
 // branches are pinned here.
 
-// The four columns under test, in the shape migration 060 created them. The
-// package's mustOpenDB builds a minimal schema without gitlab_config, which is
-// itself a case worth having (see the fail-open test below).
+// The four columns under test, on Global's row of git_repos (migration 1310;
+// they were gitlab_config's). The package's mustOpenDB writes that row with the
+// columns at their default, on.
 func withGitlabConfig(t *testing.T, pool *sql.DB, enabled, push, mr, tag int) {
 	t.Helper()
 	if _, err := pool.Exec(`
-		CREATE TABLE IF NOT EXISTS gitlab_config (
-			id                  INTEGER PRIMARY KEY CHECK (id = 1),
-			webhook_enabled     INTEGER NOT NULL DEFAULT 0,
-			webhook_events_push INTEGER NOT NULL DEFAULT 0,
-			webhook_events_mr   INTEGER NOT NULL DEFAULT 0,
-			webhook_events_tag  INTEGER NOT NULL DEFAULT 0
-		)`); err != nil {
-		t.Fatalf("create gitlab_config: %v", err)
-	}
-	if _, err := pool.Exec(`
-		INSERT INTO gitlab_config(id, webhook_enabled, webhook_events_push, webhook_events_mr, webhook_events_tag)
-		VALUES (1, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			webhook_enabled=excluded.webhook_enabled,
-			webhook_events_push=excluded.webhook_events_push,
-			webhook_events_mr=excluded.webhook_events_mr,
-			webhook_events_tag=excluded.webhook_events_tag`,
+		UPDATE git_repos SET webhook_enabled=?, webhook_events_push=?, webhook_events_mr=?, webhook_events_tag=?
+		 WHERE id='global'`,
 		enabled, push, mr, tag); err != nil {
-		t.Fatalf("seed gitlab_config: %v", err)
+		t.Fatalf("seed the webhook policy: %v", err)
 	}
 }
 
@@ -170,13 +155,23 @@ func TestWebhookGitLab_EnabledEventFiltering(t *testing.T) {
 }
 
 func TestWebhookGitLab_FailsOpenWithoutConfig(t *testing.T) {
-	// mustOpenDB's minimal schema has no gitlab_config at all, so the policy read
-	// errors. It must fail OPEN: these flags were never enforced, so a missing
-	// row or a transient DB error must not be the thing that stops a repo syncing.
+	// With no row for the repository, and then with no table at all, the policy
+	// read finds nothing or errors. It must fail OPEN: these flags were never
+	// enforced, so a missing row or a transient DB error must not be the thing
+	// that stops a repo syncing.
 	pool := mustOpenDB(t)
 	h := webhookSvc(t, pool)
 
+	if _, err := pool.Exec(`DELETE FROM git_repos`); err != nil {
+		t.Fatal(err)
+	}
 	if rec := deliver(t, h, "Push Hook"); rec.Code != http.StatusAccepted {
-		t.Errorf("no gitlab_config: want 202 (fail open), got %d", rec.Code)
+		t.Errorf("no row for the repository: want 202 (fail open), got %d", rec.Code)
+	}
+	if _, err := pool.Exec(`DROP TABLE git_repos`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := deliver(t, h, "Push Hook"); rec.Code != http.StatusAccepted {
+		t.Errorf("no git_repos table: want 202 (fail open), got %d", rec.Code)
 	}
 }

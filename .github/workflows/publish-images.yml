@@ -1,11 +1,12 @@
 # Publish the release images to the GitHub Container Registry.
 #
 # Runs when a vX.Y.Z tag is pushed (the last step of a release) and builds
-# three linux/amd64 images from that tagged commit:
+# four linux/amd64 images from that tagged commit:
 #
 #   ghcr.io/resetsmith/cronomicon             the server (backend/Dockerfile)
 #   ghcr.io/resetsmith/cronomicon-runner      slim runner (backend/Dockerfile.runner)
 #   ghcr.io/resetsmith/cronomicon-runner-fat  runner + ansible/terraform (backend/Dockerfile.runner.fat)
+#   ghcr.io/resetsmith/cronomicon-validate    `cronomicon validate` for CI (backend/Dockerfile, target validate; 2.5.0)
 #
 # Each is tagged X.Y.Z, X.Y and latest. This is a publish step, not a gate:
 # `make verify` and the frontend build + tests still run locally before the
@@ -59,6 +60,10 @@ jobs:
           - image: cronomicon-runner-fat
             dockerfile: backend/Dockerfile.runner.fat
             description: Cronomicon runner agent with ansible, terraform and git
+          - image: cronomicon-validate
+            dockerfile: backend/Dockerfile
+            target: validate
+            description: Cronomicon job-definition validation for CI (cronomicon validate, with a shell)
     steps:
       - uses: actions/checkout@v7
 
@@ -89,6 +94,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -173,6 +179,7 @@ jobs:
           docker pull ghcr.io/resetsmith/cronomicon:$V
           docker pull ghcr.io/resetsmith/cronomicon-runner:$V
           docker pull ghcr.io/resetsmith/cronomicon-runner-fat:$V
+          docker pull ghcr.io/resetsmith/cronomicon-validate:$V
           \`\`\`
 
           ## Documentation

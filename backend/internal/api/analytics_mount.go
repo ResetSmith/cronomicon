@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 )
 
@@ -120,13 +121,24 @@ func (s *Server) runAnalytics(w http.ResponseWriter, r *http.Request) {
 	// same fragment every other list endpoint uses, so analytics cannot become a
 	// side channel that reveals the existence of work in a scope the caller has
 	// no grant for.
-	scopeFrag, scopeArgs := s.scopeWhereFragment(r, "scope")
+	scopeFrag, scopeArgs := s.scopeWhereFragment(r, "scope", runScopeOwnerSQL)
 	if scopeFrag != "" {
 		// scopeWhereFragment returns its own leading " AND " (see listJobs).
 		// Prepending a second one produced `… AND  AND (…)` — a syntax error,
 		// and so a 500, for every caller who is not unrestricted.
 		where += scopeFrag
 		args = append(args, scopeArgs...)
+	}
+	// Whose the run is (2.5.0 C2, CF-1): another agency's no-scope runs were
+	// folded into the totals and the failure-reason clusters.
+	if frag, fargs := agencyReadFilter(r, runOwnerSQL); frag != "" {
+		where += frag
+		args = append(args, fargs...)
+	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, runOwnerSQL); frag != "" {
+		where += frag
+		args = append(args, fargs...)
 	}
 
 	out := analyticsResponse{

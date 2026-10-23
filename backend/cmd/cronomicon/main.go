@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,9 +32,12 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/backup"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
+	"github.com/ResetSmith/cronomicon/internal/hostkeys"
 	"github.com/ResetSmith/cronomicon/internal/logsink"
 	"github.com/ResetSmith/cronomicon/internal/logsync"
+	"github.com/ResetSmith/cronomicon/internal/notices"
 	"github.com/ResetSmith/cronomicon/internal/notify"
 	"github.com/ResetSmith/cronomicon/internal/redactdict"
 	"github.com/ResetSmith/cronomicon/internal/runner"
@@ -41,6 +45,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/seed"
 	"github.com/ResetSmith/cronomicon/internal/settings"
+	"github.com/ResetSmith/cronomicon/internal/sshexec"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 	"github.com/ResetSmith/cronomicon/web"
 )
@@ -58,7 +63,7 @@ var errIdentityNotReady = errors.New("identity provider not ready")
 // tags); a release build still overrides all three via -ldflags. Kept in sync with
 // the top CHANGELOG.md entry.
 var (
-	version   = "2.2.3"
+	version   = "2.5.2"
 	commit    = "none"
 	buildDate = "unknown"
 )
@@ -170,6 +175,10 @@ func run() error {
 		return fmt.Errorf("open db: %w", err)
 	}
 	defer pool.Close()
+	// 2.5.2 GR: the schema version this start found. 0 is a database this start
+	// creates — a new installation, whose built-in agency is named "Central"
+	// below — which a migration cannot tell from an existing empty one.
+	startVersion, _, _ := db.Status(pool)
 	if err := db.Migrate(pool); err != nil {
 		return fmt.Errorf("migrate db: %w", err)
 	}
@@ -184,10 +193,41 @@ func run() error {
 	// degraded build once per outage as an `Audit / redactor-unavailable` row.
 	redactdict.Install(pool, cfg, logger)
 
+	// 2.5.2 GR: a new installation calls its built-in agency "Central"; an
+	// existing one keeps "Global" until a global administrator renames it.
+	// After the masker (the rename is audited) and before the seed (whose runs
+	// carry the agency's name).
+	if startVersion == 0 {
+		if err := settings.NameNewInstallationAgency(context.Background(), pool); err != nil {
+			return err
+		}
+		logger.Info("new installation: the built-in agency is named " + settings.NewInstallationAgencyName)
+	}
+
+	// The "why can't this run be claimed" explainers apply the claim query's
+	// rules from places that hold no configuration; tell them whether the
+	// secret-injection fence is in force, as the claim itself reads it.
+	execspec.SetInjectionGateArmed(cfg.SecretsInjectionEnabled)
+
 	// GC-19: say once, at the first boot of this release, what the upgrade
 	// changed for THIS installation — the same report `cronomicon preflight`
 	// prints, for the operator who upgraded without running it.
 	logUpgradeReport(context.Background(), pool, logger)
+
+	// LR-85: bring the notices inbox up to date before anything serves, so what
+	// an upgrade left for a person to settle is there on the first page load and
+	// in the log of the boot that created it. The same checks run again whenever
+	// the inbox is opened. A failure here is a stale inbox, not a failed boot.
+	notices.SetRecordKeyNameCheck(sshexec.BastionKeyNameFindings)
+	notices.SetLocalRunnerHostKeysCheck(hostkeys.LocalRunnerMissingKeys)
+	notices.SetGlobalRepoFromEnvironment(strings.TrimSpace(cfg.GitLabBaseURL) != "")
+	if err := notices.RunChecks(context.Background(), pool); err != nil {
+		logger.Warn("notices: boot checks failed", "err", err)
+	}
+	if open, err := notices.ListOpen(context.Background(), pool); err == nil && len(open) > 0 {
+		logger.Warn("there are open notices for an administrator: see Notices in the app",
+			"count", len(open))
+	}
 	logHostKeyReport(context.Background(), pool, logger, cfg.SSHExecutorEnabled)
 
 	// RB-7: load the role→permission matrix into its process cache. requirePerm is
@@ -277,6 +317,33 @@ func run() error {
 			"change_log_days", cfg.RetentionChangeLogDays,
 			"log_files_days", cfg.RetentionLogFilesDays)
 	}
+	// 2.5.1 SG2.8: push-target URLs carry their service's token; seal any still
+	// stored plain (from before 2.5.1, or written while no KEK was configured).
+	if n, serr := settings.SealAlertTargetURLs(ctx0, pool, cfg); serr != nil {
+		logger.Error("could not seal the push-target URLs; they stay as they are until the next start", "error", serr)
+	} else if n > 0 {
+		logger.Info("push-target URLs sealed", "count", n)
+	}
+	// 2.5.1 SG2.10: bind every sealed value to its row, once; from then on an
+	// unbound value is refused. This is what makes 2.5.1 one-way: 2.5.0 cannot
+	// open a bound value, so going back means restoring a backup from before.
+	if rep, berr := secrets.BindSeals(ctx0, pool, cfg); berr != nil {
+		logger.Error("could not bind the sealed values to their rows; unbound values stay readable and the next start tries again", "error", berr, "bound", rep.Bound)
+	} else {
+		switch {
+		case rep.NoKEK:
+			logger.Info("no KEK configured: no sealed value to bind")
+		case rep.Failed > 0:
+			logger.Warn("some sealed values could not be bound to their rows (a KEK version not configured?); they stay readable unbound and the next start tries again",
+				"bound", rep.Bound, "failed", rep.Failed)
+		case rep.Bound > 0:
+			logger.Warn("sealed values bound to their rows (2.5.1): this database can no longer be opened by 2.5.0; restoring a backup from before the upgrade is the only way back",
+				"bound", rep.Bound)
+		}
+	}
+	if err := seedBackupKeys(ctx0, pool, cfg.BackupRecipients, logger); err != nil {
+		return err
+	}
 	db.StartRetention(ctx0, pool, db.RetentionPolicy{
 		// Boot values, used only if the very first Reload fails.
 		RunsDays:           cfg.RetentionRunsDays,
@@ -295,12 +362,25 @@ func run() error {
 		// RH: the reaper and the manual "Purge now" button share one implementation
 		// of what permanent deletion means. Injected because internal/db must not
 		// import internal/api.
-		PurgeDefinition: func(ctx context.Context, kind, name string) (bool, error) {
-			return api.PurgeDefinition(ctx, pool, settings.ResolveLogDir(ctx, pool), kind, name)
+		PurgeDefinition: func(ctx context.Context, kind, name, uid string) (bool, error) {
+			return api.PurgeDefinition(ctx, pool, settings.ResolveLogDir(ctx, pool), kind, name, uid)
 		},
 		BackupAt: cfg.BackupAt, // PP-H6: wall-clock daily sweep
 		Upload:   uploader,     // nil when unconfigured ⇒ snapshot kept locally only
-		WG:       &bg,          // PP-L15: drained on shutdown before pool.Close()
+		// 2.5.1 SG1: sealed to the keys in Settings → Backups, read per sweep so
+		// a change applies to the next backup. A read error fails the backup
+		// rather than writing it unencrypted.
+		Seal: func(ctx context.Context, src, dst string) ([]string, error) {
+			keys, err := settings.BackupRecipients(ctx, pool)
+			if err != nil {
+				return nil, err
+			}
+			if len(keys) == 0 {
+				return nil, nil
+			}
+			return backup.EncryptFile(src, dst, keys)
+		},
+		WG: &bg, // PP-L15: drained on shutdown before pool.Close()
 		// Re-read the authoritative knobs at the top of every sweep so a settings
 		// change takes effect on the next nightly run rather than the next restart
 		// (LU-2). The closure lives here, not in internal/db, so that package keeps
@@ -324,6 +404,7 @@ func run() error {
 			p.DefinitionRevisionsDays = ac.RetentionDays.DefinitionRevisions
 			p.RunnerPlacementHistoryDays = ac.RetentionDays.RunnerPlacementHistory
 			p.HostKeyLedgerDays = ac.RetentionDays.HostKeyLedger
+			p.SecretUsesDays = ac.RetentionDays.SecretUses
 			// Resolved per sweep too: the operator can re-point the log dir, and
 			// the reaper must sweep the tree that is actually being written to.
 			p.LogDir = settings.ResolveLogDir(ctx, pool)
@@ -372,74 +453,11 @@ func run() error {
 	// breaches and missed fires reach the same transports, rules and
 	// per-transport delivery stamps as a terminal-run notification.
 	sched.SetNotifier(notifier)
-	sched.SetWorkflowFirer(func(ctx context.Context, source, workflowName, scheduleName, envJSON string) {
-		var (
-			rowid     int64
-			stepsJSON string
-		)
-		// Source-qualified lookup (A9/A11) so a scheduled cronomicon workflow resolves
-		// its own steps rather than a same-named git workflow's.
-		if err := pool.QueryRowContext(ctx,
-			`SELECT rowid, steps FROM workflows WHERE source = ? AND name = ?`, source, workflowName,
-		).Scan(&rowid, &stepsJSON); err != nil {
-			logger.Error("scheduler firer: look up workflow", "workflow", workflowName, "source", source, "error", err)
-			return
-		}
-		steps, err := workflow.ParseSteps(stepsJSON)
-		if err != nil {
-			logger.Error("scheduler firer: parse steps", "workflow", workflowName, "error", err)
-			return
-		}
-		if _, err := workflow.New(pool, logger).Trigger(ctx, workflow.TriggerParams{
-			WorkflowName:   workflowName,
-			WorkflowSource: source,
-			WorkflowID:     rowid,
-			Steps:          steps,
-			TriggeredBy:    "scheduler",
-			TriggerKind:    "scheduled",
-			ScheduleName:   scheduleName,
-			EnvJSON:        envJSON,
-		}); err != nil {
-			logger.Error("scheduler firer: trigger workflow", "workflow", workflowName, "error", err)
-		}
-	})
+	sched.SetWorkflowFirer(workflow.ScheduledFirer(pool, logger))
 	// AR — deferred ad-hoc WORKFLOW runs promoted by the pending loop fire
 	// through the same engine seam as the cron firer, but keep the scheduling
 	// operator as triggered_by so the run's audit trail names a person.
-	sched.SetPendingWorkflowFirer(func(ctx context.Context, p scheduler.PendingWorkflowFire) {
-		var (
-			rowid     int64
-			stepsJSON string
-		)
-		if err := pool.QueryRowContext(ctx,
-			`SELECT rowid, steps FROM workflows WHERE source = ? AND name = ?`, p.Source, p.Name,
-		).Scan(&rowid, &stepsJSON); err != nil {
-			logger.Error("pending firer: look up workflow", "workflow", p.Name, "source", p.Source, "error", err)
-			return
-		}
-		steps, err := workflow.ParseSteps(stepsJSON)
-		if err != nil {
-			logger.Error("pending firer: parse steps", "workflow", p.Name, "error", err)
-			return
-		}
-		// RX-11 — the trigger kind and the reaction provenance ride the envelope
-		// rather than being hardcoded here. A reaction-fired workflow that
-		// reported "manual" would be a lie in History, and a depth that reset to
-		// zero on every hop would disarm the runaway ceiling for whole chains.
-		if _, err := workflow.New(pool, logger).Trigger(ctx, workflow.TriggerParams{
-			WorkflowName:   p.Name,
-			WorkflowSource: p.Source,
-			WorkflowID:     rowid,
-			Steps:          steps,
-			TriggeredBy:    p.TriggeredBy,
-			TriggerKind:    p.TriggerKind,
-			EnvJSON:        p.EnvJSON,
-			ReactionDepth:  p.ReactionDepth,
-			ReactedToRunID: p.ReactedToRunID,
-		}); err != nil {
-			logger.Error("pending firer: trigger workflow", "workflow", p.Name, "error", err)
-		}
-	})
+	sched.SetPendingWorkflowFirer(workflow.PendingFirer(pool, logger))
 	bg.Go(func() {
 		if err := sched.Start(ctx0); err != nil {
 			logger.Error("scheduler stopped with error", "error", err)
@@ -621,7 +639,8 @@ const auditLogName = "audit.log"
 // would send every later line to an unlinked inode.
 const processLogName = "cronomicon.log"
 
-// runValidate implements `cronomicon validate <path>...` (T11), reusing the runtime
+// runValidate implements `cronomicon validate [-agency] <path>...`
+// (T11; the flag 2.4.0, GR-14), reusing the runtime
 // YAML/pragma parser from the gitlab slice (T10/S10). A path that is a directory
 // is validated as a whole job-definitions checkout: scripts/ is parsed first and
 // each job's script_ref is resolved against it (B-Git), with orphan scripts
@@ -636,15 +655,32 @@ func runValidate(args []string) int {
 // code (0 = valid, 1 = errors, 2 = usage) without calling os.Exit, so a CLI-level
 // test can assert both the exit code and the line-numbered stderr format against
 // a deliberately-broken repo.
+//
+// The flag applies to a directory: -agency says it is an agency's repository
+// (a job must name a scope, one of the checkout's). Without it a directory is
+// Global's repository. Either way a reference resolves in the checkout or is
+// an error, as at sync (§0a, IN-8; `-library`, which looked in a checkout of
+// Global's repository too, went with borrowing).
 func validatePaths(args []string, out, errOut io.Writer) int {
-	if len(args) == 0 {
-		_, _ = fmt.Fprintln(errOut, "usage: cronomicon validate <path>... (file, or a repo dir for cross-file script_ref checks)")
+	const usage = "usage: cronomicon validate [-agency] <path>...\n" +
+		"  <path> is a file, or a repository's checkout (a directory) for the checks across its files"
+	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	agency := fs.Bool("agency", false, "the directory is an agency's repository (GR-14)")
+	fs.Usage = func() { _, _ = fmt.Fprintln(errOut, usage) }
+	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	args = fs.Args()
+	if len(args) == 0 {
+		_, _ = fmt.Fprintln(errOut, usage)
+		return 2
+	}
+	opt := gitlab.ValidateOptions{Agency: *agency}
 	exit := 0
 	for _, path := range args {
 		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
-			errs, warnings, err := gitlab.ValidateRepo(path)
+			errs, warnings, err := gitlab.ValidateRepoWith(path, opt)
 			if err != nil {
 				fmt.Fprintf(errOut, "%s: %v\n", path, err)
 				exit = 1

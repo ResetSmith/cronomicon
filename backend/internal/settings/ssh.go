@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"strings"
 	"time"
 
@@ -13,11 +14,36 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/db"
 )
 
-// hostKeyMeta derives the non-secret pin metadata (FU-1) from a stored
-// authorized-key line: whether a key is pinned, its SHA256 fingerprint for
-// out-of-band comparison, and its algorithm. The raw line is never returned. An
-// empty line ⇒ unpinned; a non-empty-but-unparseable line still reports pinned
-// (so the UI shows "pinned" rather than silently claiming unpinned).
+// The host key shown on a host record or a bastion is the one the LOCAL RUNNER
+// trusts for the address the record is dialled at: the key in force in its
+// ledger (host_key_ledger), approved by an operator or carried over by the
+// 2.3.0 upgrade. Until 2.3.0 it was a key stored on the record itself, captured
+// on the first connection; those columns are gone (migration 1270).
+//
+// trustedKeySQL is that key for a record, in authorized-key form ("type
+// base64"), or NULL. addrSQL and portSQL are the record's dial address and
+// port; the known_hosts host is built from them the way hostkeys.Pattern does
+// (the bare address on port 22, [address]:port otherwise).
+func trustedKeySQL(addrSQL, portSQL string) string {
+	pattern := `CASE WHEN COALESCE(NULLIF(` + portSQL + `, 0), 22) = 22 THEN ` + addrSQL +
+		` ELSE '[' || ` + addrSQL + ` || ']:' || ` + portSQL + ` END`
+	return `(SELECT substr(l.known_hosts_line, instr(l.known_hosts_line, ' ') + 1)
+	           FROM host_key_ledger l JOIN runners rn ON rn.id = l.runner_id AND rn.kind = 'server'
+	          WHERE l.host = ` + pattern + `
+	            AND l.decision = 'approved' AND l.superseded_at IS NULL
+	          ORDER BY l.id DESC LIMIT 1)`
+}
+
+var (
+	hostTrustedKeySQL    = trustedKeySQL(`COALESCE(NULLIF(ssh_hosts.address, ''), ssh_hosts.hostname)`, `ssh_hosts.port`)
+	bastionTrustedKeySQL = trustedKeySQL(`COALESCE(NULLIF(bastions.address, ''), bastions.name)`, `bastions.port`)
+)
+
+// hostKeyMeta derives the non-secret metadata (FU-1) from that key: whether
+// there is one, its SHA256 fingerprint for out-of-band comparison, and its
+// algorithm. The raw line is never returned. An empty line ⇒ none; a
+// non-empty-but-unparseable line still reports a key (so the UI does not
+// silently claim there is none).
 func hostKeyMeta(line string) (pinned bool, fingerprint, keyType string) {
 	if strings.TrimSpace(line) == "" {
 		return false, "", ""
@@ -43,10 +69,12 @@ type SshHost struct {
 	User             *string `json:"user"`
 	Status           string  `json:"status"`
 	LastCheckedAt    *string `json:"lastCheckedAt"`
-	// HostKey* expose the pinned SSH host key in a non-secret way (FU-1): whether
-	// a key is pinned, its SHA256 fingerprint for out-of-band comparison, and its
-	// algorithm. The raw known_hosts line is never surfaced. Derived from the
-	// stored ssh_hosts.host_key (empty ⇒ unpinned; TOFU-captured on first connect).
+	// HostKey* expose, in a non-secret way (FU-1), the host key the LOCAL RUNNER
+	// trusts for this record's address: whether it has one, its SHA256
+	// fingerprint for out-of-band comparison, and its algorithm. It is the key
+	// an operator approved for the local runner (Runners → Local runner → Host
+	// keys), or one the 2.3.0 upgrade carried over; nothing is captured on
+	// first connect any more. The field names predate that.
 	HostKeyPinned      bool   `json:"hostKeyPinned"`
 	HostKeyFingerprint string `json:"hostKeyFingerprint,omitempty"`
 	HostKeyType        string `json:"hostKeyType,omitempty"`
@@ -54,10 +82,22 @@ type SshHost struct {
 	CreatedAt          string `json:"createdAt"`
 	LastModifiedBy     string `json:"lastModifiedBy"`
 	LastModifiedAt     string `json:"lastModifiedAt"`
+	// ScopeID is set on a record imported for a scope and nil on one written by
+	// hand. It decides who the record belongs to (LR-69): an imported record is
+	// its scope's agency's; a hand-written one is its owner_agency's.
+	ScopeID *string `json:"scopeId"`
+	// OwnerAgency is the id of the agency the record belongs to by that rule —
+	// Global for an imported record whose scope is in several agencies or none —
+	// and OwnerAgencyName its name. Read-only on an imported record.
+	OwnerAgency     string `json:"ownerAgency"`
+	OwnerAgencyName string `json:"ownerAgencyName"`
 }
 
 // SshHostInput is the caller-supplied payload.
 type SshHostInput struct {
+	// OwnerAgency is the owning agency's id for a hand-written record. Required
+	// on create (the API fills it in); on update, empty keeps the owner.
+	OwnerAgency      string
 	Hostname         string
 	Address          *string
 	Port             int
@@ -80,8 +120,8 @@ type SshBastion struct {
 	Zone             *string `json:"zone"`
 	Status           string  `json:"status"`
 	LastCheckedAt    *string `json:"lastCheckedAt"`
-	// HostKey* mirror SshHost — the non-secret pin metadata for the bastion's own
-	// host key (bastions.host_key, SU-4). See SshHost for semantics.
+	// HostKey* mirror SshHost — the key the local runner trusts for the
+	// bastion's own address (SU-4). See SshHost for semantics.
 	HostKeyPinned      bool   `json:"hostKeyPinned"`
 	HostKeyFingerprint string `json:"hostKeyFingerprint,omitempty"`
 	HostKeyType        string `json:"hostKeyType,omitempty"`
@@ -89,10 +129,17 @@ type SshBastion struct {
 	CreatedAt          string `json:"createdAt"`
 	LastModifiedBy     string `json:"lastModifiedBy"`
 	LastModifiedAt     string `json:"lastModifiedAt"`
+	// OwnerAgency is the id of the agency the bastion belongs to (LR-69); a host
+	// routes only through a bastion of its own agency or Global's (LR-70).
+	OwnerAgency     string `json:"ownerAgency"`
+	OwnerAgencyName string `json:"ownerAgencyName"`
 }
 
 // SshBastionInput is the caller payload.
 type SshBastionInput struct {
+	// OwnerAgency is the owning agency's id. Required on create (the API fills
+	// it in); on update, empty keeps the owner.
+	OwnerAgency      string
 	Name             string
 	Address          string
 	Port             int
@@ -106,7 +153,8 @@ type SshBastionInput struct {
 func ListSshHosts(ctx context.Context, database *sql.DB) ([]SshHost, error) {
 	rows, err := database.QueryContext(ctx,
 		`SELECT id, source, hostname, address, port, os, via, auth_key_env_var, auth_credential_id, username,
-		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, host_key
+		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, `+hostTrustedKeySQL+`,
+		        scope_id, `+hostOwnerSQL+`, (SELECT name FROM agencies WHERE id = `+hostOwnerSQL+`)
 		 FROM ssh_hosts ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list ssh hosts: %w", err)
@@ -127,7 +175,8 @@ func ListSshHosts(ctx context.Context, database *sql.DB) ([]SshHost, error) {
 func GetSshHost(ctx context.Context, database *sql.DB, id string) (*SshHost, error) {
 	rows, err := database.QueryContext(ctx,
 		`SELECT id, source, hostname, address, port, os, via, auth_key_env_var, auth_credential_id, username,
-		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, host_key
+		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, `+hostTrustedKeySQL+`,
+		        scope_id, `+hostOwnerSQL+`, (SELECT name FROM agencies WHERE id = `+hostOwnerSQL+`)
 		 FROM ssh_hosts WHERE id=?`, id)
 	if err != nil {
 		return nil, err
@@ -139,18 +188,34 @@ func GetSshHost(ctx context.Context, database *sql.DB, id string) (*SshHost, err
 	return scanSshHost(rows)
 }
 
+// hostOwnerSQL is the id of the agency an ssh_hosts row belongs to (LR-69): its
+// scope's ONE agency when it was imported for a scope, its own owner_agency when
+// it was written by hand. A scope in several agencies (the state from before
+// 2.3.0) or in none has no single answer, and its imported records read as
+// Global's, which makes them a global administrator's to change.
+const hostOwnerSQL = `CASE WHEN ssh_hosts.scope_id IS NOT NULL
+     THEN COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+                      FROM scope_agencies sa WHERE sa.scope_id = ssh_hosts.scope_id), 'global')
+     ELSE ssh_hosts.owner_agency END`
+
 func scanSshHost(rows *sql.Rows) (*SshHost, error) {
 	var h SshHost
 	var address, os, via, authKeyEnvVar, authCredentialID, username, status, lastCheckedAt, hostKey sql.NullString
+	var scopeID, ownerName sql.NullString
 	var port sql.NullInt64
 	err := rows.Scan(&h.ID, &h.Source, &h.Hostname, &address, &port, &os, &via, &authKeyEnvVar, &authCredentialID, &username,
-		&h.CreatedBy, &h.CreatedAt, &h.LastModifiedBy, &h.LastModifiedAt, &status, &lastCheckedAt, &hostKey)
+		&h.CreatedBy, &h.CreatedAt, &h.LastModifiedBy, &h.LastModifiedAt, &status, &lastCheckedAt, &hostKey,
+		&scopeID, &h.OwnerAgency, &ownerName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
+	if scopeID.Valid && scopeID.String != "" {
+		h.ScopeID = &scopeID.String
+	}
+	h.OwnerAgencyName = ownerName.String
 	if address.Valid {
 		h.Address = &address.String
 	}
@@ -184,39 +249,6 @@ func scanSshHost(rows *sql.Rows) (*SshHost, error) {
 	return &h, nil
 }
 
-// ClearSshHostKey clears a pinned host key (FU-1) so the next connect re-captures
-// it via TOFU — the supported way to re-key a legitimately rotated host without a
-// raw SQL UPDATE. Status is reset to unverified so the UI reflects the re-pin
-// pending. Returns whether a row was updated (false ⇒ unknown id). Audited.
-func ClearSshHostKey(ctx context.Context, database *sql.DB, actor, id string) (bool, error) {
-	h, _ := GetSshHost(ctx, database, id)
-	res, err := database.ExecContext(ctx,
-		`UPDATE ssh_hosts SET host_key=NULL, status='unverified' WHERE id=?`, id)
-	if err != nil {
-		return false, fmt.Errorf("clear ssh host key: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n > 0 && h != nil {
-		audit(ctx, database, actor, "SSH Hosts", "host key cleared", h.Hostname, "")
-	}
-	return n > 0, nil
-}
-
-// ClearBastionHostKey mirrors ClearSshHostKey for a bastion's own host key.
-func ClearBastionHostKey(ctx context.Context, database *sql.DB, actor, id string) (bool, error) {
-	b, _ := GetBastion(ctx, database, id)
-	res, err := database.ExecContext(ctx,
-		`UPDATE bastions SET host_key=NULL, status='unverified' WHERE id=?`, id)
-	if err != nil {
-		return false, fmt.Errorf("clear bastion host key: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n > 0 && b != nil {
-		audit(ctx, database, actor, "Bastions", "host key cleared", b.Name, "")
-	}
-	return n > 0, nil
-}
-
 // SetSshHostStatus records the outcome of a connection test (ssh-update.md TC.3).
 func SetSshHostStatus(ctx context.Context, database *sql.DB, id, status, checkedAt string) error {
 	_, err := database.ExecContext(ctx,
@@ -235,17 +267,21 @@ func CreateSshHost(ctx context.Context, database *sql.DB, inp SshHostInput, acto
 	if port == 0 {
 		port = 22
 	}
+	owner := inp.OwnerAgency
+	if owner == "" {
+		owner = agencyid.Global
+	}
 	_, err := database.ExecContext(ctx,
 		`INSERT INTO ssh_hosts (id, source, hostname, address, port, os, via, auth_key_env_var, auth_credential_id, username,
-		                         created_by, created_at, last_modified_by, last_modified_at)
-		 VALUES (?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                         created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+		 VALUES (?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, inp.Hostname, inp.Address, port, inp.OS, inp.Via, inp.AuthKeyEnvVar, inp.AuthCredentialID, inp.User,
-		actor, now, actor, now,
+		actor, now, actor, now, owner,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create ssh host: %w", err)
 	}
-	audit(ctx, database, actor, "SSH Hosts", "created", inp.Hostname, "")
+	audit(ctx, database, owner, actor, "SSH Hosts", "created", inp.Hostname, "")
 	return GetSshHost(ctx, database, id)
 }
 
@@ -264,11 +300,15 @@ func UpdateSshHost(ctx context.Context, database *sql.DB, id string, inp SshHost
 	// Fail-closed: the WHERE itself excludes git rows, so even if the pre-check
 	// above was skipped (e.g. a transient GetSshHost error), a git row is never
 	// mutated.
+	// The owner moves only when one is named, and only on a hand-written record:
+	// an imported record is its scope's (the CASE keeps what is stored).
 	res, err := database.ExecContext(ctx,
 		`UPDATE ssh_hosts SET hostname=?, address=?, port=?, os=?, via=?, auth_key_env_var=?, auth_credential_id=?, username=?,
-		  last_modified_by=?, last_modified_at=? WHERE id=? AND source='cronomicon'`,
+		  last_modified_by=?, last_modified_at=?,
+		  owner_agency = CASE WHEN ? <> '' AND scope_id IS NULL THEN ? ELSE owner_agency END
+		  WHERE id=? AND source='cronomicon'`,
 		inp.Hostname, inp.Address, port, inp.OS, inp.Via, inp.AuthKeyEnvVar, inp.AuthCredentialID, inp.User,
-		actor, now, id,
+		actor, now, inp.OwnerAgency, inp.OwnerAgency, id,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update ssh host: %w", err)
@@ -277,7 +317,7 @@ func UpdateSshHost(ctx context.Context, database *sql.DB, id string, inp SshHost
 	if n == 0 {
 		return nil, nil
 	}
-	audit(ctx, database, actor, "SSH Hosts", "updated", inp.Hostname, "")
+	audit(ctx, database, RowAgency(ctx, database, "ssh_hosts", "owner_agency", id), actor, "SSH Hosts", "updated", inp.Hostname, "")
 	return GetSshHost(ctx, database, id)
 }
 
@@ -295,7 +335,7 @@ func DeleteSshHost(ctx context.Context, database *sql.DB, id, actor string) (boo
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 && h != nil {
-		audit(ctx, database, actor, "SSH Hosts", "deleted", h.Hostname, "")
+		audit(ctx, database, ownerOrGlobalAgency(h.OwnerAgency), actor, "SSH Hosts", "deleted", h.Hostname, "")
 	}
 	return n > 0, nil
 }
@@ -304,7 +344,8 @@ func DeleteSshHost(ctx context.Context, database *sql.DB, id, actor string) (boo
 func ListBastions(ctx context.Context, database *sql.DB) ([]SshBastion, error) {
 	rows, err := database.QueryContext(ctx,
 		`SELECT id, name, address, port, username, auth_key_env_var, auth_credential_id, zone,
-		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, host_key
+		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, `+bastionTrustedKeySQL+`,
+		        owner_agency, (SELECT name FROM agencies WHERE id = bastions.owner_agency)
 		 FROM bastions ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list bastions: %w", err)
@@ -325,7 +366,8 @@ func ListBastions(ctx context.Context, database *sql.DB) ([]SshBastion, error) {
 func GetBastion(ctx context.Context, database *sql.DB, id string) (*SshBastion, error) {
 	rows, err := database.QueryContext(ctx,
 		`SELECT id, name, address, port, username, auth_key_env_var, auth_credential_id, zone,
-		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, host_key
+		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, `+bastionTrustedKeySQL+`,
+		        owner_agency, (SELECT name FROM agencies WHERE id = bastions.owner_agency)
 		 FROM bastions WHERE id=?`, id)
 	if err != nil {
 		return nil, err
@@ -339,13 +381,15 @@ func GetBastion(ctx context.Context, database *sql.DB, id string) (*SshBastion, 
 
 func scanBastion(rows *sql.Rows) (*SshBastion, error) {
 	var b SshBastion
-	var username, authKeyEnvVar, authCredentialID, zone, status, lastCheckedAt, hostKey sql.NullString
+	var username, authKeyEnvVar, authCredentialID, zone, status, lastCheckedAt, hostKey, ownerName sql.NullString
 	var port sql.NullInt64
 	err := rows.Scan(&b.ID, &b.Name, &b.Address, &port, &username, &authKeyEnvVar, &authCredentialID, &zone,
-		&b.CreatedBy, &b.CreatedAt, &b.LastModifiedBy, &b.LastModifiedAt, &status, &lastCheckedAt, &hostKey)
+		&b.CreatedBy, &b.CreatedAt, &b.LastModifiedBy, &b.LastModifiedAt, &status, &lastCheckedAt, &hostKey,
+		&b.OwnerAgency, &ownerName)
 	if err != nil {
 		return nil, err
 	}
+	b.OwnerAgencyName = ownerName.String
 	if username.Valid {
 		b.Username = &username.String
 	}
@@ -391,17 +435,21 @@ func CreateBastion(ctx context.Context, database *sql.DB, inp SshBastionInput, a
 	if port == 0 {
 		port = 22
 	}
+	owner := inp.OwnerAgency
+	if owner == "" {
+		owner = agencyid.Global
+	}
 	_, err := database.ExecContext(ctx,
 		`INSERT INTO bastions (id, name, hostname, address, port, username, auth_key_env_var, auth_credential_id, zone,
-		                       created_by, created_at, last_modified_by, last_modified_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                       created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, inp.Name, inp.Name, inp.Address, port, inp.Username, inp.AuthKeyEnvVar, inp.AuthCredentialID, inp.Zone,
-		actor, now, actor, now,
+		actor, now, actor, now, owner,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create bastion: %w", err)
 	}
-	audit(ctx, database, actor, "Bastions", "created", inp.Name, "")
+	audit(ctx, database, owner, actor, "Bastions", "created", inp.Name, "")
 	return GetBastion(ctx, database, id)
 }
 
@@ -414,9 +462,11 @@ func UpdateBastion(ctx context.Context, database *sql.DB, id string, inp SshBast
 	}
 	res, err := database.ExecContext(ctx,
 		`UPDATE bastions SET name=?, hostname=?, address=?, port=?, username=?, auth_key_env_var=?, auth_credential_id=?, zone=?,
-		  last_modified_by=?, last_modified_at=? WHERE id=?`,
+		  last_modified_by=?, last_modified_at=?,
+		  owner_agency = CASE WHEN ? <> '' THEN ? ELSE owner_agency END
+		  WHERE id=?`,
 		inp.Name, inp.Name, inp.Address, port, inp.Username, inp.AuthKeyEnvVar, inp.AuthCredentialID, inp.Zone,
-		actor, now, id,
+		actor, now, inp.OwnerAgency, inp.OwnerAgency, id,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update bastion: %w", err)
@@ -425,7 +475,7 @@ func UpdateBastion(ctx context.Context, database *sql.DB, id string, inp SshBast
 	if n == 0 {
 		return nil, nil
 	}
-	audit(ctx, database, actor, "Bastions", "updated", inp.Name, "")
+	audit(ctx, database, RowAgency(ctx, database, "bastions", "owner_agency", id), actor, "Bastions", "updated", inp.Name, "")
 	return GetBastion(ctx, database, id)
 }
 
@@ -438,7 +488,7 @@ func DeleteBastion(ctx context.Context, database *sql.DB, id, actor string) (boo
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 && b != nil {
-		audit(ctx, database, actor, "Bastions", "deleted", b.Name, "")
+		audit(ctx, database, ownerOrGlobalAgency(b.OwnerAgency), actor, "Bastions", "deleted", b.Name, "")
 	}
 	return n > 0, nil
 }

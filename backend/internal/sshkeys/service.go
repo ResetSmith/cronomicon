@@ -230,16 +230,16 @@ func (s *Service) Create(ctx context.Context, inp CreateInput, actor string) (*C
 	if err != nil {
 		return nil, err
 	}
-	sealed, err := s.sealer.Seal([]byte(inp.Material))
+	sealed, err := s.sealer.Seal(secrets.RowBinding("ssh_credentials", id), []byte(inp.Material)) // 2.5.1 SG2.10
 	if err != nil {
 		return nil, fmt.Errorf("encrypt ssh credential: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO ssh_credentials (id, label, description, source, ciphertext, nonce, wrapped_dek, kek_version,
+		`INSERT INTO ssh_credentials (id, label, description, source, ciphertext, nonce, wrapped_dek, kek_version, seal_format,
 		                              key_type, fingerprint, public_key,
 		                              created_by, created_at, last_modified_by, last_modified_at, owner_agency)
-		 VALUES (?, ?, ?, 'stored', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, inp.Label, inp.Description, sealed.Ciphertext, sealed.Nonce, sealed.WrappedDEK, sealed.KEKVersion,
+		 VALUES (?, ?, ?, 'stored', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, inp.Label, inp.Description, sealed.Ciphertext, sealed.Nonce, sealed.WrappedDEK, sealed.KEKVersion, sealed.Format,
 		keyType, fingerprint, publicKey, actor, now, actor, now, inp.OwnerAgency); err != nil {
 		return nil, fmt.Errorf("insert ssh credential: %w", err)
 	}
@@ -280,16 +280,16 @@ func (s *Service) Update(ctx context.Context, id string, inp UpdateInput, actor 
 		if perr != nil {
 			return nil, perr
 		}
-		sealed, serr := s.sealer.Seal([]byte(inp.Material))
+		sealed, serr := s.sealer.Seal(secrets.RowBinding("ssh_credentials", id), []byte(inp.Material))
 		if serr != nil {
 			return nil, fmt.Errorf("encrypt ssh credential: %w", serr)
 		}
 		if _, err := s.db.ExecContext(ctx,
 			`UPDATE ssh_credentials SET label=?, description=?, source='stored', vault_ref=NULL,
-			  ciphertext=?, nonce=?, wrapped_dek=?, kek_version=?,
+			  ciphertext=?, nonce=?, wrapped_dek=?, kek_version=?, seal_format=?,
 			  key_type=?, fingerprint=?, public_key=?,
 			  last_modified_by=?, last_modified_at=? WHERE id=?`,
-			inp.Label, inp.Description, sealed.Ciphertext, sealed.Nonce, sealed.WrappedDEK, sealed.KEKVersion,
+			inp.Label, inp.Description, sealed.Ciphertext, sealed.Nonce, sealed.WrappedDEK, sealed.KEKVersion, sealed.Format,
 			keyType, fingerprint, publicKey, actor, now, id); err != nil {
 			return nil, fmt.Errorf("update ssh credential: %w", err)
 		}

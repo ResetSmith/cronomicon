@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/runnerproto"
 )
 
@@ -48,13 +49,13 @@ func pollDecode(t *testing.T, svc *Service, as interface {
 }
 
 func TestEffectiveClaimCaps(t *testing.T) {
-	got := effectiveClaimCaps([]string{"bash", "python", "ansible"}, []string{"python"})
+	got := execspec.EffectiveCaps([]string{"bash", "python", "ansible"}, []string{"python"})
 	want := map[string]bool{"bash": true, "ansible": true}
 	if len(got) != 2 || !want[got[0]] || !want[got[1]] {
 		t.Errorf("mask subtract: got %v, want bash+ansible", got)
 	}
 	// Empty mask is a no-op (same order).
-	if same := effectiveClaimCaps([]string{"bash", "python"}, nil); len(same) != 2 {
+	if same := execspec.EffectiveCaps([]string{"bash", "python"}, nil); len(same) != 2 {
 		t.Errorf("nil mask must not narrow: %v", same)
 	}
 }
@@ -237,6 +238,30 @@ func TestUpdateRunnerSettingsEndpoint(t *testing.T) {
 	// Bad capability-mask entry → 400.
 	if rec := patch(`{"capabilityMask":["not-a-runtype"]}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad mask should 400, got %d", rec.Code)
+	}
+
+	// 2.3.2 — the poll interval is a managed setting, held between thirty
+	// seconds (the server's own hold on a poll: at thirty an idle agent is
+	// connected all the time, and less would buy nothing) and ninety (a runner
+	// unseen for two minutes is shown as degraded).
+	for _, bad := range []string{`{"pollIntervalSeconds":29}`, `{"pollIntervalSeconds":91}`, `{"pollIntervalSeconds":0}`, `{"pollIntervalSeconds":-30}`} {
+		if rec := patch(bad); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "between 30 and 90") {
+			t.Errorf("%s: %d %s, want 400 naming the bounds", bad, rec.Code, rec.Body.String())
+		}
+	}
+	for _, ok := range []string{`{"pollIntervalSeconds":30}`, `{"pollIntervalSeconds":90}`} {
+		if rec := patch(ok); rec.Code != http.StatusOK {
+			t.Errorf("%s: %d %s, want 200", ok, rec.Code, rec.Body.String())
+		}
+	}
+	_ = svc.db.QueryRow(`SELECT managed_settings FROM runners WHERE id = ?`, id).Scan(&raw)
+	if raw == nil || !strings.Contains(*raw, `"pollIntervalSeconds":90`) {
+		t.Errorf("stored managed settings = %v, want the interval in them", raw)
+	}
+	// On its own it is an opinion: not cleared to NULL as an empty set is.
+	stored, err := validateAndNormalize(runnerproto.PollSettingsValues{PollIntervalSeconds: new(30)})
+	if err != nil || stored == "" {
+		t.Errorf("an interval alone normalised to %q (%v); it must be stored", stored, err)
 	}
 }
 

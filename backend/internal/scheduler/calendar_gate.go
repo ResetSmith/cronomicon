@@ -55,25 +55,29 @@ func (s *Scheduler) location() *time.Location {
 // DB error an only-bound entry fires rather than staying silent. That rule is
 // about a calendar that resolves to no days, not about a resolver that could not
 // run at all; a database this scheduler cannot read is not a policy statement.
-func (s *Scheduler) calendarVerdict(ctx context.Context, source, ownerKind, ownerName, scheduleName string) calGate {
+func (s *Scheduler) calendarVerdict(ctx context.Context, source, ownerKind, ownerName, ownerUID, scheduleName string) calGate {
 	loc := s.location()
-	day := calendar.DayOf(time.Now(), loc)
+	now := time.Now()
+	day := calendar.DayOf(now, loc)
 	gate := calGate{Day: day, Loc: loc}
 
-	skip, only := s.calendarBindings(ctx, source, ownerKind, ownerName, scheduleName)
+	skip, only := s.calendarBindings(ctx, source, ownerKind, ownerName, ownerUID, scheduleName)
 
 	// NOTE: this read happens even when the entry names no calendars, and that is
 	// not waste — the global tier (§2.8) unions a change-freeze calendar's days
 	// into EVERY entry's skip set, so an entry with no bindings of its own is
 	// still suppressible. There is no empty-bindings fast path to take.
-	sets, err := calendar.Load(ctx, s.db, append(append([]string{}, skip...), only...))
+	//
+	// Since §0a (2.4.0): the installation-wide freeze first, then the entry's
+	// own calendars and its agency's global ones (until then every global
+	// calendar, whoever's).
+	v, err := freezeTier(ctx, s.db, definitionAgency(ctx, s.db, ownerUID, ownerKind), skip, only, day, now)
 	if err != nil {
 		s.log.Error("scheduler: load calendars — firing without calendar suppression",
 			"owner", ownerName, "kind", ownerKind, "schedule", scheduleName, "err", err)
 		return gate
 	}
-
-	gate.Verdict = calendar.Evaluate(sets, skip, only, day)
+	gate.Verdict = v
 	return gate
 }
 
@@ -104,13 +108,22 @@ func (g calGate) record() skipRecord {
 // schedule row. A missing row (an entry that vanished between registration and
 // this fire) yields no bindings, which fires — consistent with the fail-open
 // stance above.
-func (s *Scheduler) calendarBindings(ctx context.Context, source, ownerKind, ownerName, scheduleName string) (skip, only []string) {
+//
+// The entry of THIS definition (2.4.0): by the owner's uid where the caller
+// has it. By source, kind and name, two agencies' definitions of one name with
+// an entry of one name each read whichever row came first, and one fired, or
+// did not, on the other's calendars. An entry that records no owner is found
+// by the name, as before.
+func (s *Scheduler) calendarBindings(ctx context.Context, source, ownerKind, ownerName, ownerUID, scheduleName string) (skip, only []string) {
 	var skipRaw, onlyRaw sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT skip_calendars, only_calendars
 		  FROM definition_schedules
-		 WHERE owner_source = ? AND owner_kind = ? AND owner_name = ? AND name = ?`,
-		source, ownerKind, ownerName, scheduleName).Scan(&skipRaw, &onlyRaw)
+		 WHERE owner_kind = ?1 AND name = ?2
+		   AND ((?3 <> '' AND owner_uid = ?3)
+		        OR ((owner_uid IS NULL OR ?3 = '') AND owner_source = ?4 AND owner_name = ?5))
+		 ORDER BY (owner_uid IS NULL) LIMIT 1`,
+		ownerKind, scheduleName, ownerUID, source, ownerName).Scan(&skipRaw, &onlyRaw)
 	if err != nil {
 		// sql.ErrNoRows is the ordinary case for an unregistered/renamed entry and
 		// is not worth a log line at error level; anything else is.

@@ -60,6 +60,20 @@ func TestRunJobReferences(t *testing.T) {
 	resp.Body.Close()
 	runURL := ts.URL + "/api/v1/jobs/" + itoa(created.ID) + "/run"
 
+	// One of the additions is an SSH key, which only an agent can deliver
+	// (LR-47): an agent serves the run's scope, so the run has one to wait for.
+	for _, q := range []string{
+		`INSERT OR IGNORE INTO scopes (id, name, source, created_at) VALUES ('sc-prod-refs', 'Prod', 'cronomicon', 't')`,
+		`INSERT INTO runners (id, name, status, registered_at, created_at, owner_agency)
+		 VALUES ('agent-refs', 'agent-refs', 'offline', 't', 't',
+		         COALESCE((SELECT sa.agency_id FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+		                    WHERE sc.name = 'Prod' LIMIT 1), 'global'))`,
+	} {
+		if _, err := pool.ExecContext(ctx, q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+
 	// Additions accepted, deduped, recorded names-only in the envelope.
 	resp = do(http.MethodPost, runURL, map[string]any{
 		"references": []map[string]string{

@@ -69,8 +69,8 @@ func TestJobBindingReadScopeEnforced(t *testing.T) {
 	if rec := reqAs(t, h, http.MethodGet, "/api/v1/job-reference-bindings/"+prodJob, "sec-viewers", ""); rec.Code != http.StatusOK {
 		t.Errorf("read in-scope job bindings = %d, want 200", rec.Code)
 	}
-	if rec := reqAs(t, h, http.MethodGet, "/api/v1/job-reference-bindings/"+stagingJob, "sec-viewers", ""); rec.Code != http.StatusForbidden {
-		t.Errorf("read out-of-scope job bindings = %d, want 403", rec.Code)
+	if rec := reqAs(t, h, http.MethodGet, "/api/v1/job-reference-bindings/"+stagingJob, "sec-viewers", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("read out-of-scope job bindings = %d, want 404 (question 72)", rec.Code)
 	}
 }
 
@@ -174,8 +174,11 @@ func TestBindingWriteAuditNamesTheSet(t *testing.T) {
 // seedEnvVar inserts a plaintext env var in the given scope (nil ⇒ global).
 func seedEnvVar(t *testing.T, pool *sql.DB, id, key string, scope *string) {
 	t.Helper()
-	if _, err := pool.Exec(`INSERT INTO env_vars(id, key, value, scope, created_by, created_at, last_modified_by, last_modified_at)
-		VALUES(?, ?, 'v', ?, 'seed', '2026-01-01T00:00:00Z', 'seed', '2026-01-01T00:00:00Z')`, id, key, scope); err != nil {
+	// Owned by the agency whose scope it is in (I2: a scope's name is unique
+	// within an agency, and a row in scope `prod` is in its owner's `prod`).
+	if _, err := pool.Exec(`INSERT INTO env_vars(id, key, value, scope, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+		VALUES(?, ?, 'v', ?, 'seed', '2026-01-01T00:00:00Z', 'seed', '2026-01-01T00:00:00Z',
+		       COALESCE((SELECT owner_agency FROM scopes WHERE name = ?), 'global'))`, id, key, scope, scope); err != nil {
 		t.Fatalf("seed env var %s: %v", key, err)
 	}
 }

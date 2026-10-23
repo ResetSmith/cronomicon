@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
@@ -44,7 +45,7 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the run exists and is running.
-	var jobName, scope, runnerID, jobSource, scriptRef string
+	var jobName, scope, runnerID, jobSource, scriptRef, runType string
 	var status string
 	// entity_code names this run's log folder (LU-7). It was stamped at enqueue,
 	// so it is a property of the run rather than something re-derived here — a
@@ -52,14 +53,25 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	var entityCode string
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT job_name, COALESCE(scope,''), COALESCE(runner_id,''), status,
-		       COALESCE(job_source,''), COALESCE(script_ref,''), COALESCE(entity_code,'')
+		       COALESCE(job_source,''), COALESCE(script_ref,''), COALESCE(entity_code,''),
+		       COALESCE(run_type,'')
 		FROM runs WHERE id = ?`, traceID).
-		Scan(&jobName, &scope, &runnerID, &status, &jobSource, &scriptRef, &entityCode)
-	if err != nil {
+		Scan(&jobName, &scope, &runnerID, &status, &jobSource, &scriptRef, &entityCode, &runType)
+	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 		return
 	}
+	if err != nil {
+		// A read that failed (SQLite busy, the pool closing at shutdown) is not
+		// "no such run": since 2.5.0 C12 an agent takes the server's own 404 as
+		// final and stops sending a run's end, so this one must be one it sends
+		// again (C12.4's re-review).
+		s.log.Error("ingest: read the run", "trace_id", traceID, "error", err)
+		httpx.Fail(w, http.StatusServiceUnavailable, "unavailable", "the run could not be read; send it again")
+		return
+	}
 	if status != "running" {
+		s.unredactableSince.Delete(traceID) // ended another way (C11)
 		httpx.Fail(w, http.StatusConflict, "conflict",
 			fmt.Sprintf("run is in status %q, not running", status))
 		return
@@ -83,8 +95,16 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	// live kill-switch (L2): a run dispatched while ON stays fail-closed even after
 	// the switch is flipped OFF and the process restarts.
 	var injectedSecretAtDispatch bool
-	_ = s.db.QueryRowContext(r.Context(),
-		`SELECT injects_secret FROM runs WHERE id = ?`, traceID).Scan(&injectedSecretAtDispatch)
+	if err := s.db.QueryRowContext(r.Context(),
+		`SELECT injects_secret FROM runs WHERE id = ?`, traceID).Scan(&injectedSecretAtDispatch); err != nil {
+		// A read that failed is not "no secret" (2.5.0 C12, question 120): the
+		// flag read false, the chunk took the lenient path, and a Vault-sourced
+		// value the run echoed could be stored unmasked. Refused; the agent sends
+		// the chunk again.
+		s.log.Error("ingest: read the run's injection flag", "trace_id", traceID, "error", err)
+		httpx.Fail(w, http.StatusServiceUnavailable, "unavailable", "the run could not be read; send it again")
+		return
+	}
 
 	// Build redactor for this run's scope (T7/S7): stored-secret values plus
 	// multi-line env_var key material. Variable values and per-run prompt answers
@@ -99,7 +119,7 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("ingest redaction: resolve failed; global dictionary still applies",
 			"trace_id", traceID, "error", injectErr)
 	}
-	redactor, err := NewRedactor(r.Context(), s.db, s.cfg, scope, injectRedact...)
+	redactor, err := NewRedactor(r.Context(), s.db, s.cfg, scope, RunAgencyIDs(r.Context(), s.db, traceID), injectRedact...)
 	redactorBroken := err != nil
 	if redactorBroken {
 		s.log.Error("build redactor", "trace_id", traceID, "error", err)
@@ -119,6 +139,25 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("ingest: incomplete redaction for a secret-bearing run; failing closed",
 			"trace_id", traceID, "resolve_error", injectErr, "redactor_error", err,
 			"resolved_values", len(injectRedact))
+		// The FINAL chunk (2.5.0 C11, present defect 83, question 106): refusing it
+		// for good left the run `running` for good whenever the fault does not
+		// clear. Its outcome is no secret: the run ends with its exit code and
+		// duration, none of this request's text is stored, and the log says why.
+		// At once when the fault is one that cannot clear (the run's secret now
+		// resolves to nothing: its binding deleted or its job pruned mid-run); for
+		// one that may (a resolve that failed, a redactor that could not be built)
+		// the chunk is refused, and the agent re-sends it, until unredactableGrace
+		// has passed since the first refusal.
+		if r.Header.Get("X-Log-Partial") != "1" {
+			permanent := injectErr == nil && !redactorBroken
+			first, _ := s.unredactableSince.LoadOrStore(traceID, time.Now())
+			if permanent || time.Since(first.(time.Time)) >= unredactableGrace {
+				s.unredactableSince.Delete(traceID)
+				s.endUnredactable(r, traceID, entityCode, jobName, scope, runnerID)
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
 		httpx.Fail(w, http.StatusServiceUnavailable, "redactor_unavailable",
 			"cannot fully redact a secret-bearing run's output right now; refusing to persist it un-redacted")
 		return
@@ -148,8 +187,14 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	// code compared against redacted bytes on disk — causing spurious 409s after any
 	// redaction event. Using log_raw_offset keeps both sides in the same unit.
 	var rawOffset int64
-	_ = s.db.QueryRowContext(r.Context(),
-		`SELECT COALESCE(log_raw_offset, 0) FROM runs WHERE id = ?`, traceID).Scan(&rawOffset)
+	if err := s.db.QueryRowContext(r.Context(),
+		`SELECT COALESCE(log_raw_offset, 0) FROM runs WHERE id = ?`, traceID).Scan(&rawOffset); err != nil {
+		// A failed read read as offset 0, which opens the log with O_TRUNC (2.5.0
+		// C12, question 120). Refused; the agent sends the chunk again.
+		s.log.Error("ingest: read the run's log offset", "trace_id", traceID, "error", err)
+		httpx.Fail(w, http.StatusServiceUnavailable, "unavailable", "the run could not be read; send it again")
+		return
+	}
 
 	// SU-9: cap the cumulative per-run log size. This endpoint is intentionally
 	// exempt from the global 2 MiB body cap (a run streams many chunks), which
@@ -161,6 +206,15 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	// loop against the on-disk size. A cap of 0 disables the check.
 	maxRunLog := int64(s.cfg.MaxRunLogBytes)
 	if maxRunLog > 0 && rawOffset >= maxRunLog {
+		// The run's FINAL chunk still ends it (2.5.0 C12, present defect 92): its
+		// text is discarded like the rest past the cap, its envelope gives the
+		// outcome. Refused, the run stayed `running` for good (the reaper acts only
+		// on a runner gone silent) and its agent re-sent it while it lived.
+		if r.Header.Get("X-Log-Partial") != "1" {
+			s.endWithoutText(r, traceID, entityCode, jobName, scope, runnerID, "", "")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		httpx.Fail(w, http.StatusRequestEntityTooLarge, "log_limit_exceeded",
 			"run log has reached the maximum size; further output is discarded")
 		return
@@ -225,6 +279,7 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	var ingestBytes int
 	var truncated bool
 	outputs := map[string]string{} // A12 captured inter-job outputs (raw values)
+	agentPrefixes := execspec.AgentPrefixesOutput(runType)
 	counter := &rawByteCounter{r: r.Body}
 	scanner := bufio.NewScanner(counter)
 	scanner.Buffer(make([]byte, 1<<20), 1<<20) // 1 MiB max line
@@ -237,7 +292,10 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 
 		// A12: parse output markers from the RAW line (before redaction) so the
 		// captured value is exact; the line is still persisted redacted below.
-		if k, v, ok := execspec.ParseOutputMarker(string(line)); ok {
+		// The agent's shell-over-SSH fan-out prefixes every remote line with
+		// "[host] ", so on those runs — and only those — the marker is looked
+		// for behind that prefix (see execspec.ParseRunnerOutputMarker).
+		if k, v, ok := execspec.ParseRunnerOutputMarker(string(line), agentPrefixes); ok {
 			outputs[k] = v
 		}
 
@@ -250,6 +308,12 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 		if maxRunLog > 0 && persistedStart+int64(ingestBytes)+int64(len(redacted))+1 > maxRunLog {
 			_, _ = f.WriteString("cronomicon: run log size limit reached; further output discarded\n")
 			truncated = true
+			// The line that crosses the cap may be the last, the envelope itself:
+			// a final chunk reads it (raw, as the lines after it are read) for the
+			// run's outcome (C12.4's re-review; it ended as log_stream_lost).
+			if t := strings.TrimSpace(string(line)); t != "" {
+				lastLine = t
+			}
 			break
 		}
 
@@ -264,18 +328,27 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 
 	// SU-9: the run tripped its log-size ceiling. Pin the raw offset AT the ceiling
 	// so every subsequent chunk short-circuits at the pre-check above (no duplicate
-	// appends on retry), account the bytes written this request, and refuse with 413.
-	// We do NOT finalize the run here — a later chunk may still carry a normal
-	// terminal envelope; if the runner gives up, the orphan reaper reconciles it.
+	// appends on retry), account the bytes written this request, and refuse a
+	// partial chunk with 413. A FINAL chunk ends the run (2.5.0 C12, present defect
+	// 92): the rest of its body is read, unstored, for its last line, the envelope,
+	// and the run ends below as any other. Until then it was refused too, and
+	// nothing ever closed the run.
 	if truncated {
 		if _, dbErr := s.db.ExecContext(r.Context(),
 			`UPDATE runs SET log_raw_offset = ? WHERE id = ?`, maxRunLog, traceID); dbErr != nil {
 			s.log.Error("cap log_raw_offset", "trace_id", traceID, "error", dbErr)
 		}
-		metrics.AddLogIngest(ingestBytes, 1)
-		httpx.Fail(w, http.StatusRequestEntityTooLarge, "log_limit_exceeded",
-			"run log has reached the maximum size; further output is discarded")
-		return
+		if r.Header.Get("X-Log-Partial") == "1" {
+			metrics.AddLogIngest(ingestBytes, 1)
+			httpx.Fail(w, http.StatusRequestEntityTooLarge, "log_limit_exceeded",
+				"run log has reached the maximum size; further output is discarded")
+			return
+		}
+		for scanner.Scan() {
+			if line := strings.TrimSpace(scanner.Text()); line != "" {
+				lastLine = line
+			}
+		}
 	}
 	// H2/DEC-2 — refuse: an ::cronomicon-output:: value that carries an injected
 	// secret would propagate that secret VERBATIM into outputs_json, into a child
@@ -452,10 +525,75 @@ func exitCodeToStatus(code int) string {
 
 // finalizeRun transitions a run to a terminal status and emits run-end activity.
 // This is B4's ownership of the running→terminal transition seam.
+// unredactableGrace is how long a secret-bearing run's final chunk is refused
+// for a redaction fault that may clear before the run is ended without it
+// (C11, defect 83). A seam for tests.
+var unredactableGrace = 10 * time.Minute
+
+// reasonLogNotRedactable is the end reason of a run whose final chunk could not
+// be redacted and was not stored (endUnredactable).
+const reasonLogNotRedactable = "log_not_redactable"
+
+// noteLogNotRedactable is the line written to such a run's log in place of
+// the chunk.
+const noteLogNotRedactable = "cronomicon: the end of this run's output was not stored: it could not be redacted " +
+	"(a secret it was given can no longer be resolved). The run's outcome and exit code are kept."
+
+// endUnredactable ends a secret-bearing run from its final chunk without
+// storing any of that chunk's text (C11, defect 83): the body is read to its
+// last line, the trailing envelope gives the outcome, and the log gets one
+// line saying why the rest is missing. Captured outputs are not read either:
+// they are text of the run. A chunk with no envelope ends the run as lost, as
+// below.
+func (s *Service) endUnredactable(r *http.Request, traceID, entityCode, jobName, scope, runnerID string) {
+	s.endWithoutText(r, traceID, entityCode, jobName, scope, runnerID, noteLogNotRedactable, reasonLogNotRedactable)
+}
+
+// endWithoutText ends a run from its final chunk, storing none of the chunk's
+// text: the body is read to its last line, whose envelope gives the outcome, and
+// note (when there is one) is appended to the log. defaultReason is the end
+// reason when the envelope names none. A chunk with no envelope ends the run as
+// lost. Used for a chunk that cannot be redacted (C11) and for one that arrives
+// once the run's log is at its cap (C12, present defect 92).
+func (s *Service) endWithoutText(r *http.Request, traceID, entityCode, jobName, scope, runnerID, note, defaultReason string) {
+	var last string
+	scanner := bufio.NewScanner(r.Body)
+	scanner.Buffer(make([]byte, 1<<20), 1<<20)
+	for scanner.Scan() {
+		if line := strings.TrimSpace(scanner.Text()); line != "" {
+			last = line
+		}
+	}
+	if note != "" {
+		if err := s.ensureLogDir(entityCode); err == nil {
+			if logPath, perr := s.logPath(entityCode, traceID); perr == nil {
+				if f, oerr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640); oerr == nil {
+					_, _ = f.WriteString(note + "\n")
+					_ = f.Close()
+				}
+			}
+		}
+	}
+	env := parseTrailingEnvelope(last)
+	if env == nil {
+		s.finalizeRun(r.Context(), traceID, jobName, scope, runnerID, "failure", nil, 0, "log_stream_lost")
+		return
+	}
+	reason := env.Reason
+	if reason == "" {
+		reason = defaultReason
+	}
+	s.finalizeRun(r.Context(), traceID, jobName, scope, runnerID,
+		exitCodeToStatus(env.ExitCode), &env.ExitCode, env.DurationMs, reason)
+}
+
 func (s *Service) finalizeRun(ctx context.Context, traceID, jobName, scope, runnerID,
 	status string, exitCode *int, durationMs int64, reason string) {
 
 	ts := now()
+	// A refusal of this run's final chunk is no longer waited on (C11's grace):
+	// until 2.5.0 C12 the entry outlived a run that ended any other way.
+	s.unredactableSince.Delete(traceID)
 
 	// 'danger' is an API-layer concept; DB status is always 'failure' for bad exits.
 	outcome := status
@@ -577,9 +715,11 @@ func (s *Service) HandleGetLog(w http.ResponseWriter, r *http.Request) {
 
 	// Verify the run exists and get its scope + log folder.
 	var scope, archivedAt sql.NullString
-	var entityCode string
+	var entityCode, runOwner, owner string // runOwner: the agency the run's scope is looked for in (I2); owner: whose the run is (1480)
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT scope, COALESCE(entity_code,''), log_archived_at FROM runs WHERE id = ?`, traceID).Scan(&scope, &entityCode, &archivedAt)
+		`SELECT scope, COALESCE(entity_code,''), log_archived_at, `+agencyid.RunScopeOwnerSQL("agencies_json")+`,
+		        `+agencyid.ColumnOwnerSQL("runs", "owner_agency")+`
+		   FROM runs WHERE id = ?`, traceID).Scan(&scope, &entityCode, &archivedAt, &runOwner, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 		return
@@ -597,7 +737,9 @@ func (s *Service) HandleGetLog(w http.ResponseWriter, r *http.Request) {
 		if scope.Valid {
 			scStr = scope.String
 		}
-		if !auth.ScopeReadable(id, scStr) {
+		// Whose the run is first (2.5.0 C2, CF-1): another agency's no-scope
+		// run, and Global's, passed the scope check, output and all.
+		if !id.ReadsAgency(owner) || !auth.ScopeReadableIn(id, runOwner, scStr) {
 			// LU-9: audited like every scope denial in internal/api. This one is
 			// worth more than most — it guards run OUTPUT, which carries whatever
 			// the job printed — so a walk across trace ids must be visible.
@@ -605,7 +747,8 @@ func (s *Service) HandleGetLog(w http.ResponseWriter, r *http.Request) {
 				s.authSvc.AuditDenied(r, id.Email, "insufficient_scope", scStr,
 					r.Method+" "+r.URL.Path+": scope access denied")
 			}
-			httpx.Fail(w, http.StatusForbidden, "forbidden", "scope access denied")
+			// As absent (question 72; it was 403, which confirmed the run).
+			httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 			return
 		}
 	}

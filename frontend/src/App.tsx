@@ -17,7 +17,9 @@ import { EnvVars } from "./views/EnvVars";
 import { Scopes } from "./views/Scopes";
 import { Settings } from "./views/Settings";
 import { Runners } from "./views/Runners";
+import { Notices } from "./views/Notices";
 import { TimezoneProvider } from "./timezone-context";
+import { AgencyProvider } from "./agency";
 import { useTheme } from "./theme-context";
 import { c } from "./theme";
 
@@ -44,6 +46,8 @@ export function App() {
 
   return (
     <TimezoneProvider>
+      {/* 2.4.4: one agency at a time; nothing below renders before it is known. */}
+      <AgencyProvider>
       <Routes>
       <Route element={<Shell />}>
         <Route index element={<Dashboard />} />
@@ -70,8 +74,13 @@ export function App() {
         <Route path="env-vars" element={<EnvVars />} />
         <Route path="runners" element={<Runners />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="notices" element={<Notices />} />
+        {/* 2.5.2 OP-25 — the Operations overview is the Dashboard with All
+            agencies chosen; old links and bookmarks land there. */}
+        <Route path="overview" element={<Navigate to="/?agency=overview" replace />} />
       </Route>
       </Routes>
+      </AgencyProvider>
     </TimezoneProvider>
   );
 }

@@ -41,6 +41,15 @@ const FILES = [
     type: "text/x-shellscript; charset=utf-8",
   },
   {
+    // The check an operator runs as root on a runner host after installing a
+    // second agent (--instance): is each agent's user kept out of the others'
+    // files? Published beside the installer so the host fetches it from the
+    // server it already reaches (runner-install.html §3).
+    src: "backend/deploy/runner-isolation-check.sh",
+    publish: "runner-isolation-check.sh",
+    type: "text/x-shellscript; charset=utf-8",
+  },
+  {
     // The annotated runner.env skeleton — fetched by the "Provision a Runner"
     // helper (runner-provision.ts), which patches values into it verbatim so
     // the emitted env can't drift from this single source (Phase 6).

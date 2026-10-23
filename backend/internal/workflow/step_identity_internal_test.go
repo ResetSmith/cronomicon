@@ -48,7 +48,7 @@ func TestPinnedStepResolvesTheTwinItNames(t *testing.T) {
 		{"uid-a", "bash", "fin-prod"},
 		{"uid-b", "ansible", "dss-prod"},
 	} {
-		src, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "deploy", UID: tc.uid}, "cronomicon")
+		src, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "deploy", UID: tc.uid}, "cronomicon", "")
 		if !ok {
 			t.Fatalf("%s did not resolve", tc.uid)
 		}
@@ -65,7 +65,7 @@ func TestPinnedStepResolvesTheTwinItNames(t *testing.T) {
 
 	// The name-only step over the same catalog still refuses — unchanged, and the
 	// reason the pinned form exists.
-	_, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "deploy"}, "cronomicon")
+	_, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "deploy"}, "cronomicon", "")
 	if !ok || jd.unavailable == "" {
 		t.Errorf("ambiguous name-only step = (%v, %q), want a refusal", ok, jd.unavailable)
 	}
@@ -80,7 +80,7 @@ func TestPinnedStepIgnoresSourcePrecedence(t *testing.T) {
 	seedJob(t, e, "uid-git", "report", "git", "bash", "")
 	seedJob(t, e, "uid-ama", "report", "cronomicon", "ansible", "")
 
-	src, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "report", Source: "cronomicon", UID: "uid-git"}, "cronomicon")
+	src, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "report", Source: "cronomicon", UID: "uid-git"}, "cronomicon", "")
 	if !ok {
 		t.Fatal("pinned step did not resolve")
 	}
@@ -98,7 +98,7 @@ func TestDanglingPinnedStepRefuses(t *testing.T) {
 	ctx := context.Background()
 	seedJob(t, e, "uid-live", "deploy", "cronomicon", "bash", "")
 
-	src, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "deploy", UID: "uid-gone"}, "cronomicon")
+	src, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "deploy", UID: "uid-gone"}, "cronomicon", "")
 	if !ok {
 		t.Fatal("a dangling pin must resolve to a REFUSAL def, not to nothing — the step needs a terminal child run")
 	}
@@ -127,7 +127,7 @@ func TestNameOnlyStepKeepsA11Precedence(t *testing.T) {
 		{"git", "cronomicon", "uid-git"}, // an explicit override is absolute
 		{"cronomicon", "git", "uid-ama"}, //
 	} {
-		_, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "report", Source: tc.override}, tc.wfSource)
+		_, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "report", Source: tc.override}, tc.wfSource, "")
 		if !ok || jd.uid != tc.wantUID {
 			t.Errorf("(override=%q, wf=%q) resolved %q, want %q", tc.override, tc.wfSource, jd.uid, tc.wantUID)
 		}
@@ -147,7 +147,7 @@ func TestLookupJobDefsKeepsTwinsApart(t *testing.T) {
 		{Type: "job", Name: "deploy", JobUID: "uid-a"},
 		{Type: "job", Name: "deploy", JobUID: "uid-b"},
 	}
-	defs, err := e.lookupJobDefs(ctx, steps, "cronomicon")
+	defs, err := e.lookupJobDefs(ctx, steps, "cronomicon", "")
 	if err != nil {
 		t.Fatalf("lookupJobDefs: %v", err)
 	}

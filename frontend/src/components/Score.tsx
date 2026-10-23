@@ -1,9 +1,9 @@
-import { useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { c } from "../theme";
 import { Btn, CopyText, statusLabel, statusTone } from "./ui";
 import { fmtDuration } from "../utils/datetime";
 import {
-  executorLabel,
+  runnerLabel,
   frac,
   groupMarks,
   inWindow,
@@ -55,7 +55,8 @@ function markLabel(g: MarkGroup, stampInZone: (at: number) => string): string {
     const verb = g.tense === "past" ? "ran" : "scheduled";
     return `${g.members.length} runs ${verb} at ${when}, worst result ${outcome}`;
   }
-  const name = g.members[0]?.jobName ?? "Run";
+  const m0 = g.members[0];
+  const name = m0 ? (m0.agency ? `${m0.jobName}, ${m0.agency}` : m0.jobName) : "Run";
   return g.tense === "past" ? `${name}, ${outcome}, ran ${when}` : `${name}, scheduled ${when}`;
 }
 
@@ -97,6 +98,12 @@ export interface ScoreProps {
   /** The forward projection stopped here because the API capped it (D-2b). */
   truncatedAt?: number | null;
   loading?: boolean;
+  /**
+   * 2.4.4 — the readout always shows something: at rest the most recent runs
+   * (else the next scheduled), and after the pointer leaves, the mark it last
+   * rested on rather than the idle line. The Operations overview's Score.
+   */
+  pinnedReadout?: boolean;
   /* FX-1 — the full score is an EXPANSION of this panel, not a second block below
      it. Supply these three and the header grows an expand control that swaps the
      single lane for the per-job staves inside the same surface; omit them and the
@@ -141,7 +148,7 @@ export function Score(props: ScoreProps) {
 // The compact single-lane body: the plot and its readout. Extracted from Score
 // unchanged (FX-1) so the shell above can swap it out wholesale — every line
 // below this point behaves exactly as it did when Score rendered it directly.
-function ScorePlot({ marks, now, hourInZone, labelInZone, stampInZone, timeInZone, runHref, onOpenRun, truncatedAt, loading }: ScoreProps) {
+function ScorePlot({ marks, now, hourInZone, labelInZone, stampInZone, timeInZone, runHref, onOpenRun, truncatedAt, loading, pinnedReadout }: ScoreProps) {
   const w = useMemo(() => scoreWindow(now), [now]);
   const groups = useMemo(() => groupMarks(marks.filter((m) => inWindow(w, m.at))), [marks, w]);
   const axis = useMemo(() => ticks(w, hourInZone), [w, hourInZone]);
@@ -157,7 +164,20 @@ function ScorePlot({ marks, now, hourInZone, labelInZone, stampInZone, timeInZon
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [cursorKey, setCursorKey] = useState<string | null>(null);
   const plotRef = useRef<HTMLDivElement>(null);
-  const activeKey = hoveredKey ?? cursorKey;
+  // pinnedReadout (2.4.4): the last mark pointed at stays shown, and at rest
+  // the most recent past group (else the next future one) is.
+  const [lastKey, setLastKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (pinnedReadout && hoveredKey != null) setLastKey(hoveredKey);
+  }, [pinnedReadout, hoveredKey]);
+  const restKey = useMemo(() => {
+    if (!pinnedReadout) return null;
+    const past = groups.filter((g) => g.tense === "past");
+    const g = past.length > 0 ? past[past.length - 1] : groups.find((x) => x.tense === "future");
+    return g ? groupKey(g) : null;
+  }, [pinnedReadout, groups]);
+  const lastShown = lastKey != null && groups.some((g) => groupKey(g) === lastKey) ? lastKey : null;
+  const activeKey = hoveredKey ?? cursorKey ?? (pinnedReadout ? (lastShown ?? restKey) : null);
   const active = activeKey != null ? (groups.find((g) => groupKey(g) === activeKey) ?? null) : null;
   // The keyboard cursor specifically — aria-activedescendant tracks this and not
   // `active`, so hovering does not narrate (H-1). Null when the cursor's mark has
@@ -333,7 +353,7 @@ function ScorePlot({ marks, now, hourInZone, labelInZone, stampInZone, timeInZon
           ))}
       </div>
 
-      <Readout group={active} stampInZone={stampInZone} timeInZone={timeInZone} runHref={runHref} onOpenRun={onOpenRun} hasMarks={groups.length > 0} />
+      <Readout group={active} stampInZone={stampInZone} timeInZone={timeInZone} runHref={runHref} onOpenRun={onOpenRun} hasMarks={groups.length > 0} fixed={pinnedReadout} />
     </>
   );
 }
@@ -523,6 +543,11 @@ function Notehead({
   );
 }
 
+// 2.4.4 — the fixed readout's height: its stamp line, the column heads and
+// READOUT_ROWS rows (about 21px each), inside the slot's 10px padding.
+const READOUT_ROWS = 10;
+const READOUT_FIXED_H = 20 + 26 + 24 + READOUT_ROWS * 21 + 4;
+
 // D-4: a FIXED readout slot, not a floating tooltip. The slot never moves, so
 // the eye does not chase it across the plot, and it has room to enumerate a
 // coincident group's members — which a tooltip pinned to a 10px notehead does not.
@@ -533,6 +558,7 @@ function Readout({
   runHref,
   onOpenRun,
   hasMarks,
+  fixed,
 }: {
   group: MarkGroup | null;
   stampInZone: (at: number) => string;
@@ -540,6 +566,13 @@ function Readout({
   runHref?: (traceId: string) => string;
   onOpenRun?: (traceId: string) => void;
   hasMarks: boolean;
+  /**
+   * 2.4.4 — a FIXED height, room for READOUT_ROWS jobs, the rest scrolling
+   * under a header that stays: moving across the plot from a one-run mark to
+   * a nineteen-run chord no longer resizes the slot (the owner found it
+   * distracting). The Operations overview's Score.
+   */
+  fixed?: boolean;
 }) {
   // VU2-2 — the slot takes its panel treatment only when it is CARRYING
   // something. At rest it holds one line of instruction, and a bordered card
@@ -555,7 +588,11 @@ function Readout({
   return (
     <div
       aria-live="polite"
+      data-testid="score-readout"
       style={{
+        ...(fixed
+          ? { height: READOUT_FIXED_H, boxSizing: "border-box" as const, display: "flex", flexDirection: "column" as const }
+          : {}),
         minHeight: 58,
         marginTop: 10,
         padding: "10px 14px",
@@ -572,7 +609,7 @@ function Readout({
           {hasMarks ? "Hover the timeline, or tab into it and use the arrow keys." : "No runs or scheduled runs in this window."}
         </span>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, ...(fixed ? { flex: 1, minHeight: 0 } : {}) }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontFamily: c.mono, color: c.text }}>{stampInZone(group.at)}</span>
             <span style={{ color: c.textMuted, fontSize: c.fontXs }}>
@@ -590,7 +627,7 @@ function Readout({
               proportion to their content, so a wider window opens the table
               out rather than leaving a packed block beside dead space; the
               View-run column anchors the right edge. A projection has no
-              trigger, executor or trace, so those heads are omitted for a
+              trigger, runner or trace, so those heads are omitted for a
               future group rather than labelling empty columns. */}
           {(() => {
             const past = group.tense === "past";
@@ -605,19 +642,24 @@ function Readout({
               padding: "0 14px 4px 0",
               borderBottom: `1px solid ${c.borderLight}`,
               whiteSpace: "nowrap",
+              // Fixed: the head stays while the rows scroll under it.
+              ...(fixed ? { position: "sticky" as const, top: 0, background: c.panel, zIndex: 1 } : {}),
             };
             const cell: CSSProperties = { padding: "4px 14px 0 0", verticalAlign: "baseline", whiteSpace: "nowrap" };
             const quiet: CSSProperties = { ...cell, fontSize: c.fontXs, color: c.textMuted };
             const cap: CSSProperties = { maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" };
-            return (
+            // 2.4.4 — a Score that spans agencies says whose each job is.
+            const agencies = group.members.some((m) => !!m.agency);
+            const table = (
               <table style={{ borderCollapse: "collapse", tableLayout: "auto", width: "100%" }}>
                 <thead>
                   <tr>
                     <th scope="col" style={head}>Job</th>
+                    {agencies && <th scope="col" style={head}>Agency</th>}
                     <th scope="col" style={head}>Status</th>
                     <th scope="col" style={head}>{past ? "Started" : "Fires"}</th>
                     {past && <th scope="col" style={head}>Trigger</th>}
-                    {past && <th scope="col" style={head}>Executor</th>}
+                    {past && <th scope="col" style={head}>Runner</th>}
                     {past && <th scope="col" style={head}>Duration</th>}
                     {past && <th scope="col" style={head}>Trace</th>}
                     {past && runHref && <th scope="col" style={{ ...head, paddingRight: 0, textAlign: "right" }}><span style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>Open</span></th>}
@@ -630,6 +672,7 @@ function Readout({
                         {m.jobName}
                         {m.ownerKind === "workflow" && <span style={{ fontSize: c.fontXs, color: c.info, fontWeight: 400, marginLeft: 8 }}>workflow</span>}
                       </td>
+                      {agencies && <td style={{ ...cell, ...cap, color: c.textSec }}>{m.agency ?? ""}</td>}
                       <td style={{ ...cell, color: markInk(m.status, group.tense), fontSize: c.fontXs }}>
                         {/* A future mark defaults to "scheduled", not "queued": it is a
                             projection, not something the scheduler has accepted, and
@@ -639,7 +682,7 @@ function Readout({
                       </td>
                       <td style={{ ...quiet, fontFamily: c.mono }}>{(timeInZone ?? stampInZone)(m.at)}</td>
                       {past && <td style={{ ...quiet, ...cap }} title={triggerLabel(m) || undefined}>{triggerLabel(m)}</td>}
-                      {past && <td style={{ ...quiet, ...cap }} title={executorLabel(m) || undefined}>{executorLabel(m)}</td>}
+                      {past && <td style={{ ...quiet, ...cap }} title={runnerLabel(m) || undefined}>{runnerLabel(m)}</td>}
                       {past && <td style={{ ...quiet, fontFamily: c.mono }}>{m.durationMs != null ? fmtDuration(m.durationMs) : ""}</td>}
                       {past && (
                         <td style={{ ...quiet, fontFamily: c.mono }}>
@@ -667,6 +710,16 @@ function Readout({
                   ))}
                 </tbody>
               </table>
+            );
+            return fixed ? (
+              // The scrollbar's room is kept from the start, so the table never
+              // overflows sideways when it appears (the walkthrough found a
+              // horizontal scrollbar and the View-run column clipped).
+              <div data-testid="score-readout-rows" style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", scrollbarGutter: "stable" }}>
+                {table}
+              </div>
+            ) : (
+              table
             );
           })()}
         </div>

@@ -401,11 +401,13 @@ func TestRunAnsibleOptionsRunTypeGate(t *testing.T) {
 	client, csrf := devLoginWithCSRF(t, ts)
 	jobID := jobRowID(t, pool, "idjob")
 
-	if code, _ := identityRun(t, ts, client, csrf, jobID, map[string]any{"ansibleCheck": true}); code != http.StatusUnprocessableEntity {
-		t.Errorf("bash + ansibleCheck = %d, want 422", code)
+	// 422 `ansible_only`: the code names the run type. It was `invalid_executor`
+	// until 2.3.0, when there was an executor to be invalid (LR-50).
+	if code, resp := triggerRun(t, client, csrf, ts.URL, jobID, map[string]any{"ansibleCheck": true}); code != http.StatusUnprocessableEntity || resp["code"] != "ansible_only" {
+		t.Errorf("bash + ansibleCheck = %d %v, want 422 ansible_only", code, resp["code"])
 	}
-	if code, _ := identityRun(t, ts, client, csrf, jobID, map[string]any{"ansibleTags": []string{"x"}}); code != http.StatusUnprocessableEntity {
-		t.Errorf("bash + ansibleTags = %d, want 422", code)
+	if code, resp := triggerRun(t, client, csrf, ts.URL, jobID, map[string]any{"ansibleTags": []string{"x"}}); code != http.StatusUnprocessableEntity || resp["code"] != "ansible_only" {
+		t.Errorf("bash + ansibleTags = %d %v, want 422 ansible_only", code, resp["code"])
 	}
 	// The gate keys on "did the operator set anything", so an explicit false must
 	// NOT trip it — a client that always sends the field stays working.

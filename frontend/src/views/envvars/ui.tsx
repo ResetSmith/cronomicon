@@ -9,6 +9,19 @@ import { useGet, rows } from "../../hooks";
 // tab views that import them from this kit.
 export { csrfHeader, errMsg };
 
+/**
+ * rowFlagWhy — why a row's Edit or Delete is off, from the row's own flag
+ * (R8: canEdit/canDelete, answered by the rule its route uses). "" when the
+ * flag allows it or is absent (an older server: the server decides).
+ * `owner` is the owning agency's NAME, as these rows report it.
+ */
+export function rowFlagWhy(flag: boolean | undefined, owner: string | null | undefined, noun: string): string {
+  if (flag !== false) return "";
+  return !owner || owner === globalAgencyName()
+    ? `This ${noun} is ${globalAgencyName()}'s — only a global administrator (a role on every agency) can change it.`
+    : `This ${noun} belongs to ${owner} — only that agency's administrators can change it.`;
+}
+
 // useInlineTags moved to the shared hooks module (CC.18) — the Env Vars tabs now
 // import it from ../../hooks alongside the catalog views.
 
@@ -89,6 +102,7 @@ export function DetailGrid({ children }: { children: ReactNode }) {
 // in was a rename, not a rewrite. Re-exported under the old name so the three
 // tabs' imports keep working.
 import { SectionLabel } from "../../components/ui";
+import { globalAgencyName } from "../../globalName";
 export { SectionLabel as DetailLabel };
 
 export function DetailRow({ label, value, last }: { label: string; value: ReactNode; last?: boolean }) {
@@ -369,7 +383,14 @@ export function OwnerChip({ owner }: { owner?: string | null }) {
   if (!owner) return null;
   return (
     <span
-      title={`Owned by ${owner}. This department's runs resolve this row before any shared row of the same name.`}
+      title={
+        // 2.5.0 C11, defect 90: a row is its owner's runs' alone since 2.4.0
+        // (§0a, IN-6). The text said Global's was every agency's, resolved after
+        // an agency's own: an order that no longer exists.
+        owner === globalAgencyName()
+          ? `Owned by ${owner}: used by ${owner}'s runs only, and changed only by global administrators.`
+          : `Owned by ${owner}: used by ${owner}'s runs only, and changed by its administrators.`
+      }
       style={{
         padding: "1px 6px",
         borderRadius: c.radiusChip,
@@ -450,11 +471,12 @@ export function AmbiguityBadge({ ambiguity }: { ambiguity: { owners: string[]; r
 // actually is when they ask it. The reads used here are the session-gated
 // membership matrices that exist precisely so views can label rows.
 //
-// EMPTY MEMBERSHIP IS NOT BLANK. Under AG-Q1(b) an entity in no agency is
-// unrestricted — reachable from everywhere — which reads as MORE access, not
-// less. AgencyCell says "unrestricted" in words for exactly the reason the
-// Honest View says "No access": the dangerous state must never look like
-// missing data.
+// EMPTY MEMBERSHIP IS NOT BLANK. Every row belongs to an agency since 2.3.0
+// (Global is one, and is where a row with no other agency is), so a row in NO
+// agency is damage: nothing can use it until a global administrator re-homes
+// it. AgencyCell says so in words, for the reason the Honest View says "No
+// access": a state that needs someone must never look like missing data.
+// (Until 2.3.0 the empty set meant "unrestricted", and the cell said that.)
 
 /** Map of entity id → agency display names, from the kind's membership matrix. */
 export function useEntityAgencies(kind: "secret" | "env-var" | "ssh-credential", bump?: number) {
@@ -477,20 +499,53 @@ export function useEntityAgencies(kind: "secret" | "env-var" | "ssh-credential",
   }, [agencyData, memberData]);
 }
 
-/** The Agencies cell: membership chips, or the word the empty set actually means. */
-export function AgencyCell({ names }: { names: string[] | undefined }) {
-  if (!names || names.length === 0) {
+/**
+ * The Agencies cell: membership chips, or the word the empty set actually means.
+ *
+ * `owner` (the owning agency's name) is named too when it is not among the
+ * agencies listed: a row several agencies shared before 2.3.0 is Global's and
+ * lists them, and only Global's runs use it (2.5.1 SG-44). Elsewhere the owner
+ * is one of the chips and is not repeated.
+ */
+export function AgencyCell({ names, owner }: { names: string[] | undefined; owner?: string }) {
+  // UNKNOWN is not damage: until the membership read has answered (or if it
+  // cannot), there is no entry for the row, and saying "no agency" in red about
+  // every row on the page would be a false alarm. Only a row the server LISTED
+  // with no agency is said to have none.
+  if (names === undefined) {
+    return <span style={{ color: c.textMuted, fontSize: c.fontXs }}>—</span>;
+  }
+  if (names.length === 0) {
     return (
       <span
-        title="No agency restriction — reachable from every department."
-        style={{ color: c.textSec, fontSize: c.fontXs, fontStyle: "italic", cursor: "help" }}
+        title="In no agency: nothing can use this until a global administrator gives it one. It is listed in Notices."
+        style={{ color: c.danger, fontSize: c.fontXs, fontStyle: "italic", cursor: "help" }}
       >
-        unrestricted
+        no agency
       </span>
     );
   }
+  const ownerApart = !!owner && !names.includes(owner);
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      {ownerApart && (
+        <span
+          title={`Owned by ${owner}: shared with the agencies beside it before 2.3.0, and used only by ${owner}'s runs. They read it; ${owner} changes it.`}
+          style={{
+            padding: "1px 7px",
+            borderRadius: c.radiusChip,
+            fontSize: c.fontXs,
+            fontFamily: c.mono,
+            background: c.panel2,
+            border: `1px dashed ${c.border}`,
+            color: c.textSec,
+            whiteSpace: "nowrap",
+            cursor: "help",
+          }}
+        >
+          {owner} (owner)
+        </span>
+      )}
       {names.map((n) => (
         <span
           key={n}

@@ -57,13 +57,18 @@ type RetentionPolicy struct {
 	// HostKeyLedgerDays bounds the host-key ledger's history (SB). In-force
 	// keys are out of its reach: see the row in runSweep.
 	HostKeyLedgerDays int
+	// SecretUsesDays bounds the record of which runs used which secret and key
+	// (2.5.1 SG2.1).
+	SecretUsesDays int
 	// PurgeDefinition hard-deletes one binned definition, wired to the API's
 	// purgeDefinition so the reaper and the manual "Purge now" button cannot
 	// disagree about what permanent deletion means (trigger cascades, the entity
 	// code retiring, the log folder being annotated rather than destroyed).
 	// Injected rather than reimplemented here because internal/db must not import
-	// internal/api; nil disables the definition purge entirely.
-	PurgeDefinition func(ctx context.Context, kind, name string) (bool, error)
+	// internal/api; nil disables the definition purge entirely. uid names the
+	// one binned definition of the name (2.5.0 C11, defect 78): by name alone,
+	// a name two agencies had binned was never purged.
+	PurgeDefinition func(ctx context.Context, kind, name, uid string) (bool, error)
 	// LogDir is the effective run-log directory (settings.ResolveLogDir). Empty
 	// disables the reaper entirely, so a lookup failure degrades to today's
 	// behaviour rather than sweeping the wrong tree.
@@ -107,6 +112,14 @@ type RetentionPolicy struct {
 	// Upload, if non-nil, ships each nightly snapshot to S3 (A4). main wires it
 	// from internal/backup so this package needs no S3/settings dependency.
 	Upload func(ctx context.Context, localPath string) error
+	// Seal, if non-nil, encrypts each snapshot before it is kept or shipped
+	// (2.5.1 SG1). It is given the plaintext in the 0700 staging directory and
+	// the path the sealed file must be written to, and returns the fingerprints
+	// of the keys it sealed to: none means no key is set, and the snapshot is
+	// then kept and shipped unencrypted as before (SG-4: encryption is
+	// optional). An error fails the backup with nothing kept or uploaded
+	// (SG-5). main supplies it from internal/backup and internal/settings.
+	Seal func(ctx context.Context, src, dst string) (fingerprints []string, err error)
 	// Reload, if non-nil, is called at the top of every sweep to refresh the
 	// day knobs and LogDir from their authoritative source (LU-2/LU-Q3(a): the
 	// DB settings blob, with env as the bootstrap default). It takes and returns
@@ -140,6 +153,9 @@ func StartRetention(ctx context.Context, pool *sql.DB, p RetentionPolicy, log *s
 		if p.WG != nil {
 			defer p.WG.Done()
 		}
+		// SG-6: a plaintext snapshot a crash left in staging goes at start, not
+		// at the next sweep up to a day later.
+		clearStaging(backupDir(p), log)
 		// Boot catch-up: back up now iff overdue (gated on persisted last-success
 		// so a crash-loop doesn't back up on every restart).
 		if backupOverdue(ctx, pool, backupInterval) {
@@ -240,6 +256,8 @@ func runSweep(ctx context.Context, pool *sql.DB, p RetentionPolicy, log *slog.Lo
 		// longer, independent window (LU-Q4(c)).
 		{"auth_events", "created_at", p.ChangeLogDays},
 		{"schedule_pushes", "created_at", p.SchedulePushesDays},
+		// 2.5.1 SG2.1: which runs used which secret and key, on its own window.
+		{"secret_uses", "at", p.SecretUsesDays},
 		// RX — the reaction delivery log is a delivery log, not a permanent
 		// record: History owns the permanent trail, and a fired reaction's run
 		// carries reacted_to_run_id on the run row precisely so the because-of
@@ -350,26 +368,14 @@ func runSweep(ctx context.Context, pool *sql.DB, p RetentionPolicy, log *slog.Lo
 	// LU-10: the audit stream ages out on its own, longer window.
 	reapAuditLog(p.AuditLogPath, p.AuditLogDays, log)
 
-	// A4 nightly backup: VACUUM INTO a consistent snapshot, then upload to S3.
-	dir := p.BackupDir
-	if dir == "" {
-		dir = "/var/lib/cronomicon/backups"
+	// A4 nightly backup: VACUUM INTO a consistent snapshot, sealed when a backup
+	// key is set (2.5.1 SG1), then upload to S3.
+	dir := backupDir(p)
+	snapshot, fingerprints, err := writeSnapshot(ctx, pool, p, dir, log)
+	if err != nil {
+		return err
 	}
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return fmt.Errorf("create backup dir %s: %w", dir, err)
-	}
-	snapshot := filepath.Join(dir, fmt.Sprintf("cronomicon-%s.db", nowUTC().Format("20060102")))
-	// PP-M2: SQLite's VACUUM INTO refuses to overwrite an existing file, so a
-	// second sweep on the same UTC day (boot catch-up, clock change, manual run)
-	// would error AFTER the prune already ran — pruning rows but producing no
-	// backup. Remove any prior same-day snapshot first so the write is idempotent.
-	if err := os.Remove(snapshot); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove stale snapshot %s: %w", snapshot, err)
-	}
-	if _, err := pool.ExecContext(ctx, "VACUUM INTO ?", snapshot); err != nil {
-		return fmt.Errorf("vacuum into %s: %w", snapshot, err)
-	}
-	log.Info("retention snapshot written", "path", snapshot)
+	log.Info("retention snapshot written", "path", snapshot, "encrypted", len(fingerprints) > 0)
 
 	// Ship it offsite (A4). Optional: skipped when no uploader is configured.
 	// The KEK for stored secrets must NOT live in this same bucket (S14).
@@ -379,27 +385,13 @@ func runSweep(ctx context.Context, pool *sql.DB, p RetentionPolicy, log *slog.Lo
 		}
 	}
 
-	// Prune local snapshot files older than 7 days so they don't accumulate
-	// on the volume indefinitely (PP-M5). Only removes *.db files matching
-	// the cronomicon-YYYYMMDD.db pattern to avoid touching anything unexpected.
-	if entries, err := os.ReadDir(dir); err == nil {
-		cutoffFile := fmt.Sprintf("cronomicon-%s.db", nowUTC().AddDate(0, 0, -7).Format("20060102"))
-		for _, e := range entries {
-			name := e.Name()
-			if !e.IsDir() && strings.HasPrefix(name, "cronomicon-") && strings.HasSuffix(name, ".db") && name < cutoffFile {
-				if rerr := os.Remove(filepath.Join(dir, name)); rerr != nil {
-					log.Warn("retention: failed to remove old snapshot", "file", name, "error", rerr)
-				} else {
-					log.Info("retention: removed old snapshot", "file", name)
-				}
-			}
-		}
-	}
+	pruneSnapshots(dir, log)
 
 	// Success: record the durable artifact's time so monitoring can alert on a
 	// stale/never-run backup, and the boot catch-up can gate on it (PP-H6).
 	now := nowUTC()
 	persistLastSuccess(ctx, pool, now)
+	persistLastSnapshot(ctx, pool, LastSnapshot{File: filepath.Base(snapshot), At: now.Format(time.RFC3339), Recipients: fingerprints})
 	metrics.BackupSucceeded(now)
 	return nil
 }
@@ -612,7 +604,11 @@ func purgeExpiredDefinitions(ctx context.Context, pool *sql.DB, p RetentionPolic
 		return nil // keep forever, or no purger wired (tests)
 	}
 	cutoff := nowUTC().AddDate(0, 0, -p.RecycleBinDays).Format(time.RFC3339)
-	type victim struct{ kind, name string }
+	// Each by its uid (2.5.0 C11, defect 78): two agencies may each bin a
+	// definition of one name, and a purge by name refuses as ambiguous, so
+	// neither was ever purged and the sweep logged an error every night. A row
+	// with no uid (none since 1010's backfill) is purged by name, as before.
+	type victim struct{ kind, name, uid string }
 	var victims []victim
 	for kind, table := range map[string]string{
 		"job":      "jobs",
@@ -620,26 +616,26 @@ func purgeExpiredDefinitions(ctx context.Context, pool *sql.DB, p RetentionPolic
 		"schedule": "schedules",
 	} {
 		rows, err := pool.QueryContext(ctx,
-			`SELECT name FROM `+table+`
+			`SELECT name, COALESCE(uid, '') FROM `+table+`
 			  WHERE source='cronomicon' AND deleted_at IS NOT NULL AND deleted_at < ?`, cutoff)
 		if err != nil {
 			return fmt.Errorf("recycle-bin scan %s: %w", table, err)
 		}
 		for rows.Next() {
-			var name string
-			if err := rows.Scan(&name); err != nil {
+			var name, uid string
+			if err := rows.Scan(&name, &uid); err != nil {
 				rows.Close()
 				return fmt.Errorf("recycle-bin scan %s: %w", table, err)
 			}
-			victims = append(victims, victim{kind, name})
+			victims = append(victims, victim{kind, name, uid})
 		}
 		rows.Close()
 	}
 	purged := 0
 	for _, v := range victims {
-		ok, err := p.PurgeDefinition(ctx, v.kind, v.name)
+		ok, err := p.PurgeDefinition(ctx, v.kind, v.name, v.uid)
 		if err != nil {
-			log.Error("retention: purge definition", "kind", v.kind, "name", v.name, "err", err)
+			log.Error("retention: purge definition", "kind", v.kind, "name", v.name, "uid", v.uid, "err", err)
 			continue
 		}
 		if ok {

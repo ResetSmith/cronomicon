@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { api } from "../../api/client";
+import { api, fetchCapabilities } from "../../api/client";
+import { agenciesFor, useMyAccess } from "../../api/access";
+import { repoLabel, useRepos } from "../../components/RepoPicker";
 import { useGet, rows } from "../../hooks";
 import { c } from "../../theme";
 import { Link } from "react-router-dom";
@@ -13,6 +15,8 @@ interface JobListItem {
   id?: number;
   name: string;
   schedule?: string | null;
+  /** 2.4.0 — the repository a Git job is of; absent for one built in the app. */
+  repoId?: string;
 }
 interface ScheduleEntryDetail {
   name?: string;
@@ -26,7 +30,6 @@ interface JobDetail {
   description?: string | null;
   scope?: string | null;
   host?: string | null;
-  executor?: string | null;
   command?: string | null;
   script?: string | null;
   scriptPath?: string | null;
@@ -118,9 +121,9 @@ function jobSource(d: JobDetail): { kind: "command" | "script" | "scriptPath"; b
   return null;
 }
 
-// "Publish to GitLab" authoring mode for Jobs — reached from Jobs via the hidden
+// "Publish to the repository" authoring mode for Jobs — reached from Jobs via the hidden
 // /jobs/publish route (mirrors how Jobs launches Compose). Authors a `kind: Job`
-// YAML (executor, scope→target_host, concurrency, timeout, retries, tags +
+// YAML (scope→target_host, concurrency, timeout, retries, tags +
 // schedules) and Git-publishes it via POST /schedules/publish with an If-Match
 // base_sha precondition (A2). The push audit lives in History → Schedule Pushes,
 // not here (single source of truth).
@@ -130,7 +133,8 @@ export function PublishBuilder() {
   const jobs = rows<JobListItem>(jobsQ.data);
 
   const [selected, setSelected] = useState<string>(NEW_JOB);
-  const job = selected === NEW_JOB ? null : jobs.find((j) => j.name === selected) ?? null;
+  // By id: two agencies may each have a job of a name (2.4.0).
+  const job = selected === NEW_JOB ? null : jobs.find((j) => String(j.id) === selected) ?? null;
   const detailQ = useGet<JobDetail>(
     () => (job?.id != null ? api.GET("/jobs/{jobId}", { params: { path: { jobId: job.id } } }) : Promise.resolve({ data: null })),
     [job?.id],
@@ -150,8 +154,34 @@ export function PublishBuilder() {
   const [phase, setPhase] = useState<"idle" | "confirm" | "publishing">("idle");
   const [result, setResult] = useState<PublishResult | null>(null);
 
+  // ── which repository (2.4.0, GR-24; R8) ──
+  // A publish names its repository (`repoId`): Global's takes a global
+  // publisher's only, an agency's its own publishers'. The picker offers what
+  // the caller may publish to; the base commit is that repository's.
+  const { repos } = useRepos();
+  const access = useMyAccess();
+  const [globalPublisher, setGlobalPublisher] = useState(false);
+  useEffect(() => {
+    void fetchCapabilities().then((caps) => setGlobalPublisher(!!caps.publishScheduleGlobal));
+  }, []);
+  const mine = new Set(agenciesFor(access ?? null, "publishSchedule").map((a) => a.id));
+  // 2.4.2 (question 55): the row says canPublish; the derivation is for a server that does not.
+  const publishable = repos.filter((r) => r.canPublish ?? (globalPublisher || (r.agencyId !== "global" && mine.has(r.agencyId))));
+  const [repoRaw, setRepoRaw] = useState("");
+  // An existing Git job is edited in the repository it came from, and nowhere
+  // else: the publish route writes wherever it is pointed, so another
+  // repository would get a second job of the name. When the caller may not
+  // publish there, nothing is offered instead.
+  const jobRepo = job?.repoId || "";
+  const repo = jobRepo ? publishable.find((r) => r.id === jobRepo) : (publishable.find((r) => r.id === repoRaw) ?? publishable[0]);
+  const repoId = repo?.id;
+  const jobRepoName = jobRepo ? (repos.find((r) => r.id === jobRepo) ?? { id: jobRepo, agencyId: jobRepo }) : null;
+
   const [syncDep, setSyncDep] = useState(0);
-  const syncQ = useGet<unknown>(() => api.GET("/git/history"), [syncDep]);
+  const syncQ = useGet<unknown>(
+    () => (repoId ? api.GET("/git/history", { params: { query: { repo: repoId } } }) : Promise.resolve({ data: [] } as never)),
+    [syncDep, repoId],
+  );
   const latestSync = rows<SyncEvent>(syncQ.data).find((e) => e.commit);
   const [shaOverride, setShaOverride] = useState<{ sha: string; source: string } | null>(null);
   const baseSha = shaOverride?.sha ?? latestSync?.commit ?? null;
@@ -217,7 +247,7 @@ export function PublishBuilder() {
   const entriesValid = manual || (cleanEntries.length > 0 && entryErrors.every((e) => e === null));
   const hasEnv = cleanEntries.some((e) => e.env.length > 0);
   const sourceOK = isNew ? command.trim() !== "" : jobSource(detail ?? {}) !== null;
-  const canPublish = phase !== "publishing" && !!baseSha && !!jobName && entriesValid && sourceOK;
+  const canPublish = phase !== "publishing" && !!repoId && !!baseSha && !!jobName && entriesValid && sourceOK;
 
   // ── canonical YAML (apiVersion/kind/metadata/spec) with the full Gap B set ──
   const buildYaml = (): string => {
@@ -240,7 +270,6 @@ export function PublishBuilder() {
     // Preserved Gap B / definition fields (so a schedule edit never strips them).
     if (detail?.scope) y += `  scope: ${yamlScalar(detail.scope)}\n`;
     if (detail?.host) y += `  target_host: ${yamlScalar(detail.host)}\n`;
-    if (detail?.executor) y += `  executor: ${yamlScalar(detail.executor)}\n`;
     if (detail?.concurrencyPolicy) y += `  concurrency_policy: ${yamlScalar(detail.concurrencyPolicy)}\n`;
     if (detail?.concurrencyKey) y += `  concurrency_key: ${yamlScalar(detail.concurrencyKey)}\n`;
     if (detail?.timeoutSeconds) y += `  timeout_seconds: ${detail.timeoutSeconds}\n`;
@@ -301,6 +330,7 @@ export function PublishBuilder() {
         content: yaml,
         ...(commitMessage.trim() ? { commitMessage: commitMessage.trim() } : {}),
         new: isNew,
+        repoId,
       },
     });
     setPhase("idle");
@@ -322,7 +352,10 @@ export function PublishBuilder() {
       setResult({ kind: "validation", message: e.message ?? "YAML schema validation failed", errors: e.errors ?? [] });
     } else {
       const e = (error ?? {}) as { message?: string; code?: string };
-      setResult({ kind: "error", status: response.status, message: e.message ?? e.code ?? `Request failed (${response.status})` });
+      // 409 branch_protected (2.4.0): nothing was published, and a retry will
+      // not help until the repository's connection changes.
+      const lead = e.code === "branch_protected" ? "The repository refused the push: its branch is protected. " : "";
+      setResult({ kind: "error", status: response.status, message: lead + (e.message ?? e.code ?? `Request failed (${response.status})`) });
     }
   };
   const reloadBaseSha = (currentSha: string) => {
@@ -345,11 +378,43 @@ export function PublishBuilder() {
           <div style={{ ...panel(), flex: "0 1 420px", minWidth: 320 }}>
             <h2 style={h2()}>Schedule Builder</h2>
 
+            <label style={label()}>Repository</label>
+            {publishable.length === 0 ? (
+              <div style={{ fontSize: c.fontSm, color: c.textSec }}>
+                You may publish to no repository: an agency's repository takes publishes from its publishers, Global's from a global publisher.
+              </div>
+            ) : (
+              <select
+                aria-label="Repository"
+                value={repoId ?? ""}
+                onChange={(e) => {
+                  setRepoRaw(e.target.value);
+                  setShaOverride(null);
+                  setResult(null);
+                }}
+                style={{ ...input() }}
+                disabled={publishable.length === 1 || !!jobRepo}
+              >
+                {publishable.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {repoLabel(r)} repository
+                  </option>
+                ))}
+              </select>
+            )}
+            {jobRepoName && (
+              <div role="note" style={{ fontSize: c.fontXs, color: repo ? c.textMuted : c.danger, marginTop: 4 }}>
+                {repo
+                  ? `${job?.name} is in ${repoLabel(jobRepoName)} repository, and an edit of it is published there.`
+                  : `${job?.name} is in ${repoLabel(jobRepoName)} repository, which you may not publish to.`}
+              </div>
+            )}
+
             <label style={label()}>Job</label>
             <select value={selected} onChange={(e) => setSelected(e.target.value)} style={{ ...input() }}>
               <option value={NEW_JOB}>— new job YAML —</option>
               {jobs.map((j) => (
-                <option key={String(j.id ?? j.name)} value={j.name}>
+                <option key={String(j.id ?? j.name)} value={String(j.id)}>
                   {j.name}
                   {j.schedule ? ` (${j.schedule})` : ""}
                 </option>
@@ -468,7 +533,7 @@ export function PublishBuilder() {
                 disabled={!canPublish}
                 style={{ ...btn(), background: canPublish ? c.primary : c.panel2, color: canPublish ? c.onSolid : c.textSec, cursor: canPublish ? "pointer" : "not-allowed" }}
               >
-                {phase === "publishing" ? "Publishing…" : "Publish to GitLab"}
+                {phase === "publishing" ? "Publishing…" : "Publish to the repository"}
               </button>
             </div>
 
@@ -534,7 +599,7 @@ export function PublishBuilder() {
             )}
             {result?.kind === "error" && (
               <div style={{ ...banner(c.danger), marginTop: 12 }}>
-                ✗ {result.status === 403 ? "403 Forbidden — missing schedule publish permission." : result.status === 503 ? "503 — GitLab unreachable, retry later." : `${result.status} — error.`} {result.message}
+                ✗ {result.status === 403 ? "403 Forbidden — missing schedule publish permission." : result.status === 503 ? "503 — the repository is unreachable, retry later." : `${result.status} — error.`} {result.message}
               </div>
             )}
           </div>
@@ -553,7 +618,7 @@ export function PublishBuilder() {
       {/* ── Confirm Publish modal ── */}
       {phase === "confirm" && (
         <Modal
-          title="Confirm Publish to GitLab"
+          title="Confirm Publish to the repository"
           wide
           onClose={() => setPhase("idle")}
           /* FX-10 — the YAML preview is already capped, but the whole panel is

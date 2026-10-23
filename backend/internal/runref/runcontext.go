@@ -49,9 +49,12 @@ func (rc RunContext) Env() map[string]string {
 // membership here would also mean a scope edit silently retargets what an in-flight
 // run can reach, which is the security-relevant surprise AG-Q2(d) was rejected for.
 //
-// A run that does not exist, or a pre-680 schema, yields an empty set — which
-// intersects nothing but still resolves every UNRESTRICTED row, matching the
-// general-pool run's behavior rather than failing every reference.
+// A run that does not exist yields an empty set, which resolves nothing but
+// Global's rows; there is no run to inject them into. A snapshot that cannot be
+// READ is an error, never an empty set: through the Global arm of the visibility
+// rule an empty set still resolves Global's rows, so a department's run whose
+// snapshot was unreadable would be handed Global's secret of the same name in
+// place of its own, with nothing in the run log to say so.
 func RunAgencies(ctx context.Context, database *sql.DB, runID string) ([]string, error) {
 	out := []string{}
 	var raw sql.NullString
@@ -60,7 +63,7 @@ func RunAgencies(ctx context.Context, database *sql.DB, runID string) ([]string,
 		return out, nil
 	}
 	if err != nil {
-		return out, nil // best-effort: a pre-680 schema has no column
+		return nil, fmt.Errorf("run %s: read agency snapshot: %w", runID, err)
 	}
 	if !raw.Valid || raw.String == "" || raw.String == "[]" {
 		return out, nil

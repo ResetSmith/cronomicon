@@ -47,9 +47,9 @@ func runRewrapSecrets(args []string) int {
 
 Re-wraps every stored credential under the active KEK (CRONOMICON_KEK_VERSION) so a
 superseded key can be retired. Covers three stores: stored secrets, SSH
-credentials, and the encrypted settings integrations (GitLab token + webhook
-secret, S3 log-storage key, Vault credentials, SMTP password, observability
-bearer token).
+credentials, and the encrypted settings integrations (every repository's token
+and its webhook secret, current and previous, the S3 log-storage key, Vault
+credentials, SMTP password, observability bearer token).
 
 Safe to run with the server up, and safe to re-run: it is idempotent, and
 re-running is the recovery for a partial pass. Start with --dry-run.
@@ -89,6 +89,13 @@ also held the plaintexts; the remediation is rotating the underlying credentials
 		return 1
 	}
 	defer pool.Close()
+	// 2.5.1 SG2.10: once the server has bound every value, an unbound one is
+	// refused here too. Without this the command would open an unbound value
+	// copied into a row after the pass and re-seal it bound to that row.
+	if _, err := secrets.ApplyBindSealsMarker(context.Background(), pool); err != nil {
+		fmt.Fprintln(os.Stderr, "rewrap-secrets:", err)
+		return 1
+	}
 
 	ctx := context.Background()
 	active := cfg.SecretKEKVersion
@@ -96,7 +103,7 @@ also held the plaintexts; the remediation is rotating the underlying credentials
 	// Refuse up front when the ACTIVE key is unusable. Proceeding would write rows
 	// nothing can decrypt, which is the one failure this command must never cause.
 	sealer := secrets.NewSealer(cfg)
-	if _, err := sealer.Seal([]byte("rewrap-preflight")); err != nil {
+	if _, err := sealer.Seal(secrets.RowBinding("rewrap", "preflight"), []byte("rewrap-preflight")); err != nil {
 		fmt.Fprintf(os.Stderr, "rewrap-secrets: the active KEK (version %d) is not usable: %v\n", active, err)
 		return 1
 	}
@@ -226,27 +233,29 @@ func survey(ctx context.Context, pool *sql.DB, active int) (*surveyReport, error
 
 	settings := storeCount{store: "settings integrations", byVer: map[int]int{}}
 	for _, tc := range tokenColumns {
-		tok, err := readToken(ctx, pool, tc)
+		toks, err := readTokens(ctx, pool, tc)
 		if err != nil {
 			return nil, err
 		}
-		if tok == "" {
-			continue // unset credential; nothing sealed
-		}
-		if v, ok := secrets.TokenKEKVersion(tok); ok {
-			settings.byVer[v]++
-		} else {
-			settings.unparsed++
+		// One item per stored token: an unset credential seals nothing, and a
+		// column of a many-row table (a repository's token) counts once per row.
+		for _, t := range toks {
+			if v, ok := secrets.TokenKEKVersion(t.Token); ok {
+				settings.byVer[v]++
+			} else {
+				settings.unparsed++
+			}
 		}
 	}
 	rep.counts = append(rep.counts, settings)
 	return rep, nil
 }
 
-// readToken returns "" when the column is absent, NULL or empty — several of
-// these default to ” rather than NULL when the credential is unset.
-func readToken(ctx context.Context, pool *sql.DB, tc tokenColumn) (string, error) {
-	return secrets.ReadSettingsToken(ctx, pool, tc)
+// readTokens returns nothing when the column is absent, NULL or empty — several
+// of these default to ” rather than NULL when the credential is unset — and one
+// token per row for a column of a many-row table.
+func readTokens(ctx context.Context, pool *sql.DB, tc tokenColumn) ([]secrets.SettingsToken, error) {
+	return secrets.ReadSettingsTokens(ctx, pool, tc)
 }
 
 // rewrapAll moves every outstanding item to the active version, returning how
@@ -261,11 +270,19 @@ func rewrapAll(ctx context.Context, pool *sql.DB, cfg *config.Config, sealer *se
 		failed += f
 	}
 	for _, tc := range tokenColumns {
-		switch rewrapTokenColumn(ctx, pool, cfg, tc, active) {
-		case rewrapMoved:
-			moved++
-		case rewrapFailed:
+		toks, err := readTokens(ctx, pool, tc)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", tc.Label, err)
 			failed++
+			continue
+		}
+		for _, t := range toks {
+			switch rewrapToken(ctx, pool, cfg, tc, t, active) {
+			case rewrapMoved:
+				moved++
+			case rewrapFailed:
+				failed++
+			}
 		}
 	}
 	return moved, failed
@@ -285,18 +302,21 @@ func rewrapEnvelopeTable(ctx context.Context, pool *sql.DB, sealer *secrets.Seal
 		ct, nonce  []byte
 		wrapped    []byte
 		kekVersion int
+		format     int
 	}
 	var todo []row
+	// 2.5.1 SG2.10: an unbound row is rewrapped (and so bound) whatever its KEK
+	// version, so the command finishes what the server's BindSeals pass does.
 	rows, err := pool.QueryContext(ctx, fmt.Sprintf(
-		`SELECT id, ciphertext, nonce, wrapped_dek, COALESCE(kek_version,1) FROM %s
-		  WHERE source='stored' AND ciphertext IS NOT NULL AND COALESCE(kek_version,1) <> ?`, table), active)
+		`SELECT id, ciphertext, nonce, wrapped_dek, COALESCE(kek_version,1), seal_format FROM %s
+		  WHERE source='stored' AND ciphertext IS NOT NULL AND (COALESCE(kek_version,1) <> ? OR seal_format <> ?)`, table), active, secrets.SealBound)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", table, err)
 		return 0, 1
 	}
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.id, &r.ct, &r.nonce, &r.wrapped, &r.kekVersion); err != nil {
+		if err := rows.Scan(&r.id, &r.ct, &r.nonce, &r.wrapped, &r.kekVersion, &r.format); err != nil {
 			rows.Close()
 			fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", table, err)
 			return moved, failed + 1
@@ -306,13 +326,13 @@ func rewrapEnvelopeTable(ctx context.Context, pool *sql.DB, sealer *secrets.Seal
 	rows.Close()
 
 	for _, r := range todo {
-		plain, err := sealer.Open(r.ct, r.nonce, r.wrapped, r.kekVersion)
+		plain, err := sealer.Open(secrets.RowBinding(table, r.id), r.format, r.ct, r.nonce, r.wrapped, r.kekVersion)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "rewrap %s %s: cannot open under KEK v%d: %v\n", table, r.id, r.kekVersion, err)
 			failed++
 			continue
 		}
-		sealed, err := sealer.Seal(plain)
+		sealed, err := sealer.Seal(secrets.RowBinding(table, r.id), plain)
 		zeroBytes(plain)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "rewrap %s %s: %v\n", table, r.id, err)
@@ -323,9 +343,9 @@ func rewrapEnvelopeTable(ctx context.Context, pool *sql.DB, sealer *secrets.Seal
 		// worked, it is already at the active version and our write must not clobber
 		// the newer ciphertext. RowsAffected 0 means exactly that — not an error.
 		res, err := pool.ExecContext(ctx, fmt.Sprintf(
-			`UPDATE %s SET ciphertext=?, nonce=?, wrapped_dek=?, kek_version=?
-			  WHERE id=? AND COALESCE(kek_version,1)=?`, table),
-			sealed.Ciphertext, sealed.Nonce, sealed.WrappedDEK, sealed.KEKVersion, r.id, r.kekVersion)
+			`UPDATE %s SET ciphertext=?, nonce=?, wrapped_dek=?, kek_version=?, seal_format=?
+			  WHERE id=? AND COALESCE(kek_version,1)=? AND ciphertext=?`, table),
+			sealed.Ciphertext, sealed.Nonce, sealed.WrappedDEK, sealed.KEKVersion, sealed.Format, r.id, r.kekVersion, r.ct)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "rewrap %s %s: %v\n", table, r.id, err)
 			failed++
@@ -338,36 +358,41 @@ func rewrapEnvelopeTable(ctx context.Context, pool *sql.DB, sealer *secrets.Seal
 	return moved, failed
 }
 
-func rewrapTokenColumn(ctx context.Context, pool *sql.DB, cfg *config.Config, tc tokenColumn, active int) rewrapOutcome {
-	tok, err := readToken(ctx, pool, tc)
-	if err != nil || tok == "" {
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", tc.Label, err)
-			return rewrapFailed
-		}
-		return rewrapSkipped
-	}
-	if v, ok := secrets.TokenKEKVersion(tok); !ok || v == active {
+// rewrapToken moves ONE stored token of a settings column: the singleton's, or
+// one row's of a column with a Key.
+func rewrapToken(ctx context.Context, pool *sql.DB, cfg *config.Config, tc tokenColumn, t secrets.SettingsToken, active int) rewrapOutcome {
+	label := tc.RowLabel(t.Key)
+	tok := t.Token
+	if v, ok := secrets.TokenKEKVersion(tok); !ok || (v == active && secrets.TokenBound(tok)) {
 		// Not a token (an un-encrypted legacy value someone set by hand), or
-		// already current. Neither is this command's business to rewrite.
+		// already current and bound (2.5.1 SG2.10). Neither is this command's
+		// business to rewrite.
 		return rewrapSkipped
 	}
-	plain, err := secrets.DecryptString(cfg, tok)
+	b := tc.Binding(t.Key)
+	plain, err := secrets.DecryptSetting(cfg, b, tok)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "rewrap %s: cannot decrypt: %v\n", tc.Label, err)
+		fmt.Fprintf(os.Stderr, "rewrap %s: cannot decrypt: %v\n", label, err)
 		return rewrapFailed
 	}
-	next, err := secrets.EncryptString(cfg, plain)
+	next, err := secrets.EncryptSetting(cfg, b, plain)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", tc.Label, err)
+		fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", label, err)
 		return rewrapFailed
 	}
 	// Guarded on the exact token we read, for the same reason as the envelope
-	// path: a concurrent settings save wins.
-	res, err := pool.ExecContext(ctx, fmt.Sprintf(
-		"UPDATE %s SET %s=? WHERE %s AND %s=?", tc.Table, tc.Column, tc.Where, tc.Column), next, tok)
+	// path: a concurrent settings save wins. A column with a Key is also
+	// addressed by its row: two repositories may hold the same token value, and
+	// each row is its own item.
+	q := fmt.Sprintf("UPDATE %s SET %s=? WHERE (%s) AND %s=?", tc.Table, tc.Column, tc.Where, tc.Column)
+	args := []any{next, tok}
+	if tc.Key != "" {
+		q += fmt.Sprintf(" AND %s=?", tc.Key)
+		args = append(args, t.Key)
+	}
+	res, err := pool.ExecContext(ctx, q, args...)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", tc.Label, err)
+		fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", label, err)
 		return rewrapFailed
 	}
 	if n, _ := res.RowsAffected(); n > 0 {

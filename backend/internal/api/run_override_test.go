@@ -194,9 +194,10 @@ func TestRunPathGroupSubset(t *testing.T) {
 	if code, body := run(broken, map[string]any{"targetGroups": []string{"web"}}); code != http.StatusUnprocessableEntity {
 		t.Errorf("degraded-projection group = %d (%s), want 422", code, body)
 	}
-	// Raw ansibleLimit on an SSH (bash) job → 422 invalid_executor.
-	if code, body := run(grp, map[string]any{"ansibleLimit": "web:&staged"}); code != http.StatusUnprocessableEntity || !strings.Contains(body, "invalid_executor") {
-		t.Errorf("ansibleLimit on ssh = %d (%s), want 422 invalid_executor", code, body)
+	// Raw ansibleLimit on a shell (bash) job → 422 ansible_only. The code names
+	// the run type and no executor: there is no executor to choose (LR-50).
+	if code, body := run(grp, map[string]any{"ansibleLimit": "web:&staged"}); code != http.StatusUnprocessableEntity || !strings.Contains(body, "ansible_only") {
+		t.Errorf("ansibleLimit on a shell job = %d (%s), want 422 ansible_only", code, body)
 	}
 	// Valid group → 202, recorded in override_json.groups.
 	if code, body := run(grp, map[string]any{"targetGroups": []string{"web"}}); code != http.StatusAccepted {

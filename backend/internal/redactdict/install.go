@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync/atomic"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/config"
 )
@@ -56,7 +57,7 @@ func (r *reporter) observe(err error) {
 		}
 		r.log.Warn("audit-stream redaction is degraded; rows are masked with what could be built",
 			"error", err)
-		_ = auditlog.WriteChangeLog(context.Background(), r.db, "system", "Audit", "redactor-unavailable", "",
+		_ = auditlog.WriteChangeLog(context.Background(), r.db, agencyid.Global, "system", "Audit", "redactor-unavailable", "",
 			"audit masking degraded: "+err.Error())
 		return
 	}
@@ -64,6 +65,6 @@ func (r *reporter) observe(err error) {
 		return // healthy, and was healthy
 	}
 	r.log.Info("audit-stream redaction restored")
-	_ = auditlog.WriteChangeLog(context.Background(), r.db, "system", "Audit", "redactor-restored", "",
+	_ = auditlog.WriteChangeLog(context.Background(), r.db, agencyid.Global, "system", "Audit", "redactor-restored", "",
 		"audit masking rebuilt with every encrypted value decrypted")
 }

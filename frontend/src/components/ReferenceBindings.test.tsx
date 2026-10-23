@@ -288,7 +288,7 @@ describe("promoted SSH key field", () => {
       reason: "resolves to the SSH key credential",
     });
 
-    const { container } = render(<JobKeyField jobId={1} scope="prod" executor="runner" />);
+    const { container } = render(<JobKeyField jobId={1} scope="prod" runType="ansible" />);
     const q = within(container);
     await waitFor(() => expect(q.getByText("CRONOMICON_KEY_ANSIBLE_RH8")).toBeTruthy());
     expect(q.getByText("✓")).toBeTruthy();
@@ -297,29 +297,28 @@ describe("promoted SSH key field", () => {
     expect(q.queryByText("CRONOMICON_SECRET_DB_PASS")).toBeNull();
   });
 
-  it("states the SSH-executor refusal, and only where it applies", async () => {
-    // Only the RUNNER path materializes a declared key (runref/resolve.go, D8); a
-    // run that resolves to the in-app SSH executor is refused at enqueue (KB). A
-    // field that presented every executor as honouring the binding would be the
-    // wrong kind of prominent.
+  it("says only an agent delivers the key, and only where the local runner could take the run", async () => {
+    // Only an AGENT materializes a declared key (runref/resolve.go, D8); the
+    // local runner never takes a run that binds one (LR-47). So the caveat is
+    // for the shell types, which the local runner could otherwise run. A field
+    // that presented every runner as honouring the binding would be the wrong
+    // kind of prominent — and one that warned on ansible would be noise.
     getResponses["/job-reference-bindings/{jobId}"] = { bindings: [binding("key", "PROD_DEPLOY")] };
 
-    const ssh = render(<JobKeyField jobId={1} scope="" executor="ssh" />);
-    await waitFor(() => expect(within(ssh.container).getByText(/Refused on the in-app SSH executor/)).toBeTruthy());
+    const shell = render(<JobKeyField jobId={1} scope="" runType="bash" />);
+    await waitFor(() => expect(within(shell.container).getByText(/delivered as a file by an agent only/)).toBeTruthy());
     cleanup();
 
-    const runner = render(<JobKeyField jobId={1} scope="" executor="runner" />);
-    await waitFor(() => expect(within(runner.container).getByText("CRONOMICON_KEY_PROD_DEPLOY")).toBeTruthy());
-    expect(within(runner.container).queryByText(/Refused/)).toBeNull();
+    const ansible = render(<JobKeyField jobId={1} scope="" runType="ansible" />);
+    await waitFor(() => expect(within(ansible.container).getByText("CRONOMICON_KEY_PROD_DEPLOY")).toBeTruthy());
+    expect(within(ansible.container).queryByText(/by an agent only/)).toBeNull();
   });
 
   it("renders on every job so a key can always be declared", async () => {
-    // The field is NOT gated on the executor: with keys removed from the editor
-    // below, a hidden field would leave no way to declare one at all — and the
-    // tempting gate is backwards anyway, since the runner path is the one that
-    // delivers keys.
+    // The field is NOT gated on the run type: with keys removed from the editor
+    // below, a hidden field would leave no way to declare one at all.
     getResponses["/job-reference-bindings/{jobId}"] = { bindings: [] };
-    const { container } = render(<JobKeyField jobId={1} scope="" executor="runner" />);
+    const { container } = render(<JobKeyField jobId={1} scope="" runType="ansible" />);
     const q = within(container);
     await waitFor(() => expect(q.getByText("SSH key")).toBeTruthy());
     expect(q.getByText(/None declared/)).toBeTruthy();
@@ -330,7 +329,7 @@ describe("promoted SSH key field", () => {
     getResponses["/job-reference-bindings/{jobId}"] = { bindings: [] };
     getResponses["/ssh/credentials"] = creds("BOUND", "PROD_DEPLOY");
 
-    const { container } = render(<JobKeyField jobId={1} scope="" executor="runner" />);
+    const { container } = render(<JobKeyField jobId={1} scope="" runType="ansible" />);
     const q = within(container);
     await waitFor(() => expect(q.getByRole("option", { name: "PROD_DEPLOY" })).toBeTruthy());
     expect(q.getByRole("option", { name: "BOUND" })).toBeTruthy();
@@ -344,7 +343,7 @@ describe("promoted SSH key field", () => {
     getResponses["/job-reference-bindings/{jobId}"] = { bindings: [binding("key", "BOUND")] };
     getResponses["/ssh/credentials"] = creds("BOUND", "PROD_DEPLOY");
 
-    const { container } = render(<JobKeyField jobId={1} scope="" executor="runner" />);
+    const { container } = render(<JobKeyField jobId={1} scope="" runType="ansible" />);
     const q = within(container);
     await waitFor(() => expect(q.getByText("CRONOMICON_KEY_BOUND")).toBeTruthy());
     expect(q.queryByRole("combobox")).toBeNull();
@@ -357,7 +356,7 @@ describe("promoted SSH key field", () => {
     };
     getResponses["/ssh/credentials"] = creds("PROD_DEPLOY");
 
-    const { container } = render(<JobKeyField jobId={1} scope="" executor="runner" />);
+    const { container } = render(<JobKeyField jobId={1} scope="" runType="ansible" />);
     const q = within(container);
     const select = await waitFor(() => q.getByRole("combobox"));
     fireEvent.change(select, { target: { value: "PROD_DEPLOY" } });

@@ -50,8 +50,9 @@ type Config struct {
 	OS string
 	// Capabilities is the run-type vocabulary this runner claims (e.g.
 	// bash,perl,powershell or ansible,terraform). Only matching runs are claimed.
-	// Empty means auto-detect: the run-types are probed from the host's
-	// toolchains at startup (D1: 1B); set explicitly to narrow the claim set.
+	// Empty means auto-detect (D1: 1B): the four shell types, which run on the
+	// targets, plus ansible and terraform when this host has them; set
+	// explicitly to narrow the claim set.
 	Capabilities []string
 	// MaxConcurrent bounds simultaneously-executing runs on this agent.
 	MaxConcurrent int
@@ -109,8 +110,9 @@ type Config struct {
 	// env, which is used as the default when this is unset).
 	StateDir string
 
-	// LogRetryBudget bounds log-POST resume attempts before giving up and letting
-	// the server mark the run log_stream_lost (R2.3).
+	// LogRetryBudget bounds a log POST's resume attempts. A mid-run chunk that
+	// spends it is left for the next; a run's final upload that spends it is
+	// sent again until the server takes it (flushTerminal; 2.5.0 C11).
 	LogRetryBudget int
 
 	// FanOut bounds parallel SSH targets within a single run (default 4).
@@ -256,7 +258,7 @@ func Resolve(args []string, getenv func(string) string) (Config, error) {
 		regToken          = fs.String("registration-token", cfg.RegistrationToken, "registration bearer token (single-use, minted per install)")
 		name              = fs.String("name", cfg.Name, "runner display name (stable across restarts)")
 		osFlag            = fs.String("os", cfg.OS, "runner OS: Linux or Windows")
-		capsFlag          = fs.String("capabilities", strings.Join(cfg.Capabilities, ","), "comma-separated run-type capabilities (empty = auto-detect from the host's toolchains; set to narrow)")
+		capsFlag          = fs.String("capabilities", strings.Join(cfg.Capabilities, ","), "comma-separated run-type capabilities (empty = the shell types, plus ansible and terraform when installed here; set to narrow)")
 		maxConc           = fs.Int("max-concurrent", cfg.MaxConcurrent, "max simultaneously-executing runs")
 		inventory         = fs.String("inventory", cfg.Inventory, "inventory mode: cronomicon or local")
 		identityFile      = fs.String("identity-file", cfg.IdentityFile, "path to persist {id, apiKey}")
@@ -268,7 +270,7 @@ func Resolve(args []string, getenv func(string) string) (Config, error) {
 		noAuthBridge      = fs.Bool("no-auth-bridge", cfg.NoAuthBridge, "disable the auth bridge (key-name→file for ansible + known_hosts injection)")
 		localInv          = fs.String("local-inventory", cfg.LocalInventoryFile, "local inventory file for 'local' mode scope resolution")
 		stateDir          = fs.String("state-dir", cfg.StateDir, "writable dir for transient run artifacts (ansible -i temp file); empty ⇒ os.TempDir()")
-		logRetry          = fs.Int("log-retry-budget", cfg.LogRetryBudget, "max log-POST resume attempts before giving up")
+		logRetry          = fs.Int("log-retry-budget", cfg.LogRetryBudget, "log-POST resume attempts per upload (a run's final upload is sent again until the server takes it or refuses it for good)")
 		fanOut            = fs.Int("fan-out", cfg.FanOut, "max parallel SSH targets within a run")
 		envBaseExtra      = fs.String("env-base-extra", strings.Join(cfg.EnvBaseExtra, ","), "comma-separated extra env-var NAMES forwarded into a scoped local-toolchain child env")
 		noSSHSock         = fs.Bool("exclude-ssh-auth-sock", cfg.ExcludeSSHAuthSock, "drop SSH_AUTH_SOCK from the scoped child env base safe-list")
@@ -371,9 +373,8 @@ func (c Config) validate() error {
 	if c.Name == "" {
 		return fmt.Errorf("runner name is required (-name / CRONOMICON_RUNNER_NAME)")
 	}
-	// Empty Capabilities is NOT an error: unset = auto-detect the run-types
-	// from the host's toolchains at startup (D1: 1B); set explicitly to narrow.
-	// detectCapabilities errors when the probe finds nothing.
+	// Empty Capabilities is NOT an error: unset = auto-detect at startup
+	// (D1: 1B, detectRunTypes); set explicitly to narrow.
 	if c.OS != "Linux" && c.OS != "Windows" {
 		return fmt.Errorf("os must be 'Linux' or 'Windows', got %q", c.OS)
 	}

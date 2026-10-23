@@ -351,7 +351,11 @@ func HoldsGate(p string) bool { return p == PolicyForbid || p == PolicyQueue }
 // Precedence:
 //   - custom: jobs.concurrency_key, an operator-authored value. Deliberately
 //     free text and deliberately NOT re-keyed by AF-4b — it is a shared
-//     namespace, the way two different jobs are made to hold one gate.
+//     namespace, the way two different jobs are made to hold one gate. Shared
+//     within the job's AGENCY since 2.4.2 (the owner's answer to question 56;
+//     §0a, IN-1): until then two agencies that each named a gate `db` held one
+//     gate together, and each one's runs waited on, or were skipped for, the
+//     other's.
 //   - uid: the job's permanent identity. The default since R2-3, because the
 //     name it replaced will one day belong to more than one job, and two
 //     agencies' jobs sharing a gate by accident is a deadlock nobody asked for.
@@ -359,9 +363,12 @@ func HoldsGate(p string) bool { return p == PolicyForbid || p == PolicyQueue }
 //     uid is somehow unset. Never silently produces an EMPTY key, which would
 //     drop the run out of the gate entirely (the partial unique index ignores
 //     NULL/” keys) and turn a Forbid job into an Allow one.
-func ConcurrencyKey(custom, uid, source, name string) string {
+func ConcurrencyKey(custom, agency, uid, source, name string) string {
 	if custom != "" {
-		return custom
+		if agency == "" {
+			return custom
+		}
+		return agency + ":" + custom
 	}
 	if uid != "" {
 		return uid

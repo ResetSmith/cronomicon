@@ -22,7 +22,11 @@ import (
 // The synthetic run sets a CHECK-valid run_type ('bash') even though no bash ran
 // — the kind discriminator is what lets History badge it as a Test and lets the
 // Dashboard/job-failure metrics exclude diagnostics (excluded in the frontend).
-func (s *Server) recordSSHTestRun(ctx context.Context, targetName string, probe sshexec.ProbeResult, actor string) {
+//
+// agency is the tested host's or bastion's (present defect 71, 2.5.0 C1): the
+// run has no job, so 1480's trigger made it Global's whatever the host's
+// agency, and Global's viewers saw an agency's test while the agency did not.
+func (s *Server) recordSSHTestRun(ctx context.Context, agency, targetName string, probe sshexec.ProbeResult, actor string) {
 	traceID := db.NewTraceID()
 
 	// verified | reachable ⇒ success; cred_error | conn_error ⇒ failure.
@@ -64,6 +68,9 @@ func (s *Server) recordSSHTestRun(ctx context.Context, targetName string, probe 
 		s.log.Error("record ssh-test run", "trace_id", traceID, "target", targetName, "error", err)
 		return
 	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE runs SET owner_agency = ? WHERE id = ?`, agency, traceID); err != nil {
+		s.log.Error("record ssh-test run's agency", "trace_id", traceID, "target", targetName, "error", err)
+	}
 
 	// Write the probe output as the run's log so GET /runs/{traceId}/log serves it.
 	// Reads the same in-process value the runner/sshexec services hold rather than
@@ -79,13 +86,14 @@ func (s *Server) recordSSHTestRun(ctx context.Context, targetName string, probe 
 	// At is the probe's CheckedAt, the same instant stamped on the run above —
 	// the pair must not drift apart in the History timeline.
 	if err := auditlog.WriteActivity(ctx, s.db, auditlog.ActivityParams{
-		At:      at,
-		Kind:    "run-end",
-		Outcome: outcome,
-		Actor:   "ssh-test",
-		JobName: jobName,
-		Target:  targetName,
-		TraceID: traceID,
+		AgencyID: agency,
+		At:       at,
+		Kind:     "run-end",
+		Outcome:  outcome,
+		Actor:    "ssh-test",
+		JobName:  jobName,
+		Target:   targetName,
+		TraceID:  traceID,
 	}); err != nil {
 		s.log.Error("record ssh-test activity", "trace_id", traceID, "target", targetName, "error", err)
 	}

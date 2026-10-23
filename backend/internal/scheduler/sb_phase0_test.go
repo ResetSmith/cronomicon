@@ -11,7 +11,8 @@ import (
 // invisible while job names were unique and both real once R2 let two agencies
 // hold same-named jobs. The tests here were written to pin each defect, and now
 // guard its fix: the run carries the job that was fired (9f7dfda), and the
-// executor is that job's own (execspec.ResolveExecutor).
+// executor is that job's own (execspec.ResolveExecutor then; since 2.3.0 no
+// producer resolves an executor at all, and the uid is what the run carries).
 //
 // A third characterization test lived here until the runner-tag pin was retired:
 // it showed a pinned shell job on a schedule being queued for ssh with its pin
@@ -126,17 +127,16 @@ func TestQueuedFireCarriesItsOwnJobIdentity(t *testing.T) {
 	}
 }
 
-// TestScheduledFireUsesItsOwnJobsExecutor guards the second identity defect
-// Phase 0 found: the executor was read by (name, source), so two same-named
-// jobs declaring different executors got one answer between them and one ran on
-// an executor its definition did not ask for. The resolver now reads the job by
-// its uid (execspec.ResolveExecutor); fired by identity, each twin gets its own.
-func TestScheduledFireUsesItsOwnJobsExecutor(t *testing.T) {
+// Phase 0 of SB found that the executor was read by (name, source), so two
+// same-named jobs declaring different executors got one answer between them.
+// Since 2.3.0 there is no answer to get: a job's `executor` is not read, and
+// both twins are written for the runner executor (LR-42).
+func TestScheduledFireIgnoresTheJobsExecutor(t *testing.T) {
 	pool := mustPool(t)
-	seedTwins(t, pool)
+	seedTwins(t, pool) // one twin says runner, the other says ssh
 
 	got := fireTwins(t, pool, "executor")
-	if got["scope-a"] != "runner" || got["scope-b"] != "ssh" {
-		t.Errorf("executors = %v, want scope-a:runner and scope-b:ssh (each twin's own)", got)
+	if got["scope-a"] != "runner" || got["scope-b"] != "runner" {
+		t.Errorf("executors = %v, want runner for both", got)
 	}
 }

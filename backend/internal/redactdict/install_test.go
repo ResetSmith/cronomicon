@@ -44,7 +44,7 @@ func TestInstallMasksAuditRowsEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := auditlog.WriteChangeLog(ctx, pool, "alice", "Secrets", "created", "TOKEN", "value was first-token-value"); err != nil {
+	if err := auditlog.WriteChangeLog(ctx, pool, "global", "alice", "Secrets", "created", "TOKEN", "value was first-token-value"); err != nil {
 		t.Fatal(err)
 	}
 	var stored string
@@ -59,7 +59,7 @@ func TestInstallMasksAuditRowsEndToEnd(t *testing.T) {
 	if _, err := svc.Update(ctx, sec.ID, secrets.UpdateInput{Key: "TOKEN", Source: "stored", Value: newVal}, "alice"); err != nil {
 		t.Fatal(err)
 	}
-	if err := auditlog.WriteChangeLog(ctx, pool, "alice", "Secrets", "rotated", "TOKEN", "value is now "+newVal); err != nil {
+	if err := auditlog.WriteChangeLog(ctx, pool, "global", "alice", "Secrets", "rotated", "TOKEN", "value is now "+newVal); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRowContext(ctx, `SELECT details FROM change_log WHERE action='rotated'`).Scan(&stored); err != nil {
@@ -89,7 +89,7 @@ func TestInstallReportsAnOutageOnceAndItsRecoveryOnce(t *testing.T) {
 	st := Install(pool, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	for i := 0; i < 3; i++ {
-		if err := auditlog.WriteChangeLog(ctx, pool, "alice", "Jobs", "Triggered", "j", "manual run"); err != nil {
+		if err := auditlog.WriteChangeLog(ctx, pool, "global", "alice", "Jobs", "Triggered", "j", "manual run"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -107,7 +107,7 @@ func TestInstallReportsAnOutageOnceAndItsRecoveryOnce(t *testing.T) {
 	cfg.SecretKEKEnv = goodKEK
 	st.Invalidate()
 	for i := 0; i < 3; i++ {
-		if err := auditlog.WriteChangeLog(ctx, pool, "alice", "Jobs", "Triggered", "j", "manual run "+"value-behind-lost-kek"); err != nil {
+		if err := auditlog.WriteChangeLog(ctx, pool, "global", "alice", "Jobs", "Triggered", "j", "manual run "+"value-behind-lost-kek"); err != nil {
 			t.Fatal(err)
 		}
 	}

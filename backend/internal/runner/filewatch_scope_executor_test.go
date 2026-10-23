@@ -4,21 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"testing"
-
-	"github.com/ResetSmith/cronomicon/internal/execspec"
 )
 
-// SB — the file-arrival half of the producer conformance for a scope bound to
-// runners: a sighting for a job that asks for ssh is refused with the reason
-// recorded on the sighting, and one for a job with no executor of its own fires
-// onto the runner executor.
-func TestSightingOnABoundScope(t *testing.T) {
+// LR-42 — the file-arrival half of the producer conformance for the one
+// executor: a sighting fires onto the runner executor whatever the job's own
+// `executor` says. That column is no longer read. (Until 2.3.0 a job that asked
+// for ssh on a scope bound to runners was refused, `scope_requires_runner`;
+// there is nothing left to ask for.)
+func TestSightingIgnoresTheJobsExecutor(t *testing.T) {
 	for _, tc := range []struct {
 		name, jobExecutor string
-		wantFire          bool
 	}{
-		{"job asks for ssh", "ssh", false},
-		{"job expresses no executor", "", true},
+		{"the job's executor says ssh", "ssh"},
+		{"the job's executor says runner", "runner"},
+		{"the job expresses no executor", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := newTestService(t)
@@ -37,18 +36,12 @@ func TestSightingOnABoundScope(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if ok != tc.wantFire {
-				t.Fatalf("fired = %v, want %v", ok, tc.wantFire)
+			if !ok {
+				t.Fatal("the sighting did not fire")
 			}
 			var reason sql.NullString
 			if err := svc.db.QueryRow(`SELECT refused_reason FROM file_watch_sightings WHERE job_name='ingest'`).Scan(&reason); err != nil {
 				t.Fatalf("no sighting row: %v", err)
-			}
-			if !tc.wantFire {
-				if reason.String != execspec.ReasonScopeRequiresRunner {
-					t.Errorf("refused_reason = %q, want %q", reason.String, execspec.ReasonScopeRequiresRunner)
-				}
-				return
 			}
 			if reason.Valid && reason.String != "" {
 				t.Errorf("the sighting was refused: %q", reason.String)
@@ -58,7 +51,7 @@ func TestSightingOnABoundScope(t *testing.T) {
 				t.Fatalf("no run row for the fired sighting: %v", err)
 			}
 			if executor != "runner" {
-				t.Errorf("executor = %q, want runner — a shell job on a bound scope must not default to ssh", executor)
+				t.Errorf("executor = %q, want runner", executor)
 			}
 		})
 	}

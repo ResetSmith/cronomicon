@@ -10,6 +10,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/notify"
+	"github.com/ResetSmith/cronomicon/internal/runref"
 )
 
 // Ad-hoc run scheduling (AR) — promotion of pending_runs into real runs.
@@ -54,7 +55,15 @@ const (
 // reaction-fired workflow would have been labelled manual in History, and the
 // depth ceiling would have read 0 on every hop because nothing carried the
 // chain position forward.
+// ReasonPendingWorkflowAmbiguous is why a parked workflow run is not fired:
+// the row names no workflow by identity and more than one holds its name.
+const ReasonPendingWorkflowAmbiguous = "two workflows are called this, and the parked run does not record which one it was for"
+
 type PendingWorkflowFire struct {
+	// UID is WHICH workflow was parked (pending_runs.owner_uid). Empty for a
+	// row that was parked when two workflows held the name and its producer
+	// could not say which: promotion refuses that row, and does not guess.
+	UID         string
 	Source      string
 	Name        string
 	TriggeredBy string
@@ -102,8 +111,10 @@ func (s *Scheduler) pendingLoop(ctx context.Context) {
 // pendingRow is one due pending_runs row.
 type pendingRow struct {
 	id, kind, name, source string
-	runAt, scheduledBy     string
-	paramsJSON             sql.NullString
+	// ownerUID is the parked definition's identity, when the row records one.
+	ownerUID           string
+	runAt, scheduledBy string
+	paramsJSON         sql.NullString
 	// Reaction provenance (RX-1). originKind is 'reaction' for a reactor-produced
 	// row and NULL for an ordinary AR deferral, which is what keeps the two
 	// producers distinguishable at promotion.
@@ -144,7 +155,8 @@ func (s *Scheduler) PromotePending(ctx context.Context) {
 	now := time.Now().UTC()
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, kind, name, source, run_at, scheduled_by, params_json,
-		       origin_kind, origin_ref, origin_env_json, reaction_depth, gate_kind, created_at, scope
+		       origin_kind, origin_ref, origin_env_json, reaction_depth, gate_kind, created_at, scope,
+		       COALESCE(owner_uid, '')
 		FROM pending_runs WHERE status = 'pending' AND run_at <= ?
 		ORDER BY run_at ASC`, now.Format(time.RFC3339))
 	if err != nil {
@@ -155,7 +167,7 @@ func (s *Scheduler) PromotePending(ctx context.Context) {
 	for rows.Next() {
 		var p pendingRow
 		if err := rows.Scan(&p.id, &p.kind, &p.name, &p.source, &p.runAt, &p.scheduledBy, &p.paramsJSON,
-			&p.originKind, &p.originRef, &p.originEnvJSON, &p.reactionDepth, &p.gateKind, &p.createdAt, &p.scope); err == nil {
+			&p.originKind, &p.originRef, &p.originEnvJSON, &p.reactionDepth, &p.gateKind, &p.createdAt, &p.scope, &p.ownerUID); err == nil {
 			due = append(due, p)
 		}
 	}
@@ -210,7 +222,7 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 		origin = OriginPromotionAdHoc
 	}
 	if g := Evaluate(ctx, s.db, s.log, GateRequest{
-		Origin: origin, Source: p.source, OwnerKind: p.kind, Name: p.name,
+		Origin: origin, Source: p.source, OwnerKind: p.kind, Name: p.name, UID: p.ownerUID,
 	}, s.location()); !g.Allowed {
 		// STAMPED, not just logged. A held row's run_at is already in the past, and
 		// /schedules/upcoming admits a past-dated row only when a gate names it —
@@ -247,11 +259,36 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 		// FX-A3 — "exists" and "runnable" are different questions, and the bin is
 		// the difference. A binned owner still exists, so its parked runs WAIT
 		// (see the job branch below for the full reasoning).
+		//
+		// By the parked workflow's uid (present defect 34): two agencies may each
+		// hold a workflow of one name, and the row says which was parked. A row
+		// with no uid was parked when its producer could not tell them apart, or
+		// before rows carried one: it is fired when ONE workflow holds the name,
+		// and refused when two do. Until 2.4.0 it fired whichever the query
+		// returned, which could be another agency's.
 		var wfBinned int
-		if err := s.db.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL FROM workflows WHERE source = ? AND name = ?`,
-			p.source, p.name).Scan(&wfBinned); err != nil {
-			s.markPendingMissed(ctx, p, "workflow no longer exists")
-			return
+		wfUID := p.ownerUID
+		if wfUID != "" {
+			if err := s.db.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL FROM workflows WHERE uid = ?`,
+				wfUID).Scan(&wfBinned); err != nil {
+				s.markPendingMissed(ctx, p, "workflow no longer exists")
+				return
+			}
+		} else {
+			var n int
+			var only sql.NullString
+			var binned sql.NullInt64
+			if err := s.db.QueryRowContext(ctx,
+				`SELECT COUNT(*), MAX(uid), MAX(deleted_at IS NOT NULL) FROM workflows WHERE source = ? AND name = ?`,
+				p.source, p.name).Scan(&n, &only, &binned); err != nil || n == 0 {
+				s.markPendingMissed(ctx, p, "workflow no longer exists")
+				return
+			}
+			if n > 1 {
+				s.markPendingMissed(ctx, p, ReasonPendingWorkflowAmbiguous)
+				return
+			}
+			wfUID, wfBinned = only.String, int(binned.Int64)
 		}
 		if wfBinned == 1 {
 			s.holdForRecycleBin(ctx, p)
@@ -259,6 +296,7 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 		}
 		s.clearRecycleBinHold(ctx, p)
 		fire := PendingWorkflowFire{
+			UID:         wfUID,
 			Source:      p.source,
 			Name:        p.name,
 			TriggeredBy: p.scheduledBy,
@@ -294,9 +332,14 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 		// tick, a restore before the grace expires fires it, and a row still binned
 		// when the grace runs out expires through the ordinary path above with the
 		// honest "past the catch-up grace" reason.
+		//
+		// The parked run's own job, by the uid its frozen params carry: by
+		// source and name, another job of the name stood in for one that had
+		// gone, or was in the bin (present defect 4's family).
 		var jobBinned int
-		if err := s.db.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL FROM jobs WHERE source = ? AND name = ?`,
-			params.jobSourceOrDefault(), params.JobName).Scan(&jobBinned); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL FROM jobs
+			 WHERE CASE WHEN ? != '' THEN uid = ? ELSE source = ? AND name = ? END`,
+			params.JobUID, params.JobUID, params.jobSourceOrDefault(), params.JobName).Scan(&jobBinned); err != nil {
 			s.markPendingMissed(ctx, p, "job no longer exists")
 			return
 		}
@@ -305,6 +348,27 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 			return
 		}
 		s.clearRecycleBinHold(ctx, p)
+		// GR-15 — judged again here, on the scope the run was parked with: a
+		// scope can be given to another agency while a run waits for its time.
+		// Terminal, with the reason: nothing that happens to the run will make
+		// it this job's to run, and a row held for it would wait out the grace.
+		if stranded, serr := runref.RepoScopeMismatch(ctx, s.db, params.JobUID, params.jobSourceOrDefault(), params.JobName, params.Scope); serr != nil {
+			s.log.Error("scheduler: check a parked run's job against its scope", "job", params.JobName, "err", serr)
+			return // tried again at the next tick
+		} else if stranded {
+			s.markPendingMissed(ctx, p, runref.ReasonRepoScopeMismatch)
+			return
+		}
+		// Present defect 44 — nor is a parked run of a project job promoted into
+		// a queue it would never leave, when no agent that allows checkout serves
+		// it now. Terminal, with the reason, as every other producer refuses it.
+		if stuck, cerr := runref.CheckoutNeedsAgent(ctx, s.db, params.JobUID, params.jobSourceOrDefault(), params.JobName, params.Scope); cerr != nil {
+			s.log.Error("scheduler: check a parked run for an agent that allows checkout", "job", params.JobName, "err", cerr)
+			return // tried again at the next tick
+		} else if stuck {
+			s.markPendingMissed(ctx, p, runref.ReasonCheckoutNeedsAgent)
+			return
+		}
 		// RX — restore the reaction context from the ROW, not from the frozen
 		// params. The reactor writes it to dedicated columns because a workflow
 		// target has no params_json to hold it, and because the delivery row that
@@ -529,7 +593,7 @@ func (s *Scheduler) reportPendingMiss(ctx context.Context, p pendingRow, reason 
 		params.Scope = p.scope.String
 	}
 	if params.RunType == "" {
-		params.RunType = s.runTypeOf(ctx, params.jobSourceOrDefault(), params.JobName)
+		params.RunType = s.runTypeOf(ctx, params.JobUID, params.jobSourceOrDefault(), params.JobName)
 	}
 	// The run is stamped at the instant it was MEANT to happen, not at the moment
 	// the sweep noticed, so History places it where the operator expects to find it.
@@ -584,9 +648,12 @@ func (s *Scheduler) alertPendingMiss(ctx context.Context, p pendingRow, reason s
 // pending row is what makes a delayed reaction survive a restart with its
 // provenance intact.
 type pendingReaction struct {
-	Kind      string // job | workflow (Phase B fires jobs only)
-	Name      string
-	Source    string
+	Kind   string // job | workflow (Phase B fires jobs only)
+	Name   string
+	Source string
+	// OwnerUID is the reacting definition's identity, which the reaction row
+	// holds. Empty leaves the row to the name, when one definition holds it.
+	OwnerUID  string
 	Scope     string
 	RunAt     string
 	Params    *EnqueueParams
@@ -621,14 +688,14 @@ func InsertReactionPendingRun(ctx context.Context, database *sql.DB, p pendingRe
 			(id, kind, name, source, scope, run_at, scheduled_by, created_at, status, params_json,
 			 origin_kind, origin_ref, reaction_depth, origin_env_json, owner_uid)
 		VALUES (?, ?, ?, ?, ?, ?, 'reactor', ?, 'pending', ?, 'reaction', ?, ?, ?,
-			CASE ?
+			COALESCE(NULLIF(?, ''), CASE ?
 			  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
 			  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
-			END)`,
+			END))`,
 		id, p.Kind, p.Name, p.Source, scopeVal, p.RunAt,
 		time.Now().UTC().Format(time.RFC3339), paramsJSON,
 		p.OriginRef, p.Depth, envVal,
-		p.Kind, p.Name, p.Source, p.Name, p.Source)
+		p.OwnerUID, p.Kind, p.Name, p.Source, p.Name, p.Source)
 	if err != nil {
 		return "", err
 	}
@@ -651,17 +718,27 @@ func InsertPendingRun(ctx context.Context, database *sql.DB, kind, name, source,
 	if scope != "" {
 		scopeVal = scope
 	}
+	// The definition's own identity when the caller has it (a deferred job run
+	// always does: params.JobUID), as TryQueue writes it; the name only when one
+	// definition holds it. Until 2.4.2 the name was all that was asked (present
+	// defect 56), so a deferred run of one of two agencies' twins was parked as
+	// nobody's and judged at promotion by its name: either twin's pause held
+	// it, and Global's calendars gated it.
+	ownUID := ""
+	if params != nil && kind == "job" {
+		ownUID = params.JobUID
+	}
 	_, err := database.ExecContext(ctx, `
 		INSERT INTO pending_runs (id, kind, name, source, scope, run_at, scheduled_by, created_at, status, params_json,
 			owner_uid)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?,
-			CASE ?
+			COALESCE(NULLIF(?, ''), CASE ?
 			  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
 			  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
-			END)`,
+			END))`,
 		id, kind, name, source, scopeVal, runAt, scheduledBy,
 		time.Now().UTC().Format(time.RFC3339), paramsJSON,
-		kind, name, source, name, source)
+		ownUID, kind, name, source, name, source)
 	if err != nil {
 		return "", err
 	}

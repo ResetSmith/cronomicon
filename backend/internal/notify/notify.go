@@ -16,11 +16,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
@@ -65,11 +67,19 @@ const (
 	// TriggerMissedRun — a schedule expected a fire and no run appeared, with no
 	// suppression on record to explain it.
 	TriggerMissedRun = "missed-run"
+	// TriggerSecretRevealed — someone revealed a stored secret (2.5.1 SG-17).
+	TriggerSecretRevealed = "secret-revealed"
+	// TriggerSecretChanged — a stored secret or SSH key was created, rotated,
+	// updated, moved, deleted or migrated to Vault (2.5.1 SG-17).
+	TriggerSecretChanged = "secret-changed"
+	// TriggerBackupKeyChanged — the installation's backup keys changed (2.5.1
+	// SG-7, SG-17). It is the installation's, so Global's rules alone see it.
+	TriggerBackupKeyChanged = "backup-key-changed"
 )
 
 // alertTriggers is the closed set, and the single source the guard and the
 // dispatcher both read.
-var alertTriggers = []string{TriggerSLABreach, TriggerMissedRun}
+var alertTriggers = []string{TriggerSLABreach, TriggerMissedRun, TriggerSecretRevealed, TriggerSecretChanged, TriggerBackupKeyChanged}
 
 // AlertEvent is a non-run-terminal alert.
 //
@@ -79,9 +89,12 @@ type AlertEvent struct {
 	Trigger string // one of the Trigger* constants above
 	JobName string
 	// JobUID — see RunEvent.JobUID.
-	JobUID  string
-	Scope   string
-	TraceID string
+	JobUID string
+	// WorkflowUID is a workflow-owned alert's workflow (2.5.0 C4): what its
+	// agency is found by when there is no run (a missed workflow fire).
+	WorkflowUID string
+	Scope       string
+	TraceID     string
 	// OwnerKind distinguishes a workflow-owned alert from a job-owned one.
 	// Empty means job, so every existing caller keeps its behaviour.
 	//
@@ -95,6 +108,10 @@ type AlertEvent struct {
 	// re-computing the reason here would mean a second copy of that logic.
 	Subject string
 	Detail  string
+	// Agency is whose the event is, when it is not found by a run, a job or a
+	// workflow (2.5.1 SG-17: a secret's owner; Global for a backup key). An
+	// agency's rule matches its own agency's events; Global's, every agency's.
+	Agency string
 }
 
 // Notifier is the seam the runner and the scheduler depend on (nil ⇒ no
@@ -160,7 +177,6 @@ func (d *Dispatcher) RunEnded(ev RunEvent) { d.send(runDispatchEvent(ev)) }
 // Extracted so tests that drive dispatch directly exercise the same conversion
 // production does, rather than hand-building a dispatchEvent that could drift.
 func runDispatchEvent(ev RunEvent) dispatchEvent {
-	subject, body := renderMessage(ev)
 	// FX-D4 — a SUPPRESSION is matched by name only, never by the `any` aliases.
 	//
 	// isRunOutcome=false is what enforces that. An operator whose rule says
@@ -171,7 +187,10 @@ func runDispatchEvent(ev RunEvent) dispatchEvent {
 	// the same trap the comment on triggerMatches describes for SLA alerts.
 	return dispatchEvent{
 		traceID: ev.TraceID, jobName: ev.JobName, jobUID: ev.JobUID, scope: ev.Scope, ownerKind: ev.OwnerKind,
-		matchKey: ev.Status, isRunOutcome: ev.Status != "skipped", subject: subject, body: body,
+		matchKey: ev.Status, isRunOutcome: ev.Status != "skipped",
+		// A suppression has no run to open (FX-D4: nothing executed).
+		linkable: ev.TraceID != "" && !strings.EqualFold(ev.Status, "skipped"),
+		render:   func(mc msgContext) (string, string) { return renderMessage(ev, mc) },
 	}
 }
 
@@ -179,11 +198,26 @@ func runDispatchEvent(ev RunEvent) dispatchEvent {
 // transports and per-transport delivery stamps as a run notification. Only the
 // matching differs — see dispatchEvent.isRunOutcome.
 func (d *Dispatcher) AlertRaised(ev AlertEvent) {
-	subject, body := renderAlert(ev)
-	d.send(dispatchEvent{
-		traceID: ev.TraceID, jobName: ev.JobName, jobUID: ev.JobUID, scope: ev.Scope, ownerKind: ev.OwnerKind,
-		matchKey: ev.Trigger, isRunOutcome: false, subject: subject, body: body,
-	})
+	d.send(alertDispatchEvent(ev))
+}
+
+// alertDispatchEvent is what AlertRaised dispatches for ev.
+func alertDispatchEvent(ev AlertEvent) dispatchEvent {
+	return dispatchEvent{
+		traceID: ev.TraceID, jobName: ev.JobName, jobUID: ev.JobUID, workflowUID: ev.WorkflowUID,
+		scope: ev.Scope, ownerKind: ev.OwnerKind, agency: ev.Agency,
+		matchKey: ev.Trigger, isRunOutcome: false,
+		linkable: ev.TraceID != "",
+		render:   func(mc msgContext) (string, string) { return renderAlert(ev, mc) },
+	}
+}
+
+// msgContext is what a message says that only the dispatcher can know (2.5.2
+// OP-5, OP-6): whose the event is, by the agency's current name, and the link
+// to its run. Empty fields add no line.
+type msgContext struct {
+	agencyName string
+	link       string
 }
 
 // dispatchEvent is what the dispatcher actually works on: a subject, a body, and
@@ -199,13 +233,18 @@ type dispatchEvent struct {
 	// jobUid is the fired job's permanent identity (R2-4). Empty for a workflow
 	// event, for history predating R2-1, and for a missed-run alert whose job
 	// has since gone — all cases where a uid-targeted rule correctly stays quiet.
-	jobUID       string
+	jobUID      string
+	workflowUID string
+	// agency is whose the event is (2.5.0 C4, AL-1), resolved once in dispatch.
+	agency       string
 	ownerKind    string // "" or "job" ⇒ job-owned; "workflow" ⇒ workflow-owned
 	scope        string
 	matchKey     string
 	isRunOutcome bool
-	subject      string
-	body         string
+	// linkable: the event has a run a person can open (a trace, and not a
+	// suppression). render builds the subject and body once the agency is known.
+	linkable bool
+	render   func(msgContext) (subject, body string)
 }
 
 // send runs the dispatch asynchronously so neither the run-finalize path nor the
@@ -234,11 +273,11 @@ type notifConfig struct {
 	smtpRecipients []string
 	appriseEnabled bool
 	appriseGateway string
-	appriseTargets []string
 }
 
 func (d *Dispatcher) dispatch(ctx context.Context, ev dispatchEvent) error {
 	ev.jobUID = d.resolveEventJobUID(ctx, ev)
+	ev.agency = d.resolveEventAgency(ctx, ev)
 	rules, err := d.matchingRules(ctx, ev)
 	if err != nil {
 		return fmt.Errorf("load alert rules: %w", err)
@@ -253,12 +292,21 @@ func (d *Dispatcher) dispatch(ctx context.Context, ev dispatchEvent) error {
 	}
 
 	wantEmail, wantPush := false, false
+	// globalMail: a Global rule mails this event, so the installation's default
+	// recipients are added (question 80; 2.5.0 C4). An agency's rule mails its
+	// own recipients only: the defaults are the installation's people.
+	globalMail := false
+	var pushRules []string
 	recipients := map[string]struct{}{}
 	for _, r := range rules {
 		for _, ch := range r.channels {
 			if email, push, ok := channelTransport(ch); ok {
 				wantEmail = wantEmail || email
 				wantPush = wantPush || push
+				globalMail = globalMail || (email && r.owner == agencyid.Global)
+				if push {
+					pushRules = append(pushRules, r.id)
+				}
 			} else {
 				// Only reachable for a rule stored before v0.52.23 — the API
 				// refuses these now. Say so once, because the alternative is a
@@ -271,18 +319,21 @@ func (d *Dispatcher) dispatch(ctx context.Context, ev dispatchEvent) error {
 			recipients[rcpt] = struct{}{}
 		}
 	}
-	for _, rcpt := range nc.smtpRecipients {
-		recipients[rcpt] = struct{}{}
+	if globalMail {
+		for _, rcpt := range nc.smtpRecipients {
+			recipients[rcpt] = struct{}{}
+		}
 	}
 
-	// AN-4 — "it failed, and here is who to call". Appended HERE rather than in
-	// the renderers: renderMessage/renderAlert are pure and hold no db, and both
-	// have already run by the time an event reaches this function. One site
-	// therefore covers run outcomes and alerts alike.
+	// 2.5.2 OP-5/OP-6 — whose it is and where to open it, then AN-4's "here is
+	// who to call". The renderers are pure and hold no db, so the dispatcher
+	// looks these up and hands them in; one site covers run outcomes and alerts
+	// alike.
 	//
 	// Below the rules check on purpose: an event nobody subscribed to returns
-	// above, so an un-alerted job never pays for this lookup.
-	subject, body := ev.subject, ev.body+d.annotationLines(ctx, ev)
+	// above, so an un-alerted job never pays for these lookups.
+	subject, body := ev.render(msgContext{agencyName: d.agencyName(ctx, ev.agency), link: d.runLink(ctx, ev)})
+	body += d.annotationLines(ctx, ev)
 
 	if wantEmail {
 		to := keys(recipients)
@@ -302,17 +353,23 @@ func (d *Dispatcher) dispatch(ctx context.Context, ev dispatchEvent) error {
 		if gateway == "" {
 			gateway = d.cfg.AppriseURL
 		}
+		// AL-2 (2.5.0 C4): the targets the matched rules name, not every
+		// target the installation has.
+		targets, err := d.ruleTargetURLs(ctx, pushRules)
+		if err != nil {
+			return fmt.Errorf("load push targets: %w", err)
+		}
 		switch {
 		case !nc.appriseEnabled && d.cfg.AppriseURL == "":
 			d.log.Warn("alert matched push channel but Apprise is not configured", "trace_id", ev.traceID)
-		case len(nc.appriseTargets) == 0:
-			d.log.Warn("alert matched push channel but no Apprise targets configured", "trace_id", ev.traceID)
+		case len(targets) == 0:
+			d.log.Warn("alert matched push channel but its rules name no enabled push target", "trace_id", ev.traceID)
 		default:
-			if err := d.sendPush(ctx, gateway, nc.appriseTargets, subject, body); err != nil {
+			if err := d.sendPush(ctx, gateway, targets, subject, body); err != nil {
 				d.log.Error("apprise push failed", "trace_id", ev.traceID, "error", err)
 				d.markTransport(ctx, "apprise", "error")
 			} else {
-				d.log.Info("alert push sent", "trace_id", ev.traceID, "targets", len(nc.appriseTargets))
+				d.log.Info("alert push sent", "trace_id", ev.traceID, "targets", len(targets))
 				d.markTransport(ctx, "apprise", "ok")
 			}
 		}
@@ -322,6 +379,8 @@ func (d *Dispatcher) dispatch(ctx context.Context, ev dispatchEvent) error {
 
 // matchedRule is the subset of an alert rule the dispatcher needs.
 type matchedRule struct {
+	id         string
+	owner      string
 	channels   []string
 	recipients string
 }
@@ -329,7 +388,7 @@ type matchedRule struct {
 // matchingRules returns enabled rules whose trigger + target match the event.
 func (d *Dispatcher) matchingRules(ctx context.Context, ev dispatchEvent) ([]matchedRule, error) {
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT target_mode, job_name, trigger, channels, recipients, job_uid
+		SELECT id, target_mode, job_name, trigger, channels, recipients, job_uid, owner_agency
 		FROM alert_config WHERE enabled = 1`)
 	if err != nil {
 		return nil, err
@@ -337,10 +396,15 @@ func (d *Dispatcher) matchingRules(ctx context.Context, ev dispatchEvent) ([]mat
 	defer rows.Close()
 	var out []matchedRule
 	for rows.Next() {
-		var targetMode, trigger, channelsJSON string
+		var id, targetMode, trigger, channelsJSON, owner string
 		var jobName, recipients, jobUID sql.NullString
-		if err := rows.Scan(&targetMode, &jobName, &trigger, &channelsJSON, &recipients, &jobUID); err != nil {
+		if err := rows.Scan(&id, &targetMode, &jobName, &trigger, &channelsJSON, &recipients, &jobUID, &owner); err != nil {
 			return nil, err
+		}
+		// AL-1 (2.5.0 C4): an agency's rule matches only its agency's events
+		// ("all" is all of that agency's); Global's match every agency's.
+		if owner != agencyid.Global && owner != ev.agency {
+			continue
 		}
 		if !triggerMatches(trigger, ev.matchKey, ev.isRunOutcome) {
 			continue
@@ -350,7 +414,7 @@ func (d *Dispatcher) matchingRules(ctx context.Context, ev dispatchEvent) ([]mat
 		}
 		var channels []string
 		_ = json.Unmarshal([]byte(channelsJSON), &channels)
-		out = append(out, matchedRule{channels: channels, recipients: recipients.String})
+		out = append(out, matchedRule{id: id, owner: owner, channels: channels, recipients: recipients.String})
 	}
 	return out, rows.Err()
 }
@@ -358,15 +422,15 @@ func (d *Dispatcher) matchingRules(ctx context.Context, ev dispatchEvent) ([]mat
 func (d *Dispatcher) loadConfig(ctx context.Context) (notifConfig, error) {
 	var nc notifConfig
 	var host, from, fromName, username, pwEnc, encryption, appriseURL sql.NullString
-	var recipientsJSON, appriseTargetsJSON sql.NullString
+	var recipientsJSON sql.NullString
 	var port sql.NullInt64
 	var appriseEnabled sql.NullInt64
 	err := d.db.QueryRowContext(ctx, `
 		SELECT smtp_host, smtp_port, smtp_from, smtp_from_name, smtp_username, smtp_password_enc,
-		       smtp_encryption, smtp_recipients, apprise_enabled, apprise_url, apprise_targets
+		       smtp_encryption, smtp_recipients, apprise_enabled, apprise_url
 		FROM notification_config WHERE id = 1`).
 		Scan(&host, &port, &from, &fromName, &username, &pwEnc, &encryption,
-			&recipientsJSON, &appriseEnabled, &appriseURL, &appriseTargetsJSON)
+			&recipientsJSON, &appriseEnabled, &appriseURL)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nc, nil
 	}
@@ -382,7 +446,7 @@ func (d *Dispatcher) loadConfig(ctx context.Context) (notifConfig, error) {
 		FromName:   fromName.String,
 	}
 	if pwEnc.Valid && pwEnc.String != "" {
-		pw, err := secrets.DecryptString(d.cfg, pwEnc.String)
+		pw, err := secrets.DecryptSetting(d.cfg, secrets.SettingsBinding(secrets.LabelSMTPPassword, ""), pwEnc.String)
 		if err != nil {
 			d.log.Error("decrypt SMTP password failed; sending unauthenticated", "error", err)
 		} else {
@@ -392,7 +456,6 @@ func (d *Dispatcher) loadConfig(ctx context.Context) (notifConfig, error) {
 	nc.smtpRecipients = parseJSONList(recipientsJSON.String)
 	nc.appriseEnabled = appriseEnabled.Int64 == 1
 	nc.appriseGateway = appriseURL.String
-	nc.appriseTargets = appriseTargetURLs(appriseTargetsJSON.String)
 	return nc, nil
 }
 
@@ -518,6 +581,12 @@ func (d *Dispatcher) SendTest(ctx context.Context) (TestReport, error) {
 	}
 
 	// ── apprise ──────────────────────────────────────────────────────────────
+	// Global's targets (2.5.0 C4): the test is of the installation's relay,
+	// sent from its Settings by a global administrator.
+	targets, err := d.globalTargetURLs(ctx)
+	if err != nil {
+		return report, err
+	}
 	gateway := nc.appriseGateway
 	if gateway == "" {
 		gateway = d.cfg.AppriseURL
@@ -533,13 +602,13 @@ func (d *Dispatcher) SendTest(ctx context.Context) (TestReport, error) {
 			Transport: "apprise", Skipped: true,
 			Detail: "Apprise is switched off.",
 		})
-	case len(nc.appriseTargets) == 0:
+	case len(targets) == 0:
 		report.Results = append(report.Results, TransportResult{
 			Transport: "apprise", Skipped: true,
 			Detail: "No Apprise targets are configured.",
 		})
 	default:
-		if err := d.sendPush(ctx, gateway, nc.appriseTargets, subject, body); err != nil {
+		if err := d.sendPush(ctx, gateway, targets, subject, body); err != nil {
 			d.log.Error("test push failed", "error", err)
 			d.markTransport(ctx, "apprise", "error")
 			report.Results = append(report.Results, TransportResult{
@@ -549,7 +618,7 @@ func (d *Dispatcher) SendTest(ctx context.Context) (TestReport, error) {
 			d.markTransport(ctx, "apprise", "ok")
 			report.Results = append(report.Results, TransportResult{
 				Transport: "apprise", Sent: true,
-				Detail: fmt.Sprintf("Sent to %d target(s).", len(nc.appriseTargets)),
+				Detail: fmt.Sprintf("Sent to %d target(s).", len(targets)),
 			})
 		}
 	}
@@ -674,7 +743,10 @@ func targetMatches(mode, ruleJob, eventJob, ownerKind, ruleUID, eventUID string)
 	}
 }
 
-func renderMessage(ev RunEvent) (subject, body string) {
+// renderMessage is a run outcome's message. The subject is unchanged by mc
+// (AN-Q4: mail filters key on it); the body names the agency under the job
+// and ends with the link to the run, when mc has them (2.5.2 OP-5, OP-6).
+func renderMessage(ev RunEvent, mc msgContext) (subject, body string) {
 	verb := "completed"
 	switch {
 	case strings.EqualFold(ev.Status, "failure"):
@@ -692,6 +764,9 @@ func renderMessage(ev RunEvent) (subject, body string) {
 	subject = fmt.Sprintf("[Cronomicon] %s %s", ev.JobName, verb)
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %s\n", label, ev.JobName)
+	if mc.agencyName != "" {
+		fmt.Fprintf(&b, "Agency: %s\n", mc.agencyName)
+	}
 	fmt.Fprintf(&b, "Status: %s\n", ev.Status)
 	if ev.Reason != "" {
 		fmt.Fprintf(&b, "Reason: %s\n", ev.Reason)
@@ -704,6 +779,9 @@ func renderMessage(ev RunEvent) (subject, body string) {
 	}
 	if ev.TraceID != "" {
 		fmt.Fprintf(&b, "Run:    %s\n", ev.TraceID)
+	}
+	if mc.link != "" {
+		fmt.Fprintf(&b, "Open:   %s\n", mc.link)
 	}
 	return subject, b.String()
 }
@@ -730,25 +808,58 @@ func parseJSONList(s string) []string {
 	return out
 }
 
-// appriseTargetURLs reads the apprise_targets column and returns the URLs of the
-// enabled targets only. A disabled target is skipped so the per-target toggle in
-// the UI actually suppresses delivery.
-//
-// The PARSE is settings.ParseAppriseTargets — the same function the Settings
-// card reads the column with. This package had its own copy until v1.5.43, and
-// the two drifted the moment one was edited: v1.5.41 dropped the pre-rich
-// bare-string form from the settings reader only, so a row still holding it
-// showed zero targets in the UI while every alert kept being delivered here,
-// and the first Save silently wiped it. One parser is the fix; this function is
-// now only the enabled-filter and the URL projection.
-func appriseTargetURLs(s string) []string {
+// ruleTargetURLs is where a push for these rules goes (AL-2, 2.5.0 C4): the
+// enabled targets they name, each once. A disabled target is skipped so its
+// toggle suppresses delivery. Until 1540 the targets were one list on
+// notification_config and every push went to all of them.
+func (d *Dispatcher) ruleTargetURLs(ctx context.Context, ruleIDs []string) ([]string, error) {
+	if len(ruleIDs) == 0 {
+		return nil, nil
+	}
+	q := `SELECT t.id, t.url FROM alert_targets t
+		WHERE t.enabled = 1 AND t.url <> ''
+		  AND t.id IN (SELECT target_id FROM alert_rule_targets WHERE rule_id IN (?` +
+		strings.Repeat(",?", len(ruleIDs)-1) + `))
+		ORDER BY t.owner_agency, t.position, t.id`
+	args := make([]any, len(ruleIDs))
+	for i, id := range ruleIDs {
+		args[i] = id
+	}
+	return d.targetURLs(ctx, q, args...)
+}
+
+// globalTargetURLs is Global's enabled targets, for a test send.
+func (d *Dispatcher) globalTargetURLs(ctx context.Context) ([]string, error) {
+	return d.targetURLs(ctx, `SELECT id, url FROM alert_targets
+		WHERE owner_agency = ? AND enabled = 1 AND url <> '' ORDER BY position, id`, agencyid.Global)
+}
+
+func (d *Dispatcher) targetURLs(ctx context.Context, q string, args ...any) ([]string, error) {
+	rows, err := d.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 	var out []string
-	for _, t := range settings.ParseAppriseTargets(s) {
-		if t.Enabled && t.URL != "" {
-			out = append(out, t.URL)
+	seen := map[string]bool{}
+	for rows.Next() {
+		var id, stored string
+		if err := rows.Scan(&id, &stored); err != nil {
+			return nil, err
+		}
+		// 2.5.1 SG2.8: sealed at rest, bound to its row; a plain URL from
+		// before reads as is.
+		u, err := secrets.OpenSetting(d.cfg, secrets.SettingsBinding(secrets.LabelAlertTargetURL, id), stored)
+		if err != nil {
+			d.log.Error("a push target's URL cannot be opened (is its KEK configured?); skipping it", "error", err)
+			continue
+		}
+		if !seen[u] {
+			seen[u] = true
+			out = append(out, u)
 		}
 	}
-	return out
+	return out, rows.Err()
 }
 
 func keys(m map[string]struct{}) []string {
@@ -761,14 +872,19 @@ func keys(m map[string]struct{}) []string {
 
 // renderAlert composes the message for a non-run-terminal alert. The scanner
 // that raised it supplies the sentence; this only dresses it.
-func renderAlert(ev AlertEvent) (subject, body string) {
+func renderAlert(ev AlertEvent, mc msgContext) (subject, body string) {
 	subject = ev.Subject
 	if subject == "" {
 		subject = fmt.Sprintf("[Cronomicon] %s — %s", ev.JobName, ev.Trigger)
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Alert:  %s\n", ev.Trigger)
-	fmt.Fprintf(&b, "Job:    %s\n", ev.JobName)
+	if ev.JobName != "" { // a secret's or a backup key's alert names no job
+		fmt.Fprintf(&b, "Job:    %s\n", ev.JobName)
+	}
+	if mc.agencyName != "" {
+		fmt.Fprintf(&b, "Agency: %s\n", mc.agencyName)
+	}
 	if ev.Scope != "" {
 		fmt.Fprintf(&b, "Scope:  %s\n", ev.Scope)
 	}
@@ -778,7 +894,50 @@ func renderAlert(ev AlertEvent) (subject, body string) {
 	if ev.TraceID != "" {
 		fmt.Fprintf(&b, "\nRun:    %s\n", ev.TraceID)
 	}
+	if mc.link != "" {
+		fmt.Fprintf(&b, "Open:   %s\n", mc.link)
+	}
 	return subject, b.String()
+}
+
+// agencyName is an agency's current name, read by id (2.5.2 OP-5): a renamed
+// agency's alert uses its new name, Global's included. "" when it cannot be
+// read, and the message then names no agency rather than failing.
+func (d *Dispatcher) agencyName(ctx context.Context, id string) string {
+	var name string
+	if err := d.db.QueryRowContext(ctx, `SELECT name FROM agencies WHERE id = ?`, id).Scan(&name); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			d.log.Warn("agency name lookup failed; sending without it", "agency", id, "error", err)
+		}
+		return ""
+	}
+	return name
+}
+
+// runLink is where a person opens the event's run (2.5.2 OP-6): History in the
+// run's agency, on the workflow-runs tab for a workflow's, under the address
+// the app recorded from a global administrator's browser or was given on
+// Settings → Notifications (OP2.1). "" without that address or a run to open;
+// a failed read sends the message without the link.
+func (d *Dispatcher) runLink(ctx context.Context, ev dispatchEvent) string {
+	if !ev.linkable {
+		return ""
+	}
+	a, err := settings.ReadAlertLinkAddress(ctx, d.db)
+	if err != nil {
+		d.log.Warn("alert link address lookup failed; sending without a link", "trace_id", ev.traceID, "error", err)
+		return ""
+	}
+	if a.Address == "" {
+		return ""
+	}
+	q := url.Values{}
+	q.Set("trace", ev.traceID)
+	q.Set("agency", ev.agency)
+	if strings.EqualFold(ev.ownerKind, "workflow") {
+		q.Set("tab", "workflow-runs")
+	}
+	return a.Address + "/runs?" + q.Encode()
 }
 
 // annotationLines returns the operator-annotation tail appended to a
@@ -797,25 +956,33 @@ func renderAlert(ev AlertEvent) (subject, body string) {
 // `[CRITICAL]` prefix is a one-line follow-up if it is ever asked for, as an
 // opt-in.
 //
+// THE AGENCY'S CONTACT (2.5.2 OP-5a, OP-28). When the definition names no
+// contact, an event about a job or workflow carries its agency's, marked
+// "(agency)" — the same fallback the app shows. An event that names no job
+// (a secret's or a backup key's alert) gets none: it is about the agency
+// itself, and goes to the agency's own rules.
+//
 // FAILURE-OPEN throughout: every error path returns "" and the un-enriched
 // message still goes out. An annotation must never cost a notification.
 func (d *Dispatcher) annotationLines(ctx context.Context, ev dispatchEvent) string {
-	kind, uid := d.resolveAnnotationOwner(ctx, ev)
-	if uid == "" {
-		return ""
-	}
 	var (
 		critical int
 		contact  string
 	)
-	if err := d.db.QueryRowContext(ctx,
-		`SELECT critical, contact FROM annotations WHERE owner_kind = ? AND owner_uid = ?`,
-		kind, uid).Scan(&critical, &contact); err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
+	if kind, uid := d.resolveAnnotationOwner(ctx, ev); uid != "" {
+		if err := d.db.QueryRowContext(ctx,
+			`SELECT critical, contact FROM annotations WHERE owner_kind = ? AND owner_uid = ?`,
+			kind, uid).Scan(&critical, &contact); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			d.log.Warn("annotation lookup failed; sending un-enriched notification",
 				"trace_id", ev.traceID, "kind", kind, "error", err)
+			return ""
 		}
-		return ""
+	}
+	if contact == "" && ev.jobName != "" && ev.agency != "" {
+		var own string
+		if err := d.db.QueryRowContext(ctx, `SELECT contact FROM agencies WHERE id = ?`, ev.agency).Scan(&own); err == nil && own != "" {
+			contact = own + " (agency)"
+		}
 	}
 	var b strings.Builder
 	if critical == 1 {
@@ -892,6 +1059,34 @@ func (d *Dispatcher) resolveAnnotationOwner(ctx context.Context, ev dispatchEven
 //
 // Unresolvable stays empty, and an empty event uid simply never matches a
 // uid-targeted rule.
+// resolveEventAgency is whose an event is (2.5.0 C4, AL-1): its run's owner
+// (1480) or its workflow run's agency (1520) by its trace; else its job's, or
+// its workflow's, by uid (a missed fire has no run); else Global's.
+func (d *Dispatcher) resolveEventAgency(ctx context.Context, ev dispatchEvent) string {
+	if ev.agency != "" { // said by the event itself (2.5.1 SG-17)
+		return ev.agency
+	}
+	var a sql.NullString
+	if ev.traceID != "" {
+		if d.db.QueryRowContext(ctx, `SELECT COALESCE(
+			NULLIF((SELECT owner_agency FROM runs WHERE id = ?1), ''),
+			NULLIF((SELECT agency_id FROM workflow_runs WHERE id = ?1), ''))`, ev.traceID).Scan(&a) == nil && a.String != "" {
+			return a.String
+		}
+	}
+	if ev.jobUID != "" {
+		if d.db.QueryRowContext(ctx, `SELECT `+agencyid.JobSQL("j")+` FROM jobs j WHERE j.uid = ?`, ev.jobUID).Scan(&a) == nil && a.String != "" {
+			return a.String
+		}
+	}
+	if ev.workflowUID != "" {
+		if d.db.QueryRowContext(ctx, `SELECT `+agencyid.WorkflowSQL+` FROM workflows w WHERE w.uid = ?`, ev.workflowUID).Scan(&a) == nil && a.String != "" {
+			return a.String
+		}
+	}
+	return agencyid.Global
+}
+
 func (d *Dispatcher) resolveEventJobUID(ctx context.Context, ev dispatchEvent) string {
 	if ev.jobUID != "" {
 		return ev.jobUID

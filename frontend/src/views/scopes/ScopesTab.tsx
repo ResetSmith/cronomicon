@@ -1,12 +1,15 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "../../api/client";
-import { GLOBAL_ADMIN_SYNC_ONLY, globalOnly } from "../../api/globalAdmin";
+import { RepoSelect, repoLabel, useRepoAdmin, useRepos } from "../../components/RepoPicker";
+import { GLOBAL_AGENCY, type AgencyRef } from "../../api/access";
+import { REPAIR_HINT, RepairDialog, type RepairBody } from "../../components/RepairDialog";
+import { CloneScopeDialog } from "./CloneScope";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
 import { useColumnWidths, useGet, useInlineTags, rows, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
-import { DetailPanel, EmptyCell, ExpandChevron, HoverTr, InlineLoading, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
+import { DetailCell, DetailPanel, EmptyCell, ExpandChevron, HoverTr, InlineLoading, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
 import {
   Btn,
   ConfirmDialog,
@@ -20,8 +23,9 @@ import {
   labelStyle,
   tdStyle,
   } from "../envvars/ui";
-import { BindingNotices, BoundRunnersCell, ScopeRunnersField, type BoundRunner } from "./ScopeRunners";
+import { BindingNotices, BoundRunnersCell, ScopeRunnersField, UnboundHostKeysNote, type BoundRunner } from "./ScopeRunners";
 import { ScopeKeyCoverage } from "../runners/HostKeys";
+import { globalAgencyName } from "../../globalName";
 
 
 export interface ScopeRow {
@@ -50,6 +54,10 @@ export interface ScopeRow {
   // restricts.
   boundRunners?: BoundRunner[];
   lastChangedAt?: string | null;
+  // R8 — what the caller may do with this row, from the server.
+  canEdit?: boolean;
+  canDelete?: boolean;
+  canRepair?: boolean;
 }
 
 // InventoryDoc mirrors the GET /scopes/{id}/inventory response (advisory parsed
@@ -134,14 +142,56 @@ export function ScopesTab({
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<ScopeRow | null>(null);
   const [deleting, setDeleting] = useState<ScopeRow | null>(null);
+  const [cloning, setCloning] = useState<ScopeRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [resyncing, setResyncing] = useState(false);
   const [notice, setNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
   // Agency options for the per-scope binding selector (agency-support.md M1).
   const { data: agencyData } = useGet<unknown>(() => api.GET("/agencies"), []);
-  const agencies = rows<{ id: string; name: string }>(agencyData);
+  // Changing a scope's agency is a global administrator's repair since 2.4.0
+  // (I4, IN-7; question 48): another agency gets a scope by a clone. The
+  // row's own canRepair says whether this caller may (R8); a server that does
+  // not send it is read by the global flag. The options are every agency, and
+  // whatever the scope is in now so the select can show it even when the
+  // catalog could not be read.
+  const mayRepair = (s: ScopeRow) => s.canRepair ?? globalAdmin;
+  const agencyOptionsFor = (current: { id: string; name: string }[]): AgencyRef[] => {
+    const all = rows<{ id: string; name: string }>(agencyData);
+    const out = new Map<string, string>();
+    out.set(GLOBAL_AGENCY, globalAgencyName());
+    for (const a of all) if (a.id !== GLOBAL_AGENCY) out.set(a.id, a.name);
+    for (const a of current) if (!out.has(a.id)) out.set(a.id, a.name);
+    return [...out].map(([id, name]) => ({ id, name }));
+  };
+  const [scopeRepair, setScopeRepair] = useState<{ scope: ScopeRow; target: AgencyRef } | null>(null);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [repairError, setRepairError] = useState("");
+  const sendScopeRepair = async (rep: RepairBody) => {
+    if (!scopeRepair) return;
+    const { scope, target } = scopeRepair;
+    setRepairBusy(true);
+    setRepairError("");
+    const { error: er } = await api.PUT("/scopes/{scopeId}/agency", {
+      params: { path: { scopeId: scope.id! }, header: csrfHeader },
+      body: { agencyId: target.id, ...rep },
+    });
+    setRepairBusy(false);
+    if (er) {
+      setRepairError(errMsg(er));
+      return;
+    }
+    setScopeRepair(null);
+    setNotice({ kind: "info", text: `${scope.scope} now belongs to ${target.name}` });
+    refetch();
+  };
   const cw = useColumnWidths("envvars-scopes");
-  const globalWhy = globalOnly(globalAdmin);
+  // A resync is of one repository (2.4.2, question 55 and 53): the ones the
+  // caller may sync, with a choice when there are several.
+  const { repos } = useRepos();
+  const maySync = useRepoAdmin();
+  const syncable = repos.filter((r) => maySync(r.agencyId));
+  const [resyncRepoRaw, setResyncRepo] = useState("");
+  const resyncRepo = syncable.find((r) => r.id === resyncRepoRaw) ?? syncable[0];
 
   // Operator-owned scope tags (migration 1160) — optimistic edits via the
   // dedicated PUT /scope-tags/{scopeId}; the override map resets on every list
@@ -155,8 +205,9 @@ export function ScopesTab({
   );
 
   const resync = async () => {
+    if (!resyncRepo) return;
     setResyncing(true);
-    const { data, error: e } = await api.POST("/scopes/resync", { params: { header: csrfHeader } });
+    const { data, error: e } = await api.POST("/scopes/resync", { params: { header: csrfHeader, query: { repo: resyncRepo.id } } });
     setResyncing(false);
     if (e) {
       setNotice({ kind: "error", text: `Re-sync failed: ${errMsg(e)}` });
@@ -166,8 +217,8 @@ export function ScopesTab({
     setNotice({
       kind: "info",
       text: r
-        ? `Re-synced ${r.scopesSynced ?? 0} scopes — ${r.deltas?.length ?? 0} scope changes — ${r.errors?.length ?? 0} pragma errors`
-        : "Re-synced inventories from GitLab",
+        ? `Re-synced ${resyncRepo ? repoLabel(resyncRepo) + " repository" : "the repository"}: ${r.scopesSynced ?? 0} scopes — ${r.deltas?.length ?? 0} scope changes — ${r.errors?.length ?? 0} pragma errors`
+        : "Re-synced inventories from the repository",
     });
     refetch();
   };
@@ -256,18 +307,16 @@ export function ScopesTab({
       // the Membership matrix until that grid was deleted; the question ("which
       // zones can run this scope's jobs?") belongs where the scope is.
       //
-      // SB — the empty state says "general pool", not "unrestricted". A scope in
-      // no agency is NOT open to any runner: the claim rule is disjoint, and
-      // only a runner in no agency may take its work. The old label was wrong
-      // about that, and with a Runners column beside it "unrestricted" would
-      // now also mean two different things on one row.
+      // Every scope belongs to an agency since 2.3.0 (Global, when no other), so
+      // the empty state is damage: no runner serves it, and nobody but a global
+      // administrator can change it. (It read "general pool" until then.)
       cell: (row) =>
         (row.agencies ?? []).length === 0 ? (
           <span
-            title="In no agency — only a general-pool runner (one in no agency) may run this scope's jobs."
-            style={{ color: c.textSec, fontSize: c.fontXs, fontStyle: "italic", cursor: "help" }}
+            title="In no agency: no runner can take this scope's jobs until a global administrator sets its agency. It is listed in Notices."
+            style={{ color: c.danger, fontSize: c.fontXs, fontStyle: "italic", cursor: "help" }}
           >
-            general pool
+            no agency
           </span>
         ) : (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -376,8 +425,15 @@ export function ScopesTab({
         <ColumnsMenu cols={cols} cw={cw} />
         {canEdit && (
           <>
-            <Btn onClick={resync} disabled={resyncing || !!globalWhy} title={globalWhy ? GLOBAL_ADMIN_SYNC_ONLY : undefined}>
-              {resyncing ? "Re-syncing…" : "↻ Re-sync from GitLab"}
+            {syncable.length > 1 && (
+              <RepoSelect repos={syncable} value={resyncRepo?.id ?? ""} onChange={setResyncRepo} label="Re-sync" />
+            )}
+            <Btn
+              onClick={resync}
+              disabled={resyncing || !resyncRepo}
+              title={resyncRepo ? undefined : "You may not sync any repository: its agency's configureApp is needed"}
+            >
+              {resyncing ? "Re-syncing…" : syncable.length === 1 ? `↻ Re-sync from ${repoLabel(syncable[0])} repository` : "↻ Re-sync from the repository"}
             </Btn>
             <Btn primary onClick={() => setAdding(true)}>
               + Add Scope
@@ -396,7 +452,7 @@ export function ScopesTab({
         <div style={{ color: c.textSec }}>
           {scopes.length === 0 ? (
             <>
-              <div>No scopes yet. Git-source scopes appear after the first GitLab sync of an inventories/ directory.</div>
+              <div>No scopes yet. Git-source scopes appear after the first sync of an inventories/ directory.</div>
               {canEdit && (
                 <div style={{ marginTop: 12 }}>
                   <Btn small onClick={() => setAdding(true)}>
@@ -418,230 +474,259 @@ export function ScopesTab({
         </div>
       )}
       {filtered.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
-          <thead>
-            <TableHead
-              columns={cols.visible}
-              sort={sort}
-              cw={cw}
-              trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
-            />
-          </thead>
-          <tbody>
-            {sort.sorted.map((s) => {
-              const isExp = expanded === s.id;
-              const isLocal = s.source === "cronomicon";
-              const pragmaErrors = s.pragmaErrors ?? [];
-              return (
-                <Fragment key={s.id ?? s.scope}>
-                  <HoverTr
-                    onClick={() => setExpanded(isExp ? null : (s.id ?? null))}
-                    tint={isExp ? c.primaryBg : undefined}
-                    hoverTint={isExp ? c.primaryBg : c.panelHover}
-                    style={{ borderBottom: `1px solid ${c.border}` }}
-                  >
-                    {renderCells(cols.visible, s, {})}
-                  </HoverTr>
-                  {isExp && (
-                    <tr style={{ borderBottom: `1px solid ${c.border}`, background: c.primaryBg }}>
-                      <td style={tdStyle()}></td>
-                      <td colSpan={cols.visible.length - 1} style={{ ...tdStyle(), paddingBottom: 18 }}>
-                        {/* EP-4 Shape B — the panel renders list-row data, so its
-                            Refresh drives the view's list reload. `refetch` here is a
-                            pure dep bump in Scopes.tsx (it does not collapse the row). */}
-                        <DetailPanel also={refetch}>
-                        {pragmaErrors.length > 0 && (
-                          <div
-                            style={{
-                              marginBottom: 12,
-                              padding: "8px 12px",
-                              border: `1px solid ${c.warning}40`,
-                              borderLeft: `3px solid ${c.warning}`,
-                              borderRadius: c.radiusSurface,
-                              fontSize: c.fontSm,
-                              color: c.warning,
-                            }}
-                          >
-                            <strong>Pragma error{pragmaErrors.length === 1 ? "" : "s"}:</strong>{" "}
-                            {pragmaErrors.map((err, i) => (
-                              <span key={i} style={{ marginRight: 12 }}>
-                                {err.line != null && <code style={{ fontFamily: c.mono, fontSize: c.fontXs }}>line {err.line}</code>}{" "}
-                                {err.message}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "6px 16px", fontSize: c.fontSm }}>
-                          {s.owner && (
-                            <>
-                              <span style={{ color: c.textSec }}>Owner</span>
-                              <span>{s.owner}</span>
-                            </>
-                          )}
-                          {s.name && (
-                            <>
-                              <span style={{ color: c.textSec }}>Inventory file</span>
-                              <span style={{ fontFamily: c.mono, fontSize: c.fontSm }}>{s.name}</span>
-                            </>
-                          )}
-                          {s.sidecarPath && (
-                            <>
-                              <span style={{ color: c.textSec }}>Sidecar</span>
-                              <span style={{ fontFamily: c.mono, fontSize: c.fontSm }}>{s.sidecarPath}</span>
-                            </>
-                          )}
-                        </div>
-                        {/* T3.8 — a scope's FULL agency membership. The selector
-                            below is the 1:1 affordance this view has always had and
-                            still covers the common case; when a scope belongs to
-                            SEVERAL agencies it would silently truncate the set, so
-                            it is replaced by a read-only summary that names them and
-                            points at the matrix. */}
-                        {s.id != null && (s.agencies?.length ?? 0) > 1 && (
-                          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <span style={{ ...labelStyle(), margin: 0 }}>Agencies</span>
-                            {(s.agencies ?? []).map((a) => (
-                              <span
-                                key={a.id}
-                                style={{ padding: "2px 9px", borderRadius: c.radiusChip, fontSize: c.fontXs, fontFamily: c.mono, background: `${c.primary}1a`, border: `1px solid ${c.primary}55`, color: c.text }}
-                              >
-                                {a.name}
-                              </span>
-                            ))}
-                            <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-                              This scope belongs to several isolation zones — a runner in <em>any</em> of them can execute
-                              its jobs. Edit the set on the <strong>Agencies</strong> tab (expand the agency); the picker
-                              here would keep only one.
-                            </span>
-                          </div>
-                        )}
-                        {canEdit && s.id != null && (s.agencies?.length ?? 0) <= 1 && (
-                          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                            <span style={{ ...labelStyle(), margin: 0 }}>Agency</span>
-                            <select
-                              aria-label={`Agency for ${s.scope}`}
-                              value={s.agencies?.[0]?.id ?? ""}
-                              // GC — a scope's agency decides who can reach it,
-                              // so moving one is a global administrator's.
-                              disabled={!!globalWhy}
-                              title={globalWhy || undefined}
-                              onChange={async (e) => {
-                                const agencyId = e.target.value || null;
-                                const { error: er } = await api.PUT("/scopes/{scopeId}/agency", {
-                                  params: { path: { scopeId: s.id! }, header: csrfHeader },
-                                  body: { agencyId },
-                                });
-                                if (er) setNotice({ kind: "error", text: `Agency update failed: ${errMsg(er)}` });
-                                else {
-                                  setNotice({ kind: "info", text: `Agency updated: ${s.scope}` });
-                                  refetch();
-                                }
+        <div style={{ overflowX: "auto" }}>
+          {/* The table's own sideways scroll, which an open row's DetailCell holds itself to (2.5.2). */}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
+            <thead>
+              <TableHead
+                columns={cols.visible}
+                sort={sort}
+                cw={cw}
+                trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
+              />
+            </thead>
+            <tbody>
+              {sort.sorted.map((s) => {
+                const isExp = expanded === s.id;
+                const isLocal = s.source === "cronomicon";
+                const pragmaErrors = s.pragmaErrors ?? [];
+                return (
+                  <Fragment key={s.id ?? s.scope}>
+                    <HoverTr
+                      onClick={() => setExpanded(isExp ? null : (s.id ?? null))}
+                      tint={isExp ? c.primaryBg : undefined}
+                      hoverTint={isExp ? c.primaryBg : c.panelHover}
+                      style={{ borderBottom: `1px solid ${c.border}` }}
+                    >
+                      {renderCells(cols.visible, s, {})}
+                    </HoverTr>
+                    {isExp && (
+                      <tr style={{ borderBottom: `1px solid ${c.border}`, background: c.primaryBg }}>
+                        <td style={tdStyle()}></td>
+                        <DetailCell colSpan={cols.visible.length - 1} padding="10px 16px 18px" cellStyle={tdStyle()}>
+                          {/* EP-4 Shape B — the panel renders list-row data, so its
+                              Refresh drives the view's list reload. `refetch` here is a
+                              pure dep bump in Scopes.tsx (it does not collapse the row). */}
+                          <DetailPanel also={refetch}>
+                          {pragmaErrors.length > 0 && (
+                            <div
+                              style={{
+                                marginBottom: 12,
+                                padding: "8px 12px",
+                                border: `1px solid ${c.warning}40`,
+                                borderLeft: `3px solid ${c.warning}`,
+                                borderRadius: c.radiusSurface,
+                                fontSize: c.fontSm,
+                                color: c.warning,
                               }}
-                              style={{ ...inputStyle(), cursor: globalWhy ? "not-allowed" : "pointer", maxWidth: 260 }}
                             >
-                              <option value="">— None (general pool) —</option>
-                              {agencies.map((a) => (
-                                <option key={a.id} value={a.id}>
-                                  {a.name}
-                                </option>
+                              <strong>Pragma error{pragmaErrors.length === 1 ? "" : "s"}:</strong>{" "}
+                              {pragmaErrors.map((err, i) => (
+                                <span key={i} style={{ marginRight: 12 }}>
+                                  {err.line != null && <code style={{ fontFamily: c.mono, fontSize: c.fontXs }}>line {err.line}</code>}{" "}
+                                  {err.message}
+                                </span>
                               ))}
-                            </select>
-                            <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-                              Network-isolation zone — only a runner in this agency can execute this scope's jobs, and
-                              only secrets and keys in it are injectable.{globalWhy ? ` ${globalWhy}` : ""}
-                            </span>
-                          </div>
-                        )}
-                        {/* SB — the runners this scope is bound to, directly under
-                            its agency: department first, then which of that
-                            department's runners can reach these hosts. Shown to
-                            everyone who can see the scope; changed only with
-                            ConfigureApp. */}
-                        {s.id != null && (
-                          <ScopeRunnersField
-                            scope={s}
-                            canEdit={canEdit}
-                            onSaved={(text) => {
-                              setNotice({ kind: "info", text });
-                              refetch();
-                            }}
-                          />
-                        )}
-                        {/* SB — a bound runner uses ITS OWN known_hosts, so a
-                            host it has never been told to trust is a run that
-                            fails at the first connection. Shown only where the
-                            server will answer: the route needs ConfigureApp. */}
-                        {s.id != null && canEdit && (s.boundRunners ?? []).length > 0 && (
-                          <div style={{ marginTop: 12 }}>
-                            <div style={{ ...labelStyle(), marginBottom: 6 }}>Host keys on the bound runners</div>
-                            <ScopeKeyCoverage scopeId={String(s.id)} bound={(s.boundRunners ?? []).length} canConfig={canEdit} />
-                          </div>
-                        )}
-                        {/* Tags are shown to everyone who can see the scope and
-                            edited only with ConfigureApp, like every other scope
-                            write. A missing permission is not a precondition the
-                            reader can fix, so the editor goes read-only rather
-                            than disabled-with-a-reason. */}
-                        {s.id != null && (
-                          <div style={{ marginTop: 12 }}>
-                            <div style={{ ...labelStyle(), marginBottom: 6 }}>
-                              Tags{tagState.tagsFor(s).length ? ` (${tagState.tagsFor(s).length})` : ""}
                             </div>
-                            {canEdit || tagState.tagsFor(s).length > 0 ? (
-                              <TagEditor tags={tagState.tagsFor(s)} onChange={(next) => tagState.save(s, next)} disabled={!canEdit} />
-                            ) : (
-                              <span style={{ color: c.textSec, fontSize: c.fontSm, fontStyle: "italic" }}>No tags</span>
+                          )}
+                          <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "6px 16px", fontSize: c.fontSm }}>
+                            {s.owner && (
+                              <>
+                                <span style={{ color: c.textSec }}>Owner</span>
+                                <span>{s.owner}</span>
+                              </>
                             )}
-                            {tagState.errors[String(s.id)] && (
-                              <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(s.id)]}</div>
+                            {s.name && (
+                              <>
+                                <span style={{ color: c.textSec }}>Inventory file</span>
+                                <span style={{ fontFamily: c.mono, fontSize: c.fontSm }}>{s.name}</span>
+                              </>
+                            )}
+                            {s.sidecarPath && (
+                              <>
+                                <span style={{ color: c.textSec }}>Sidecar</span>
+                                <span style={{ fontFamily: c.mono, fontSize: c.fontSm }}>{s.sidecarPath}</span>
+                              </>
                             )}
                           </div>
-                        )}
-                        {canEdit && s.id != null && <InventoryPanel scopeId={s.id} />}
-                        {isLocal && (s.hosts?.length ?? 0) > 0 && (
-                          <div style={{ marginTop: 12 }}>
-                            <div style={{ ...labelStyle(), marginBottom: 6 }}>Hosts ({s.hosts!.length})</div>
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                              {s.hosts!.map((h) => (
-                                <code
-                                  key={h}
-                                  style={{
-                                    padding: "3px 8px",
-                                    background: c.panel2,
-                                    border: `1px solid ${c.border}`,
-                                    borderRadius: c.radiusChip,
-                                    fontSize: c.fontXs,
-                                    fontFamily: c.mono,
-                                    color: c.textSec,
-                                  }}
+                          {/* T3.8 — a scope's FULL agency membership. The selector
+                              below is the 1:1 affordance this view has always had and
+                              still covers the common case; when a scope belongs to
+                              SEVERAL agencies it would silently truncate the set, so
+                              it is replaced by a read-only summary that names them and
+                              points at the matrix. */}
+                          {/* A scope belongs to ONE agency (v2.3.0, LR-7). Since
+                              2.4.0 changing it is a global administrator's repair,
+                              with a reason (I4, IN-7; question 48), and so is
+                              settling a scope still in several agencies from before
+                              2.3.0 on its one agency. Anyone else reads its agency. */}
+                          {s.id != null && (s.agencies?.length ?? 0) > 1 && (
+                            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                              <span style={{ ...labelStyle(), margin: 0 }}>Agencies</span>
+                              {(s.agencies ?? []).map((a) => (
+                                <span
+                                  key={a.id}
+                                  style={{ padding: "2px 9px", borderRadius: c.radiusChip, fontSize: c.fontXs, fontFamily: c.mono, background: `${c.primary}1a`, border: `1px solid ${c.primary}55`, color: c.text }}
                                 >
-                                  {h}
-                                </code>
+                                  {a.name}
+                                </span>
                               ))}
+                              <span style={{ color: c.warning, fontSize: c.fontSm }}>
+                                This scope is still in several agencies, from before 2.3.0. It runs for each of them until a
+                                global administrator settles its one agency, a repair.
+                              </span>
                             </div>
-                          </div>
-                        )}
-                        {/* Cronomicon-authored scopes only, and only for callers who
-                            may configure the app — every other mutation control in
-                            this view is canEdit-gated, and without it a viewer saw a
-                            Delete button that could only ever 403. Quiet danger here;
-                            the solid fill is reserved for the confirm (VC.6). */}
-                        {isLocal && canEdit && (
-                          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-                            <Btn dangerQuiet onClick={() => setDeleting(s)}>
-                              Delete Scope
-                            </Btn>
-                          </div>
-                        )}
-                        </DetailPanel>
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                          )}
+                          {s.id != null && (() => {
+                            const current = s.agencies ?? [];
+                            const single = current.length === 1 ? current[0].id : "";
+                            const effect =
+                              "Only a runner that serves this agency can execute this scope's jobs, and only this agency's secrets and keys are injectable.";
+                            if (!mayRepair(s)) {
+                              return (
+                                <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                                  <span style={{ ...labelStyle(), margin: 0 }}>Agency</span>
+                                  <span style={{ fontFamily: c.mono, fontSize: c.fontSm }}>{current.map((a) => a.name).join(", ") || "none"}</span>
+                                  <span style={{ color: c.textSec, fontSize: c.fontSm }}>
+                                    {effect} {REPAIR_HINT}
+                                  </span>
+                                </div>
+                              );
+                            }
+                            const options = agencyOptionsFor(current);
+                            return (
+                              <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                                <span style={{ ...labelStyle(), margin: 0 }}>Agency</span>
+                                <select
+                                  aria-label={`Agency for ${s.scope}`}
+                                  value={single}
+                                  onChange={(e) => {
+                                    if (!e.target.value || e.target.value === single) return;
+                                    const target = options.find((a) => a.id === e.target.value);
+                                    if (!target) return;
+                                    setRepairError("");
+                                    setScopeRepair({ scope: s, target });
+                                  }}
+                                  style={{ ...inputStyle(), cursor: "pointer", maxWidth: 260 }}
+                                >
+                                  {current.length !== 1 && <option value="">Choose its one agency…</option>}
+                                  {options.map((a) => (
+                                    <option key={a.id} value={a.id}>
+                                      {a.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <span style={{ color: c.textSec, fontSize: c.fontSm }}>
+                                  {effect} Changing it is a repair of a placement that was a mistake.
+                                </span>
+                              </div>
+                            );
+                          })()}
+                          {/* SB — the runners this scope is bound to, directly under
+                              its agency: department first, then which of that
+                              department's runners can reach these hosts. Shown to
+                              everyone who can see the scope; changed only with
+                              ConfigureApp. */}
+                          {s.id != null && (
+                            <ScopeRunnersField
+                              scope={s}
+                              canEdit={canEdit}
+                              onSaved={(text) => {
+                                setNotice({ kind: "info", text });
+                                refetch();
+                              }}
+                            />
+                          )}
+                          {/* SB — a bound runner uses ITS OWN known_hosts, so a
+                              host it has never been told to trust is a run that
+                              fails at the first connection. Shown only where the
+                              server will answer: the route needs ConfigureApp. */}
+                          {s.id != null && canEdit && (s.boundRunners ?? []).length > 0 && (
+                            <div style={{ marginTop: 12 }}>
+                              <div style={{ ...labelStyle(), marginBottom: 6 }}>Host keys on the bound runners</div>
+                              <ScopeKeyCoverage scopeId={String(s.id)} bound={(s.boundRunners ?? []).length} canConfig={canEdit} />
+                            </div>
+                          )}
+                          {/* An unbound scope has no fixed set of runners to show
+                              coverage for. Say instead who reviews which runner's
+                              keys — to everyone who can open the row, because the
+                              reader who needs it is the one who cannot act. */}
+                          {s.id != null && (s.boundRunners ?? []).length === 0 && (
+                            <div style={{ marginTop: 12 }}>
+                              <div style={{ ...labelStyle(), marginBottom: 6 }}>Host keys</div>
+                              <UnboundHostKeysNote />
+                            </div>
+                          )}
+                          {/* Tags are shown to everyone who can see the scope and
+                              edited only with ConfigureApp, like every other scope
+                              write. A missing permission is not a precondition the
+                              reader can fix, so the editor goes read-only rather
+                              than disabled-with-a-reason. */}
+                          {s.id != null && (
+                            <div style={{ marginTop: 12 }}>
+                              <div style={{ ...labelStyle(), marginBottom: 6 }}>
+                                Tags{tagState.tagsFor(s).length ? ` (${tagState.tagsFor(s).length})` : ""}
+                              </div>
+                              {canEdit || tagState.tagsFor(s).length > 0 ? (
+                                <TagEditor tags={tagState.tagsFor(s)} onChange={(next) => tagState.save(s, next)} disabled={!canEdit} />
+                              ) : (
+                                <span style={{ color: c.textSec, fontSize: c.fontSm, fontStyle: "italic" }}>No tags</span>
+                              )}
+                              {tagState.errors[String(s.id)] && (
+                                <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(s.id)]}</div>
+                              )}
+                            </div>
+                          )}
+                          {canEdit && s.id != null && <InventoryPanel scopeId={s.id} />}
+                          {isLocal && (s.hosts?.length ?? 0) > 0 && (
+                            <div style={{ marginTop: 12 }}>
+                              <div style={{ ...labelStyle(), marginBottom: 6 }}>Hosts ({s.hosts!.length})</div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                {s.hosts!.map((h) => (
+                                  <code
+                                    key={h}
+                                    style={{
+                                      padding: "3px 8px",
+                                      background: c.panel2,
+                                      border: `1px solid ${c.border}`,
+                                      borderRadius: c.radiusChip,
+                                      fontSize: c.fontXs,
+                                      fontFamily: c.mono,
+                                      color: c.textSec,
+                                    }}
+                                  >
+                                    {h}
+                                  </code>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {/* Cronomicon-authored scopes only, and only for callers who
+                              may configure the app — every other mutation control in
+                              this view is canEdit-gated, and without it a viewer saw a
+                              Delete button that could only ever 403. Quiet danger here;
+                              the solid fill is reserved for the confirm (VC.6). */}
+                          {canEdit && s.id != null && (
+                            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                              {/* 2.4.0 (R8) — another agency gets a scope by a clone; the scope stays. */}
+                              {s.canEdit !== false && <Btn onClick={() => setCloning(s)}>Clone to an agency…</Btn>}
+                              {isLocal && s.canDelete !== false && (
+                                <Btn dangerQuiet onClick={() => setDeleting(s)}>
+                                  Delete Scope
+                                </Btn>
+                              )}
+                            </div>
+                          )}
+                          </DetailPanel>
+                        </DetailCell>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       <div style={{ marginTop: 12, fontSize: c.fontXs, color: c.textSec, display: "flex", gap: 6, alignItems: "center" }}>
@@ -684,6 +769,38 @@ export function ScopesTab({
           busy={busy}
           onConfirm={doDelete}
           onCancel={() => setDeleting(null)}
+        />
+      )}
+
+      {cloning && cloning.id != null && (
+        <CloneScopeDialog
+          scopeId={cloning.id}
+          scopeName={cloning.scope}
+          currentAgency={(cloning.agencies ?? []).length === 1 ? cloning.agencies![0].id : undefined}
+          globalAdmin={globalAdmin}
+          onClose={() => setCloning(null)}
+          onCloned={(text) => {
+            setCloning(null);
+            setNotice({ kind: "info", text });
+            refetch();
+          }}
+        />
+      )}
+
+      {scopeRepair && (
+        <RepairDialog
+          title={`Move ${scopeRepair.scope.scope} to ${scopeRepair.target.name}?`}
+          message={
+            <>
+              Its jobs will run only on runners that serve {scopeRepair.target.name}, and only {scopeRepair.target.name}'s secrets and keys
+              are injectable. A workflow that names it beside another agency's scopes is refused at its next run and save.
+            </>
+          }
+          confirmLabel={`Move to ${scopeRepair.target.name}`}
+          busy={repairBusy}
+          error={repairError}
+          onCancel={() => setScopeRepair(null)}
+          onConfirm={sendScopeRepair}
         />
       )}
     </div>
@@ -1027,9 +1144,18 @@ function ScopeFormModal({
       setFormError("Scope names must be alphanumeric (dashes/underscores allowed).");
       return;
     }
-    const dup = existing.some((s) => s.id !== initial?.id && s.scope.toLowerCase() === scopeName.toLowerCase());
+    // A scope's name is unique within its agency (2.4.0, I2): two agencies may
+    // each have one of a name. The agency is the one chosen (a new scope) or the
+    // scope's own (a rename); when it is not known yet, any match is a clash.
+    const agencyOf = initial ? (initial.agencies ?? [])[0]?.id : agencyPick.selected;
+    const dup = existing.some(
+      (s) =>
+        s.id !== initial?.id &&
+        s.scope.toLowerCase() === scopeName.toLowerCase() &&
+        (!agencyOf || (s.agencies ?? []).some((a) => a.id === agencyOf)),
+    );
     if (dup) {
-      setFormError(`A scope named '${scopeName}' already exists.`);
+      setFormError(`A scope named '${scopeName}' already exists in this agency.`);
       return;
     }
     if (agencyPick.blockedReason) {
@@ -1226,13 +1352,7 @@ function ScopeFormModal({
             )}
           </div>
         )}
-        <CreationAgencyPicker
-          label="scope"
-          required={agencyPick.required}
-          agencies={agencyPick.agencies}
-          selected={agencyPick.selected}
-          setSelected={agencyPick.setSelected}
-        />
+        <CreationAgencyPicker label="scope" pick={agencyPick} />
       </div>
     </Modal>
   );

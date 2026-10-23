@@ -3,7 +3,10 @@ import { api, csrfHeader, errMsg } from "../../api/client";
 import { useGet, rows } from "../../hooks";
 import type { components } from "../../api/schema";
 import { c } from "../../theme";
-import { AlertBanner, Btn, ExpandChevron, InlineLoading, Modal } from "../../components/ui";
+import { Link } from "react-router-dom";
+import { isRunnerOnly } from "../../runtypes";
+import { AlertBanner, Btn, InlineLoading, Modal } from "../../components/ui";
+import { globalAgencyName } from "../../globalName";
 
 // Scope↔runner bindings — the UI (SB band).
 //
@@ -14,17 +17,18 @@ import { AlertBanner, Btn, ExpandChevron, InlineLoading, Modal } from "../../com
 //
 // Three rules shape everything in this file, and all three are the server's:
 //
-//   - A scope with no bound runner is unrestricted: any runner eligible for its
-//     agency may serve it, and shell jobs default to SSH from the server.
+//   - A scope with no bound runner is unrestricted: any runner that serves its
+//     agency takes its runs — an agent, or the server as the local runner.
 //   - A binding outlives its runner. A runner that has been deregistered is
 //     still listed, still restricts the scope, and nothing can claim the scope's
 //     runs until it is replaced. That is deliberate — the alternative is a
 //     confined scope quietly reopening to its whole agency — so the UI's job is
 //     to make the state LOUD, never to tidy it away.
-//   - Binding changes more than dispatch. Jobs with no executor of their own
-//     move from SSH (the server's keys and known_hosts) to the runners (theirs);
-//     jobs that ask for SSH start being refused. So the dialog previews before
-//     it saves.
+//   - Binding changes more than dispatch. It decides WHICH machines take the
+//     scope's runs, and each has its own keys and its own host-key trust; a
+//     job that binds an SSH key needs an agent among them. So the dialog
+//     previews before it saves. (Until 2.3.0 a binding also moved jobs between
+//     two executors; there is one now.)
 
 export type BoundRunner = components["schemas"]["BoundRunner"];
 type Preview = components["schemas"]["ScopeRunnersPreview"];
@@ -44,6 +48,8 @@ export interface RunnerLite {
   name: string;
   status?: string | null;
   agencies?: { id: string; name: string }[];
+  /** "server" for the local runner; an agent otherwise. */
+  kind?: string;
 }
 
 const isReachable = (status?: string | null) => status === "online" || status === "degraded";
@@ -59,22 +65,21 @@ export function boundRunnerState(b: BoundRunner): string {
   return "";
 }
 
-/** "the general pool" for a scope in no agency, else its agency names. */
+/** The scope's agency by name ("Global" for one with none listed: where every scope without another agency is). */
 export function scopePoolName(scope: BindableScope): string {
   const names = (scope.agencies ?? []).map((a) => a.name);
-  return names.length === 0 ? "the general pool" : names.join(", ");
+  return names.length === 0 ? globalAgencyName() : names.join(", ");
 }
 
-// A runner is eligible for a scope by the claim query's agency rule: a member of
-// one of the scope's agencies, or — for a scope in none — a runner in none. The
-// server enforces it on save; this copy only decides what the picker offers, so
-// an ineligible runner is shown disabled with the reason instead of being
-// offered and then refused.
+// A runner is eligible for a scope by the claim query's agency rule: it serves
+// one of the scope's agencies (Global is one, since 2.3.0, and a scope with no
+// other agency is in it). The server enforces it on save; this copy only
+// decides what the picker offers, so an ineligible runner is shown disabled
+// with the reason instead of being offered and then refused. A scope that
+// lists no agency at all is damage, and no runner is eligible for it.
 function eligibleFor(scope: BindableScope, runner: RunnerLite): boolean {
   const scopeAgencies = new Set((scope.agencies ?? []).map((a) => a.id));
-  const runnerAgencies = (runner.agencies ?? []).map((a) => a.id);
-  if (scopeAgencies.size === 0) return runnerAgencies.length === 0;
-  return runnerAgencies.some((id) => scopeAgencies.has(id));
+  return (runner.agencies ?? []).some((a) => scopeAgencies.has(a.id));
 }
 
 const chip = (tone: "plain" | "warning"): React.CSSProperties => ({
@@ -148,8 +153,8 @@ export function ScopeRunnersField({
         </span>
         {bound.length === 0 ? (
           <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-            Not bound — any runner in {scopePoolName(scope)} may run this scope's jobs, and shell jobs default to SSH
-            from the server.
+            Not bound — any runner that serves {scopePoolName(scope)} may take this scope's runs: its agents, and, for a
+            scope of Global's, the local runner.
           </span>
         ) : (
           bound.map((b) => {
@@ -182,10 +187,10 @@ export function ScopeRunnersField({
           {serving === 0 ? (
             <>
               ⚠ No bound runner can claim work right now, so this scope's runs are waiting. A binding is kept when its
-              runner goes away — on purpose, so the scope does not quietly reopen to {scopePoolName(scope)}.
+              runner goes away — on purpose, so the scope does not quietly reopen to every runner that serves {scopePoolName(scope)}.
             </>
           ) : (
-            <>Only these runners may run this scope's jobs. Jobs with no executor of their own run on them; SSH is refused.</>
+            <>Only these runners take this scope's runs.</>
           )}
         </div>
       )}
@@ -231,47 +236,38 @@ function JobNames({ jobs }: { jobs: { name: string }[] }) {
 // rather than leaving the panel empty.
 function PreviewPanel({ preview, selectedCount }: { preview: Preview; selectedCount: number }) {
   const lines: { tone: "info" | "warning"; node: React.ReactNode }[] = [];
-  if (preview.jobsMovingToRunner.length > 0) {
+  const who = (rs: Preview["runnersLosing"]) =>
+    rs.map((r) => (r.local ? `${r.name} (this server)` : r.name)).join(", ");
+  if (preview.runnersLosing.length > 0) {
+    lines.push({
+      tone: "warning",
+      node: (
+        <>
+          <strong>{plural(preview.runnersLosing.length, "runner")}</strong> will stop taking this scope's runs:{" "}
+          {who(preview.runnersLosing)}. Runs they would have taken wait for the runners that remain.
+        </>
+      ),
+    });
+  }
+  if (preview.runnersGaining.length > 0) {
     lines.push({
       tone: "info",
       node: (
         <>
-          <strong>{plural(preview.jobsMovingToRunner.length, "job")}</strong> will move from SSH on the server to the bound
-          runners — they will connect with the runners' own keys and known hosts: <JobNames jobs={preview.jobsMovingToRunner} />
+          <strong>{plural(preview.runnersGaining.length, "runner")}</strong> will start taking this scope's runs:{" "}
+          {who(preview.runnersGaining)} — each with its own keys and its own trusted host keys.
         </>
       ),
     });
   }
-  if (preview.jobsRefused.length > 0) {
+  if (preview.jobsNeedingAgent.length > 0) {
     lines.push({
       tone: "warning",
       node: (
         <>
-          <strong>{plural(preview.jobsRefused.length, "job")}</strong> {preview.jobsRefused.length === 1 ? "asks" : "ask"} for
-          the SSH executor and will be refused while the scope is bound, until that setting is removed:{" "}
-          <JobNames jobs={preview.jobsRefused} />
-        </>
-      ),
-    });
-  }
-  if (preview.jobsMovingToSsh.length > 0) {
-    lines.push({
-      tone: "warning",
-      node: (
-        <>
-          <strong>{plural(preview.jobsMovingToSsh.length, "job")}</strong> will go back to running over SSH from the
-          server: <JobNames jobs={preview.jobsMovingToSsh} />
-        </>
-      ),
-    });
-  }
-  if (preview.queuedSshRuns > 0) {
-    lines.push({
-      tone: "warning",
-      node: (
-        <>
-          <strong>{plural(preview.queuedSshRuns, "run")}</strong> already queued or scheduled for SSH will still run from
-          the server; the binding applies to runs produced after it is saved.
+          <strong>{plural(preview.jobsNeedingAgent.length, "job")}</strong> {preview.jobsNeedingAgent.length === 1 ? "binds" : "bind"} an
+          SSH key, and no agent will serve this scope. Only an agent can deliver a key file, so{" "}
+          {preview.jobsNeedingAgent.length === 1 ? "its" : "their"} runs will be refused: <JobNames jobs={preview.jobsNeedingAgent} />
         </>
       ),
     });
@@ -306,8 +302,8 @@ function PreviewPanel({ preview, selectedCount }: { preview: Preview; selectedCo
         ),
       });
     }
-    // The move to a runner moves host-key trust with it: the server's own pins
-    // stop mattering and this runner's known_hosts starts to.
+    // Which runner takes a run decides whose host-key trust applies: an agent
+    // trusts the hosts in its own reviewed known_hosts.
     if (r.hostsWithoutKey > 0) {
       lines.push({
         tone: "warning",
@@ -337,7 +333,7 @@ function PreviewPanel({ preview, selectedCount }: { preview: Preview; selectedCo
         <div style={{ fontSize: c.fontSm, color: c.textSec }}>
           {selectedCount === 0 && !preview.currentlyBound
             ? "Nothing — the scope stays unbound."
-            : "No job changes executor, and every chosen runner can serve what runs on this scope."}
+            : "The same runners take this scope's runs, and every chosen runner can serve what runs on it."}
         </div>
       ) : (
         <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 }}>
@@ -468,7 +464,7 @@ export function ScopeRunnersDialog({
       }
     >
       <p style={{ margin: "0 0 12px", fontSize: c.fontSm, color: c.textSec }}>
-        Choose the runners that can reach this scope's hosts. With none chosen, any runner in {scopePoolName(scope)} may
+        Choose the runners that can reach this scope's hosts. With none chosen, any runner that serves {scopePoolName(scope)} may
         run its jobs. Runs already queued follow the change.
       </p>
       {runnersQ.loading ? (
@@ -483,9 +479,7 @@ export function ScopeRunnersDialog({
             row(
               String(r.id),
               r.name,
-              (scope.agencies ?? []).length === 0
-                ? "in an agency — this scope takes a general-pool runner"
-                : `not in ${scopePoolName(scope)}`,
+              `does not serve ${scopePoolName(scope)}`,
               { disabled: true },
             ),
           )}
@@ -592,97 +586,93 @@ export function ReplaceRunnerDialog({
   );
 }
 
-const REASON: Record<RetiredPin["reason"], string> = {
-  mixed_pins: "its jobs were pinned to different tags",
-  partial_pins: "only some of its jobs were pinned",
-  no_scope: "the job has no scope, so there is nothing to bind",
-  unknown_scope: "the job names a scope that does not exist",
-  no_eligible_runner: "no runner both carried the tag and was eligible for the scope",
-  binned_job: "the job is in the recycle bin; restored, it would not be confined",
-  leftover_git_key: "its Git file still says runner_tag, and the scope is not bound",
-};
-
-// BindingNotices lists the runner pins that could not be turned into a scope
-// binding — by the upgrade, or by a Git job still carrying `runner_tag` on a
-// scope nobody bound. Each of those jobs USED to be confined to particular
-// runners and is not any more, which is the one thing this change must not let
-// happen quietly. A group disappears by itself when its scope is bound; the
-// rest need someone to say "seen, and that is fine".
-export function BindingNotices({ dep, onChanged }: { dep: number; onChanged: () => void }) {
-  const [bump, setBump] = useState(0);
-  const q = useGet<unknown>(() => api.GET("/scope-binding-notices"), [dep, bump]);
+// BindingNotices says, on the Scopes page, how many jobs lost the confinement a
+// runner tag used to give them: the runner pins that could not be turned into a
+// scope binding — by the upgrade, or by a Git job still carrying `runner_tag`
+// on a scope nobody bound. Each of those jobs USED to be confined to particular
+// runners and is not any more, which is the one thing that change must not let
+// happen quietly.
+//
+// It is a pointer since 2.3.0 (LR-85): the list itself, with why each pin could
+// not be converted and the dismissal, is in the Notices inbox, which is where
+// every standing condition is read. This banner stays because the remedy is
+// made here, by binding the scope's runners; a notice disappears by itself when
+// its scope is bound.
+export function BindingNotices({ dep }: { dep: number; onChanged?: () => void }) {
+  const q = useGet<unknown>(() => api.GET("/scope-binding-notices"), [dep]);
   const notices = rows<RetiredPin>(q.data);
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const groups = useMemo(() => {
-    const by = new Map<string, RetiredPin[]>();
-    for (const n of notices) {
-      const key = n.scope || "";
-      by.set(key, [...(by.get(key) ?? []), n]);
-    }
-    return [...by.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [notices]);
-
   if (notices.length === 0) return null;
-
-  const dismiss = async (ids: number[]) => {
-    setBusy(true);
-    setErr(null);
-    const { error } = await api.POST("/scope-binding-notices/dismiss", {
-      params: { header: csrfHeader },
-      body: { ids },
-    });
-    setBusy(false);
-    if (error) {
-      setErr(errMsg(error));
-      return;
-    }
-    setBump((n) => n + 1);
-    onChanged();
-  };
-
+  const scopes = [...new Set(notices.map((n) => n.scope || "").filter(Boolean))].sort();
   return (
     <AlertBanner type="warning">
-      <div style={{ display: "grid", gap: 8, width: "100%" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span>
-            <strong>{plural(notices.length, "job")}</strong> used to be confined to particular runners by a runner tag and{" "}
-            {notices.length === 1 ? "is" : "are"} not any more. Bind the scope's runners below to confine{" "}
-            {notices.length === 1 ? "it" : "them"} again, or dismiss what may run anywhere.
-          </span>
-          <Btn small onClick={() => setOpen((o) => !o)} ariaExpanded={open}>
-            <ExpandChevron open={open} /> {open ? "Hide" : "Show"}
-          </Btn>
-        </div>
-        {open && (
-          <div style={{ display: "grid", gap: 8 }}>
-            {groups.map(([scope, list]) => (
-              <div key={scope || "(none)"} style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", fontSize: c.fontSm }}>
-                <span style={{ fontFamily: c.mono, fontWeight: 600, color: c.text }}>{scope || "(no scope)"}</span>
-                <span style={{ color: c.textSec }}>
-                  {list.map((n) => `${n.jobName} → ${n.runnerTag}`).join(", ")} — {REASON[list[0].reason] ?? list[0].reason}
-                </span>
-                <Btn small onClick={() => dismiss(list.map((n) => n.id))} disabled={busy}>
-                  Dismiss
-                </Btn>
-              </div>
-            ))}
-            {err && <span role="alert" style={{ color: c.danger, fontSize: c.fontSm }}>{err}</span>}
-          </div>
-        )}
-      </div>
+      <span>
+        <strong>{plural(notices.length, "job")}</strong> used to be confined to particular runners by a runner tag and{" "}
+        {notices.length === 1 ? "is" : "are"} not any more
+        {scopes.length > 0 ? (
+          <>
+            {" "}
+            (scope{scopes.length === 1 ? "" : "s"} <span style={{ fontFamily: c.mono }}>{scopes.join(", ")}</span>)
+          </>
+        ) : null}
+        . Bind the scope's runners below to confine {notices.length === 1 ? "it" : "them"} again.{" "}
+        <Link to="/notices" style={{ color: c.primary, fontWeight: 600 }}>
+          Review in Notices
+        </Link>
+      </span>
     </AlertBanner>
+  );
+}
+
+// UnboundHostKeysNote is what the expanded row of a scope with NO bound runner
+// says about host keys (2.3.2). The coverage table needs a fixed set of runners
+// and so shows nothing there, which left an agency's administrator with runs
+// failing host_key_unverified on the local runner and no word on the page about
+// who can approve its keys: the local runner is Global's, and a guest decides
+// nothing on it (LR-63). Like RunsOn it STATES the claim rule and the host-key
+// rule, so it must stay true to both.
+export function UnboundHostKeysNote() {
+  return (
+    <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.5, maxWidth: 760 }}>
+      No runner is named for this scope, so any runner that serves its agency may take its jobs, and each connects only
+      to hosts whose key was approved <strong>for that runner</strong>. An agent's keys are reviewed on the agent:{" "}
+      <Link to="/runners" style={{ color: c.primary, fontWeight: 600 }}>
+        Runners
+      </Link>{" "}
+      → the agent → Trusted host keys. The local runner (this server, where it is switched on; it serves Global only)
+      belongs to Global: <strong>only a global administrator approves its host keys</strong>, and{" "}
+      <Link to="/notices" style={{ color: c.primary, fontWeight: 600 }}>
+        Notices
+      </Link>{" "}
+      lists the hosts it has none for. Binding this scope to the agency's own agents keeps its jobs off the local
+      runner.
+    </div>
   );
 }
 
 // RunsOn is the job detail's answer to "where does this run": the bound runners
 // when the job's scope has any, each with the reason it is not serving if it is
 // not, and otherwise the plain statement that any eligible runner may take it.
-export function RunsOn({ bound, scope }: { bound: BoundRunner[]; scope?: string | null }) {
+export function RunsOn({ bound, scope, runType }: { bound: BoundRunner[]; scope?: string | null; runType?: string | null }) {
   if (bound.length === 0) {
-    return <span style={{ color: c.textSec }}>Any eligible runner</span>;
+    // Not a list of runners: who is eligible is decided at the claim (agency,
+    // capability, injection, key bindings), and no route gives a reader that
+    // answer for a scope. What can be said of every job is the rule: ansible
+    // and terraform need an agent's toolchain; a shell job is any runner's. The
+    // finer print is in the tooltip, because it is not true of every shell job
+    // (one that binds an SSH key is an agent's only — the field below says so).
+    const agent = isRunnerOnly(runType);
+    return (
+      <span
+        style={{ color: c.textSec }}
+        title={
+          agent
+            ? "This run type needs the local toolchain, which only an agent has."
+            : "An agent, or, for a scope of Global's, the local runner (this server) where it is switched on. A job that binds an SSH key is taken by an agent only."
+        }
+      >
+        Any {agent ? "agent" : "runner"} that serves {scope ? "its scope" : "the Global agency"}
+      </span>
+    );
   }
   return (
     <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>

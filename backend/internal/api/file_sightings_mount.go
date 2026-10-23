@@ -60,10 +60,14 @@ func (s *Server) listFileSightings(w http.ResponseWriter, r *http.Request) {
 	if src == "" {
 		src = "git"
 	}
+	// THIS job's sightings (2.5.0 C11, defect 76): by its uid, and by source
+	// and name only for a row that records none. By name, FIN's job listed
+	// TAX's paths, runners and runs.
+	const ofJob = `(job_uid = ? OR (job_uid IS NULL AND job_source = ? AND job_name = ?))`
 	var total int
 	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM file_watch_sightings WHERE job_source = ? AND job_name = ?`,
-		src, jr.Name).Scan(&total); err != nil {
+		`SELECT COUNT(*) FROM file_watch_sightings WHERE `+ofJob,
+		jr.UID, src, jr.Name).Scan(&total); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -71,9 +75,9 @@ func (s *Server) listFileSightings(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, path, size_bytes, mtime, runner_id, seen_at, run_id, refused_reason
 		  FROM file_watch_sightings
-		 WHERE job_source = ? AND job_name = ?
+		 WHERE `+ofJob+`
 		 ORDER BY seen_at DESC, id DESC
-		 LIMIT ? OFFSET ?`, src, jr.Name, pageSize, (page-1)*pageSize)
+		 LIMIT ? OFFSET ?`, jr.UID, src, jr.Name, pageSize, (page-1)*pageSize)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return

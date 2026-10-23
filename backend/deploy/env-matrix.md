@@ -27,12 +27,17 @@ configuration knob may live under a reserved prefix.
 | `CRONOMICON_KEY_*` | SSH Keys | user | **file path** to key material on the executing host |
 | `CRONOMICON_RUN_*` | dispatcher | Cronomicon (fixed set) | read-only run **context** |
 
-**The `CRONOMICON_RUN_*` fixed set** (injected into every run by the executor; not
+**The `CRONOMICON_RUN_*` fixed set** (injected into every run by the runner that
+takes it; not
 bindable, never from a store row — a run's own metadata, always log-safe):
 `CRONOMICON_RUN_ID` (run/trace id), `CRONOMICON_RUN_JOB` (job name), `CRONOMICON_RUN_JOB_SOURCE`
-(`git`|`cronomicon`), `CRONOMICON_RUN_SCOPE` (`""` = global), `CRONOMICON_RUN_TYPE` (run type),
-`CRONOMICON_RUN_TRIGGERED_BY` (actor), `CRONOMICON_RUN_EXECUTOR` (`ssh`|`runner`). Both
-executors inject them.
+(`git`|`cronomicon`), `CRONOMICON_RUN_SCOPE` (`""` = no scope: the run is the Global
+agency's), `CRONOMICON_RUN_TYPE` (run type),
+`CRONOMICON_RUN_TRIGGERED_BY` (actor), `CRONOMICON_RUN_EXECUTOR` (`ssh`|`runner`). An agent
+and the local runner both inject them. `CRONOMICON_RUN_EXECUTOR` is `ssh` when the
+local runner (this server) runs the job and `runner` when an agent does. Since
+v2.3.0 nothing chooses between the two, so this is the one place a script can
+tell which kind of runner took it.
 
 **Derived references (rows are never renamed).** Rows keep their bare names
 (`ansible_rh8_key`, `NWD_BECOME_PASS`); the reference is derived at use time by
@@ -107,14 +112,14 @@ A write failure is reported (rate-limited) to the process log and never stops th
 | Var | Default | Notes |
 |---|---|---|
 | `CRONOMICON_DB_PATH` | `/var/lib/cronomicon/cronomicon.db` | SQLite file on the mounted volume. |
-| `CRONOMICON_GIT_CACHE_DIR` | `/var/lib/cronomicon/git-cache/job-definitions` | GitLab clone cache. Keep on the volume so it survives restarts. |
+| `CRONOMICON_GIT_CACHE_DIR` | `/var/lib/cronomicon/git-cache/job-definitions` | The clone of Global's repository: the directory itself, not a parent. Keep on the volume so it survives restarts. Any other repository is cloned into a directory named by its id **beside** this one (by default `/var/lib/cronomicon/git-cache/<repo id>`), so the directory that holds this one must be writable and on the volume too. |
 
 ## Auth — Trusted Header SSO (primary)
 
 | Var | Default | Notes |
 |---|---|---|
 | `CRONOMICON_AUTH_MODE` | `trusted-header` | `trusted-header\|oidc`. |
-| `CRONOMICON_TRUSTED_PROXIES` | _(empty)_ | **req** in trusted-header mode — CIDR/IP allowlist of the reverse proxy. **Fail-closed: empty ⇒ refuse to boot** (unless `CRONOMICON_DEV_AUTH`). In the compose stack this is Traefik's static internal IP, e.g. `172.28.0.2/32`. |
+| `CRONOMICON_TRUSTED_PROXIES` | _(empty)_ | **req** in trusted-header mode — CIDR/IP allowlist of the reverse proxy. **Fail-closed: empty ⇒ refuse to boot** (unless `CRONOMICON_DEV_AUTH`). Give the proxy a stable internal address and list exactly that, e.g. `172.28.0.2/32`. |
 | `CRONOMICON_TRUSTED_HEADER_USER` | `Remote-User` | Header-name override. |
 | `CRONOMICON_TRUSTED_HEADER_EMAIL` | `Remote-Email` | Header-name override. |
 | `CRONOMICON_TRUSTED_HEADER_NAME` | `Remote-Name` | Header-name override. |
@@ -164,8 +169,9 @@ Only consulted when `CRONOMICON_AUTH_MODE=oidc`.
 | `CRONOMICON_GITLAB_BASE_URL` | _(empty)_ | GitLab repo URL for job-definition sync. |
 | `CRONOMICON_GITLAB_TOKEN` | _(empty)_ | Read token for private repos; unauthenticated clone if empty. Secret. |
 | `CRONOMICON_GITLAB_WEBHOOK_SECRET` | _(empty)_ | Validates `X-Gitlab-Token` on the webhook. Secret. |
-| `CRONOMICON_GITLAB_WRITE_BRANCH` | _(empty)_ | The GitOps branch used for **both** sync-read and publish-write — there is one branch, not a read/write pair. Empty ⇒ fall back to the DB-backed `gitlab_config.write_branch` (**Settings → GitLab**), then `main`. Resolved **fresh per operation**, so a DB-side change applies without a restart; setting it here pins the branch and the panel value is ignored. |
-| `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | _(empty)_ | Out-of-band bootstrap registration token. Multi-use, env-configured; unlike UI-minted tokens (single-use per install) it is never consumed. Secret. |
+| `CRONOMICON_GIT_FETCH_TIMEOUT` | `10m` | How long **one transfer** of a sync may take: a fetch, a first clone, or the update of one submodule. A Go duration (`10m`, `90s`, `1h`); a value that does not parse is ignored and the default used, and zero or less stops the server at start-up. Every repository's syncs and publishes wait in one queue, so a remote that stalls would hold all of them: at the bound the sync fails, the repository's sync problems say that the transfer was given up and name this variable, and the queue moves on. One figure for every repository. Raise it if the first clone of a large repository over a slow link is given up; a publish's push is not bounded by it. |
+| `CRONOMICON_GITLAB_WRITE_BRANCH` | _(empty)_ | The GitOps branch used for **both** sync-read and publish-write — there is one branch, not a read/write pair. Empty ⇒ fall back to the DB-backed branch of Global's repository (`git_repos.branch`, **Settings → Repositories**), then `main`. It applies to Global's repository only. Resolved **fresh per operation**, so a DB-side change applies without a restart; setting it here pins the branch and the panel value is ignored. |
+| `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | _(empty)_ | Out-of-band bootstrap registration token. Multi-use, env-configured; unlike UI-minted tokens (single-use per install) it is never consumed. Since v2.3.0 a registration token decides which agency owns the agent it enrols, and this one names none: an agent that registers with it is owned by, and serves, the **Global** agency. To enrol an agent for a department, mint a token for that agency under Runners. Secret. |
 | `CRONOMICON_AGENT_DIR` | `/usr/share/cronomicon/agents` | Directory of runner-agent binaries + `SHA256SUMS` served unauthenticated at `GET /agents/{filename}` (the container image bakes them in). Missing dir ⇒ clean 404 with a build-it-yourself hint — bare-metal deploys can point this at their own build output. |
 
 ### Stale-runner reaper
@@ -174,26 +180,47 @@ Only consulted when `CRONOMICON_AUTH_MODE=oidc`.
 crashed runner would otherwise stay `online` forever and its `running` runs hang
 forever. A background sweep runs **once a minute** (not configurable) and applies the
 two windows below in order: mark offline, reconcile that runner's orphaned runs to
-`failure` / `queued_reason=runner_lost`, then deregister.
+`failure` / `queued_reason=runner_lost`, then deregister. Both windows apply to
+agents only. The local runner (below) is this process: it is never marked offline
+or deregistered by the sweep, and its orphaned runs are reconciled by its own
+reaper (`CRONOMICON_SSH_EXECUTOR_STALE_AFTER`).
 
 | Var | Default | Notes |
 |---|---|---|
 | `CRONOMICON_RUNNER_OFFLINE_AFTER` | `5m` | Go duration. An `online`/`draining` runner whose last heartbeat is older than this is marked **offline**. Agents poll once a minute, so the default is ≈5 missed polls. Shortening it below the poll interval will flap runners offline between polls. |
 | `CRONOMICON_RUNNER_DEREGISTER_AFTER` | `336h` (14 days) | Go duration. A runner that stays **offline** this long is fully removed — its tokens revoked and its row deleted (its placement is snapshotted first, see `backup-restore.md`). "Offline since" is derived from `last_seen_at` (or `registered_at` when it never polled), so this window is measured from the last heartbeat, not from the moment it was marked offline. A host that comes back later must re-register. |
 
-## SSH executor (opt-in)
+## Local runner (this server running shell jobs itself; opt-in)
 
-Off by default. When enabled, **this process holds SSH private keys and opens
-outbound SSH to job targets** itself, rather than handing the work to a runner
-agent — so enabling it changes the server's blast radius, and it logs a loud
-warning at startup while on. Left off, `executor='ssh'` runs simply queue and are
-never claimed.
+The **local runner** is the server running shell jobs (`bash`, `perl`,
+`powershell`, `python`) over SSH from its own process. It is a row in the
+runner list and claims queued runs by the same rules as an agent: nothing on a
+job, a script or a run chooses it. Off on a new installation. Turned on, **this
+process holds SSH private keys and opens outbound SSH to job targets** itself,
+rather than handing the work to a runner agent — so it changes the server's
+blast radius, and it logs a loud warning each time it starts. It connects only
+to hosts whose key an operator has approved for it (Runners → Local runner →
+Host keys; nothing is captured on first connect), and never takes a run that
+binds an SSH key.
+
+Left off, a run that only the local runner could take stays queued, and History
+says why (*the local runner would take this run and is not running*). A shell
+run that an agent serving the scope's agency can take is taken by that agent.
+
+It is turned on and off under **Settings → Local runner** by a global
+administrator, with a confirmation and an audit entry, and no restart; the
+same setting holds how many runs it executes at once and which agencies it
+serves. The environment decides only two things: whether it is forbidden
+outright, and the values it starts with the first time v2.3.0 runs. (Before
+v2.3.0 this was the "SSH executor", switched on by the environment and chosen
+per job; the three `CRONOMICON_SSH_EXECUTOR_*` names keep that spelling.)
 
 | Var | Default | Notes |
 |---|---|---|
-| `CRONOMICON_SSH_EXECUTOR_ENABLED` | `false` | Master switch for the in-process SSH worker pool. `false` ⇒ the claim loop and the periodic orphan reaper never start and ssh runs stay queued. Note the **startup orphan sweep runs either way**: an `executor='ssh'` run left `running` by a crash holds a global concurrency slot until it is reconciled, so it is reconciled to `executor_lost` at boot whether or not the executor is enabled. |
-| `CRONOMICON_SSH_EXECUTOR_CONCURRENCY` | `4` | Simultaneous ssh runs claimed by this process. `≤ 0` is treated as the default rather than "unbounded" or "none". Within a single run, fan-out across targets is separately bounded. |
-| `CRONOMICON_SSH_EXECUTOR_STALE_AFTER` | `24h` | Go duration bounding the **periodic** orphan reaper, which runs once a minute while the executor is enabled: an `executor='ssh'` run still `running` longer than this is reconciled to failure (`executor_lost`). Keep it safely **above the longest plausible job** (its configured timeout) — this window is a safety net, not the crash-recovery path, and a value below a real job's runtime will kill live runs. `≤ 0` falls back to the default. |
+| `CRONOMICON_LOCAL_RUNNER` | _(unset)_ | Set to `forbid` to keep this server from ever running jobs itself: the **local runner** (the in-process SSH engine) then reads as off and cannot be turned on from the app. Unset (or `allow`), the decision is made under **Settings → Local runner**, which is where it is turned on and off since v2.3.0. Any other value refuses to start: a switch that keeps SSH keys off a host must not read a typo as "allowed". |
+| `CRONOMICON_SSH_EXECUTOR_ENABLED` | `false` | **A seed since v2.3.0, read once.** The first time v2.3.0 or later starts against a database from before 2.3.0, this becomes the initial value of the local runner's on/off setting, so an upgrade arrives in the state it was running in. After that the setting in the app is the truth and this is ignored. Note the **startup orphan sweep runs either way**: a run the local runner had claimed and a crash left `running` holds a global concurrency slot until it is reconciled, so it is reconciled to `executor_lost` at boot whether or not the local runner is on. |
+| `CRONOMICON_SSH_EXECUTOR_CONCURRENCY` | `4` | **A seed since v2.3.0, read once**, with the switch above: the initial number of runs the local runner executes at the same time (`≤ 0` is treated as the default). It is changed afterwards under Settings → Local runner. Within a single run, fan-out across targets is separately bounded. |
+| `CRONOMICON_SSH_EXECUTOR_STALE_AFTER` | `24h` | Go duration bounding the **periodic** orphan reaper, which runs once a minute whether or not the local runner is on (a run it started can outlive the switch being turned off): a run the local runner claimed that is still `running` longer than this is reconciled to failure (`executor_lost`). Keep it safely **above the longest plausible job** (its configured timeout) — this window is a safety net, not the crash-recovery path, and a value below a real job's runtime will kill live runs. `≤ 0` falls back to the default. |
 
 ## Stored-secret encryption
 
@@ -244,10 +271,10 @@ checked, but the file form is preferred for the reasons above.
 
 ## Retention
 
-Retention is **per-table** and lives in the DB: twelve independent day knobs (`runs`,
+Retention is **per-table** and lives in the DB: thirteen independent day knobs (`runs`,
 `activity`, `workflowRuns`, `changeLog`, `schedulePushes`, `logFiles`,
 `auditLogFiles`, `recycleBin`, `definitionRevisions`, `runnerPlacementHistory`,
-`archivedLogFiles`, `hostKeyLedger`) stored in the `auditCompliance` settings blob and edited under
+`archivedLogFiles`, `hostKeyLedger`, `secretUses`) stored in the `auditCompliance` settings blob and edited under
 **Settings → Audit & Compliance**. The vars below are **bootstrap defaults only** — on the first boot
 that finds the blob unset they seed it (each var fanning out to the tables it
 covered before), and from then on the blob is authoritative. Editing these on an
@@ -294,6 +321,7 @@ it. `CRONOMICON_BACKUP_AT` therefore also decides when retention runs.
 | Var | Default | Notes |
 |---|---|---|
 | `CRONOMICON_BACKUP_AT` | `02:00` | Daily **wall-clock UTC** `HH:MM` for the retention + backup sweep. Always UTC — *not* the application timezone from Settings → General, which governs scheduling and display only. An unset or unparseable value falls back to `02:00` rather than failing to boot. Wall-clock anchoring (rather than a 24h-from-boot ticker) is deliberate: a process restarted more often than daily would never have reached the end of a 24h ticker, so a frequently-redeployed deployment could go indefinitely without a durable backup. A **boot catch-up** sweep also runs immediately when the last recorded success is more than 24h old, gated on that persisted timestamp so a crash-loop still backs up at most about once a day. |
+| `CRONOMICON_BACKUP_RECIPIENTS` | _(empty)_ | Seeds Settings → Backups' keys **once**, on the first boot that finds none stored (2.5.1): age X25519 public keys (`age1…`), separated by commas or newlines. With keys, every snapshot is encrypted to them (`cronomicon-YYYYMMDD.db.age`, locally and in the bucket); without, backups stay unencrypted. Encryption is optional. Public keys only: the private keys that open a backup never go to the server, and **losing all of them makes every encrypted backup unreadable**. Afterwards the stored list is the one in force and this is not applied. Set but holding no usable key (a typo, a private key, nothing between the commas) while no list is stored, the server **refuses to start**, naming the variable: it would otherwise write and upload its first backup unencrypted. Beside a stored list (an empty one included) a bad value is logged and the stored list applies. |
 | `CRONOMICON_BACKUP_S3_BUCKET` | _(empty)_ | Empty ⇒ local snapshots only (no upload). |
 | `CRONOMICON_BACKUP_S3_ENDPOINT` | _(empty)_ | `host:port`; empty ⇒ AWS S3. Set for MinIO. |
 | `CRONOMICON_BACKUP_S3_REGION` | `us-east-1` | |
@@ -308,9 +336,9 @@ it. `CRONOMICON_BACKUP_AT` therefore also decides when retention runs.
 |---|---|---|
 | `CRONOMICON_APPRISE_URL` | _(empty)_ | Apprise gateway base URL, e.g. `http://apprise:8000` (an Apprise sidecar). Used as the push gateway when an alert rule includes a push/apprise channel. The per-config gateway override (`apprise_url` in notification settings) takes precedence if set. |
 
-> SMTP server settings (host/port/encryption/username/from/recipients) and the
-> Apprise target URLs are operator-managed in **Settings → Notifications**, not
-> env. The **SMTP password is stored envelope-encrypted with the KEK** (so a KEK
+> SMTP server settings (host/port/encryption/username/from/recipients) are
+> operator-managed in **Settings → Notifications**, and each agency's Apprise
+> push targets in **Settings → Alerts** (2.5.0), not env. The **SMTP password is stored envelope-encrypted with the KEK** (so a KEK
 > is required to use authenticated SMTP — see `CRONOMICON_KEK_FILE`).
 
 ## Metrics
@@ -324,8 +352,12 @@ The Vault client (AppRole, KV v2) stays a no-op stub unless `CRONOMICON_VAULT_AD
 **and** both role/secret IDs are present (env **or** DB `vault_config`); then
 vault-source **secrets** and vault-source **SSH credentials** resolve live through
 one shared client, and the SPA shows the vault path option. No Vault configured ⇒
-local-KEK only. Operator guidance: the
-administrator manual's Vault section.
+local-KEK only. There is one connection and one credential for the whole
+installation; since v2.3.0 what keeps agencies apart on it is a setting, not
+an environment variable: an agency's secret or key may name only a path inside
+the prefixes a global administrator assigned to that agency (Scopes →
+Agencies), checked when the path is written or the row is moved. Operator
+guidance: the administrator manual's Vault section.
 
 | Var | Default | Notes |
 |---|---|---|
@@ -364,17 +396,20 @@ timezone blobs). The precedence rule is applied uniformly:
 
 **When a change applies** is per-setting, not uniform — the "When applied" column
 below is the answer, and the PUT handler logs a restart warning only for the ones
-that genuinely need one. The connection-shaped settings (GitLab repo/PAT, Vault
-addr/AppRole) are resolved once at startup, because the client built from them is
-constructed at boot. The rest are re-read closer to use.
+that genuinely need one. The Vault connection (addr/AppRole) is resolved once at
+startup, because the client built from it is constructed at boot. A repository's
+connection (GitLab repo/PAT) was too, until 2.4.0; its sync service is now rebuilt
+whenever the connection is saved. The rest are re-read closer to use.
 
 | Setting | Env override | DB source | When applied |
 |---|---|---|---|
-| GitLab repo URL / PAT | `CRONOMICON_GITLAB_BASE_URL` / `CRONOMICON_GITLAB_TOKEN` | `gitlab_config` | restart |
-| GitLab webhook secret | `CRONOMICON_GITLAB_WEBHOOK_SECRET` (pins validation; **rotation API returns 409 while set**) | `gitlab_config` (+ rotation overlap pair) | restart |
-| GitLab write branch | `CRONOMICON_GITLAB_WRITE_BRANCH` | `gitlab_config.write_branch` | next sync/publish (read per operation) |
-| Vault addr / AppRole | `CRONOMICON_VAULT_ADDR` / `CRONOMICON_VAULT_ROLE_ID[_FILE]` / `CRONOMICON_VAULT_SECRET_ID[_FILE]` | `vault_config` | restart |
-| Vault namespace | `CRONOMICON_VAULT_NAMESPACE` | `vault_config.namespace` | restart |
+| GitLab repo URL / PAT | `CRONOMICON_GITLAB_BASE_URL` / `CRONOMICON_GITLAB_TOKEN` (Global's repository only) | `git_repos` (the row `global`) | when the connection is saved (its sync service is rebuilt and syncs); an env value at restart |
+| GitLab webhook secret | `CRONOMICON_GITLAB_WEBHOOK_SECRET` (Global's repository only; pins validation; **rotation API returns 409 while set**) | `git_repos` (+ rotation overlap pair) | the stored secret: at once (read per delivery); the env value: restart |
+| GitLab write branch | `CRONOMICON_GITLAB_WRITE_BRANCH` (Global's repository only) | `git_repos.branch` | next sync/publish (read per operation) |
+| Vault addr / AppRole (the installation's, also Global's) | `CRONOMICON_VAULT_ADDR` / `CRONOMICON_VAULT_ROLE_ID[_FILE]` / `CRONOMICON_VAULT_SECRET_ID[_FILE]` | `vault_config` | next Vault operation (the client is keyed on the resolved config) |
+| Vault namespace | `CRONOMICON_VAULT_NAMESPACE` | `vault_config.namespace` | next Vault operation |
+| An agency's own Vault (2.5.1) | — (no env; an agency cannot set the server's environment) | `agency_vaults` (one row per agency; AppRole credentials sealed) | next Vault operation of that agency's rows |
+| Allowed hosts for an agency's own Vault (2.5.1) | — (no env) | settings KV `vaultAllowedHosts` | at once: asked on every save, test and client build |
 | Run-log dir | — (no env) | `log_storage_config.local_path` | **immediately** — pushed to every writer on save; in-flight runs finish in the old directory and existing files are not moved |
 | Retention windows | seeded from `CRONOMICON_RETENTION_*` on first boot only | `auditCompliance` settings blob | next nightly sweep |
 | Application timezone | `TZ` (fallback only) | settings KV `timezone` | **immediately** — the cron engine is rebuilt in the new zone |

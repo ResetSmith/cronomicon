@@ -1,6 +1,10 @@
 package api
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/ResetSmith/cronomicon/internal/auth"
+)
 
 // mountAuth registers the operator identity surface (B2):
 //
@@ -8,6 +12,8 @@ import "net/http"
 //	GET  /api/v1/auth/callback         → OIDC callback (public)
 //	POST /api/v1/auth/logout           → clear session (session + CSRF)
 //	GET  /api/v1/me                    → current operator (session)
+//	GET  /api/v1/me/access             → the caller's groups and grants (session, LR-87)
+//	POST /api/v1/auth/sessions/revoke  → sign out every other session (global admin, LR-79)
 //	GET  /api/v1/access/recent-logins  → Honest View, A3.2 (session)
 //
 // Login/callback are public (they establish the session). Logout is a
@@ -38,6 +44,12 @@ func (s *Server) mountAuth(mux *http.ServeMux) {
 	}
 
 	mux.Handle("GET /api/v1/me", a.RequireSession(http.HandlerFunc(a.Me)))
+	// LR-87 — what the caller's own groups grant them, and which matched nothing.
+	mux.Handle("GET /api/v1/me/access", a.RequireSession(http.HandlerFunc(a.MyAccess)))
+	// LR-79 — the one remaining way to sign everyone out, now that no RBAC write
+	// does it as a side effect. A global administrator's: it reaches every agency.
+	mux.Handle("POST /api/v1/auth/sessions/revoke",
+		s.requireGlobal(auth.PermManageRoles)(http.HandlerFunc(a.RevokeSessions)))
 	// Spec path is /recent-logins (openapi.yaml); /access/recent-logins kept as a
 	// back-compat alias.
 	mux.Handle("GET /api/v1/recent-logins", a.RequireSession(http.HandlerFunc(a.RecentLogins)))

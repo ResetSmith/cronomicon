@@ -158,6 +158,9 @@ func runLocalToolchain(ctx context.Context, m *runnerproto.ManifestResponse, cfg
 // own ansible config supplies any inventory). `--limit` is appended when set.
 // terraform: the body is a sequence of terraform subcommand args (one per line),
 // defaulting to `terraform apply -auto-approve` when blank.
+//
+// An cronomicon-mode run with NO inventory (a job with no scope) is run as it
+// always was, and says so: see noInventoryNote.
 func localCommand(m *runnerproto.ManifestResponse, cfg Config, workdir string) (argv []string, stdin string, provenance []string, err error) {
 	switch m.RunType {
 	case "ansible":
@@ -222,6 +225,15 @@ func localCommand(m *runnerproto.ManifestResponse, cfg Config, workdir string) (
 				return nil, "", nil, ferr
 			}
 			argv = append(argv, "-i", invPath)
+		} else if cfg.Inventory == "cronomicon" && m.InventoryMode != "local" && len(m.Targets) == 0 {
+			// No inventory and no targets came with the run: it has no scope (a
+			// scoped run with no inventory is refused before it gets here, and
+			// a local-inventory runner supplies its own). ansible-playbook then
+			// has only its implicit localhost, which is THIS machine, and a
+			// play for any other host matches nothing and still exits 0. Said
+			// in the log (2.3.2), or a run that did nothing reads as a success
+			// with no explanation.
+			provenance = append(provenance, noInventoryNote)
 		}
 		if m.Limit != "" {
 			argv = append(argv, "--limit", m.Limit)
@@ -365,6 +377,11 @@ func identityArgs(m *runnerproto.ManifestResponse, cfg Config) (args []string, p
 	}
 	return args, provenance, nil
 }
+
+// noInventoryNote is the log line of an Ansible run that was given no
+// inventory. The words "no inventory" are what an operator searches for.
+const noInventoryNote = "cronomicon: ansible: no inventory — this run has no scope, so the play sees only this runner's own machine " +
+	"(Ansible's implicit localhost); a play for any other host matches nothing, and the run still ends as a success"
 
 // privateKeyArgs decides the auto --private-key wiring for an ansible run (R2).
 // It returns the argv fragment (empty when nothing is wired) plus one provenance

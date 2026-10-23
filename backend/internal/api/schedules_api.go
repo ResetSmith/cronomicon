@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
@@ -48,12 +50,27 @@ type scheduleEntryResp struct {
 // viewer's wall clock.
 // It issues no nested query, so callers must invoke it only after any outer rows
 // iterator is drained (SQLite pool rule, see db.maxOpenConns).
-func (s *Server) loadSchedules(ctx context.Context, ownerSource, ownerKind, ownerName string, paused bool) []scheduleEntryResp {
+//
+// The entries are the DEFINITION's (2.4.0): the ones that carry its uid, and
+// one that records no owner only where the definition is the one holder of
+// its name, which is the scheduler's own join (loadJobEntries). Read by
+// source, kind and name, as they were, the detail of one agency's `load`
+// showed the entries of another agency's `load` beside its own, their
+// environment included, and the edit form, which sends back what the detail
+// gave it, saved them as this definition's.
+func (s *Server) loadSchedules(ctx context.Context, ownerUID, ownerSource, ownerKind, ownerName string, paused bool) []scheduleEntryResp {
+	holders := "jobs"
+	if ownerKind == "workflow" {
+		holders = "workflows"
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT name, cron, env, source_ref, start_at, end_at, interval FROM definition_schedules
-		WHERE owner_source = ? AND owner_kind = ? AND owner_name = ?
+		WHERE owner_source = ?2 AND owner_kind = ?3 AND owner_name = ?4
+		  AND ((?1 <> '' AND owner_uid = ?1)
+		    OR ((owner_uid IS NULL OR ?1 = '')
+		        AND (SELECT COUNT(*) FROM `+holders+` o WHERE o.name = ?4 AND o.source = ?2) <= 1))
 		ORDER BY position, name
-	`, ownerSource, ownerKind, ownerName)
+	`, ownerUID, ownerSource, ownerKind, ownerName)
 	if err != nil {
 		return nil
 	}
@@ -152,6 +169,12 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		// SU-2: never expose a scoped job owner's schedule (its plaintext env) to a
 		// restricted actor outside that scope.
 		if !scheduleOwnerReadable(id, hasID, sr) {
+			continue
+		}
+		// Whose the entry is (2.5.0 C2, CF-1: a workflow's entries, and a
+		// no-scope job's, plaintext env and all, passed the scope filter for
+		// everyone), then the agency the request works in (2.4.4).
+		if !readsAgency(r, sr.ownerAgency) || !agencyctx.In(r, sr.ownerAgency) {
 			continue
 		}
 		readable = append(readable, sr)
@@ -302,12 +325,50 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		allCalNames = append(allCalNames, calendar.ParseNames(sr.skipCals.String)...)
 		allCalNames = append(allCalNames, calendar.ParseNames(sr.onlyCals.String)...)
 	}
-	calSets, calErr := calendar.Load(ctx, s.db, allCalNames)
-	if calErr != nil {
-		// Degrade to an unannotated projection rather than failing the endpoint:
-		// the Upcoming tab going blank is worse than it briefly over-promising.
-		s.log.Error("upcoming: load calendars — projection not annotated", "err", calErr)
-		calSets = calendar.Set{}
+	// One Load per agency that owns an entry (I2: a calendar is its agency's
+	// and its name unique there), not per entry: a handful of agencies, each
+	// read once and kept for the request.
+	calSetsByAgency := map[string]calendar.Set{}
+	calSetsFor := func(agency string) calendar.Set {
+		if sets, ok := calSetsByAgency[agency]; ok {
+			return sets
+		}
+		sets, calErr := calendar.Load(ctx, s.db, agency, allCalNames)
+		if calErr != nil {
+			// Degrade to an unannotated projection rather than failing the endpoint:
+			// the Upcoming tab going blank is worse than it briefly over-promising.
+			s.log.Error("upcoming: load calendars — projection not annotated", "agency", agency, "err", calErr)
+			sets = calendar.Set{}
+		}
+		calSetsByAgency[agency] = sets
+		return sets
+	}
+	// The installation freeze (§0a, open point 2) outranks every calendar, as
+	// the scheduler's freezeTier has it: every projected fire it will stop is
+	// annotated with it (the review of I1: the projection promised them), each
+	// judged at its own time, so a scheduled window marks the fires inside it
+	// and none outside (2.5.2 FZ-3).
+	freeze := calendar.Freeze{}
+	if f, err := calendar.ReadFreeze(ctx, s.db); err != nil {
+		s.log.Error("upcoming: read the installation freeze — projection not annotated with it", "err", err)
+	} else {
+		freeze = f
+	}
+	ownerAgencyOf := map[string]string{}
+	agencyOfOwner := func(uid, kind string) string {
+		if uid == "" {
+			return agencyid.Global
+		}
+		if a, ok := ownerAgencyOf[uid]; ok {
+			return a
+		}
+		a := agencyid.Global
+		var got sql.NullString
+		if err := s.db.QueryRowContext(ctx, `SELECT `+agencyid.DefinitionSQL, uid, kind).Scan(&got); err == nil && got.Valid {
+			a = got.String
+		}
+		ownerAgencyOf[uid] = a
+		return a
 	}
 
 	type proj struct {
@@ -326,6 +387,12 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		if !scheduleOwnerReadable(id, hasID, sr) {
 			continue
 		}
+		// Whose the entry is (2.5.0 C2, CF-1: a workflow's entries, and a
+		// no-scope job's, plaintext env and all, passed the scope filter for
+		// everyone), then the agency the request works in (2.4.4).
+		if !readsAgency(r, sr.ownerAgency) || !agencyctx.In(r, sr.ownerAgency) {
+			continue
+		}
 		key := defKey{sr.source, sr.kind, sr.owner}
 		if !enabledSet[key] || pausedSet[key] {
 			continue
@@ -334,10 +401,16 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		// an expired one contributes nothing at all — matching real fires.
 		skipCals := calendar.ParseNames(sr.skipCals.String)
 		onlyCals := calendar.ParseNames(sr.onlyCals.String)
+		// The global tier is the entry's own agency's (§0a, 2.4.0), as fire()
+		// asks it: one lookup per owner, cached for the request.
+		ownerAgency := agencyOfOwner(sr.ownerUID.String, sr.kind)
 		for _, t := range cronutil.NextNSpec(sr.spec(), now, end, perEntryCap, appLoc) {
 			// Evaluated per instant, in the app zone, exactly as fire() will —
 			// a holiday suppresses one day's instant, not the whole entry.
-			v := calendar.Evaluate(calSets, skipCals, onlyCals, calendar.DayOf(t, appLoc))
+			v, frozen := calendar.FreezeVerdictAt(freeze, t)
+			if !frozen {
+				v = calendar.EvaluateFor(calSetsFor(ownerAgency), ownerAgency, skipCals, onlyCals, calendar.DayOf(t, appLoc))
+			}
 			projections = append(projections, proj{sr.kind, sr.owner, sr.name, sr.cron, sr.source,
 				sr.ownerUID.String, splitAgencies(sr.ownerAgencies), t, v})
 		}
@@ -379,7 +452,7 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 	// pending id, so the UI can offer Cancel) and interleaved by instant.
 	// 'missed' rows ride a separate key: they are not upcoming, but silently
 	// hiding them would defeat the point of keeping them.
-	adhoc, missed := s.pendingRunItems(ctx, id, hasID, now, end)
+	adhoc, missed := s.pendingRunItems(ctx, id, hasID, now, end, func(owner string) bool { return readsAgency(r, owner) && agencyctx.In(r, owner) })
 	if len(adhoc) > 0 {
 		items = append(items, adhoc...)
 		sort.Slice(items, func(i, j int) bool {
@@ -411,8 +484,10 @@ type scheduleRow struct {
 	// is resolved for JOB owners only (a workflow has no scope of its own; its
 	// agencies are the union over its jobs, which needs step parsing and is
 	// resolved by the handlers that care).
-	ownerUID           sql.NullString
-	ownerAgencies      sql.NullString
+	ownerUID      sql.NullString
+	ownerAgencies sql.NullString
+	// ownerAgency is the owner's agency id: whose scope ownerScope is (I2).
+	ownerAgency        string
 	startAt, endAt     sql.NullString // activation window (AW-7)
 	interval           sql.NullString // anchored-interval mode (Phase 2)
 	skipCals, onlyCals sql.NullString // working-calendar bindings (CAL-10)
@@ -437,12 +512,19 @@ func (sr scheduleRow) spec() cronutil.Spec {
 // definition_schedules who forgets it silently re-opens the FX-A4 hole
 // (phantom bindings and promised runs for binned owners) — the exact drift
 // that produced FX-A4 in the first place.
+//
+// The owner is the entry's owner_uid (2.5.0 C12.5's review): by name, TAX
+// binning its `backup` made FIN's live `backup` binned too, so FIN's schedule
+// lost it from the Schedules list, Upcoming and its used-by count. An entry
+// that records no uid (from before 1050) is matched by its name, as before.
 const binnedOwnerSQL = `(EXISTS (SELECT 1 FROM jobs j2
-                   WHERE ds.owner_kind = 'job' AND j2.source = ds.owner_source
-                     AND j2.name = ds.owner_name AND j2.deleted_at IS NOT NULL)
+                   WHERE ds.owner_kind = 'job' AND j2.deleted_at IS NOT NULL
+                     AND (j2.uid = ds.owner_uid OR (ds.owner_uid IS NULL
+                          AND j2.source = ds.owner_source AND j2.name = ds.owner_name)))
               OR EXISTS (SELECT 1 FROM workflows w2
-                   WHERE ds.owner_kind = 'workflow' AND w2.source = ds.owner_source
-                     AND w2.name = ds.owner_name AND w2.deleted_at IS NOT NULL))`
+                   WHERE ds.owner_kind = 'workflow' AND w2.deleted_at IS NOT NULL
+                     AND (w2.uid = ds.owner_uid OR (ds.owner_uid IS NULL
+                          AND w2.source = ds.owner_source AND w2.name = ds.owner_name))))`
 
 func (s *Server) drainScheduleRows(ctx context.Context) ([]scheduleRow, error) {
 	// SU-2: resolve each schedule's owner scope so the read handlers can drop
@@ -453,19 +535,19 @@ func (s *Server) drainScheduleRows(ctx context.Context) ([]scheduleRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ds.owner_source, ds.owner_kind, ds.owner_name, ds.name, ds.cron, ds.env,
 		       (SELECT j.scope FROM jobs j
-		         WHERE ds.owner_kind = 'job' AND j.source = ds.owner_source AND j.name = ds.owner_name) AS owner_scope,
+		         WHERE ds.owner_kind = 'job'
+		           AND (j.uid = ds.owner_uid OR (ds.owner_uid IS NULL AND j.source = ds.owner_source AND j.name = ds.owner_name))
+		         ORDER BY j.rowid LIMIT 1) AS owner_scope,
 		       ds.start_at, ds.end_at, ds.interval, ds.skip_calendars, ds.only_calendars,
 		       -- R2F-3: the owner's identity (stamped since 1020) and, for job
 		       -- owners, its derived agencies — both in THIS select, so the
 		       -- schedule handlers' query budget (schedules_batch_test) is
 		       -- unchanged, exactly as owner_scope above.
 		       ds.owner_uid,
-		       (SELECT GROUP_CONCAT(a.name, '\x1f')
-		          FROM jobs j
-		          JOIN scopes sc         ON sc.name = j.scope
-		          JOIN scope_agencies sa ON sa.scope_id = sc.id
-		          JOIN agencies a        ON a.id = sa.agency_id
-		         WHERE ds.owner_kind = 'job' AND j.source = ds.owner_source AND j.name = ds.owner_name) AS owner_agencies
+		       -- The owner's agency (a job's since 1400, a workflow's since 1360):
+		       -- until I2 derived from a job's scope's name.
+		       (SELECT a.name FROM agencies a WHERE a.id = `+scheduleOwnerAgencySQL+`) AS owner_agencies,
+		       COALESCE(`+scheduleOwnerAgencySQL+`, '`+agencyid.Global+`') AS owner_agency
 		FROM definition_schedules ds
 		-- FX-A4: a binned owner's entries survive the soft delete (that is what
 		-- makes a restore cheap) but the scheduler's reload skips them, so listing
@@ -483,13 +565,23 @@ func (s *Server) drainScheduleRows(ctx context.Context) ([]scheduleRow, error) {
 		var sr scheduleRow
 		if err := rows.Scan(&sr.source, &sr.kind, &sr.owner, &sr.name, &sr.cron, &sr.env, &sr.ownerScope,
 			&sr.startAt, &sr.endAt, &sr.interval, &sr.skipCals, &sr.onlyCals,
-			&sr.ownerUID, &sr.ownerAgencies); err != nil {
+			&sr.ownerUID, &sr.ownerAgencies, &sr.ownerAgency); err != nil {
 			continue
 		}
 		out = append(out, sr)
 	}
 	return out, rows.Err()
 }
+
+// scheduleOwnerAgencySQL is the agency of a definition_schedules row's owner
+// (alias ds): by the owner's uid (agencyid.DefinitionOf), or, for an entry that
+// records none (from before 1020), by the owner's source and name, as the
+// scheduler joins it. NULL for an owner that is not there.
+var scheduleOwnerAgencySQL = `COALESCE(` + agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind") + `,
+	(SELECT ` + agencyid.JobSQL("j") + ` FROM jobs j
+	  WHERE ds.owner_kind = 'job' AND j.source = ds.owner_source AND j.name = ds.owner_name ORDER BY j.rowid LIMIT 1),
+	(SELECT ` + agencyid.WorkflowSQL + ` FROM workflows w
+	  WHERE ds.owner_kind = 'workflow' AND w.source = ds.owner_source AND w.name = ds.owner_name ORDER BY w.rowid LIMIT 1))`
 
 // scheduleOwnerReadable reports whether the actor may see a drained schedule row,
 // given its resolved owner scope (SU-2). Unrestricted actors, workflow-owned
@@ -505,7 +597,7 @@ func scheduleOwnerReadable(id auth.Identity, hasID bool, sr scheduleRow) bool {
 	if sr.ownerScope.Valid {
 		scope = sr.ownerScope.String
 	}
-	return auth.ScopeReadable(id, scope)
+	return auth.ScopeReadableIn(id, sr.ownerAgency, scope)
 }
 
 // defKey identifies a job/workflow definition for the batched schedule-state
@@ -647,26 +739,45 @@ func rfc3339Ptr(t time.Time) *string {
 // upcoming items, plus any 'missed' rows (regardless of instant — they are a
 // standing notice until cancelled). Job rows are filtered by the caller's scope
 // grants (SU-2), using the scope frozen on the pending row.
-func (s *Server) pendingRunItems(ctx context.Context, id auth.Identity, hasID bool, now, end time.Time) (upcoming, missed []map[string]any) {
+func (s *Server) pendingRunItems(ctx context.Context, id auth.Identity, hasID bool, now, end time.Time, inAgency func(owner string) bool) (upcoming, missed []map[string]any) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, kind, name, source, scope, run_at, scheduled_by, status, COALESCE(miss_reason,''),
-		       COALESCE(gate_kind,''), COALESCE(concurrency_key,''), COALESCE(origin_kind,'')
+		       COALESCE(gate_kind,''), COALESCE(concurrency_key,''), COALESCE(origin_kind,''),
+		       COALESCE(owner_uid, '')
 		FROM pending_runs ORDER BY run_at ASC`)
 	if err != nil {
 		return nil, nil
 	}
 	defer rows.Close()
+	type pendingRow struct {
+		rowID, kind, name, source, runAt, schedBy, status, missReason, gateKind, concKey, originKind, ownerUID string
+		scope                                                                                                  sql.NullString
+	}
+	var pendingRows []pendingRow
 	for rows.Next() {
-		var rowID, kind, name, source, runAt, schedBy, status, missReason, gateKind, concKey, originKind string
+		var rowID, kind, name, source, runAt, schedBy, status, missReason, gateKind, concKey, originKind, ownerUID string
 		var scope sql.NullString
 		if err := rows.Scan(&rowID, &kind, &name, &source, &scope, &runAt, &schedBy, &status, &missReason,
-			&gateKind, &concKey, &originKind); err != nil {
+			&gateKind, &concKey, &originKind, &ownerUID); err != nil {
 			continue
 		}
+		// Whose scope it is (I2): the owner definition's agency, as the
+		// promotion finds the definition. Rows are drained before it is asked.
+		pendingRows = append(pendingRows, pendingRow{rowID, kind, name, source, runAt, schedBy, status, missReason, gateKind, concKey, originKind, ownerUID, scope})
+	}
+	rows.Close()
+	for _, pr := range pendingRows {
+		rowID, kind, name, source, runAt, schedBy, status, missReason, gateKind, concKey, originKind, scope :=
+			pr.rowID, pr.kind, pr.name, pr.source, pr.runAt, pr.schedBy, pr.status, pr.missReason, pr.gateKind, pr.concKey, pr.originKind, pr.scope
+		ownerAgency := s.definitionAgencyFor(ctx, kind, pr.ownerUID, source, name)
 		// Same fail-closed rule as scheduleOwnerReadable: only an unrestricted
-		// actor sees everything; anyone else is gated by ScopeReadable (which
-		// still admits NULL/global scopes).
-		if !(hasID && id.Unrestricted()) && !auth.ScopeReadable(id, scope.String) {
+		// actor sees everything; anyone else is gated by ScopeReadableIn (which
+		// still admits NULL/global scopes), asked of the owner's agency (I2).
+		if !(hasID && id.Unrestricted()) && !auth.ScopeReadableIn(id, ownerAgency, scope.String) {
+			continue
+		}
+		// 2.4.4: the agency the request works in (agencyctx.In).
+		if !inAgency(ownerAgency) {
 			continue
 		}
 		item := map[string]any{

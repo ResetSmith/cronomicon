@@ -22,22 +22,28 @@ const SERVING = {
   status: "online",
   protocolVersion: 14,
   capabilities: ["bash"],
+  ownerAgency: { id: "ag-fin", name: "Finance" },
   agencies: [{ id: "ag-fin", name: "Finance" }],
+  canManage: true,
+  canReviewHostKeys: true,
 };
 const IDLE = { ...SERVING, id: "019f0000-0000-0000-0000-00000000bbbb", name: "runner-fin-02" };
-// Re-enrolled into the general pool: no agencies, and nothing to restore but
-// the scopes its old id still holds.
+// Re-enrolled as Global's own agent: it already serves Global, and what there
+// is to restore is the Global scope its old id still holds.
 const REENROLLED = {
   id: "019f0000-0000-0000-0000-00000000cccc",
   name: "runner-pool-01",
   status: "online",
   protocolVersion: 14,
   capabilities: ["bash"],
-  agencies: [],
+  ownerAgency: { id: "global", name: "Global" },
+  agencies: [{ id: "global", name: "Global" }],
+  canManage: true,
+  canReviewHostKeys: true,
   placementSuggestion: {
     historyId: 9,
     previousRunnerId: "019f0000-0000-0000-0000-00000000dead",
-    agencies: [],
+    agencies: [{ id: "global", name: "Global" }],
     tags: [],
     scopes: ["shared-hosts"],
     deregisteredAt: "2026-10-01T08:00:00Z",
@@ -123,7 +129,9 @@ describe("Runners — scopes served (SB)", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Replace this runner…" }));
     const dialog = within((await screen.findByText("Replace runner-dmz-01")).closest("[role=dialog]") ?? document.body);
-    fireEvent.change(await dialog.findByRole("combobox"), { target: { value: IDLE.id } });
+    // (The page has other selects; the dialog's is the one that offers the idle runner.)
+    const pick = (await dialog.findAllByRole("combobox")).find((el) => within(el).queryByRole("option", { name: /runner-fin-02/ }));
+    fireEvent.change(pick!, { target: { value: IDLE.id } });
     fireEvent.click(dialog.getByRole("button", { name: "Replace" }));
 
     expect(await screen.findByText(/Host keys approved for runner-dmz-01 are not handed over with its scopes/)).toBeTruthy();
@@ -135,19 +143,19 @@ describe("Runners — scopes served (SB)", () => {
     await expand("runner-fin-02");
 
     expect(await screen.findByText("Scopes served")).toBeTruthy();
-    expect(screen.getByText(/this runner serves whatever its groups allow/)).toBeTruthy();
+    expect(screen.getByText(/this runner takes any run of the agency it serves/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Replace this runner…" })).toBeNull();
   });
 });
 
-describe("Runners — restore offer for a general-pool runner (SB)", () => {
-  it("offers a runner with no agencies when its old id still holds scopes, and names them", async () => {
+describe("Runners — restore offer for a Global runner (SB, MA-32)", () => {
+  it("offers a re-enrolled runner the scopes its old id still holds, and names them", async () => {
     renderRunners();
     await expand("runner-pool-01");
 
     expect(await screen.findByText(/Previous placement found/i)).toBeTruthy();
-    // No agency to restore — said as what it is, not as an empty list.
-    expect(screen.getByText(/while in the general pool/)).toBeTruthy();
+    // Nothing about what it serves changes — said, so "restore" is not read as "re-place".
+    expect(screen.getByText(/already serves\s+Global; restoring changes nothing about that/)).toBeTruthy();
     const waiting = screen.getByText(/still bound to it/);
     expect(waiting.textContent).toMatch(/Scope shared-hosts is still bound to it, so its runs are waiting\. Restoring re-points it at this runner\./);
   });

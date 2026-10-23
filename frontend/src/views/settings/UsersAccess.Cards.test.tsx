@@ -27,6 +27,13 @@ const posts: Array<{ path: string; body: unknown }> = [];
 const deletes: string[] = [];
 const gets: string[] = [];
 
+// The agency in use (2.5.0 C11): none unless a test sets one.
+const { inUse } = vi.hoisted(() => ({ inUse: { current: null as null | { agency: string; agencyName: string } } }));
+vi.mock("../../agency", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agency")>();
+  return { ...actual, useAgencyOptional: () => inUse.current };
+});
+
 vi.mock("../../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/client")>();
   return {
@@ -91,7 +98,10 @@ beforeEach(() => {
     { id: "g2", adGroup: "SG-Admins", role: "admin", agencyId: null, agencyName: null, allScopes: true },
   ];
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  inUse.current = null;
+});
 
 const renderSection = async () => {
   render(
@@ -207,6 +217,37 @@ describe("Access Grants card (RB-20)", () => {
   });
 });
 
+// 2.5.0 C11, defect 87 (question 108): a grant is made in the agency the person
+// works in, and the list shows that agency's grants only; one on another
+// agency, or on every agency, was made from Tax and then never listed.
+describe("Access Grants card — working in an agency (C11)", () => {
+  it("grants in the agency in use, with no where to choose and no agency filter", async () => {
+    inUse.current = { agency: "ag-tax", agencyName: "Tax" };
+    GRANTS = Array.from({ length: 6 }, (_, i) => ({ id: `g${i}`, adGroup: i ? `SG-${i}` : "SG-Tax", role: "viewer", agencyId: "ag-tax", agencyName: "Tax", allScopes: false }));
+    await renderSection();
+    expect(screen.getByTestId("grant-where").textContent).toBe("In Tax");
+    expect(screen.queryByRole("option", { name: "All agencies" })).toBeNull();
+    const group = screen.getByPlaceholderText("SG-Cronomicon-Tax");
+    fireEvent.change(group, { target: { value: "SG-New" } });
+    const add = within(group.parentElement as HTMLElement).getByText("+ Add").closest("button") as HTMLButtonElement;
+    expect(add.disabled).toBe(false);
+    fireEvent.click(add);
+    await waitFor(() => expect(posts.some((p) => p.path === "/access-grants")).toBe(true));
+    expect(posts.find((p) => p.path === "/access-grants")!.body).toMatchObject({ adGroup: "SG-New", agencyId: "ag-tax" });
+  });
+
+  it("grants on every agency only while working in Global", async () => {
+    inUse.current = { agency: "global", agencyName: "Global" };
+    await renderSection();
+    expect(screen.getByTestId("grant-where").textContent).toBe("On every agency");
+    const group = screen.getByPlaceholderText("SG-Cronomicon-Tax");
+    fireEvent.change(group, { target: { value: "SG-Root" } });
+    fireEvent.click(within(group.parentElement as HTMLElement).getByText("+ Add").closest("button") as HTMLButtonElement);
+    await waitFor(() => expect(posts.some((p) => p.path === "/access-grants")).toBe(true));
+    expect(posts.find((p) => p.path === "/access-grants")!.body).toMatchObject({ adGroup: "SG-Root", allScopes: true });
+  });
+});
+
 describe("Roles card (RB-11)", () => {
   // The role NAME appears in both cards (a grant names its role), so every
   // lookup here is scoped to the row carrying the role-table's own markup.
@@ -232,11 +273,14 @@ describe("Roles card (RB-11)", () => {
     expect(roleRow("viewer").textContent).toMatch(/No permissions/i);
   });
 
-  it("warns that deleting a role signs everyone out", async () => {
+  // LR-79 — no access change signs anyone out since 2.3.0: grants are resolved
+  // per request, so a deleted role is simply gone on the next one. The dialog
+  // used to warn that every other operator would be signed out.
+  it("says a role's deletion is in force on the next request, and signs nobody out", async () => {
     await renderSection();
     fireEvent.click(within(roleRow("tax-operator")).getByText("Delete"));
     await waitFor(() => expect(screen.getByText(/Delete role tax-operator\?/i)).toBeTruthy());
-    expect(screen.getByText(/signed out/i)).toBeTruthy();
+    expect(screen.getByText(/in force on everyone's next request\. Nobody is signed out\./)).toBeTruthy();
     expect(deletes.length).toBe(0);
   });
 });

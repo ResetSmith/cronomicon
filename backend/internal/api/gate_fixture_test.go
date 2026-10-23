@@ -15,6 +15,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/gitlab"
 )
 
 // The two-agency fixture (GC-18).
@@ -64,6 +65,14 @@ const (
 // the cast above. The KEK is set so secret and credential routes work.
 func gateServer(t *testing.T) (http.Handler, *sql.DB) {
 	t.Helper()
+	return gateServerWith(t, nil)
+}
+
+// gateServerWith is gateServer with the configuration adjusted before the
+// server is built — DevAuth, for a test that needs a cookie session beside the
+// trusted-header cast.
+func gateServerWith(t *testing.T, adjust func(*config.Config)) (http.Handler, *sql.DB) {
+	t.Helper()
 	pool, err := db.Open(filepath.Join(t.TempDir(), "gate.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -97,6 +106,12 @@ func gateServer(t *testing.T) (http.Handler, *sql.DB) {
 		}
 		exec(`INSERT INTO access_grants (id, ad_group, role, agency_id, all_scopes, created_at)
 		      VALUES (?,?,?,?,?,'2026-01-01T00:00:00Z')`, "g:"+group, group, role, ag, all)
+		// 2.5.0 C5: each agency grant's group is on its agency's list, so these
+		// grants are as they were before the lists existed (no notice, and
+		// editable by their delegates).
+		if ag != nil {
+			exec(`INSERT INTO agency_groups (agency_id, ad_group, created_at) VALUES (?,?,'2026-01-01T00:00:00Z')`, ag, group)
+		}
 	}
 	grant(gRoot, "admin", "")
 	grant(gFinAdmin, "admin", "FIN")
@@ -113,6 +128,9 @@ func gateServer(t *testing.T) (http.Handler, *sql.DB) {
 		TrustedProxies: []string{"192.0.2.0/24"},
 		SecretKEKEnv:   "YTM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM=",
 	}
+	if adjust != nil {
+		adjust(cfg)
+	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	authSvc := auth.NewService(context.Background(), cfg, pool, log)
 	if err := auth.RefreshRoles(context.Background(), pool); err != nil {
@@ -120,8 +138,31 @@ func gateServer(t *testing.T) (http.Handler, *sql.DB) {
 	}
 	// The roles cache is process-wide; put the built-in set back for the next test.
 	t.Cleanup(func() { _ = auth.RefreshRoles(context.Background(), pool) })
-	h := api.New(api.Options{Config: cfg, Logger: log, Auth: authSvc, DB: pool}).Handler()
+	h := api.New(api.Options{Config: cfg, Logger: log, Auth: authSvc, DB: pool, RepoTest: fakeRepoTest}).Handler()
 	return h, pool
+}
+
+// fakeRepoTest stands in for a remote (2.4.0 Phase I3): every connection
+// answers and may push, except a URL that says it is read-only, or a token
+// that does (may not push), or a URL that says it is unreachable (does not
+// answer). The real check is the gitlab package's, tested there against git
+// http-backend.
+func fakeRepoTest(_ context.Context, _ *config.Config, url, token, branch string) gitlab.ConnectionTest {
+	if strings.Contains(token, "read-only") {
+		url += "/read-only"
+	}
+	res := gitlab.ConnectionTest{Branch: branch, Branches: []string{branch}}
+	if strings.Contains(url, "unreachable") {
+		res.Error = "dial tcp: connection refused"
+		return res
+	}
+	res.OK, res.BranchFound = true, true
+	if strings.Contains(url, "read-only") {
+		res.PushError = "authorization failed"
+		return res
+	}
+	res.CanPush = true
+	return res
 }
 
 // gateReq issues one request as a member of the given AD group(s) — a

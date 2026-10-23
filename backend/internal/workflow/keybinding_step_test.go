@@ -51,27 +51,37 @@ func waitChildRun(t *testing.T, pool *sql.DB, jobName string) (status, reason st
 	return "", ""
 }
 
-func TestWorkflowStep_RefusesAKeyBoundJobOnSSH(t *testing.T) {
+func TestWorkflowStep_RefusesAKeyBoundJobWithNoAgent(t *testing.T) {
 	pool := openPool(t)
 	seedScopedJob(t, pool, "deploy", "ssh")
 	bindStepKey(t, pool, "deploy")
 
 	if status := triggerOneStep(t, pool, "deploy"); status == "success" {
-		t.Error("the workflow succeeded on a step the ssh executor could not have provisioned")
+		t.Error("the workflow succeeded on a step nothing could have provisioned")
 	}
 	status, reason := stepRun(t, pool, "deploy")
 	if status != "failure" {
 		t.Errorf("child run status = %q, want failure", status)
 	}
-	if reason != runref.ReasonKeyBindingOnSSH {
-		t.Errorf("queued_reason = %q, want %q", reason, runref.ReasonKeyBindingOnSSH)
+	if reason != runref.ReasonKeyBindingNeedsAgent {
+		t.Errorf("queued_reason = %q, want %q", reason, runref.ReasonKeyBindingNeedsAgent)
 	}
 }
 
-func TestWorkflowStep_KeyBoundJobOnRunnerIsEnqueued(t *testing.T) {
+func TestWorkflowStep_KeyBoundJobWithAnAgentIsEnqueued(t *testing.T) {
 	pool := openPool(t)
-	seedScopedJob(t, pool, "deploy", "runner")
+	seedScopedJob(t, pool, "deploy", "ssh") // scope 'tax'; the job's executor is not read
 	bindStepKey(t, pool, "deploy")
+	// An agent serves the step's scope (a new scope and a new runner are both
+	// Global's) — offline, even: that is an ordinary wait.
+	for _, q := range []string{
+		`INSERT OR IGNORE INTO scopes (id, name, source, created_at) VALUES ('sc-tax', 'tax', 'cronomicon', 't')`,
+		`INSERT INTO runners (id, name, status, registered_at, created_at) VALUES ('agent-1', 'agent-1', 'offline', 't', 't')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
 
 	eng := workflow.New(pool, discardLog())
 	if _, err := eng.Trigger(context.Background(), workflow.TriggerParams{
@@ -81,7 +91,7 @@ func TestWorkflowStep_KeyBoundJobOnRunnerIsEnqueued(t *testing.T) {
 		t.Fatalf("Trigger: %v", err)
 	}
 	status, reason := waitChildRun(t, pool, "deploy")
-	if status == "failure" || reason == runref.ReasonKeyBindingOnSSH {
-		t.Errorf("status/reason = %q/%q — the refusal fired on the runner executor", status, reason)
+	if status == "failure" || reason == runref.ReasonKeyBindingNeedsAgent {
+		t.Errorf("status/reason = %q/%q — refused although an agent can deliver the key", status, reason)
 	}
 }

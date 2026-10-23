@@ -16,7 +16,6 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
-	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
 // fakeSMTP is a minimal in-process SMTP sink that captures one delivered message.
@@ -140,6 +139,13 @@ func TestAppriseSend(t *testing.T) {
 	}
 }
 
+// fixed is a hand-built event's renderer: the same subject and body whatever
+// the dispatcher knows (the agency and the link are tested through the real
+// renderers).
+func fixed(subject, body string) func(msgContext) (string, string) {
+	return func(msgContext) (string, string) { return subject, body }
+}
+
 func newDispatcherDB(t *testing.T) (*Dispatcher, *sql.DB) {
 	t.Helper()
 	pool, err := db.Open(filepath.Join(t.TempDir(), "notify.db"))
@@ -164,13 +170,16 @@ func TestDispatcherMatchAndSend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed alert: %v", err)
 	}
-	// Seed notification_config: SMTP host + apprise targets.
+	// Seed notification_config: SMTP host + the gateway; and the push target r1
+	// names (AL-2, 1540), with one it does not.
 	_, err = pool.Exec(`INSERT INTO notification_config
 		(id, smtp_host, smtp_port, smtp_from, smtp_encryption, smtp_recipients, apprise_enabled, apprise_url, apprise_targets, last_modified_at)
-		VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','[]',1,'http://apprise:8000','[{"label":"On-call","service":"slack","url":"slack://x","enabled":true}]','now')`)
+		VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','[]',1,'http://apprise:8000','[]','now')`)
 	if err != nil {
 		t.Fatalf("seed notif config: %v", err)
 	}
+	seedTarget(t, pool, "t1", "global", "slack://x", true, "r1")
+	seedTarget(t, pool, "t2", "global", "slack://not-named", true)
 
 	var gotEmailTo []string
 	var gotPushTargets []string
@@ -207,75 +216,6 @@ func TestDispatcherMatchAndSend(t *testing.T) {
 	}
 	if gotEmailTo != nil || gotPushTargets != nil {
 		t.Errorf("success should not have dispatched: email=%v push=%v", gotEmailTo, gotPushTargets)
-	}
-}
-
-func TestAppriseTargetURLs(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want []string
-	}{
-		{"empty", "", nil},
-		{"invalid", "{not json", nil},
-		// The pre-rich bare-string form is NOT tolerated any more. It was
-		// dropped from the settings reader in v1.5.41 and from this one in
-		// v1.5.43; migration 1150 rewrites any stored row that still carries
-		// it, so by the time the dispatcher reads the column there is nothing
-		// in this shape left. Tolerating it HERE and not there is precisely the
-		// split that let the UI show zero targets while alerts kept being
-		// delivered — see DM-1.
-		{"legacy strings are no longer delivered to", `["slack://x","mailto://y"]`, nil},
-		{"objects honor enabled", `[{"url":"slack://x","enabled":true},{"url":"mailto://y","enabled":false}]`, []string{"slack://x"}},
-		{"object without url skipped", `[{"label":"empty","enabled":true}]`, nil},
-		{"mixed row keeps only the object", `["slack://legacy",{"url":"mailto://y","enabled":true}]`, []string{"mailto://y"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := appriseTargetURLs(tc.in)
-			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
-				t.Errorf("appriseTargetURLs(%q) = %v, want %v", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
-// TestAppriseReadersAgree is the regression test for DM-1. The Settings card and
-// the notification dispatcher read the SAME column through different code paths
-// (settings.GetNotificationConfig vs the dispatcher's own SELECT), and for two
-// releases they disagreed about the legacy bare-string form: the settings reader
-// had dropped it while this package's private copy of the parser kept it, so a
-// row in the old form was invisible in the UI, still delivered to, and wiped by
-// the first Save.
-//
-// The guarantee is now structural — appriseTargetURLs calls
-// settings.ParseAppriseTargets — and this test is what keeps it that way: it
-// fails the moment anyone re-introduces a second parser with its own opinion.
-func TestAppriseReadersAgree(t *testing.T) {
-	fixtures := []string{
-		"",
-		"{not json",
-		`[]`,
-		`["slack://legacy"]`,
-		`[{"label":"On-call","service":"email","url":"mailto://a@b.c","enabled":true}]`,
-		`[{"url":"slack://on","enabled":true},{"url":"slack://off","enabled":false}]`,
-		`["slack://legacy",{"url":"mailto://y","enabled":true}]`,
-		`[{"label":"no url","enabled":true}]`,
-	}
-	for _, in := range fixtures {
-		// What the Settings card would show, reduced to the same projection the
-		// dispatcher applies: enabled targets that actually carry a URL.
-		var viaSettings []string
-		for _, tgt := range settings.ParseAppriseTargets(in) {
-			if tgt.Enabled && tgt.URL != "" {
-				viaSettings = append(viaSettings, tgt.URL)
-			}
-		}
-		viaDispatcher := appriseTargetURLs(in)
-		if strings.Join(viaSettings, ",") != strings.Join(viaDispatcher, ",") {
-			t.Errorf("readers disagree on %s:\n  settings card  -> %v\n  dispatcher     -> %v\nOne column, one parser: route both through settings.ParseAppriseTargets.",
-				in, viaSettings, viaDispatcher)
-		}
 	}
 }
 
@@ -392,9 +332,11 @@ func TestSendTestReportsPerTransport(t *testing.T) {
 		d, pool := newDispatcherDB(t)
 		if _, err := pool.Exec(`INSERT INTO notification_config
 			(id, smtp_host, smtp_port, smtp_from, smtp_encryption, smtp_recipients, apprise_enabled, apprise_url, apprise_targets, last_modified_at)
-			VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','["ops@example.com"]',1,'http://apprise:8000','[{"label":"On-call","service":"slack","url":"slack://x","enabled":true}]','now')`); err != nil {
+			VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','["ops@example.com"]',1,'http://apprise:8000','[]','now')`); err != nil {
 			t.Fatalf("seed config: %v", err)
 		}
+		seedTarget(t, pool, "t1", "global", "slack://x", true)
+		seedTarget(t, pool, "t-fin", "ag:FIN", "slack://fin", true) // an agency's: not the installation's test
 		var mailedTo []string
 		var pushed []string
 		d.sendEmail = func(_ SMTP, to []string, subject, body string) error {
@@ -602,5 +544,19 @@ func TestSuppressionNotifiesOnlyAnExplicitSkippedRule(t *testing.T) {
 				t.Errorf("body = %q names a run id, but nothing ran", gotBody)
 			}
 		})
+	}
+}
+
+// seedTarget inserts a push target (1540) and links it to the rules named.
+func seedTarget(t *testing.T, pool *sql.DB, id, owner, url string, enabled bool, rules ...string) {
+	t.Helper()
+	if _, err := pool.Exec(`INSERT INTO alert_targets (id, owner_agency, url, enabled, created_at) VALUES (?, ?, ?, ?, 'now')`,
+		id, owner, url, enabled); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	for _, r := range rules {
+		if _, err := pool.Exec(`INSERT INTO alert_rule_targets (rule_id, target_id) VALUES (?, ?)`, r, id); err != nil {
+			t.Fatalf("link target: %v", err)
+		}
 	}
 }

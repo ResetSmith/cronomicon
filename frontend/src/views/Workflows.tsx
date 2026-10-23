@@ -1,7 +1,10 @@
 import { Fragment, Suspense, lazy, useEffect, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
-import { COMPOSE_ADMIN_ONLY, globalOnly } from "../api/globalAdmin";
+import { useAgencyOptional } from "../agency";
+import { agenciesFor, isGlobalFor, useMyAccess } from "../api/access";
+import { WorkflowAssignDialog } from "./AssignDialog";
+import type { components } from "../api/schema";
 import { useLiveGet, rows, useClientPager, useColumnWidths, useInlineAnnotation, useInlineTags, useTableSort, useToast } from "../hooks";
 import { AnnotationSection, CriticalChip, annotationOf, type Annotation } from "../components/Annotation";
 import { useGet } from "../hooks";
@@ -22,7 +25,8 @@ const WorkflowCanvasLazy = lazy(() =>
   import("./workflows/WorkflowCanvas").then((m) => ({ default: m.WorkflowCanvas })),
 );
 import { FolderBrowser } from "../components/FolderBrowser";
-import { AlertBanner, Btn, ConfirmDialog, DerivedAgencies, EmptyCell, ExpandChevron, RefreshButton, HoverTr, Modal, InlineTags, Pager, SearchBar, Section, SkeletonRows, TabBar, TagEditor, TagFilterSelect, Toast, jobStatusLabel, matchesStatus, matchesTags, statusLabel, statusTone, agencySortKey } from "../components/ui";
+import { parentOf } from "../utils/tree";
+import { AlertBanner, Btn, ConfirmDialog, DerivedAgencies, DetailCell, EmptyCell, ExpandChevron, RefreshButton, HoverTr, Modal, InlineTags, Pager, SearchBar, Section, SkeletonRows, TabBar, TagEditor, TagFilterSelect, Toast, jobStatusLabel, matchesStatus, matchesTags, statusLabel, statusTone, agencySortKey } from "../components/ui";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns, type TableColumn } from "../components/table";
 import { type SortColumn } from "../utils/sort";
 import { RevisionHistory } from "./RevisionHistory";
@@ -221,18 +225,43 @@ export function Workflows() {
   // longer note there on why this replaced the client-side role list and why it
   // remains a UX affordance rather than a boundary).
   const [canCompose, setCanCompose] = useState(false);
+  const [composeAdmin, setComposeAdmin] = useState(false);
+  const composeAgency = useAgencyOptional()?.agency;
   const [canRun, setCanRun] = useState(false);
+  // 2.5.0 C7.3 (IN-12): a global administrator gives a Git workflow to an agency.
+  const [globalAdmin, setGlobalAdmin] = useState(false);
+  const [assignFor, setAssignFor] = useState<Workflow | null>(null);
   // GC (v2.2.2) — revision history is listed and restored only for a compose
   // ADMINISTRATOR (see the same note in Jobs.tsx); a departmental composer keeps
   // the row's History button, disabled with the reason.
-  const [composeAdmin, setComposeAdmin] = useState(false);
   useEffect(() => {
     fetchCapabilities().then((caps) => {
       setCanCompose(!!caps.compose);
-      setCanRun(!!caps.triggerJobs);
       setComposeAdmin(!!caps.composeAdmin);
+      setCanRun(!!caps.triggerJobs);
+      setGlobalAdmin(!!caps.configureAppGlobal);
     });
   }, []);
+  // 2.5.0 C11, defect 88: what is created and edited here is the agency in
+  // use's, and the server answers 403 to someone who composes elsewhere but
+  // not in it. "May compose somewhere" (caps.compose) offered + Create, Edit,
+  // Clone and Delete in an agency where the person only views. As Schedules and
+  // Calendars gate it: a global composer, or compose on the agency in use.
+  // C12, defect 94: a grant on every agency that carries compose is a global
+  // composer for this too (isGlobalFor), with or without configureApp
+  // (composeAdmin needs both); until then a custom role with compose on every
+  // scope lost every action here. While /me/access is being read the actions
+  // wait (undefined); if it could not be read (null) they show, and the server
+  // decides.
+  const composeAccess = useMyAccess();
+  const canComposeHere =
+    canCompose &&
+    (composeAdmin ||
+      !composeAgency ||
+      composeAccess === null ||
+      (composeAccess !== undefined &&
+        (isGlobalFor(composeAccess, "compose") ||
+          agenciesFor(composeAccess, "compose").some((a) => a.id === composeAgency))));
 
   // WB-O2: poll the list while any workflow is running/queued so live status
   // (and Next/Last run) updates without a manual refresh; stops once all settle.
@@ -242,6 +271,36 @@ export function Workflows() {
     (d) => rows<Workflow>(d).some((w) => w.status === "running" || w.status === "queued"),
   );
   const items = rows<Workflow>(data);
+  // 2.5.2 OP-3 — ?workflow=<uid>, the workflow run detail's "Open workflow":
+  // the twin of Jobs' ?job= (see there). This browser does not page, so the
+  // folder and the expanded row are all it takes.
+  const focusUid = params.get("workflow");
+  const [focusName, setFocusName] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!focusUid || !data) return;
+    const w = items.find((x) => x.uid === focusUid);
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("workflow");
+        const folder = w ? parentOf(workflowDisplayPath(w)) : "";
+        if (folder) next.set("path", folder);
+        else if (w) next.delete("path");
+        return next;
+      },
+      { replace: true },
+    );
+    if (w) {
+      setExpanded(w.id ?? null);
+      setFocusName(workflowName(w));
+    } else {
+      fireToast("That workflow is not in this agency's list.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusUid, data]);
+  useEffect(() => {
+    if (focusName) document.getElementById(`workflow-detail-${focusName}`)?.scrollIntoView?.({ block: "center" });
+  }, [focusName, path]);
   // R2F-3 — the Agency column tells the catalog rows apart; a dialog TITLE shows
   // the name alone, so it qualifies when this page holds two workflows by it.
   const wfTitleName = useNameDisambiguator(items, (w) => ({ uid: w.uid, name: w.name, agencies: w.agencies }));
@@ -580,7 +639,7 @@ export function Workflows() {
           )}
           {/* Edit only for cronomicon rows the caller may compose (hidden for git
               rows + non-admins). Delete lives in the editor behind a confirm. */}
-          {canCompose && w.source === "cronomicon" && (
+          {canComposeHere && w.source === "cronomicon" && (
             <Link to={`/workflow-editor?id=${w.id}`} style={{ textDecoration: "none" }}>
               <Btn small>Edit</Btn>
             </Link>
@@ -618,8 +677,8 @@ export function Workflows() {
           {renderCells(cols.visible, { wf: w, displayName }, { base: td })}
         </HoverTr>
         {isExp && (
-          <tr style={{ borderBottom: `1px solid ${c.border}` }}>
-            <td colSpan={cols.visible.length} style={{ padding: "16px 18px", background: c.primaryBg }}>
+          <tr id={`workflow-detail-${workflowName(w)}`} style={{ borderBottom: `1px solid ${c.border}` }}>
+            <DetailCell colSpan={cols.visible.length} padding="16px 18px" background={c.primaryBg}>
               {/* EV-3 — the meta strip that used to sit here (Last run / Next run /
                   Schedule) is gone: it restated three columns of the row it hangs
                   off, verbatim. Actions keep their top-right home (EV-4). */}
@@ -643,21 +702,24 @@ export function Workflows() {
                       {w.disabled ? "Resume" : "Pause"}
                     </Btn>
                   )}
+                  {/* 2.5.0 C7.3 — a Git workflow given to another agency with
+                      what it runs; the same action takes an update. */}
+                  {globalAdmin && w.source === "git" && (
+                    <Btn small onClick={() => setAssignFor(w)}>Give to an agency…</Btn>
+                  )}
                   {/* Delete was previously editor-only; it is now also a row action
                       here, behind the same confirm and the same cronomicon-only gate
                       as Edit. Destructive last, dangerQuiet — Runners' order. */}
                   {/* RH: in-app definitions get history here; git rows get it from Git. */}
-                  {canCompose && w.source === "cronomicon" && (
+                  {canComposeHere && w.source === "cronomicon" && (
                     <Btn
                       small
                       onClick={() => setHistoryFor(w.name ?? "")}
-                      disabled={!composeAdmin}
-                      title={globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY) || undefined}
                     >
                       History
                     </Btn>
                   )}
-                  {canCompose && w.source === "cronomicon" && (
+                  {canComposeHere && w.source === "cronomicon" && (
                     <Btn small dangerQuiet disabled={busyId === w.id || delBusy} onClick={() => setDeleting(w)}>
                       Delete
                     </Btn>
@@ -740,7 +802,7 @@ export function Workflows() {
                 </div>
               </div>
               </RefreshScope>
-            </td>
+            </DetailCell>
           </tr>
         )}
       </Fragment>
@@ -763,7 +825,7 @@ export function Workflows() {
         {/* I-1 (VF-11) — same gate as the empty state's "Create a workflow"
             below, and as the editor's own. Ungated, it was a primary button
             leading a Viewer to WorkflowEditor's refusal notice. */}
-        {canCompose && (
+        {canComposeHere && (
           <Link to="/workflow-editor" style={{ textDecoration: "none" }}>
             <Btn primary style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ Create</Btn>
           </Link>
@@ -784,7 +846,7 @@ export function Workflows() {
       {!loading && !error && items.length === 0 && (
         <div style={{ color: c.textSec }}>
           <div>No workflows yet. Workflows are synced from the workflows/ directory of the definitions repo, or authored in the workflow editor.</div>
-          {canCompose && (
+          {canComposeHere && (
             <div style={{ marginTop: 12 }}>
               <Link to="/workflow-editor" style={{ textDecoration: "none" }}>
                 <Btn small>Create a workflow</Btn>
@@ -807,28 +869,32 @@ export function Workflows() {
           // Search mode: flat results across all folders, full path shown,
           // sorted (TS-8) and paged client-side (TS-15).
           <>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm, tableLayout: "fixed" }}>
-              <thead>{tableHeader()}</thead>
-              <tbody>{pageItems.map((w) => renderWorkflowRow(w, workflowDisplayPath(w)))}</tbody>
-            </table>
+            <div style={pinnedScroll}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm, tableLayout: "fixed" }}>
+                <thead>{tableHeader()}</thead>
+                <tbody>{pageItems.map((w) => renderWorkflowRow(w, workflowDisplayPath(w)))}</tbody>
+              </table>
+            </div>
             <Pager pager={pager} page={page} total={total} noun="workflows" />
           </>
         ) : (
           // Browse mode: navigate the folder tree one level at a time.
-          <FolderBrowser
-            // TS-24: the sorted array, so the active column orders each folder's
-            // leaves; folders themselves stay alpha-first.
-            items={sort.sorted}
-            preserveLeafOrder
-            getPath={workflowDisplayPath}
-            getName={workflowName}
-            path={path}
-            onNavigate={setPath}
-            rootLabel="Workflows"
-            header={tableHeader()}
-            colCount={cols.visible.length}
-            renderLeaf={(leaf) => renderWorkflowRow(leaf.item, leaf.label)}
-          />
+          <div style={pinnedScroll}>
+            <FolderBrowser
+              // TS-24: the sorted array, so the active column orders each folder's
+              // leaves; folders themselves stay alpha-first.
+              items={sort.sorted}
+              preserveLeafOrder
+              getPath={workflowDisplayPath}
+              getName={workflowName}
+              path={path}
+              onNavigate={setPath}
+              rootLabel="Workflows"
+              header={tableHeader()}
+              colCount={cols.visible.length}
+              renderLeaf={(leaf) => renderWorkflowRow(leaf.item, leaf.label)}
+            />
+          </div>
         ))}
 
       {laterFor && (
@@ -853,6 +919,13 @@ export function Workflows() {
         </Modal>
       )}
 
+      {assignFor && (
+        <WorkflowAssignDialog
+          wf={assignFor as components["schemas"]["Workflow"]}
+          workflows={items as components["schemas"]["Workflow"][]}
+          onClose={() => setAssignFor(null)}
+        />
+      )}
       {historyFor && (
         <RevisionHistory
           kind="workflow"
@@ -905,6 +978,12 @@ const th = (): React.CSSProperties => ({
   whiteSpace: "nowrap",
 });
 const td: React.CSSProperties = { padding: "10px 16px", verticalAlign: "top" };
+
+// The table's own sideways scroll, which its expanded row's DetailCell holds
+// itself to (2.5.2): without it the page scrolled sideways instead, and the
+// open workflow's Refresh, Pause and Run sat off screen when the columns were
+// wider than the window.
+const pinnedScroll: React.CSSProperties = { overflowX: "auto" };
 
 // Absolute app-zone datetime for the Created On / Last Edited columns (V1.1-17);
 // `—` when null (git rows). Routes through the shared app-zone formatter (§5.2).

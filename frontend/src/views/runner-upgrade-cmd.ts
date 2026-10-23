@@ -2,6 +2,18 @@
 //
 // Upgrading an installed agent is binary-swap + restart: the runner keeps its
 // id, API key, config and unit — only /usr/local/bin/cronomicon-runner changes.
+// The exceptions are three drop-ins, each for a unit written by an installer
+// that did not yet know the line: SYSCALL_DROPIN (a unit that filters system
+// calls without an error number, every one written before 2.3.0),
+// KILLMODE_DROPIN (a unit that names no KillMode, every one written before
+// 2.3.2) and STATEDIR_DROPIN (a state directory with no mode, before 2.3.0).
+//
+// The command upgrades a MACHINE, not a runner (MA-22). A machine may run
+// several agents (runner-install.sh --instance), each with a unit of its own,
+// and they all share the one binary. Restarting only the unit whose row the
+// operator happened to copy the command from would leave the others running the
+// old process against a new file, so every ENABLED agent unit is restarted and
+// each is reported.
 // Re-running runner-install.sh would also work but is the wrong tool: it creates
 // users, writes the unit, and needs a registration token the operator no longer
 // has.
@@ -21,8 +33,47 @@
 
 /** Where runner-install.sh installs the agent binary. */
 export const AGENT_BIN_PATH = "/usr/local/bin/cronomicon-runner";
-/** The systemd unit runner-install.sh writes and enables. */
+/** The systemd unit runner-install.sh writes and enables for the default agent. */
 export const AGENT_UNIT = "cronomicon-runner";
+/**
+ * Every agent unit a machine may have: the default agent's, and one per
+ * `--instance <name>` (cronomicon-runner-<name>.service). systemctl patterns.
+ */
+export const AGENT_UNIT_PATTERNS = [`${AGENT_UNIT}.service`, `${AGENT_UNIT}-*.service`] as const;
+/**
+ * The drop-in the upgrade writes beside a unit that needs it. runner-install.sh
+ * has written `SystemCallErrorNumber=EPERM` into the unit itself since 2.3.0;
+ * a unit from an older installer has the filter without it, and systemd 239
+ * (RHEL 8) then KILLS the thread that makes a call the filter does not know.
+ * Go's PATH lookup makes one, so on those hosts the agent never finds ansible,
+ * terraform or systemd-run. Re-running the installer is not a way to fix an
+ * enrolled agent (it needs a new token and rewrites the config from flags), so
+ * the upgrade is what carries the line to the units that exist.
+ */
+export const SYSCALL_DROPIN = "10-syscall-errno.conf";
+/**
+ * The second drop-in the upgrade writes, beside a unit that names no KillMode
+ * (every unit written before 2.3.2). An agent from 2.3.2 on finishes its runs
+ * when it is told to stop, but systemd's default kill mode sends SIGTERM to
+ * every process in the unit's control group, and an Ansible or Terraform run
+ * is a child of the agent in that group: the play was cut off by systemd while
+ * the agent waited for it. `KillMode=mixed` signals the agent alone. A unit
+ * that already names a KillMode, whatever it is, is the operator's and is left
+ * alone.
+ */
+export const KILLMODE_DROPIN = "20-killmode.conf";
+/**
+ * The third drop-in, beside a unit that keeps a state directory and names no
+ * mode for it (every unit written before 2.3.0): systemd resets the directory
+ * to 0755 at every start, so another user of the machine (a second agent's,
+ * once one is added with --instance) can list the agent's state, its identity
+ * file's name and its runs' work directories. runner-install.sh has written
+ * `StateDirectoryMode=0750` since 2.3.0 (2.5.0 C12, defect 96: until then only
+ * the installer carried it, and an upgraded agent kept 0755).
+ */
+export const STATEDIR_DROPIN = "30-statedir-mode.conf";
+/** How long each restarted unit is watched before it is reported, in seconds. */
+export const RESTART_WATCH_SECONDS = 20;
 
 /**
  * upgradeCommand returns the paste-once block that upgrades an installed agent
@@ -44,6 +95,25 @@ export const AGENT_UNIT = "cronomicon-runner";
  *     `mv -f` (atomic rename on the same filesystem). The RUNNING process keeps
  *     its own inode, so the swap can't corrupt the in-flight agent; the restart
  *     is what picks up the new code.
+ *   - a unit that filters system calls without an error number gets the
+ *     SYSCALL_DROPIN drop-in before it restarts; a unit that already has the
+ *     line, or no filter, is left alone.
+ *   - a unit that names no KillMode gets the KILLMODE_DROPIN drop-in before it
+ *     restarts, so the restart that follows is already a drain for an agent
+ *     that can drain; a unit that names one is left alone.
+ *   - a unit with a StateDirectory and no StateDirectoryMode gets the
+ *     STATEDIR_DROPIN drop-in (0750); a unit that names a mode is left alone.
+ *   - every agent unit that is ENABLED OR RUNNING is restarted, and each is
+ *     watched and reported on its own line. "Active" at one moment proves
+ *     nothing: an agent that exits some seconds in is started again by systemd
+ *     and is active again each time. A unit passes when it is running at the
+ *     end of the watch AND is the same process it was at the start.
+ *     Not every unit present is restarted: an
+ *     instance being removed is stopped and disabled first, and must not be
+ *     started again by an upgrade. But a unit that is running without being
+ *     enabled must not be left on the old process either. A machine where none
+ *     is found (an agent installed some other way) falls back to the default
+ *     unit, as this command always did.
  */
 export function upgradeCommand(origin: string): string {
   return [
@@ -79,11 +149,77 @@ export function upgradeCommand(origin: string): string {
     `install -m 0755 "\${DL}/\${FILE}" "\${BIN}.new"`,
     `mv -f "\${BIN}.new" "$BIN"`,
     ``,
-    `systemctl restart ${AGENT_UNIT}`,
-    `sleep 2`,
-    `systemctl is-active --quiet ${AGENT_UNIT} \\`,
-    `  && { echo ">> OK: $("$BIN" version 2>/dev/null || echo "restarted")"; } \\`,
-    `  || { echo ">> FAILED to start — roll back with: sudo mv -f \${BIN}.prev $BIN && sudo systemctl restart ${AGENT_UNIT}" >&2; exit 1; }`,
+    `# One binary serves every agent on this machine, so every agent restarts:`,
+    `# the default unit and each --instance unit, when it is enabled or running.`,
+    `UNITS=$({ systemctl list-unit-files --no-legend ${AGENT_UNIT_PATTERNS.map((u) => `'${u}'`).join(" ")} 2>/dev/null | awk '$2 == "enabled" { print $1 }'; systemctl list-units --no-legend --plain --type=service --state=active ${AGENT_UNIT_PATTERNS.map((u) => `'${u}'`).join(" ")} 2>/dev/null | awk '{ print $1 }'; } | sort -u || true)`,
+    `if [ -z "$UNITS" ]; then UNITS="${AGENT_UNIT}.service"; fi`,
+    `UNITS=$(echo $UNITS)`,
+    ``,
+    `# A unit from an installer older than 2.3.0 filters system calls without`,
+    `# SystemCallErrorNumber. On systemd 239 (RHEL 8) the agent's PATH lookups`,
+    `# then never return and it finds no ansible, terraform or sandbox.`,
+    `RELOAD=0`,
+    `for U in $UNITS; do`,
+    `  CONF=$(systemctl cat "$U" 2>/dev/null || true)`,
+    `  if grep -q '^SystemCallFilter=' <<<"$CONF" && ! grep -q '^SystemCallErrorNumber=' <<<"$CONF"; then`,
+    `    mkdir -p "/etc/systemd/system/\${U}.d"`,
+    `    printf '[Service]\\nSystemCallErrorNumber=EPERM\\n' > "/etc/systemd/system/\${U}.d/${SYSCALL_DROPIN}"`,
+    `    echo ">> Added SystemCallErrorNumber=EPERM to \${U} (/etc/systemd/system/\${U}.d/${SYSCALL_DROPIN})"`,
+    `    RELOAD=1`,
+    `  fi`,
+    `  # A unit from an installer older than 2.3.2 names no KillMode, and systemd's`,
+    `  # default signals every process of the unit: an Ansible or Terraform run is`,
+    `  # cut off by the stop its agent is draining. mixed signals the agent alone.`,
+    `  if [ -n "$CONF" ] && ! grep -q '^KillMode=' <<<"$CONF"; then`,
+    `    mkdir -p "/etc/systemd/system/\${U}.d"`,
+    `    printf '[Service]\\nKillMode=mixed\\n' > "/etc/systemd/system/\${U}.d/${KILLMODE_DROPIN}"`,
+    `    echo ">> Added KillMode=mixed to \${U} (/etc/systemd/system/\${U}.d/${KILLMODE_DROPIN})"`,
+    `    RELOAD=1`,
+    `  fi`,
+    `  # A unit from an installer older than 2.3.0 keeps a state directory with no`,
+    `  # mode, and systemd resets it to 0755 at every start: listable by any user.`,
+    `  if grep -q '^StateDirectory=' <<<"$CONF" && ! grep -q '^StateDirectoryMode=' <<<"$CONF"; then`,
+    `    mkdir -p "/etc/systemd/system/\${U}.d"`,
+    `    printf '[Service]\\nStateDirectoryMode=0750\\n' > "/etc/systemd/system/\${U}.d/${STATEDIR_DROPIN}"`,
+    `    echo ">> Added StateDirectoryMode=0750 to \${U} (/etc/systemd/system/\${U}.d/${STATEDIR_DROPIN})"`,
+    `    RELOAD=1`,
+    `  fi`,
+    `done`,
+    `if [ "$RELOAD" = 1 ]; then systemctl daemon-reload; fi`,
+    ``,
+    `main_pid() { P=$(systemctl show -p MainPID "$1" 2>/dev/null | cut -d= -f2 || true); case "$P" in ''|*[!0-9]*) echo 0 ;; *) echo "$P" ;; esac; }`,
+    ``,
+    `echo ">> Restarting: \${UNITS}"`,
+    `# An agent from 2.3.2 on finishes the runs it has in flight before it stops,`,
+    `# so this waits for them: up to the unit's TimeoutStopSec (5 minutes as`,
+    `# installed), after which systemd ends the agent and the run is recorded as`,
+    `# lost. An older agent stops at once and its runs with it.`,
+    `echo ">> Each agent finishes the runs it has in flight first (up to 5 minutes) ..."`,
+    `systemctl restart $UNITS || true`,
+    `# "active" is true of an agent that is about to fail, until it does, and`,
+    `# true again each time systemd starts it afresh. So a unit passes only if`,
+    `# it is running at the end of the watch as the SAME process it started as.`,
+    `STARTED=""`,
+    `for U in $UNITS; do STARTED="\${STARTED} $(main_pid "$U")"; done`,
+    `echo ">> Watching for ${RESTART_WATCH_SECONDS}s that each agent stays up ..."`,
+    `sleep ${RESTART_WATCH_SECONDS}`,
+    `NOT_UP=""`,
+    `set -- $STARTED`,
+    `for U in $UNITS; do`,
+    `  WAS="$1"; shift`,
+    `  if ! systemctl is-active --quiet "$U"; then`,
+    `    echo ">> FAILED to start: \${U}" >&2; NOT_UP="\${NOT_UP} \${U}"`,
+    `  elif [ "$WAS" = 0 ] || [ "$WAS" != "$(main_pid "$U")" ]; then`,
+    `    echo ">> FAILED to stay up: \${U} has restarted itself since the upgrade (journalctl -u \${U})" >&2; NOT_UP="\${NOT_UP} \${U}"`,
+    `  else`,
+    `    echo ">> OK: \${U}"`,
+    `  fi`,
+    `done`,
+    `if [ -n "$NOT_UP" ]; then`,
+    `  echo ">> Roll back with: sudo mv -f \${BIN}.prev $BIN && sudo systemctl restart \${UNITS}" >&2`,
+    `  exit 1`,
+    `fi`,
+    `echo ">> Now running: $("$BIN" version 2>/dev/null || echo "the published build")"`,
     `SH`,
   ].join("\n");
 }

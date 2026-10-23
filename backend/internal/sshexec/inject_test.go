@@ -157,11 +157,12 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 
 	// Host + cronomicon job + the job's reference bindings.
 	if _, err := pool.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?, ?)`,
-		host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?)`,
+		host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
 		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
@@ -169,16 +170,26 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 	// Bind a secret and a variable. (A bound KEY is a different story on this
 	// executor — it fails the run before connecting; see
 	// TestSSHExecutorFailsBeforeConnectingOnKeyBinding.)
-	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','cronomicon','j1','secret','DB_PASS',?),('job','cronomicon','j1','var','REGION',?)`, now, now); err != nil {
+	//
+	// The secret is the JOB's binding and the variable is its SCRIPT's, filed
+	// under the script's uid (migration 1290). The run below freezes that uid
+	// beside the name; a local runner that looked the script up by name, or
+	// dropped the uid, would deliver the secret and not the variable.
+	if _, err := pool.Exec(`INSERT INTO scripts(uid, name, run_type, command, content_hash, synced_at)
+		VALUES('uid-lib','lib.sh','bash','echo hi','sha256:x',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
+		VALUES('job','cronomicon','j1',NULL,'secret','DB_PASS',?),('script','','lib.sh','uid-lib','var','REGION',?)`, now, now); err != nil {
 		t.Fatal(err)
 	}
 	// The run carries a per-run reference ADDITION in its override envelope: the
 	// undeclared EXTRA variable.
 	if _, err := pool.Exec(`
-		INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, override_json, created_at)
-		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',
-		       '{"references":[{"kind":"var","name":"EXTRA"}]}',?)`, scope, now); err != nil {
+		INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, override_json, created_at,
+		                 script_ref, script_uid)
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','runner',
+		       '{"references":[{"kind":"var","name":"EXTRA"}]}',?, 'lib.sh', 'uid-lib')`, scope, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -188,7 +199,7 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 	svc.WithShutdownWG(endWG)
 	t.Cleanup(endWG.Wait)
 
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: run=%v err=%v", claimed, err)
 	}
@@ -301,10 +312,11 @@ func TestSSHExecutorFailsClosedOnMissingBinding(t *testing.T) {
 		string(pemBytes), now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1','testhost',?,?,'tester','SSH_KEY',?,?)`, host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1','testhost',?,?,'tester','SSH_KEY',?)`, host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
 		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
@@ -315,7 +327,7 @@ func TestSSHExecutorFailsClosedOnMissingBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','cronomicon','bash','s','testhost','queued','ops@x','manual','ssh',?)`, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash','s','testhost','queued','ops@x','manual','runner',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -325,7 +337,7 @@ func TestSSHExecutorFailsClosedOnMissingBinding(t *testing.T) {
 	svc.WithShutdownWG(endWG)
 	t.Cleanup(endWG.Wait)
 
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -380,10 +392,11 @@ func TestSSHExecutorFailsClosedOnAuditError(t *testing.T) {
 	if _, err := sec.Create(context.Background(), secrets.CreateInput{Key: "DB_PASS", Source: "stored", Scope: new(scope), Value: "resolvable"}, "tester"); err != nil {
 		t.Fatalf("create secret: %v", err)
 	}
-	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1','testhost',?,?,'tester','SSH_KEY',?,?)`, host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1','testhost',?,?,'tester','SSH_KEY',?)`, host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
 		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
@@ -393,7 +406,7 @@ func TestSSHExecutorFailsClosedOnAuditError(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','runner',?)`, scope, now); err != nil {
 		t.Fatal(err)
 	}
 	// Break the audit sink so the injection audit write fails.
@@ -407,7 +420,7 @@ func TestSSHExecutorFailsClosedOnAuditError(t *testing.T) {
 	svc.WithShutdownWG(endWG)
 	t.Cleanup(endWG.Wait)
 
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -441,11 +454,11 @@ func readLog(t *testing.T, dir, trace string) string {
 	return string(b)
 }
 
-// TestSSHExecutorFailsBeforeConnectingOnKeyBinding is the KB executor-side half:
-// a bound SSH key that reaches dispatch on this executor (a binding added while
-// the run waited — every producer refuses one at enqueue) fails the run BEFORE
-// it connects, with the reason in the run log and the injection audit row still
-// written. It used to warn in-band and run anyway.
+// TestSSHExecutorFailsBeforeConnectingOnKeyBinding: the local runner and a bound
+// SSH key (LR-47). The claim keeps it away from a job that binds one; and a
+// key that reaches the engine all the same fails the run BEFORE it connects,
+// with the reason in the run log and the injection audit row still written. It
+// used to warn in-band and run anyway.
 func TestSSHExecutorFailsBeforeConnectingOnKeyBinding(t *testing.T) {
 	pool, err := db.Open(filepath.Join(t.TempDir(), "ssh.db"))
 	if err != nil {
@@ -483,11 +496,12 @@ func TestSSHExecutorFailsBeforeConnectingOnKeyBinding(t *testing.T) {
 		t.Fatalf("create credential: %v", err)
 	}
 	if _, err := pool.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?, ?)`,
-		host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?)`,
+		host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
 		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
@@ -499,7 +513,7 @@ func TestSSHExecutorFailsBeforeConnectingOnKeyBinding(t *testing.T) {
 	}
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','runner',?)`, scope, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -509,18 +523,38 @@ func TestSSHExecutorFailsBeforeConnectingOnKeyBinding(t *testing.T) {
 	svc.WithShutdownWG(endWG)
 	t.Cleanup(endWG.Wait)
 
-	claimed, err := svc.claim(context.Background())
+	// LR-47, the claim's half: the local runner does not take a run whose job
+	// binds a key. It stays queued, for an agent.
+	jobOwner := runref.Owner{Kind: "job", Source: "cronomicon", Name: "j1"}
+	keyBinding := []runref.Binding{{Kind: runref.KindKey, Name: "deploy_key"}}
+	if claimed, err := claimAsLocal(t, svc, pool); err != nil || claimed != nil {
+		t.Fatalf("the local runner claimed a key-bound run: run=%v err=%v", claimed, err)
+	}
+	var status string
+	if err := pool.QueryRow(`SELECT status FROM runs WHERE id='run-1'`).Scan(&status); err != nil || status != "queued" {
+		t.Fatalf("a key-bound run the local runner must not take is %q (%v), want queued", status, err)
+	}
+
+	// The engine's half, the backstop: a binding the claim did not see — here
+	// one declared in the instant after the claim — fails the run before it
+	// connects.
+	if err := runref.ReplaceBindings(context.Background(), pool, jobOwner, nil, "tester"); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: run=%v err=%v", claimed, err)
 	}
+	if err := runref.ReplaceBindings(context.Background(), pool, jobOwner, keyBinding, "tester"); err != nil {
+		t.Fatal(err)
+	}
 	svc.execute(context.Background(), *claimed)
 
-	var status string
 	if err := pool.QueryRow(`SELECT status FROM runs WHERE id='run-1'`).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	if status != "failure" {
-		t.Fatalf("run status = %q, want failure — the executor cannot deliver the key, so the run must not start", status)
+		t.Fatalf("run status = %q, want failure — the local runner cannot deliver the key, so the run must not start", status)
 	}
 	logStr := readLog(t, logDir, "run-1")
 	if !strings.Contains(logStr, "CRONOMICON_KEY_deploy_key") || !strings.Contains(logStr, "cannot deliver key files") {

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"time"
@@ -118,6 +119,15 @@ func (e *executor) run(ctx context.Context, m *runnerproto.ManifestResponse, buf
 
 	if runCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
 		emit(fmt.Sprintf("cronomicon: run timed out after %ds; process killed", m.TimeoutSeconds))
+		if exitCode == 0 {
+			exitCode = -1
+		}
+	}
+	// A run the agent itself ended, because it was told to stop a second time
+	// before the run had finished (Abort). Said in the log, or the run reads as
+	// a job that failed by itself.
+	if errors.Is(context.Cause(ctx), errAgentStopped) {
+		emit("cronomicon: the runner agent was stopped before this run finished; the run was cancelled")
 		if exitCode == 0 {
 			exitCode = -1
 		}

@@ -35,7 +35,12 @@ const (
 	// settings-resolved path is pushed in via SetLogDir (and by tests).
 	DefaultLogDir = "/var/lib/cronomicon/logs"
 
-	// pollTimeout is the server-side long-poll timeout (A6.2).
+	// pollTimeout is the server-side long-poll timeout (A6.2). An agent's poll
+	// interval is how often a poll STARTS, so an idle agent waits on the server
+	// for this much of every interval, and all of it at or below this value:
+	// the runner drawer's Poll interval field says so (POLL_HOLD_SECONDS in
+	// frontend/src/views/Runners.tsx, the guide and the openapi description all
+	// state 30). Change this and they are wrong.
 	pollTimeout = 30 * time.Second
 
 	// pollInterval is how often the long-poll loop re-checks for work.
@@ -74,6 +79,17 @@ type Service struct {
 	logDir     atomic.Pointer[string]
 	notifier   notify.Notifier // optional (C.1); nil ⇒ no dispatch
 	shutdownWG *sync.WaitGroup // optional (PP-L15); tracks the reaper goroutine for graceful drain
+
+	// localScanning is up while the one worker that scans host keys for the
+	// local runner is running (startLocalScan).
+	localScanning atomic.Bool
+
+	// unredactableSince holds, per trace id, when a secret-bearing run's FINAL
+	// chunk was first refused because its redaction could not be built (a fault
+	// that may clear: a Vault outage, an unreadable binding). Past
+	// unredactableGrace the run is ended without that text (2.5.0 C11, defect
+	// 83). In memory only: a restart starts the wait again, which bounds it.
+	unredactableSince sync.Map // trace id → time.Time
 
 	// authSvc records authorization denials to the auth audit trail (LU-9). This
 	// package owns exactly one operator-facing authz decision — the scope gate on

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  containerLimitFlags,
   defaultProvisionOptions,
   generateRunnerEnv,
   provisionOneLiner,
@@ -227,5 +228,162 @@ describe("vocabulary", () => {
     // Exercise the widest option set against the real template: any rename in
     // the example throws inside generateRunnerEnv (setVar drift guard).
     expect(() => generateRunnerEnv(example, fullOpts())).not.toThrow();
+  });
+});
+
+// MA-16/MA-24 — a second agent on a machine. The installer gives an instance a
+// user, a unit and directories of its own (cronomicon-runner-<name>); the
+// artifacts this form generates must point at THOSE, or a hand-placed env file
+// would make the second agent read the first one's keys and identity.
+describe("an instance", () => {
+  const withInstance = (over: Partial<ProvisionOptions> = {}): ProvisionOptions => ({
+    ...defaultProvisionOptions("https://cronomicon.example.com"),
+    token: "crn_reg_abc",
+    instance: "tax",
+    ...over,
+  });
+
+  it("rides the install command, and names the runner <hostname>-<instance>", () => {
+    const cmd = provisionOneLiner(withInstance());
+    expect(cmd).toContain("-n $(hostname)-tax");
+    expect(cmd).toContain("--instance tax");
+    // An explicit name wins; the instance still applies.
+    const named = provisionOneLiner(withInstance({ name: "tax-agent" }));
+    expect(named).toContain("-n tax-agent");
+    expect(named).toContain("--instance tax");
+  });
+
+  it("points the env file at the instance's own directories", () => {
+    const env = generateRunnerEnv(example, withInstance({ knownHostsSrc: "/tmp/kh", keyMode: "key-dir", keyDirSrc: "/tmp/keys", caCertSrc: "/tmp/ca.pem" }));
+    expect(env).toContain("CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner-tax/identity.json");
+    expect(env).toContain("CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/cronomicon-runner-tax/known_hosts");
+    expect(env).toContain("CRONOMICON_RUNNER_KEY_DIR=/var/lib/cronomicon-runner-tax/keys");
+    expect(env).toContain("CRONOMICON_RUNNER_CA_CERT=/etc/cronomicon-runner-tax/ca.pem");
+    // Nothing active in it points at the default agent's directories.
+    const active = env.split("\n").filter((l) => !l.trimStart().startsWith("#"));
+    expect(active.some((l) => /cronomicon-runner\/(identity|known_hosts|keys|ca\.pem)/.test(l))).toBe(false);
+    expect(keyMapDestSpec("prod=/k1", "tax")).toBe("prod=/var/lib/cronomicon-runner-tax/keys/prod");
+  });
+
+  it("changes nothing when it is absent", () => {
+    const base = withInstance({ instance: undefined });
+    for (const none of [undefined, "", "  "]) {
+      const o = withInstance({ instance: none });
+      expect(provisionOneLiner(o)).toBe(provisionOneLiner(base));
+      expect(generateRunnerEnv(example, o)).toBe(generateRunnerEnv(example, base));
+    }
+    expect(provisionOneLiner(base)).toContain("-n $(hostname) ");
+    expect(provisionOneLiner(base)).not.toContain("--instance");
+  });
+
+  // Not the default agent's artifacts: on the machine this field is for, those
+  // would overwrite the first agent's configuration.
+  it("generates nothing while the name is invalid", () => {
+    for (const bad of ["Tax", "x; rm -rf /", "tax-dept-east12"]) {
+      const o = withInstance({ instance: bad });
+      expect(provisionOneLiner(o).startsWith("#")).toBe(true);
+      expect(provisionOneLiner(o)).not.toContain("curl");
+      expect(() => generateRunnerEnv(example, o)).toThrow(/instance name is not valid/);
+    }
+  });
+
+  // A container is a machine of its own: one agent, the default layout.
+  it("is ignored by the container command", () => {
+    expect(provisionDockerRun(withInstance())).toBe(provisionDockerRun(withInstance({ instance: undefined })));
+  });
+});
+
+// 2.3.1 — limits for an agent and everything it runs. The install command
+// carries them as the installer's flags (written into the unit); the container
+// command as the runtime's own. The env file has no variable for them.
+describe("resource limits", () => {
+  const withLimits = (over: Partial<ProvisionOptions> = {}): ProvisionOptions => ({
+    ...defaultProvisionOptions("https://cronomicon.example.com"),
+    token: "crn_reg_abc",
+    limits: { memoryMax: "4G", cpuQuota: "200%", tasksMax: "1024" },
+    ...over,
+  });
+
+  it("ride the install command as the installer's three flags", () => {
+    expect(provisionOneLiner(withLimits())).toContain("--memory-max 4G --cpu-quota 200% --tasks-max 1024");
+    expect(provisionOneLiner(withLimits({ instance: "tax" }))).toContain("--instance tax --memory-max 4G --cpu-quota 200% --tasks-max 1024");
+    expect(provisionOneLiner(withLimits({ limits: { cpuQuota: "150%" } }))).toMatch(/ --cpu-quota 150%( |$)/);
+  });
+
+  it("change nothing when none is set", () => {
+    const base = provisionOneLiner(withLimits({ limits: undefined }));
+    expect(base).not.toMatch(/--(memory-max|cpu-quota|tasks-max)/);
+    expect(provisionOneLiner(withLimits({ limits: {} }))).toBe(base);
+    expect(provisionOneLiner(withLimits({ limits: { memoryMax: " ", cpuQuota: "", tasksMax: "" } }))).toBe(base);
+  });
+
+  it("yield no install command while one is not what the installer takes", () => {
+    for (const bad of ["4GB", "0", "4G; reboot", "$(id)"]) {
+      const cmd = provisionOneLiner(withLimits({ limits: { memoryMax: bad } }));
+      expect(cmd.startsWith("#"), bad).toBe(true);
+      expect(cmd).toMatch(/resource limit is not valid/);
+    }
+  });
+
+  it("are not in the env file", () => {
+    expect(generateRunnerEnv(example, withLimits())).toBe(generateRunnerEnv(example, withLimits({ limits: undefined })));
+  });
+
+  // A container has no unit. The same three limits are docker's own flags
+  // there; each spelling below was accepted by Docker 29 (2026-10-08).
+  it("become the runtime's own flags in the container command", () => {
+    expect(containerLimitFlags({ memoryMax: "4G", cpuQuota: "200%", tasksMax: "1024" })).toEqual([
+      "--memory 4g",
+      "--memory-swap 4g",
+      "--cpus 2",
+      "--pids-limit 1024",
+    ]);
+    const cmd = provisionDockerRun(withLimits());
+    expect(cmd).toContain("--restart unless-stopped --stop-timeout 300 \\\n  --memory 4g --memory-swap 4g --cpus 2 --pids-limit 1024 \\\n  -e ");
+    // The installer's flags are not docker's.
+    expect(cmd).not.toMatch(/--(memory-max|cpu-quota|tasks-max)/);
+  });
+
+  it("translate each unit: memory suffixes to docker's, a CPU percentage to a count of CPUs", () => {
+    const mem = (v: string) => containerLimitFlags({ memoryMax: v });
+    expect(mem("512M")).toEqual(["--memory 512m", "--memory-swap 512m"]);
+    expect(mem("64K")).toEqual(["--memory 64k", "--memory-swap 64k"]);
+    expect(mem("2T")).toEqual(["--memory 2t", "--memory-swap 2t"]);
+    expect(mem("4294967296")).toEqual(["--memory 4294967296", "--memory-swap 4294967296"]); // bytes in both
+    const cpu = (v: string) => containerLimitFlags({ cpuQuota: v });
+    expect(cpu("150%")).toEqual(["--cpus 1.5"]);
+    expect(cpu("125%")).toEqual(["--cpus 1.25"]);
+    expect(cpu("100%")).toEqual(["--cpus 1"]);
+    expect(cpu("1000%")).toEqual(["--cpus 10"]);
+    expect(cpu("50%")).toEqual(["--cpus 0.5"]);
+    expect(cpu("1%")).toEqual(["--cpus 0.01"]);
+    expect(cpu("7%")).toEqual(["--cpus 0.07"]);
+  });
+
+  // Swap off, always: left out, docker gives the container as much swap again
+  // as its memory, and a run over the limit is slowed where it should stop.
+  it("never write a memory limit without the swap limit equal to it", () => {
+    for (const v of ["4G", "512M", "8388608K", "1T", "6291456"]) {
+      const flags = containerLimitFlags({ memoryMax: v });
+      expect(flags).toHaveLength(2);
+      expect(flags[1]).toBe(flags[0].replace("--memory ", "--memory-swap "));
+    }
+    expect(containerLimitFlags({ cpuQuota: "200%", tasksMax: "64" }).join(" ")).not.toContain("--memory");
+  });
+
+  it("leave the container command as it was when none is set", () => {
+    const base = provisionDockerRun(withLimits({ limits: undefined }));
+    expect(base).not.toMatch(/--(memory|cpus|pids-limit)/);
+    expect(provisionDockerRun(withLimits({ limits: {} }))).toBe(base);
+    expect(provisionDockerRun(withLimits({ limits: { memoryMax: "  ", cpuQuota: "" } }))).toBe(base);
+    expect(containerLimitFlags(undefined)).toEqual([]);
+  });
+
+  it("yield no container command while one is not valid", () => {
+    for (const bad of ["4GB", "4g", "0", "4G --privileged", "$(id)"]) {
+      const cmd = provisionDockerRun(withLimits({ limits: { memoryMax: bad } }));
+      expect(cmd.startsWith("#"), bad).toBe(true);
+      expect(cmd).not.toContain("docker run");
+    }
   });
 });

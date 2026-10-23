@@ -160,9 +160,9 @@ describe("Score — coincident marks (VU-21)", () => {
     expect(text).toContain("2 at this instant");
   });
 
-  // SR-1 — each readout row states its own time, trigger, executor, trace id
+  // SR-1 — each readout row states its own time, trigger, runner, trace id
   // and a View-run link, on top of the name/status/duration it already had.
-  it("gives each member its own time, trigger, executor, trace id and run link", () => {
+  it("gives each member its own time, trigger, runner, trace id and run link", () => {
     const onOpenRun = vi.fn();
     renderScore({
       marks: [
@@ -179,14 +179,15 @@ describe("Score — coincident marks (VU-21)", () => {
     expect(text).toContain("t:13:05:05");
     expect(text).toContain("by ops@example.com");
     expect(text).toContain("schedule nightly");
-    expect(text).toContain("Runner · nv-dmz-01");
-    expect(text).toContain("SSH");
+    expect(text).toContain("nv-dmz-01");
+    expect(text).not.toContain("Runner · ");
+    expect(text).toContain("Server (SSH)");
     // The trace id is shortened on screen but the full value is what copies.
     expect(text).toContain("0192abcd");
     expect(text).not.toContain("000000000001");
     // SR-2 — every column has a head naming it.
     const heads = within(readout()).getAllByRole("columnheader").map((h) => h.textContent);
-    expect(heads).toEqual(["Job", "Status", "Started", "Trigger", "Executor", "Duration", "Trace", "Open"]);
+    expect(heads).toEqual(["Job", "Status", "Started", "Trigger", "Runner", "Duration", "Trace", "Open"]);
     const links = within(readout()).getAllByRole("link", { name: "View run" });
     expect(links).toHaveLength(2);
     // Members list worst-first, so assert on the set of hrefs, not the order.

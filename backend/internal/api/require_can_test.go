@@ -86,7 +86,7 @@ func TestRequireCanAllowsAndDenies(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/x/run", nil)
 			r = r.WithContext(auth.WithIdentity(r.Context(), tc.id))
 
-			got := srv.requireCan(rec, r, tc.id, tc.perm, tc.scope)
+			got := srv.requireCan(rec, r, tc.id, tc.perm, "", tc.scope)
 			if got != tc.allow {
 				t.Fatalf("requireCan = %v, want %v", got, tc.allow)
 			}
@@ -136,7 +136,7 @@ func TestRequireCanSurvivesNilAuthService(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/x/run", nil)
 	id := withEmail(granted([]string{"viewer"}, []string{"tax"}), "v@example.com")
 
-	if srv.requireCan(rec, r, id, auth.PermTriggerJobs, "tax") {
+	if srv.requireCan(rec, r, id, auth.PermTriggerJobs, "", "tax") {
 		t.Fatal("requireCan allowed a viewer to trigger")
 	}
 	if rec.Code != http.StatusForbidden {

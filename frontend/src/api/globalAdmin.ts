@@ -30,16 +30,14 @@ export const GLOBAL_ADMIN_ONLY = globalAdminOnly();
 /** For a surface whose READ is refused too (the GitLab and Vault connections). */
 export const GLOBAL_ADMIN_VIEW_ONLY = globalAdminOnly("view or change this");
 
-/** POST /git/sync and POST /scopes/resync — they re-read every agency's definitions. */
-export const GLOBAL_ADMIN_SYNC_ONLY = globalAdminOnly("start a sync from GitLab");
-
-/** Reusable schedules, calendars, reactions and the recycle bin (`composeAdmin`). */
-export const COMPOSE_ADMIN_ONLY =
-  "Reusable schedules, calendars, reactions and the recycle bin are shared by every agency — only a global administrator (a role on every agency) can change them.";
-
-/** Choosing the Vault source for a secret, editing a Vault-backed one, Migrate to Vault. */
+/**
+ * A Vault-backed secret or key that is GLOBAL's: any path on the installation's
+ * one Vault connection, so a global administrator's. (An agency's own is its
+ * administrators', inside the Vault paths assigned to that agency — v2.3.0,
+ * LR-80; see api/vaultPaths.)
+ */
 export const VAULT_SECRET_GLOBAL_ONLY =
-  "A Vault-backed secret names a path on the installation's one Vault connection — only a global administrator can create, edit or migrate one.";
+  "A Vault-backed secret that is Global's may name any path on the installation's Vault — only a global administrator can create, edit or migrate one.";
 
 /**
  * globalOnly turns a "…Global" capability flag into the reason a control is

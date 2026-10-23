@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"log/slog"
 	"slices"
 
@@ -73,6 +74,12 @@ type ResolvedRef struct {
 	Name   string
 	As     string
 	Source string
+	// RowID and Owner are the secret's or key's row and its owner agency id,
+	// and Origin how the run came to carry it (2.5.1 SG2.2): what secret_uses
+	// records. Empty for a variable.
+	RowID  string
+	Owner  string
+	Origin string
 }
 
 // ErrOutOfScope is returned when a binding names a row that exists but is not
@@ -247,12 +254,12 @@ func (r *Resolver) resolveSecret(ctx context.Context, runScope string, runAgenci
 	// any OTHER error is logged so a mislabel isn't fully silent (matters once
 	// vault-source rows exist — a transient fault must not quietly record a vault
 	// secret as stored). Resolution itself is unaffected by this read.
-	source := "stored"
-	if serr := r.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(source,''),'stored') FROM secrets WHERE id = ?`, id).Scan(&source); serr != nil && !errors.Is(serr, sql.ErrNoRows) {
+	source, owner := "stored", ""
+	if serr := r.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(source,''),'stored'), COALESCE(owner_agency, '') FROM secrets WHERE id = ?`, id).Scan(&source, &owner); serr != nil && !errors.Is(serr, sql.ErrNoRows) {
 		r.log.Warn("audit: could not read secret source; recording as 'stored'", "reference", b.Kind.Reference(b.Name), "error", serr)
 		source = "stored"
 	}
-	out.Refs = append(out.Refs, ResolvedRef{Kind: KindSecret, Name: b.Name, As: b.As, Source: source})
+	out.Refs = append(out.Refs, ResolvedRef{Kind: KindSecret, Name: b.Name, As: b.As, Source: source, RowID: id, Owner: owner, Origin: b.Origin})
 	return nil
 }
 
@@ -347,13 +354,13 @@ func (r *Resolver) resolveKey(ctx context.Context, runAgencies []string, b Bindi
 	// Best-effort backing source (stored|vault) from ssh_credentials for provenance;
 	// never the material. A legacy/fallback-resolved key with no credential row keeps
 	// the "stored" default.
-	source := "stored"
+	source, owner := "stored", ""
 	if serr := r.db.QueryRowContext(ctx,
-		`SELECT COALESCE(NULLIF(source,''),'stored') FROM ssh_credentials WHERE id = ?`, id).Scan(&source); serr != nil && !errors.Is(serr, sql.ErrNoRows) {
+		`SELECT COALESCE(NULLIF(source,''),'stored'), COALESCE(owner_agency, '') FROM ssh_credentials WHERE id = ?`, id).Scan(&source, &owner); serr != nil && !errors.Is(serr, sql.ErrNoRows) {
 		r.log.Warn("audit: could not read key source; recording as 'stored'", "reference", b.Kind.Reference(b.Name), "error", serr)
 		source = "stored"
 	}
-	out.Refs = append(out.Refs, ResolvedRef{Kind: KindKey, Name: b.Name, As: b.As, Source: source})
+	out.Refs = append(out.Refs, ResolvedRef{Kind: KindKey, Name: b.Name, As: b.As, Source: source, RowID: id, Owner: owner, Origin: b.Origin})
 	return nil
 }
 
@@ -404,27 +411,27 @@ func lookupScopedID(ctx context.Context, database *sql.DB, table, key, runScope 
 // "two candidates and I picked one", and that distinction is the entire safety
 // property. Every row this returns is one the old query could also have returned.
 func lookupScoped(ctx context.Context, database *sql.DB, table, key, runScope string, runAgencies []string) (id, scope string, found bool, err error) {
+	g := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	// The membership table for this row type. Compile-time constant, never input.
 	memberTable := "secret_agencies"
 	memberCol := "secret_id"
 	if table == "env_vars" {
 		memberTable, memberCol = "env_var_agencies", "env_var_id"
 	}
-	agencyJSON := marshalNames(runAgencies)
+	agencyJSON := marshalNames(runAgencies, g)
 	rows, qerr := database.QueryContext(ctx,
-		`SELECT t.id, COALESCE(t.scope,''), COALESCE(ag.name,'') FROM `+table+` t
+		`SELECT t.id, COALESCE(t.scope,''), `+ownerNameSQL("t")+` FROM `+table+` t
 		 LEFT JOIN agencies ag ON ag.id = t.owner_agency
 		 WHERE t.key = ?
-		   AND (COALESCE(t.scope,'') = '' OR COALESCE(t.scope,'') = ?)
-		   AND (
-		     NOT EXISTS (SELECT 1 FROM `+memberTable+` m WHERE m.`+memberCol+` = t.id)
-		     OR EXISTS (
-		       SELECT 1 FROM `+memberTable+` m
-		       JOIN agencies a ON a.id = m.agency_id
-		       WHERE m.`+memberCol+` = t.id AND a.name IN (SELECT value FROM json_each(?)))
-		   )
+		   -- a scoped row is its scope's (I2, a scope's name is unique within
+		   -- an agency only): owned by the run's scope owner, or by one of the
+		   -- run's agencies (a scope several share, from before 2.3, is
+		   -- Global's, and its rows are its members')
+		   AND (COALESCE(t.scope,'') = ''
+		        OR (COALESCE(t.scope,'') = ? AND (t.owner_agency = `+agencyid.RunScopeOwnerSQL("?")+` OR `+ownerInRunSQL("t")+`)))
+		   AND `+usableByRunSQL(memberTable, memberCol, "t.id")+`
 		 ORDER BY (COALESCE(t.scope,'') = ?) DESC, t.id`,
-		key, runScope, agencyJSON, runScope)
+		key, runScope, agencyJSON, agencyJSON, agencyJSON, agencyJSON, runScope)
 	if qerr != nil {
 		return "", "", false, fmt.Errorf("lookup %s %q: %w", table, key, qerr)
 	}
@@ -440,7 +447,7 @@ func lookupScoped(ctx context.Context, database *sql.DB, table, key, runScope st
 	if err := rows.Err(); err != nil {
 		return "", "", false, fmt.Errorf("lookup %s %q: %w", table, key, err)
 	}
-	win, ambiguous := pickOwned(cands, runAgencies, runScope)
+	win, ambiguous := pickOwned(cands, runAgencies, runScope, g)
 	if ambiguous {
 		return "", "", false, ErrAmbiguousReference
 	}
@@ -460,12 +467,20 @@ type candidate struct{ id, scope, owner string }
 // pickOwned applies RA-17's tiers to the visible candidates. Returns the winner, or
 // ambiguous=true when the winning tier holds more than one row at the same scope
 // precedence. A nil winner with ambiguous=false means nothing resolved.
-func pickOwned(cands []candidate, runAgencies []string, runScope string) (win *candidate, ambiguous bool) {
+func pickOwned(cands []candidate, runAgencies []string, runScope, globalName string) (win *candidate, ambiguous bool) {
+	// A row of Global's ("" here) is a run of Global's own, and no other run's
+	// (§0a, IN-6). Until then it was every run's "shared" tier, under the run's
+	// own agency's rows. usableByRunSQL already keeps it from another agency's
+	// run; this is the same rule again, as for a drifted owner below.
+	// globalName is the built-in agency's name now (2.5.2 GR: it may be renamed).
+	globalRun := len(runAgencies) == 0 || slices.Contains(runAgencies, globalName)
 	var owned, shared []candidate
 	for _, c := range cands {
 		switch {
+		case c.owner == "" && globalRun:
+			owned = append(owned, c)
 		case c.owner == "":
-			shared = append(shared, c)
+			// Global's, for a run of another agency: not usable.
 		case slices.Contains(runAgencies, c.owner):
 			owned = append(owned, c)
 		default:
@@ -523,12 +538,61 @@ func LookupEntityID(ctx context.Context, database *sql.DB, kind Kind, name, runS
 	return "", false, nil
 }
 
+// usableByRunSQL is THE visibility rule for a secret, a variable or an SSH key,
+// as one SQL fragment with one bound parameter (the run's agency names, JSON):
+// the row is in one of the run's agencies. A row of Global's is usable by a run
+// of Global's, and by no other (§0a, IN-6: until then it was usable by every
+// agency's run, LR-23; a secret two agencies need is a common Vault path).
+//
+// It replaced "the row has no membership rows, OR its membership intersects the
+// run's" when Global became a row (migration 1220). The first arm was the shared
+// tier spelled as an absence; it is a membership like any other now, and a row
+// with NO membership at all — which the database no longer lets exist — matches
+// nothing. Every reader goes through this function so the rule has one spelling.
+func usableByRunSQL(memberTable, memberCol, idExpr string) string {
+	return `EXISTS (
+		SELECT 1 FROM ` + memberTable + ` m
+		  JOIN agencies a ON a.id = m.agency_id
+		 WHERE m.` + memberCol + ` = ` + idExpr + `
+		   AND a.name IN (SELECT value FROM json_each(?)))`
+}
+
+// ownerNameSQL renders a row's owner for pickOwned: the owning agency's NAME, or
+// ” for a row Global owns — the shared tier. (The tier was "owner_agency = ”"
+// until migration 1220 gave Global an id; keeping ” as its spelling HERE means
+// the tier logic below did not have to change with it.) The query must
+// LEFT JOIN agencies AS ag on the owner.
+//
+// An owner that names no agency — the agency is gone and the row is not — is
+// NOT the shared tier. It renders as danglingOwner, which is no run's agency, so
+// pickOwned drops the row: nobody's secret is nobody's to use, where reading it
+// as Global's would hand a deleted department's secret to every agency.
+func ownerNameSQL(alias string) string {
+	return `CASE WHEN ` + alias + `.owner_agency = '` + agencyid.Global + `' THEN ''
+	             ELSE COALESCE(ag.name, '` + danglingOwner + `') END`
+}
+
+// ownerInRunSQL is "the row's OWNER is one of the run's agencies" (one bound
+// parameter, the run's agency names as JSON): pickOwned's rule for a caller
+// that asks of one row by id or label. A row Global owns whose membership
+// shares it into an agency is Global's, and usable by Global's runs only
+// (§0a, IN-6; found by the review of I1: these two checks said yes).
+func ownerInRunSQL(alias string) string {
+	return `COALESCE((SELECT name FROM agencies WHERE id = ` + alias + `.owner_agency), '') IN (SELECT value FROM json_each(?))`
+}
+
+// danglingOwner cannot be an agency's name: names are trimmed on write and this
+// begins with a space.
+const danglingOwner = " (no such agency)"
+
 // marshalNames renders an agency set for the json_each parameter above. Always a
-// well-formed array — an empty run set is "[]", which matches only rows with no
-// membership, exactly as intended for a general-pool run.
-func marshalNames(names []string) string {
+// well-formed array — an empty run set is the built-in agency's (a run with no
+// snapshot is: the trigger runs_born_global), and matches only its rows, by
+// globalName, its name now (2.5.2 GR).
+func marshalNames(names []string, globalName string) string {
 	if len(names) == 0 {
-		return "[]"
+		b, _ := json.Marshal([]string{globalName})
+		return string(b)
 	}
 	b, err := json.Marshal(names)
 	if err != nil {
@@ -590,19 +654,14 @@ func scopeOrMissing(ctx context.Context, database *sql.DB, table string, b Bindi
 // this run is not in": the two are different facts that must collapse to one operator
 // message (M2), and the caller does exactly that.
 func lookupKeyID(ctx context.Context, database *sql.DB, label string, runAgencies []string) (id string, found bool, err error) {
+	g := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	rows, qerr := database.QueryContext(ctx, `
-		SELECT c.id, COALESCE(ag.name,'')
+		SELECT c.id, `+ownerNameSQL("c")+`
 		FROM ssh_credentials c
 		LEFT JOIN agencies ag ON ag.id = c.owner_agency
 		WHERE c.label = ?
-		  AND (
-		    NOT EXISTS (SELECT 1 FROM ssh_credential_agencies ca WHERE ca.credential_id = c.id)
-		    OR EXISTS (
-		      SELECT 1 FROM ssh_credential_agencies ca
-		      JOIN agencies a ON a.id = ca.agency_id
-		      WHERE ca.credential_id = c.id AND a.name IN (SELECT value FROM json_each(?)))
-		  )
-		ORDER BY c.id`, label, marshalNames(runAgencies))
+		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id")+`
+		ORDER BY c.id`, label, marshalNames(runAgencies, g))
 	if qerr != nil {
 		return "", false, fmt.Errorf("resolve key agencies %q: %w", label, qerr)
 	}
@@ -620,7 +679,7 @@ func lookupKeyID(ctx context.Context, database *sql.DB, label string, runAgencie
 	}
 	// runScope "" — keys have no scope axis, so the scope tiebreak is a no-op here
 	// and the tier decides alone.
-	win, ambiguous := pickOwned(cands, runAgencies, "")
+	win, ambiguous := pickOwned(cands, runAgencies, "", g)
 	if ambiguous {
 		return "", false, ErrAmbiguousReference
 	}
@@ -638,17 +697,14 @@ func lookupKeyID(ctx context.Context, database *sql.DB, label string, runAgencie
 //
 // A credential id that matches no row reports false: there is nothing to use.
 func KeyIDUsable(ctx context.Context, database *sql.DB, credentialID string, runAgencies []string) (bool, error) {
+	g := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	var n int
 	err := database.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM ssh_credentials c
 		WHERE c.id = ?
-		  AND (
-		    NOT EXISTS (SELECT 1 FROM ssh_credential_agencies ca WHERE ca.credential_id = c.id)
-		    OR EXISTS (
-		      SELECT 1 FROM ssh_credential_agencies ca
-		      JOIN agencies a ON a.id = ca.agency_id
-		      WHERE ca.credential_id = c.id AND a.name IN (SELECT value FROM json_each(?)))
-		  )`, credentialID, marshalNames(runAgencies)).Scan(&n)
+		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id")+`
+		  AND `+ownerInRunSQL("c"),
+		credentialID, marshalNames(runAgencies, g), marshalNames(runAgencies, g)).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("resolve key agencies %q: %w", credentialID, err)
 	}
@@ -656,27 +712,14 @@ func KeyIDUsable(ctx context.Context, database *sql.DB, credentialID string, run
 }
 
 func keyInAgencies(ctx context.Context, database *sql.DB, label string, runAgencies []string) (bool, error) {
-	var members int
-	err := database.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM ssh_credential_agencies ca
-		JOIN ssh_credentials c ON c.id = ca.credential_id
-		WHERE c.label = ?`, label).Scan(&members)
-	if err != nil {
-		return false, fmt.Errorf("resolve key agencies %q: %w", label, err)
-	}
-	if members == 0 {
-		return true, nil // unrestricted
-	}
-	if len(runAgencies) == 0 {
-		return false, nil // general-pool run intersects nothing
-	}
+	g := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	var hit int
-	err = database.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM ssh_credential_agencies ca
-		JOIN ssh_credentials c ON c.id = ca.credential_id
-		JOIN agencies a        ON a.id = ca.agency_id
-		WHERE c.label = ? AND a.name IN (SELECT value FROM json_each(?))`,
-		label, marshalNames(runAgencies)).Scan(&hit)
+	err := database.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM ssh_credentials c
+		WHERE c.label = ?
+		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id")+`
+		  AND `+ownerInRunSQL("c"),
+		label, marshalNames(runAgencies, g), marshalNames(runAgencies, g)).Scan(&hit)
 	if err != nil {
 		return false, fmt.Errorf("resolve key agencies %q: %w", label, err)
 	}

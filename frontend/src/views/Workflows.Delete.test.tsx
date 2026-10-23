@@ -25,6 +25,21 @@ const WORKFLOWS = [
 // of the Delete button sound rather than a race.
 const laterTick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+// The agency in use and the person's access (2.5.0 C11): none unless a test
+// sets them.
+const { inUse, myAccess } = vi.hoisted(() => ({
+  inUse: { current: null as null | { agency: string; agencyName: string } },
+  myAccess: { current: null as unknown },
+}));
+vi.mock("../agency", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agency")>();
+  return { ...actual, useAgencyOptional: () => inUse.current };
+});
+vi.mock("../api/access", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/access")>();
+  return { ...actual, useMyAccess: () => myAccess.current };
+});
+
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
   return {
@@ -68,7 +83,11 @@ beforeEach(() => {
   deleteStatus = 200;
   deletes.length = 0;
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  inUse.current = null;
+  myAccess.current = null;
+});
 
 const renderWorkflows = async () => {
   const { container } = render(
@@ -135,6 +154,23 @@ describe("Workflows — expanded-row Delete", () => {
     expect(off.queryByRole("link", { name: "+ Create" })).toBeNull();
   });
 
+  // 2.5.0 C11, defect 88: + Create and Delete are offered in an agency the person
+  // composes in, not wherever they compose somewhere.
+  it("offers + Create and Delete only in an agency the person composes in", async () => {
+    myAccess.current = {
+      grants: [{ role: "composer", allScopes: false, agencyId: "ag-fin", agencyName: "Finance", scopes: [], permissions: ["compose"], groups: [], origin: "group" }],
+    };
+    inUse.current = { agency: "ag-tax", agencyName: "Tax" };
+    const tax = await renderWorkflows();
+    await waitFor(() => expect(tax.queryByText("git-wf")).toBeTruthy());
+    expect(tax.queryByRole("link", { name: "+ Create" })).toBeNull();
+    cleanup();
+
+    inUse.current = { agency: "ag-fin", agencyName: "Finance" };
+    const fin = await renderWorkflows();
+    await waitFor(() => expect(fin.getByRole("link", { name: "+ Create" })).toBeTruthy());
+  });
+
   it("confirms before deleting, then DELETEs the expanded workflow's id", async () => {
     const q = await renderWorkflows();
     expandRow(q, "cronomicon-wf");
@@ -185,25 +221,17 @@ describe("Workflows — expanded-row Delete", () => {
 // departmental composer, who used to open the dialog and read "could not load
 // history". They keep the row's History button — they do compose — disabled
 // with the reason (FX-7). Edit and Delete are per-scope compose and unaffected.
-describe("Workflows — row History needs a compose administrator (GC)", () => {
-  const WHY = /only a global administrator \(a role on every agency\) can change them\./;
+// 2.5.0 C7 (C3, SO-2): History is compose on the definition's agency, which the
+// server decides, as for Edit and Delete: the button is live for any composer.
+describe("Workflows — row History for a composer (SO-2)", () => {
   const history = (q: ReturnType<typeof within>) => q.getByRole("button", { name: "History" }) as HTMLButtonElement;
 
-  it("disables History with the reason for a departmental composer, and leaves Delete live", async () => {
-    const q = await renderWorkflows();
-    expandRow(q, "cronomicon-wf");
-    await waitFor(() => expect(history(q)).toBeTruthy());
-    expect(history(q).disabled).toBe(true);
-    expect(history(q).title).toMatch(WHY);
-    expect((deleteBtn(q) as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it("enables History for a compose administrator", async () => {
-    composeAdminOn = true;
+  it("leaves History live for a departmental composer", async () => {
     const q = await renderWorkflows();
     expandRow(q, "cronomicon-wf");
     await waitFor(() => expect(history(q)).toBeTruthy());
     expect(history(q).disabled).toBe(false);
     expect(history(q).title).toBe("");
+    expect((deleteBtn(q) as HTMLButtonElement).disabled).toBe(false);
   });
 });

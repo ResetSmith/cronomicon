@@ -28,16 +28,19 @@ func TestAgencyHasOnlineRunner(t *testing.T) {
 	}
 	exec(`INSERT INTO agencies(id,name,created_at) VALUES('a1','alpha','t')`)
 	exec(`INSERT INTO agencies(id,name,created_at) VALUES('a2','beta','t')`)
-	exec(`INSERT INTO runners(id,name,status,registered_at,created_at) VALUES('r1','member','online','t','t')`)
-	exec(`INSERT INTO runner_agencies(runner_id,agency_id) VALUES('r1','a1')`) // online member of alpha
-	exec(`INSERT INTO runners(id,name,status,registered_at,created_at) VALUES('r2','off','offline','t','t')`)
-	exec(`INSERT INTO runner_agencies(runner_id,agency_id) VALUES('r2','a2')`)                               // offline member of beta
+	// Each agent is owned by the agency it serves (since §0a a runner takes its
+	// owner's work only).
+	exec(`INSERT INTO runners(id,name,status,registered_at,created_at,owner_agency) VALUES('r1','member','online','t','t','a1')`)
+	exec(`INSERT OR IGNORE INTO runner_agencies(runner_id,agency_id) VALUES('r1','a1')`) // online member of alpha
+	exec(`INSERT INTO runners(id,name,status,registered_at,created_at,owner_agency) VALUES('r2','off','offline','t','t','a2')`)
+	exec(`INSERT OR IGNORE INTO runner_agencies(runner_id,agency_id) VALUES('r2','a2')`)                              // offline member of beta
 	exec(`INSERT INTO runners(id,name,status,registered_at,created_at) VALUES('r3','gen','online','t','t')`) // online, untagged
 
 	ctx := context.Background()
-	// T3.6 — the helper now takes the run's agency SET. An EMPTY set is the general
-	// pool (unchanged, AG-Q3a); a non-empty set is satisfied by an online member of
-	// ANY of its agencies.
+	// T3.6 — the helper takes the run's agency SET, satisfied by an online runner
+	// that serves ANY of its agencies. Since migration 1220 "the general pool" is
+	// Global: r3 has no other agency, so it serves Global, and a run with no scope
+	// carries [Global]. An EMPTY set is no agency at all, and nothing serves it.
 	check := func(want bool, agencies ...string) {
 		t.Helper()
 		got, err := AgenciesHaveOnlineRunner(ctx, pool, agencies)
@@ -51,7 +54,8 @@ func TestAgencyHasOnlineRunner(t *testing.T) {
 	check(true, "alpha")  // an online member exists
 	check(false, "beta")  // its only member is offline
 	check(false, "gamma") // no such agency
-	check(true)           // empty set ⇒ general pool, and an online untagged runner exists
+	check(true, "Global") // r3, born in Global, is online
+	check(false)          // an empty set is nobody's
 
 	// The property the set form adds: ANY member of ANY listed agency suffices, so a
 	// run requiring beta-or-alpha is servable even though beta alone is not.

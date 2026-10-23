@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/db"
 )
 
@@ -52,13 +53,20 @@ type RunRow struct {
 	//     NOT taken. Those columns are what claimRun and the
 	//     manifest read to dispatch; a row that cannot be dispatched carries
 	//     none, exactly as the skipped writers always wrote.
-	// script_ref, content_hash and entity_code ARE still snapshotted: they
-	// say what the row was about, which History needs either way.
+	// script_ref, script_uid, content_hash and entity_code ARE still
+	// snapshotted: they say what the row was about, which History needs either
+	// way.
 	Terminal bool
 
 	// SuppressedByCalendar names the working calendar that vetoed a fire
 	// (CAL-6); NULL otherwise. Only meaningful with Terminal.
 	SuppressedByCalendar string
+
+	// NoDefinition writes the row as of no definition even though JobName
+	// names one: a workflow step refused for being another agency's, whose
+	// row must not be that agency's job's (2.4.2, present defect 58). Without
+	// it an empty JobUID is filled from the name.
+	NoDefinition bool
 
 	// CreatedAt overrides the row timestamp (RFC3339 UTC). Empty means now.
 	// Only the missed-run detector sets it: a miss is DISCOVERED minutes after
@@ -140,7 +148,10 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 	if r.DurationMs != nil {
 		durationMs = *r.DurationMs
 	}
-	uid := resolveEnqueueUID(ctx, database, r.EnqueueParams)
+	uid := ""
+	if !r.NoDefinition {
+		uid = resolveEnqueueUID(ctx, database, r.EnqueueParams)
+	}
 	snap := r.snapshotFlag()
 
 	_, err := database.ExecContext(ctx, `
@@ -151,9 +162,9 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			 env_json, override_json, ssh_user, ssh_credential, agencies_json,
 			 suppressed_by_calendar, started_at, completed_at, duration_ms, created_at,
 			 entity_code, script_ref, content_hash,
-			 checkout_sha, checkout_entry, requires_json,
+			 checkout_repo, checkout_sha, checkout_entry, requires_json,
 			 reaction_depth, reacted_to_run_id, priority, scheduled_for,
-			 job_uid)
+			 job_uid, script_uid)
 		VALUES (?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?,
@@ -170,15 +181,37 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			         (SELECT printf('%08x', code) FROM entity_codes
 			           WHERE kind = 'job' AND uid = ? AND deleted_at IS NULL)),
 			(SELECT script_ref FROM jobs WHERE uid = ?),
-			(SELECT content_hash FROM jobs WHERE uid = ?),
-			-- §7/RX.2: a checkout job (project_root set) pins the sync clone's
-			-- current commit (git_sync_state.last_sha) and entry playbook AT
-			-- ENQUEUE, so a mid-run sync can't retarget the run. Body-only jobs
-			-- leave both NULL. Terminal rows (? = 0) take no snapshot at all.
+			-- The hash of what will run. For a job built in the app that is the
+			-- SCRIPT's, since dispatch reads the script's record and not the
+			-- job's copy of it (execspec.ResolveCommand); for every other job it
+			-- is the job's own.
+			(SELECT COALESCE((SELECT s.content_hash FROM scripts s
+			                   WHERE s.uid = j.script_uid AND j.source <> 'git'), j.content_hash)
+			   FROM jobs j WHERE j.uid = ?),
+			-- §7/RX.2: a checkout job (project_root set) pins, AT ENQUEUE, the
+			-- repository its tree is fetched from, that repository's last synced
+			-- commit, and the entry playbook, so a mid-run sync can't retarget the
+			-- run. Body-only jobs leave all three NULL. Terminal rows (? = 0) take
+			-- no snapshot at all.
+			--
+			-- GR-22: the repository is the SCRIPT's, not the job's. The entry and
+			-- the tree are the script's files: an agency's job may use Global's
+			-- script (GR-16), and a job built in the app has no repository of its
+			-- own. Until 2.4.0 there was one repository and the commit was always
+			-- Global's. A project job FROM GIT whose script row has gone falls back
+			-- to the job's own repository and then to Global's, which is where it
+			-- was pinned before. One built in the app has no repository of its own
+			-- and is pinned to none (present defect 41): Global's is not its
+			-- script's, and the run is refused at dispatch (execspec.ErrScriptGone).
 			CASE WHEN ? = 1 THEN
-				(SELECT CASE WHEN project_root IS NOT NULL AND project_root != ''
-				             THEN (SELECT last_sha FROM git_sync_state WHERE id = 1) END
-				   FROM jobs WHERE uid = ?) END,
+				(SELECT CASE WHEN j.project_root IS NOT NULL AND j.project_root != ''
+				             THEN COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), CASE WHEN j.source = 'git' THEN COALESCE(j.repo_id, 'global') END) END
+				   FROM jobs j WHERE j.uid = ?) END,
+			CASE WHEN ? = 1 THEN
+				(SELECT CASE WHEN j.project_root IS NOT NULL AND j.project_root != ''
+				             THEN (SELECT g.last_sha FROM git_repos g
+				                    WHERE g.id = COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), CASE WHEN j.source = 'git' THEN COALESCE(j.repo_id, 'global') END)) END
+				   FROM jobs j WHERE j.uid = ?) END,
 			CASE WHEN ? = 1 THEN
 				(SELECT CASE WHEN project_root IS NOT NULL AND project_root != ''
 				             THEN script_path END
@@ -194,34 +227,88 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			-- 409ing at manifest time. Injected rather than authored because a
 			-- requirement an operator can forget is a requirement that does not
 			-- exist. (Missing from two of the five writers until RR-0.)
+			--
+			-- ANSIBLE jobs only. Sync stores become_password_secret on a job of
+			-- any run type ("stored but ignored" for the others), and until 2.3.0
+			-- a shell run was claimed by an SSH pool that did not read a run's
+			-- requirements, so the token on a shell run cost nothing. The local
+			-- runner claims by the one claim, which does read them, and it
+			-- advertises no such token: a shell job carrying an ignored become
+			-- password would have waited for ever.
+			--
+			-- 2.4.0, present defect 39: a PROJECT job's run additionally REQUIRES
+			-- the 'checkout' token, injected the same way and for the same reason.
+			-- A checkout run is run only by an agent started with -allow-checkout,
+			-- which is the one that advertises the token. Until now nothing asked
+			-- for it at the claim: any agent with the run type took the run, and
+			-- one that does not allow checkout refused it and the run failed. On a
+			-- scope served by both kinds of agent the same job passed or failed by
+			-- which agent polled first. The run WAITS for a capable agent now. The
+			-- local runner advertises no such token and no longer takes a project
+			-- job's run, which it ran as a body with the pin ignored.
 			CASE WHEN ? = 1 THEN
+				-- A stored value that is not a JSON list (nothing writes one; a row
+				-- edited by hand could hold null, a string, or text that is not JSON)
+				-- is read as no requirements: json_insert adds nothing to a value
+				-- that is no list, and the run would then ask for nothing at all.
 				(SELECT CASE
-				          WHEN become_password_secret IS NOT NULL AND become_password_secret != ''
-				            THEN CASE WHEN EXISTS (
-				                        SELECT 1 FROM json_each(COALESCE(NULLIF(requires_json,''), '[]'))
-				                        WHERE value = 'become-file')
-				                      THEN requires_json
-				                      ELSE json_insert(COALESCE(NULLIF(requires_json,''), '[]'), '$[#]', 'become-file')
-				                 END
-				          WHEN requires_json IS NOT NULL AND requires_json != '[]'
-				            THEN requires_json
+				          WHEN r.project_root IS NULL OR r.project_root = '' THEN r.req
+				          WHEN EXISTS (
+				                 SELECT 1 FROM json_each(CASE WHEN json_valid(r.req) AND json_type(r.req) = 'array' THEN r.req ELSE '[]' END)
+				                 WHERE value = 'checkout')
+				            THEN r.req
+				          ELSE json_insert(CASE WHEN json_valid(r.req) AND json_type(r.req) = 'array' THEN r.req ELSE '[]' END, '$[#]', 'checkout')
 				        END
-				   FROM jobs WHERE uid = ?) END,
+				   FROM (SELECT project_root,
+				                CASE
+				                  WHEN become_password_secret IS NOT NULL AND become_password_secret != ''
+				                       AND run_type = 'ansible'
+				                    THEN CASE WHEN EXISTS (
+				                                SELECT 1 FROM json_each(COALESCE(NULLIF(requires_json,''), '[]'))
+				                                WHERE value = 'become-file')
+				                              THEN requires_json
+				                              ELSE json_insert(COALESCE(NULLIF(requires_json,''), '[]'), '$[#]', 'become-file')
+				                         END
+				                  WHEN requires_json IS NOT NULL AND requires_json != '[]'
+				                    THEN requires_json
+				                END AS req
+				           FROM jobs WHERE uid = ?) r) END,
 			?, ?, ?, ?,
 			-- R2-1/R2-5: the identity, resolved once by resolveEnqueueUID.
-			NULLIF(?, ''))
+			NULLIF(?, ''),
+			-- 1290 (GR-5): WHICH script script_ref means, frozen beside it. Dispatch
+			-- finds the script's reference bindings from the run (the manifest,
+			-- the claim and its gates, the log redactor, the local runner), and a
+			-- name is a script in every repository that has one. NULL for a job
+			-- with no script, and for one whose script has gone.
+			(SELECT script_uid FROM jobs WHERE uid = ?))
 	`,
 		traceID, r.kindOrDefault(), r.JobName, src, r.RunType, nullStr(r.Scope), nullStr(r.TargetHost),
 		r.statusOrDefault(), nullStr(r.QueuedReason), r.TriggeredBy, r.TriggerKind,
 		nullStr(r.ConcurrencyKey), workflowRunID, r.executorOrDefault(), nullStr(r.ScheduleName),
-		nullStr(r.EnvJSON), nullStr(r.OverrideJSON), nullStr(r.SSHUser), nullStr(r.SSHCredential), r.agenciesJSONOrDefault(),
+		nullStr(r.EnvJSON), nullStr(r.OverrideJSON), nullStr(r.SSHUser), nullStr(r.SSHCredential), r.agenciesSnapshot(ctx, database),
 		nullStr(r.SuppressedByCalendar), startedAt, completedAt, durationMs, now,
 		r.EntityCode, uid, uid, uid,
-		snap, uid, snap, uid, snap, uid,
+		snap, uid, snap, uid, snap, uid, snap, uid,
 		r.ReactionDepth, nullStr(r.ReactedToRunID), r.Priority, nullStr(r.ScheduledFor),
-		uid)
+		uid, uid)
 	if err != nil {
 		return "", fmt.Errorf("insert run: %w", err)
 	}
 	return traceID, nil
+}
+
+// agenciesSnapshot is what the row's agencies_json holds. A row that will
+// execute always names an agency (agenciesJSONOrDefault). A TERMINAL row — a
+// suppressed fire, a skipped step — never reaches a claim or a resolver, and
+// keeps whatever its producer gave it, which for the suppression writers is
+// nothing: '[]'. That is history, not a decision, and it is left as it was.
+func (r RunRow) agenciesSnapshot(ctx context.Context, q agencyid.Queryer) string {
+	if r.Terminal {
+		if r.AgenciesJSON == "" {
+			return "[]"
+		}
+		return r.AgenciesJSON
+	}
+	return r.agenciesJSONOrDefault(ctx, q)
 }

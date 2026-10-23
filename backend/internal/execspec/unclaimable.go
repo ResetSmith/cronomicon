@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/runcap"
+	"slices"
 	"strings"
 )
 
@@ -36,34 +39,81 @@ import (
 // triggerJobs on the run's scope, the facts are about infrastructure rather than
 // credentials, and a reason vague enough to leak nothing is a reason nobody can act
 // on — which is the entire failure being fixed.
+// localRunnerTypes are the run types the local runner runs
+// (settings.LocalRunnerCapabilities, which this package does not import).
+var localRunnerTypes = []string{"bash", "perl", "powershell", "python"}
+
 func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (string, error) {
-	var agenciesJSON, runType, requiresJSON, jobName, jobSource, jobUID, scriptRef, scope, executor sql.NullString
+	var agenciesJSON, runType, requiresJSON, scope, executor sql.NullString
 	err := database.QueryRowContext(ctx, `
-		SELECT COALESCE(agencies_json,'[]'), run_type, requires_json, job_name, job_source, job_uid, script_ref,
-		       scope, executor
+		SELECT COALESCE(agencies_json,'[]'), run_type, requires_json, scope, executor
 		FROM runs WHERE id = ?`, runID).
-		Scan(&agenciesJSON, &runType, &requiresJSON, &jobName, &jobSource, &jobUID, &scriptRef,
-			&scope, &executor)
+		Scan(&agenciesJSON, &runType, &requiresJSON, &scope, &executor)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
 		return "", err
 	}
-	// Every reason below is about RUNNERS. A run frozen onto the ssh executor is
-	// claimed by the in-process pool and needs none, so "no runner is online" on
-	// such a run is not a hint, it is a wrong answer (SB Phase 0 found every
-	// queued ssh run in a runner-less deployment carrying exactly that).
+	// Nothing claims a row frozen onto the SSH executor any more (2.3.0, LR-42):
+	// every run is written for the runner executor and the server takes its
+	// share as the local runner. Migration 1590 (2.5.0 C11) closes the rows a
+	// 2.2.x installation left waiting (the 2.3.0 upgrade pass that converted
+	// them is retired); one that is still here was written around the one
+	// writer of runs.
 	if executor.String == "ssh" {
-		return "", nil
+		return ReasonQueuedForSSHExecutor, nil
 	}
 	ok, _, err := EligibleOnlineRunnerForRun(ctx, database, runID)
 	if err != nil || ok {
 		return "", err
 	}
 	ag := agenciesJSON.String
+	// The agency the run's scope is looked for in (I2: a scope's name is unique
+	// within an agency only), from the run's snapshot.
+	var runNames []string
+	_ = json.Unmarshal([]byte(ag), &runNames)
+	scopeOwner, oerr := RunScopeOwner(ctx, database, runNames)
+	if oerr != nil {
+		return "", oerr
+	}
 	if ag == "" || ag == "null" {
 		ag = "[]"
+	}
+	bindsKey, err := runBindsKey(ctx, database, runID)
+	if err != nil {
+		return "", err
+	}
+
+	// 0. The local runner would take this run and is not running. Asked first,
+	// because it is the one cause with a single switch behind it, and because
+	// every line below counts ONLINE runners and would say "no runner is
+	// online" about a server that is merely turned off. Type, requirements,
+	// agency, binding and the key rule, as the claim applies them; secret
+	// injection is always on for it (LR-46).
+	reqJSON := requiresJSON.String
+	if reqJSON == "" {
+		reqJSON = "[]"
+	}
+	lcaps := EffectiveCapsSQL("rn")
+	var localOff bool
+	if err := database.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM runners rn
+			 WHERE rn.kind = 'server' AND rn.status <> 'online'
+			   AND ? IN `+lcaps+`
+			   AND NOT EXISTS (SELECT 1 FROM json_each(?) je WHERE je.value NOT IN `+lcaps+`)
+			   AND EXISTS (SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
+			                WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency AND a.name IN (SELECT value FROM json_each(?)))
+			   AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ? AND sc.owner_agency = ?)
+			        OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
+			                    WHERE sc.name = ? AND sc.owner_agency = ? AND sr.runner_id = rn.id))
+			   AND ? = 0)`,
+		runType.String, reqJSON, ag, scope.String, scopeOwner, scope.String, scopeOwner, bindsKey).Scan(&localOff); err != nil {
+		return "", err
+	}
+	if localOff {
+		return ReasonLocalRunnerOff, nil
 	}
 
 	count := func(where string, args ...any) (int, error) {
@@ -82,8 +132,11 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 		return "no runner is online", nil
 	}
 
-	// 2. Can anything online run this TYPE?
-	typeClause := `? IN (SELECT value FROM json_each(rn.capabilities))`
+	// 2. Can anything online run this TYPE? Against the runner's EFFECTIVE
+	// capabilities — what it declared minus what the operator masked off — as the
+	// claim does: a runner whose mask lists this type will never take the run.
+	caps := EffectiveCapsSQL("rn")
+	typeClause := `? IN ` + caps
 	n, err = count(typeClause, runType.String)
 	if err != nil {
 		return "", err
@@ -93,26 +146,41 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	}
 
 	// 3. Agency eligibility — claimRun's disjoint split (AG-Q3a), reproduced exactly.
-	// A tagged run needs a MEMBER of one of its agencies; an untagged run needs a
-	// runner with NO agencies. The second half is the one that surprises people:
-	// an unbound run is not claimable by "anything", it is claimable ONLY by the
-	// general pool, so a fully departmentalised fleet cannot take it at all.
-	agencyClause := typeClause + ` AND (
-		(? <> '[]' AND EXISTS (SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
-		                       WHERE ra.runner_id = rn.id AND a.name IN (SELECT value FROM json_each(?))))
-		OR (? = '[]' AND NOT EXISTS (SELECT 1 FROM runner_agencies ra WHERE ra.runner_id = rn.id)))`
-	n, err = count(agencyClause, runType.String, ag, ag, ag)
+	// A run needs a runner that SERVES one of its agencies. A run with no scope
+	// is Global's (migration 1220) and needs a runner that serves Global — the
+	// half that surprises people: it is not claimable by "anything", so a fleet in
+	// which every runner belongs to a department cannot take it at all.
+	agencyClause := typeClause + ` AND EXISTS (
+		SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
+		 WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency AND a.name IN (SELECT value FROM json_each(?)))`
+	n, err = count(agencyClause, runType.String, ag)
 	if err != nil {
 		return "", err
 	}
 	if n == 0 {
-		if ag == "[]" {
-			return "this run has no scope, so only a runner with no agencies can claim it, " +
-				"and every online runner belongs to one — bind a scope to run it", nil
-		}
 		var names []string
 		_ = json.Unmarshal([]byte(ag), &names)
-		return "no online runner belongs to " + strings.Join(names, ", "), nil
+		switch {
+		case len(names) == 0:
+			// Not reachable through the one writer of runs or the birth trigger; a
+			// row in this state was written around both.
+			return "this run carries no agency at all, so no runner can claim it (an internal error: " +
+				"every run belongs to Global or to its scope's agency)", nil
+		case len(names) == 1 && names[0] == agencyid.CurrentGlobalName(ctx, database):
+			// The built-in agency, by its name now (2.5.2 GR).
+			g := names[0]
+			// Since 2.4.0 (§0a) a Global job names Global's scopes only: binding it
+			// to an agency's scope is not a remedy, so the reason does not offer it.
+			// The local runner is offered only for what it runs (2.5.0 C11,
+			// defect 90: it was offered to an Ansible run too).
+			remedy := "enrol a runner for " + g
+			if slices.Contains(localRunnerTypes, runType.String) {
+				remedy += ", or turn on the local runner (it serves " + g + ")"
+			}
+			return "this run belongs to " + g + " (it has no scope, or its scope is " + g + "'s), and no online " +
+				"runner serves " + g + " — " + remedy, nil
+		}
+		return "no online runner serves " + strings.Join(names, ", "), nil
 	}
 
 	// 3.4. The SB-1 scope binding (mig. 1180). Checked right after agency because
@@ -122,40 +190,49 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	// EXISTS arm. The arguments are kept in a slice so every later clause extends one
 	// list instead of re-spelling it.
 	bindClause := agencyClause + ` AND (
-		NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ?)
+		NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ? AND sc.owner_agency = ?)
 		OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-		            WHERE sc.name = ? AND sr.runner_id = rn.id))`
-	bindArgs := []any{runType.String, ag, ag, ag, scope.String, scope.String}
+		            WHERE sc.name = ? AND sc.owner_agency = ? AND sr.runner_id = rn.id))`
+	bindArgs := []any{runType.String, ag, scope.String, scopeOwner, scope.String, scopeOwner}
 	n, err = count(bindClause, bindArgs...)
 	if err != nil {
 		return "", err
 	}
 	if n == 0 {
-		bound, berr := BoundRunnersByScopeName(ctx, database, scope.String)
+		bound, berr := BoundRunnersByScopeName(ctx, database, scopeOwner, scope.String)
 		if berr != nil {
 			return "", berr
 		}
 		return scopeBindingReason(scope.String, bound), nil
 	}
 
+	// 3.6. An SSH key binding (LR-47). The runners that passed so far may be the
+	// local runner alone, and it does not take a run that binds a key: an agent
+	// is handed the key as a file on its own disk, the server would have to
+	// place one on the target.
+	keyClause := bindClause + ` AND ` + localRunnerCannotSQL("rn")
+	keyArgs := append(append([]any{}, bindArgs...), bindsKey)
+	n, err = count(keyClause, keyArgs...)
+	if err != nil {
+		return "", err
+	}
+	if n == 0 {
+		return ReasonKeyNeedsAgent, nil
+	}
+
 	// 4. Secret injection (P1.4): a run whose job/script declares bindings needs an
 	// injection-flagged runner. This is the gate most likely to be hit by a NEW
 	// runner — enrolling it in the agency is the obvious step, ticking the
 	// injection flag is the one people forget.
-	var bindsSecrets int
-	_ = database.QueryRowContext(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM reference_bindings rb
-			-- R2F-1: keyed on the run's frozen job identity, matching poll.go's gate
-			-- exactly. An explainer reading a DIFFERENT job's bindings than the claim
-			-- query would name a reason that is not the one holding the run.
-			WHERE (rb.owner_kind = 'job'
-			        AND CASE WHEN ? != '' THEN rb.owner_uid = ?
-			                 ELSE rb.owner_source = COALESCE(NULLIF(?, ''), 'git') AND rb.owner_name = ? END)
-			   OR (rb.owner_kind = 'script' AND rb.owner_name = ?))`,
-		jobUID.String, jobUID.String, jobSource.String, jobName.String, scriptRef.String).Scan(&bindsSecrets)
-	injectionClause := bindClause + ` AND (? = 0 OR rn.allow_secret_injection = 1)`
-	injectionArgs := append(append([]any{}, bindArgs...), bindsSecrets)
+	// The question is claimrule.go's, shared with the claim's other mirror: keyed
+	// on the run's frozen job identity, counting a per-run SSH credential, and
+	// disarmed with the injection kill switch.
+	bindsSecrets, err := runNeedsInjectionRunner(ctx, database, runID)
+	if err != nil {
+		return "", err
+	}
+	injectionClause := keyClause + ` AND (? = 0 OR rn.allow_secret_injection = 1)`
+	injectionArgs := append(append([]any{}, keyArgs...), bindsSecrets)
 	n, err = count(injectionClause, injectionArgs...)
 	if err != nil {
 		return "", err
@@ -172,7 +249,7 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	}
 	var missing []string
 	for _, tok := range requires {
-		n, err = count(injectionClause+` AND ? IN (SELECT value FROM json_each(rn.capabilities))`,
+		n, err = count(injectionClause+` AND ? IN `+caps,
 			append(append([]any{}, injectionArgs...), tok)...)
 		if err != nil {
 			return "", err
@@ -182,7 +259,16 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 		}
 	}
 	if len(missing) > 0 {
-		return "no eligible runner advertises " + strings.Join(missing, ", "), nil
+		reason := "no eligible runner advertises " + strings.Join(missing, ", ")
+		for _, tok := range missing {
+			if tok == "checkout" {
+				// The one token an operator did not write (it is on every
+				// project job's run since 2.4.0), so what it means is said.
+				reason += " — this is a project's run, which only an agent started with -allow-checkout takes"
+				break
+			}
+		}
+		return reason, nil
 	}
 
 	// Every gate above passed individually but the combined predicate did not — the
@@ -190,6 +276,20 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	// plainly rather than guessing.
 	return "no single online runner satisfies all of this run's requirements", nil
 }
+
+// The three reasons 2.3.0 added with the local runner. Sentences, shown
+// verbatim (there is no token-to-text map on the frontend).
+const (
+	// ReasonLocalRunnerOff: the local runner serves this run and is not running.
+	ReasonLocalRunnerOff = "the local runner would take this run and is not running — it is turned off, or " +
+		"forbidden on this host (a global administrator: Settings → Local runner)"
+	// ReasonKeyNeedsAgent: only the local runner is in reach, and the job binds a key.
+	ReasonKeyNeedsAgent = "this job binds an SSH key, which the local runner cannot deliver, and no agent " +
+		"that could take the run is online"
+	// ReasonQueuedForSSHExecutor: a row no claim reads any more.
+	ReasonQueuedForSSHExecutor = "this run was queued for the SSH executor, which the local runner replaced in " +
+		"2.3.0, so nothing will claim it — cancel it and run the job again"
+)
 
 // StampUnclaimableReason writes UnclaimableReason onto a queued run, if any. Never
 // fails the caller: an advisory hint that errors must not take an enqueue down with
@@ -200,8 +300,22 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 // with a stale "nobody can claim this" would be worse than saying nothing.
 func StampUnclaimableReason(ctx context.Context, database *sql.DB, runID string) (string, error) {
 	reason, err := UnclaimableReason(ctx, database, runID)
-	if err != nil || reason == "" {
+	if err != nil {
 		return "", err
+	}
+	// 2.5.0 C6: a run a runner could take may still wait for a slot, held by
+	// the concurrency cap at the claim (runcap). Said here, not in
+	// UnclaimableReason, whose "" means "no runner gate holds it" to its
+	// other readers (ScopeBindingBlock, the stuck-run hint).
+	if reason == "" {
+		var agency sql.NullString
+		_ = database.QueryRowContext(ctx, `SELECT owner_agency FROM runs WHERE id = ?`, runID).Scan(&agency)
+		if agency.Valid {
+			reason = runcap.HeldAtClaim(ctx, database, agency.String)
+		}
+	}
+	if reason == "" {
+		return "", nil
 	}
 	_, err = database.ExecContext(ctx,
 		`UPDATE runs SET queued_reason = ? WHERE id = ? AND status = 'queued'`, reason, runID)

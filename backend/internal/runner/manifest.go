@@ -17,6 +17,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/inventory"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/runnerproto"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/settings"
@@ -50,16 +51,16 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	// Look up the run. 404 if absent.
 	var jobName, runType, status, executor string
 	var scope, targetHost, envJSON, runnerID, jobSource, overrideJSON sql.NullString
-	var checkoutSHA, checkoutEntry, requiresJSON, scriptRef, triggeredBy, sshUser, sshCred, jobUID sql.NullString
+	var checkoutSHA, checkoutEntry, requiresJSON, scriptRef, triggeredBy, sshUser, sshCred, jobUID, checkoutRepo sql.NullString
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT job_name, run_type, status, executor,
 		       scope, target_host, env_json, runner_id, job_source, override_json,
 		       checkout_sha, checkout_entry, requires_json, script_ref, triggered_by,
-		       ssh_user, ssh_credential, job_uid
+		       ssh_user, ssh_credential, job_uid, checkout_repo
 		FROM runs WHERE id = ?`, traceID).
 		Scan(&jobName, &runType, &status, &executor,
 			&scope, &targetHost, &envJSON, &runnerID, &jobSource, &overrideJSON,
-			&checkoutSHA, &checkoutEntry, &requiresJSON, &scriptRef, &triggeredBy, &sshUser, &sshCred, &jobUID)
+			&checkoutSHA, &checkoutEntry, &requiresJSON, &scriptRef, &triggeredBy, &sshUser, &sshCred, &jobUID, &checkoutRepo)
 	if err != nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 		return
@@ -86,11 +87,59 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the command via the shared execspec path (same as sshexec). Git
-	// cache dir resolves identically to runners_mount.go (gitlab.DefaultCloneDir).
+	// May this run go ahead? Every producer of a run asks when the run is made;
+	// its scope, its job's script and its repository can each change while it
+	// waits, so what such a change can turn is asked again for the run that is
+	// about to be handed out, in one place that the local runner asks too
+	// (runref.RefuseDispatch has the list). Before anything of the run is
+	// resolved: no command, target or secret of a refused run is read. The
+	// agent ends the run as failed, with this answer in its log, as for every
+	// refusal of the manifest.
+	if refusal, derr := runref.RefuseDispatch(r.Context(), s.db, traceID); derr != nil {
+		s.log.Error("manifest dispatch check", "trace_id", traceID, "error", derr)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "dispatch check failed")
+		return
+	} else if refusal != nil {
+		httpx.Fail(w, http.StatusConflict, refusal.Code, refusal.Reason)
+		return
+	}
+
+	// Resolve the command via the shared execspec path (same as sshexec). A
+	// body kept as a file is read from the objects of its repository's clone
+	// (gitlab.CloneDirFor): at the last synced commit, or, for a checkout run,
+	// at the commit, repository and entry the run was pinned to when it was
+	// queued. What a later sync did to the entry file does not reach a run
+	// that is already pinned (present defect 23).
 	interp, body, err := execspec.ResolveCommand(
-		r.Context(), s.db, gitlab.DefaultCloneDir(), jobName, jobSource.String, runType)
+		r.Context(), s.db, gitlab.CloneDirFor,
+		execspec.JobRef{UID: jobUID.String, Name: jobName, Source: jobSource.String},
+		execspec.Pin{Repo: checkoutRepo.String, SHA: checkoutSHA.String, Entry: checkoutEntry.String}, runType)
 	if err != nil {
+		// Two refusals that are the run's and not the server's, each with its
+		// reason: the agent ends the run failed with the answer in its log.
+		// Until 2.4.0 both were a 500 that said only "command resolution
+		// failed".
+		var unread *execspec.CommitReadError
+		var ambiguous *execspec.AmbiguousJobError
+		switch {
+		case errors.As(err, &ambiguous):
+			// The refusal to pick between two jobs of one name, for a run that
+			// records neither: said, as the local runner says it.
+			httpx.Fail(w, http.StatusConflict, "job_ambiguous", ambiguous.Error())
+			return
+		case errors.Is(err, execspec.ErrScriptGone):
+			// Asked above; here for a job that lost its script in between.
+			httpx.Fail(w, http.StatusConflict, runref.CodeScriptGone, runref.ReasonScriptGone)
+			return
+		case errors.Is(err, execspec.ErrJobGone):
+			httpx.Fail(w, http.StatusConflict, "job_gone",
+				"the job this run is of no longer exists: it was removed after the run was queued")
+			return
+		case errors.As(err, &unread):
+			httpx.Fail(w, http.StatusConflict, "script_unreadable",
+				"the script of this run could not be read from its repository: "+unread.Error())
+			return
+		}
 		s.log.Error("manifest resolve command", "trace_id", traceID, "error", err)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "command resolution failed")
 		return
@@ -174,11 +223,23 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	var targets []runnerproto.ManifestTarget
 	// RP-8 — the ansible identity carriage (set below, shipped on the response).
 	var manifestSSHUser, manifestSSHKeyRef string
+	// The agency the run's scope is looked for in (I2: a scope's name is unique
+	// within an agency only), from the run's snapshot.
+	manifestAgencies, aerr := runref.RunAgencies(r.Context(), s.db, traceID)
+	if aerr != nil {
+		httpx.Fail500(w, s.log, "db_error", aerr)
+		return
+	}
+	scopeOwner, aerr := execspec.RunScopeOwner(r.Context(), s.db, manifestAgencies)
+	if aerr != nil {
+		httpx.Fail500(w, s.log, "db_error", aerr)
+		return
+	}
 	if inventoryMode == "cronomicon" {
 		// F2 host subset + M3 group expansion (override_json.hosts/groups): enforced
 		// here for cronomicon-inventory runners since the server resolves their targets.
 		// Local-inventory runners resolve hosts agent-side and honor --limit instead.
-		resolved, _, err := execspec.ResolveRun(r.Context(), s.db, scope.String, targetHost.String,
+		resolved, _, err := execspec.ResolveRun(r.Context(), s.db, scopeOwner, scope.String, targetHost.String,
 			execspec.OverrideHosts(overrideJSON.String), execspec.OverrideGroups(overrideJSON.String))
 		if err != nil {
 			s.log.Error("manifest resolve targets", "trace_id", traceID, "error", err)
@@ -248,7 +309,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		// Sequential query (not nested inside an open rows cursor) — safe under the
 		// SQLite pool rule.
 		qerr := s.db.QueryRowContext(r.Context(),
-			`SELECT raw_inventory, inventory_format FROM scopes WHERE name = ?`, scope.String).
+			`SELECT raw_inventory, inventory_format FROM scopes WHERE name = ? AND owner_agency = ?`, scope.String, scopeOwner).
 			Scan(&raw, &format)
 		hasInventory := qerr == nil && raw.Valid && raw.String != ""
 		if !hasInventory {
@@ -274,8 +335,13 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	var timeoutSeconds sql.NullInt64
 	var envPassthroughJSON, projectRoot sql.NullString
+	// The run's own job, by its uid: by source and name, a run of one of two
+	// jobs of a name was handed the other's timeout and passthrough list
+	// (present defect 4's family). By name only for a run that records no uid.
 	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT timeout_seconds, env_passthrough, project_root FROM jobs WHERE name = ? AND source = ?`, jobName, js).
+		`SELECT timeout_seconds, env_passthrough, project_root FROM jobs
+		  WHERE CASE WHEN ? != '' THEN uid = ? ELSE source = ? AND name = ? END`,
+		jobUID.String, jobUID.String, js, jobName).
 		Scan(&timeoutSeconds, &envPassthroughJSON, &projectRoot); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		s.log.Error("manifest read job knobs", "job", jobName, "error", err)
 	}
@@ -327,14 +393,27 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	var checkout *runnerproto.ManifestCheckout
 	if checkoutSHA.Valid && checkoutSHA.String != "" {
 		// Defense-in-depth (RX.2): the pinned value must be a full commit SHA,
-		// never a ref. It is snapshotted from git_sync_state.last_sha, so this
-		// only fires on a corrupt/never-synced state.
+		// never a ref. It is snapshotted from the repository's last synced SHA
+		// (git_repos.last_sha), so this only fires on a corrupt/never-synced state.
 		if !isFullCommitSHA(checkoutSHA.String) {
 			httpx.Fail(w, http.StatusConflict, "no_checkout_sha",
 				"checkout run has no valid pinned commit SHA (the repo may not have synced yet)")
 			return
 		}
-		repoURL, _ := settings.ResolveGitlabRuntime(r.Context(), s.db, s.cfg)
+		// The repository the run was pinned to at enqueue (runs.checkout_repo,
+		// GR-22): the commit is that repository's, so the URL the agent is sent
+		// to must be its URL. A run from before 2.4.0 records none, and there
+		// was then one repository: Global's.
+		repo := checkoutRepo.String
+		if repo == "" {
+			repo = repoid.Global
+		}
+		repoURL, _, rerr := settings.ResolveRepoRuntime(r.Context(), s.db, s.cfg, repo)
+		if rerr != nil {
+			// Not "no repository": the row could not be read.
+			httpx.Fail500(w, s.log, "db_error", rerr)
+			return
+		}
 		if repoURL == "" {
 			httpx.Fail(w, http.StatusConflict, "no_checkout_repo",
 				"checkout run cannot resolve the source repository URL; configure the GitLab integration")
@@ -579,16 +658,20 @@ func (s *Service) collectReferenceBindings(ctx context.Context, runID, jobName, 
 	// injected with a sibling department's credentials. ErrNoRows is tolerated
 	// (callers pass an empty runID on the pure-enumeration paths): the uid is then
 	// empty and the legacy name arm applies, exactly as before this band.
-	var overrideJSON, sshCred, jobUID sql.NullString
+	//
+	// script_uid is read here for the same reason (1290): the caller's scriptRef
+	// is a NAME, and a name is a script in every repository that has one. The
+	// run froze which one it meant when it was queued.
+	var overrideJSON, sshCred, jobUID, scriptUID sql.NullString
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT override_json, ssh_credential, job_uid FROM runs WHERE id = ?`, runID).Scan(&overrideJSON, &sshCred, &jobUID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		`SELECT override_json, ssh_credential, job_uid, script_uid FROM runs WHERE id = ?`, runID).Scan(&overrideJSON, &sshCred, &jobUID, &scriptUID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		// Fail like a binding read: the caller cannot prove the run is secret-free
 		// without knowing whether additions exist.
 		return nil, fmt.Errorf("load run overrides: %w", err)
 	}
 	owners := []runref.Owner{{Kind: "job", Source: js, Name: jobName, UID: jobUID.String}}
-	if scriptRef != "" {
-		owners = append(owners, runref.Owner{Kind: "script", Name: scriptRef})
+	if scriptUID.String != "" {
+		owners = append(owners, runref.Owner{Kind: "script", Name: scriptRef, UID: scriptUID.String})
 	}
 	sets := make([][]runref.Binding, 0, len(owners)+1)
 	for _, o := range owners {
@@ -605,7 +688,7 @@ func (s *Service) collectReferenceBindings(ctx context.Context, runID, jobName, 
 	// redactor too — lockstep masking of the value if a playbook ever echoes it.
 	// Exactly the CA-3b reasoning for the connect-as key.
 	if bs := becomeSecretFor(ctx, s.db, jobName, js, jobUID.String); bs != "" {
-		sets = append(sets, []runref.Binding{{Kind: runref.KindSecret, Name: bs, File: true}})
+		sets = append(sets, []runref.Binding{{Kind: runref.KindSecret, Name: bs, File: true, Origin: runref.OriginBecome}})
 	}
 	sets = append(sets, runref.OverrideBindings(overrideJSON.String))
 	// CA-3b — a per-run "connect as" credential is an implicit key binding: going
@@ -614,7 +697,7 @@ func (s *Service) collectReferenceBindings(ctx context.Context, runID, jobName, 
 	// is the SHARED collect pass (manifest injection + ingest redaction), so the
 	// redactor sees the delivered material too.
 	if sshCred.String != "" {
-		sets = append(sets, []runref.Binding{{Kind: runref.KindKey, Name: sshCred.String}})
+		sets = append(sets, []runref.Binding{{Kind: runref.KindKey, Name: sshCred.String, Origin: runref.OriginConnectAs}})
 	}
 	seen := map[string]bool{}
 	var bindings []runref.Binding

@@ -99,8 +99,15 @@ export type RunSummaryInput = {
    * carries the literal there). The phrase states the count; this states which.
    */
   targetNames: string[];
-  executorWord: string;
-  executorChanged: boolean;
+  /**
+   * Who takes the run (LR-50): the names of the runners the scope is bound to,
+   * else the rule — "an agent" for ansible and terraform, "any runner" for a
+   * shell run. A fact about the scope and the run type, not a choice made in
+   * the dialog, so it is stated and never accented.
+   */
+  runsOn: string;
+  /** True when `runsOn` names the scope's bound runners. */
+  scopeBound: boolean;
   /** The operator's per-run identity. "" ⇒ the job's own value stands. */
   sshUser: string;
   sshCredential: string;
@@ -112,12 +119,6 @@ export type RunSummaryInput = {
    * server ignores a stored one outright — see the fold in `where` below.
    */
   identityCapable: boolean;
-  /**
-   * SB — names of the runners the run's scope is bound to, [] when the scope is
-   * not bound or the run is not going to a runner. A fact about the SCOPE, not a
-   * choice made in the dialog, so it is stated and never accented.
-   */
-  boundRunners: string[];
   // When
   whenPhrase: string;
   deferred: boolean;
@@ -197,12 +198,9 @@ export function buildRunSummary(i: RunSummaryInput): SummaryGroup[] {
       // answer. Same reason env overrides carry values, one row up in spirit.
       detail: i.targetNames.length > 0 ? truncate(i.targetNames.join(", "), SUMMARY_DETAIL_CAP) : undefined,
     },
-    {
-      key: "executor",
-      label: "Executor",
-      value: i.executorWord,
-      accent: i.executorChanged ? "warning" : undefined,
-    },
+    // Who takes the run. It holds the place the Executor row had, and unlike
+    // that row it is never a deviation: nothing in this dialog can change it.
+    { key: "runsOn", label: "Runs on", value: i.runsOn, note: i.scopeBound ? "bound to the scope" : undefined },
   ];
   // The identity the run will ACTUALLY connect with, which is not the same as
   // the identity this dialog set. The server folds the job spec's identity
@@ -241,12 +239,6 @@ export function buildRunSummary(i: RunSummaryInput): SummaryGroup[] {
         note: changed ? `job default: ${jobPhrase}` : "job default",
       });
     }
-  }
-  // SB — where a runner run lands when its scope is bound. It replaces the row
-  // the runner-tag pin used to have here; unlike that row it is never a
-  // deviation, because nothing in this dialog can change it.
-  if (i.boundRunners.length > 0) {
-    where.push({ key: "runsOn", label: "Runs on", value: i.boundRunners.join(", "), note: "bound to the scope" });
   }
 
   // ── When ───────────────────────────────────────────────────────────────────
@@ -294,7 +286,7 @@ export function buildRunSummary(i: RunSummaryInput): SummaryGroup[] {
   // RD5 — the rail's groups mirror the dialog's five sections by name, so the
   // section an operator opens and the group that restates it share one word.
   // "Where it runs" is split at the same seam as the dialog: Targets carries
-  // the scope + targets rows, Method the executor and identity rows.
+  // the scope + targets rows, Method the runner and identity rows.
   const targets = where.filter((r) => r.key === "scope" || r.key === "targets");
   const method = where.filter((r) => r.key !== "scope" && r.key !== "targets");
   const groups: SummaryGroup[] = [

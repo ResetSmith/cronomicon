@@ -1,13 +1,16 @@
 package execspec
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // CA (the ssh-user plan §2.2) — the per-run "connect as" overlay.
 
 func TestApplyIdentityOverride(t *testing.T) {
 	base := func() []Target {
 		return []Target{
-			{Name: "web1", User: "hostuser", AuthCredentialID: "cred-host", Via: "bastion-1", HostKey: "hk"},
+			{Name: "web1", User: "hostuser", AuthCredentialID: "cred-host", Via: "bastion-1", Address: "10.0.0.1", Port: 2222},
 			{Name: "web2", User: "", AuthKeyEnvVar: "LEGACY_KEY"},
 			{Name: "gone", ResolveErr: "no SSH host record"},
 		}
@@ -17,7 +20,7 @@ func TestApplyIdentityOverride(t *testing.T) {
 		in := base()
 		out := ApplyIdentityOverride(in, "", "", "")
 		for i := range in {
-			if out[i] != in[i] {
+			if !reflect.DeepEqual(out[i], in[i]) {
 				t.Errorf("target %d changed with empty override: %+v", i, out[i])
 			}
 		}
@@ -63,11 +66,12 @@ func TestApplyIdentityOverride(t *testing.T) {
 
 	t.Run("routing and unresolved targets untouched", func(t *testing.T) {
 		out := ApplyIdentityOverride(base(), "deploy", "cred-override", "")
-		// CA-Q4 — the bastion hop and host-key trust are routing, not identity.
-		if out[0].Via != "bastion-1" || out[0].HostKey != "hk" {
+		// CA-Q4 — the bastion hop and the address (which is what host-key trust
+		// is keyed by) are routing, not identity.
+		if out[0].Via != "bastion-1" || out[0].Address != "10.0.0.1" || out[0].Port != 2222 {
 			t.Errorf("routing fields must be untouched: %+v", out[0])
 		}
-		if out[2] != base()[2] {
+		if !reflect.DeepEqual(out[2], base()[2]) {
 			t.Errorf("ResolveErr target must pass through unchanged: %+v", out[2])
 		}
 	})

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
@@ -49,7 +50,14 @@ func AuditInjectionOnce(ctx context.Context, database *sql.DB, log *slog.Logger,
 	if actor == "" {
 		actor = "system"
 	}
-	if werr := settings.WriteChangeLog(ctx, database, actor, "Secrets", "injected", traceID, AuditDetails(resolved.Refs, scope)); werr != nil {
+	// 2.5.1 SG2.2: the rows behind the names, written under the same slot and
+	// before the change_log row, so a run that ships a secret leaves both or
+	// (on a failure, with the slot released) neither.
+	werr := RecordUses(ctx, database, traceID, resolved.Refs)
+	if werr == nil {
+		werr = settings.WriteChangeLog(ctx, database, settings.RowAgency(ctx, database, "runs", "owner_agency", traceID), actor, "Secrets", "injected", traceID, AuditDetails(resolved.Refs, scope))
+	}
+	if werr != nil {
 		// Only release the slot WE just claimed (claimed>0); in the repair path the
 		// slot was already 1 and owned by a prior call. Release on a cancellation-proof
 		// context so a disconnected request can't leave the slot wedged (M6).
@@ -66,6 +74,55 @@ func AuditInjectionOnce(ctx context.Context, database *sql.DB, log *slog.Logger,
 		return werr
 	}
 	return nil
+}
+
+// RecordUses writes one secret_uses row per secret and key in refs (2.5.1
+// SG2.2): its row, its owner, how the run came to carry it, and the run's job
+// and runner as the run row has them now (the claim stamps the runner before
+// a manifest or the local runner resolves anything). INSERT OR IGNORE: the
+// injection audit's repair path may record a run twice.
+func RecordUses(ctx context.Context, database *sql.DB, traceID string, refs []ResolvedRef) error {
+	var rows []ResolvedRef
+	for _, r := range refs {
+		if (r.Kind == KindSecret || r.Kind == KindKey) && r.RowID != "" {
+			rows = append(rows, r)
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("record secret uses: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+	for _, r := range rows {
+		via := r.Origin
+		if via == "" {
+			via = "binding"
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO secret_uses
+			  (at, trace_id, kind, row_id, owner_agency, via, ref_name, job_uid, job_name, runner_id, runner_name)
+			SELECT ?, ?, ?, ?, ?, ?, ?, runs.job_uid, runs.job_name, runs.runner_id, runs.runner_name
+			  FROM runs WHERE runs.id = ?`,
+			now, traceID, string(r.Kind), r.RowID, ownerOrGlobal(r.Owner), via, r.Name, traceID); err != nil {
+			return fmt.Errorf("record secret uses: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("record secret uses: %w", err)
+	}
+	return nil
+}
+
+// ownerOrGlobal: an owner that names no agency reads as Global's.
+func ownerOrGlobal(owner string) string {
+	if owner == "" {
+		return agencyid.Global
+	}
+	return owner
 }
 
 // injectionAuditRowExists reports whether a dispatch-injection audit row is present

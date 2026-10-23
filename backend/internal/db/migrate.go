@@ -29,6 +29,23 @@ func Migrate(pool *sql.DB) error {
 	return nil
 }
 
+// MigrateTo brings the schema to exactly `version`, up or down. Nothing in the
+// server calls it. It exists for what must be exercised against an OLDER
+// schema than the current one: a test that seeds a database at the previous
+// schema and then reads or upgrades it — the migration tests here, and the
+// pre-upgrade report in internal/preflight, which reads the previous
+// release's tables and is tested from its own package.
+func MigrateTo(pool *sql.DB, version uint) error {
+	m, err := migrator(pool)
+	if err != nil {
+		return err
+	}
+	if err := m.Migrate(version); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return fmt.Errorf("migrate to %d: %w", version, err)
+	}
+	return nil
+}
+
 // Status returns the current migration version and whether the schema is in a
 // dirty (failed-mid-migration) state. Used by the /readyz check (T13).
 func Status(pool *sql.DB) (version uint, dirty bool, err error) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
 // newReaperService opens a migrated DB and returns a Service wired to it (no
@@ -130,5 +131,98 @@ func TestPeriodicReaperRespectsStaleWindow(t *testing.T) {
 	}
 	if got := runField(t, pool, "fresh", "status"); got != "running" {
 		t.Errorf("fresh status = %q, want running (within window — live long job must survive)", got)
+	}
+}
+
+// Since 2.3.0 a run of the server's is known by the runner on its row — the
+// local runner — and not by an executor value: every run is written for the
+// runner executor (LR-42). The startup sweep reconciles exactly those, gives
+// the load they held back to the local runner's row, and leaves an agent's
+// run to the runner reaper.
+func TestStartupSweepKnowsTheLocalRunnersRunsByTheirRunner(t *testing.T) {
+	svc, pool := newReaperService(t)
+	ctx := context.Background()
+	localID, _, err := settings.EnsureLocalRunner(ctx, pool, true, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := pool.Exec(`INSERT INTO runners (id, name, status, registered_at, created_at) VALUES ('agent', 'agent', 'online', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	startedAt := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	insertRun(t, pool, "mine", "runner", "running", startedAt)
+	insertRun(t, pool, "agents", "runner", "running", startedAt)
+	insertRun(t, pool, "unclaimed", "runner", "queued", "")
+	for id, runner := range map[string]string{"mine": localID, "agents": "agent"} {
+		if _, err := pool.Exec(`UPDATE runs SET runner_id = ? WHERE id = ?`, runner, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(`UPDATE runners SET load = 3 WHERE id = ?`, localID); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.sweepOrphansOnStartup(ctx)
+
+	if got := runField(t, pool, "mine", "status"); got != "failure" {
+		t.Errorf("the local runner's orphan is %q, want failure", got)
+	}
+	if got := runField(t, pool, "mine", "queued_reason"); got != "executor_lost" {
+		t.Errorf("its reason = %q, want executor_lost", got)
+	}
+	if got := runField(t, pool, "agents", "status"); got != "running" {
+		t.Errorf("an agent's run is %q, want running (the runner reaper's to judge)", got)
+	}
+	if got := runField(t, pool, "unclaimed", "status"); got != "queued" {
+		t.Errorf("a queued run is %q, want queued", got)
+	}
+	var load int
+	if err := pool.QueryRow(`SELECT load FROM runners WHERE id = ?`, localID).Scan(&load); err != nil || load != 0 {
+		t.Errorf("the local runner's load after the startup sweep = %d (%v), want 0", load, err)
+	}
+}
+
+// The slot a claim took is given back once, by whoever ends the run. A run the
+// stale reaper already reconciled is finished by its worker later; that must
+// not give back a second slot, which belongs to another run still in flight.
+func TestLoadIsReleasedOncePerRun(t *testing.T) {
+	svc, pool := newReaperService(t)
+	ctx := context.Background()
+	localID, _, err := settings.EnsureLocalRunner(ctx, pool, true, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startedAt := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	for _, id := range []string{"reaped", "other"} {
+		insertRun(t, pool, id, "runner", "running", startedAt)
+		if _, err := pool.Exec(`UPDATE runs SET runner_id = ? WHERE id = ?`, localID, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(`UPDATE runners SET load = 2 WHERE id = ?`, localID); err != nil {
+		t.Fatal(err)
+	}
+	load := func() int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(`SELECT load FROM runners WHERE id = ?`, localID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if !svc.reconcileOrphan(ctx, orphan{traceID: "reaped", jobName: "job-reaped", scope: "sc", startedAt: startedAt}) {
+		t.Fatal("fixture: the orphan was not reconciled")
+	}
+	if got := load(); got != 1 {
+		t.Fatalf("load after the reaper reconciled one of two = %d, want 1", got)
+	}
+	// Its worker finishes late.
+	svc.finalize(ctx, claimedRun{traceID: "reaped", jobName: "job-reaped", scope: "sc"}, "success", nil)
+	if got := load(); got != 1 {
+		t.Errorf("load after the reaped run's worker finished too = %d, want 1 (the other run still holds its slot)", got)
+	}
+	if got := runField(t, pool, "reaped", "status"); got != "failure" {
+		t.Errorf("the reaped run is %q, want it left as the reaper recorded it", got)
 	}
 }

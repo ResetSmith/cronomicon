@@ -117,11 +117,21 @@ func (s *Scheduler) ScanSLA(ctx context.Context) {
 	now := time.Now().UTC()
 	loc := s.location()
 
+	// The run's own job, by the uid the run records. Until 2.4.0 the join was
+	// by name and source: with two jobs of one name (two agencies may each own
+	// an in-app one) a run was judged against both jobs' deadlines, and warned
+	// for the other job's. A run that records no uid is its name's job when one
+	// job holds the name, and nobody's when two do: nothing is guessed.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT r.id, r.job_name, COALESCE(r.job_source,'git'), COALESCE(r.scope,''), r.started_at,
 		       j.warn_after_seconds, j.must_finish_by
 		  FROM runs r
-		  JOIN jobs j ON j.name = r.job_name AND j.source = COALESCE(r.job_source,'git')
+		  JOIN jobs j ON CASE WHEN COALESCE(r.job_uid,'') != ''
+		                      THEN j.uid = r.job_uid
+		                      ELSE j.name = r.job_name AND j.source = COALESCE(r.job_source,'git')
+		                           AND (SELECT COUNT(*) FROM jobs o
+		                                 WHERE o.name = r.job_name AND o.source = COALESCE(r.job_source,'git')) = 1
+		                 END
 		 WHERE r.status = 'running'
 		   AND r.sla_warned_at IS NULL
 		   AND r.started_at IS NOT NULL
@@ -310,12 +320,27 @@ func (s *Scheduler) ScanMissedRuns(ctx context.Context) {
 	s.writeMissedCursor(ctx, windowEnd)
 }
 
+// The rows of `runs`, and of `workflow_runs`, that are of ONE definition, as a
+// condition taking ?1 the definition's uid, ?2 its name and ?3 its source: the
+// rows stamped with the uid, and the rows of the name that are stamped with
+// none (or, for a definition that records no uid, the rows of the name).
+const (
+	jobRowsOfEntrySQL = `((?1 <> '' AND job_uid = ?1)
+	        OR ((job_uid IS NULL OR ?1 = '') AND job_name = ?2 AND COALESCE(job_source,'git') = ?3))`
+	workflowRowsOfEntrySQL = `((?1 <> '' AND workflow_uid = ?1)
+	        OR ((workflow_uid IS NULL OR ?1 = '') AND workflow_name = ?2 AND COALESCE(workflow_source,'git') = ?3))`
+)
+
 // detectionEntry is one schedule entry the detector watches.
 type detectionEntry struct {
 	ownerKind, ownerSource, ownerName string
-	name, cron, interval              string
-	startAt, endAt                    string
-	scope                             string
+	// ownerUID is the definition the entry belongs to (2.4.0): what its fires,
+	// its pause and its recorded skips are found by. Empty for a definition
+	// that records none.
+	ownerUID             string
+	name, cron, interval string
+	startAt, endAt       string
+	scope                string
 }
 
 // scheduleEntriesForDetection returns every entry belonging to a live, enabled,
@@ -328,26 +353,42 @@ func (s *Scheduler) scheduleEntriesForDetection(ctx context.Context) ([]detectio
 	// was missing. The two arms are deliberately separate SELECTs rather than a
 	// join over a CASE, because the owner tables share no scope column and a
 	// single query would have to pretend they do.
+	//
+	// Each entry with the definition it BELONGS to (2.4.0), by the join the
+	// scheduler loads its entries with (loadJobEntries): the owner the entry
+	// records, and by the name only for an entry that records none, where one
+	// definition holds the name. By the name alone, two agencies' definitions
+	// of one name were each watched for the other's entries too, and one
+	// agency's pause or disabled switch decided what was expected of both.
+	// The pause is the definition's own (IsPausedUID's rule).
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ds.owner_kind, ds.owner_source, ds.owner_name, ds.name,
 		       COALESCE(ds.cron,''), COALESCE(ds.interval,''),
 		       COALESCE(ds.start_at,''), COALESCE(ds.end_at,''),
-		       COALESCE(j.scope,'')
+		       COALESCE(j.scope,''), COALESCE(j.uid,'')
 		  FROM definition_schedules ds
-		  JOIN jobs j ON j.name = ds.owner_name AND j.source = ds.owner_source
+		  JOIN jobs j ON (ds.owner_uid IS NOT NULL AND j.uid = ds.owner_uid)
+		              OR (ds.owner_uid IS NULL AND j.name = ds.owner_name AND j.source = ds.owner_source
+		                  AND (SELECT COUNT(*) FROM jobs o WHERE o.name = ds.owner_name AND o.source = ds.owner_source) = 1)
 		 WHERE ds.owner_kind = 'job' AND j.enabled = 1 AND j.deleted_at IS NULL
 		   AND NOT EXISTS (SELECT 1 FROM paused_jobs p
-		                    WHERE p.source = ds.owner_source AND p.owner_kind = 'job' AND p.name = ds.owner_name)
+		                    WHERE p.owner_kind = 'job'
+		                      AND (p.owner_uid = j.uid
+		                           OR (p.owner_uid IS NULL AND p.source = j.source AND p.name = j.name)))
 		UNION ALL
 		SELECT ds.owner_kind, ds.owner_source, ds.owner_name, ds.name,
 		       COALESCE(ds.cron,''), COALESCE(ds.interval,''),
 		       COALESCE(ds.start_at,''), COALESCE(ds.end_at,''),
-		       ''
+		       '', COALESCE(w.uid,'')
 		  FROM definition_schedules ds
-		  JOIN workflows w ON w.name = ds.owner_name AND w.source = ds.owner_source
+		  JOIN workflows w ON (ds.owner_uid IS NOT NULL AND w.uid = ds.owner_uid)
+		                   OR (ds.owner_uid IS NULL AND w.name = ds.owner_name AND w.source = ds.owner_source
+		                       AND (SELECT COUNT(*) FROM workflows o WHERE o.name = ds.owner_name AND o.source = ds.owner_source) = 1)
 		 WHERE ds.owner_kind = 'workflow' AND w.enabled = 1 AND w.deleted_at IS NULL
 		   AND NOT EXISTS (SELECT 1 FROM paused_jobs p
-		                    WHERE p.source = ds.owner_source AND p.owner_kind = 'workflow' AND p.name = ds.owner_name)`)
+		                    WHERE p.owner_kind = 'workflow'
+		                      AND (p.owner_uid = w.uid
+		                           OR (p.owner_uid IS NULL AND p.source = w.source AND p.name = w.name)))`)
 	if err != nil {
 		return nil, err
 	}
@@ -356,7 +397,7 @@ func (s *Scheduler) scheduleEntriesForDetection(ctx context.Context) ([]detectio
 	for rows.Next() {
 		var e detectionEntry
 		if err := rows.Scan(&e.ownerKind, &e.ownerSource, &e.ownerName, &e.name,
-			&e.cron, &e.interval, &e.startAt, &e.endAt, &e.scope); err != nil {
+			&e.cron, &e.interval, &e.startAt, &e.endAt, &e.scope, &e.ownerUID); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -383,13 +424,18 @@ func (s *Scheduler) fireExplained(ctx context.Context, e detectionEntry, t time.
 	// moments earlier, and left a fabricated 'skipped' row to explain away every
 	// later fire that day. scheduled_for is the fire instant carried across that
 	// delete, so the promoted run is recognisable as the fire it was.
+	//
+	// THIS job's rows (2.4.0), in each of the three questions: the rows stamped
+	// with its uid, and the rows of its name that are stamped with none. By the
+	// name alone, a fire of another agency's job of the same name and entry
+	// explained this one's missing fire.
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM runs
-		 WHERE job_name = ? AND COALESCE(job_source,'git') = ?
-		   AND COALESCE(schedule_name,'') = ?
-		   AND ((created_at   >= ? AND created_at   <= ?)
-		     OR (scheduled_for >= ? AND scheduled_for <= ?))`,
-		e.ownerName, e.ownerSource, e.name, from, to, from, to).Scan(&n); err != nil {
+		 WHERE `+jobRowsOfEntrySQL+`
+		   AND COALESCE(schedule_name,'') = ?4
+		   AND ((created_at   >= ?5 AND created_at   <= ?6)
+		     OR (scheduled_for >= ?5 AND scheduled_for <= ?6))`,
+		e.ownerUID, e.ownerName, e.ownerSource, e.name, from, to).Scan(&n); err != nil {
 		return false, err
 	}
 	if n > 0 {
@@ -405,11 +451,13 @@ func (s *Scheduler) fireExplained(ctx context.Context, e detectionEntry, t time.
 	//    explained by check 1; one that has not promoted is still parked here.
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM pending_runs
-		 WHERE kind = 'job' AND name = ? AND source = ?
+		 WHERE kind = 'job'
+		   AND ((?1 <> '' AND owner_uid = ?1)
+		        OR ((owner_uid IS NULL OR ?1 = '') AND name = ?2 AND source = ?3))
 		   AND gate_kind = 'concurrency' AND status = 'pending'
-		   AND COALESCE(json_extract(params_json,'$.ScheduleName'),'') = ?
-		   AND created_at >= ? AND created_at <= ?`,
-		e.ownerName, e.ownerSource, e.name, from, to).Scan(&n); err != nil {
+		   AND COALESCE(json_extract(params_json,'$.ScheduleName'),'') = ?4
+		   AND created_at >= ?5 AND created_at <= ?6`,
+		e.ownerUID, e.ownerName, e.ownerSource, e.name, from, to).Scan(&n); err != nil {
 		return false, err
 	}
 	if n > 0 {
@@ -423,11 +471,11 @@ func (s *Scheduler) fireExplained(ctx context.Context, e detectionEntry, t time.
 	day := calendar.DayOf(t, loc)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT created_at FROM runs
-		 WHERE job_name = ? AND COALESCE(job_source,'git') = ?
-		   AND COALESCE(schedule_name,'') = ?
+		 WHERE `+jobRowsOfEntrySQL+`
+		   AND COALESCE(schedule_name,'') = ?4
 		   AND status = 'skipped'
 		 ORDER BY created_at DESC LIMIT 200`,
-		e.ownerName, e.ownerSource, e.name)
+		e.ownerUID, e.ownerName, e.ownerSource, e.name)
 	if err != nil {
 		return false, err
 	}
@@ -454,12 +502,13 @@ func (s *Scheduler) workflowFireExplained(ctx context.Context, e detectionEntry,
 	from := t.Add(-time.Minute).Format(time.RFC3339)
 	to := t.Add(missedGrace).Format(time.RFC3339)
 	var n int
+	// THIS workflow's rows (2.4.0), as the job arm asks for this job's.
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM workflow_runs
-		 WHERE workflow_name = ? AND COALESCE(workflow_source,'git') = ?
-		   AND COALESCE(schedule_name,'') = ?
-		   AND created_at >= ? AND created_at <= ?`,
-		e.ownerName, e.ownerSource, e.name, from, to).Scan(&n); err != nil {
+		 WHERE `+workflowRowsOfEntrySQL+`
+		   AND COALESCE(schedule_name,'') = ?4
+		   AND created_at >= ?5 AND created_at <= ?6`,
+		e.ownerUID, e.ownerName, e.ownerSource, e.name, from, to).Scan(&n); err != nil {
 		return false, err
 	}
 	if n > 0 {
@@ -469,11 +518,11 @@ func (s *Scheduler) workflowFireExplained(ctx context.Context, e detectionEntry,
 	day := calendar.DayOf(t, loc)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT created_at FROM workflow_runs
-		 WHERE workflow_name = ? AND COALESCE(workflow_source,'git') = ?
-		   AND COALESCE(schedule_name,'') = ?
+		 WHERE `+workflowRowsOfEntrySQL+`
+		   AND COALESCE(schedule_name,'') = ?4
 		   AND status = 'skipped'
 		 ORDER BY created_at DESC LIMIT 200`,
-		e.ownerName, e.ownerSource, e.name)
+		e.ownerUID, e.ownerName, e.ownerSource, e.name)
 	if err != nil {
 		return false, err
 	}
@@ -501,10 +550,14 @@ func (s *Scheduler) recordMissedFire(ctx context.Context, e detectionEntry, t ti
 		s.recordMissedWorkflowFire(ctx, e, t)
 		return
 	}
+	// The record is the DEFINITION's (2.4.0): two agencies' jobs of one name
+	// that both miss a fire leave a record each. Written by name alone, the
+	// first one's record stood for the second's, here and in the detector's
+	// own reading of it, and the second was neither recorded nor alerted.
 	err := s.recordSuppression(ctx, EnqueueParams{
-		JobName: e.ownerName, JobSource: e.ownerSource, Scope: e.scope,
+		JobName: e.ownerName, JobSource: e.ownerSource, JobUID: e.ownerUID, Scope: e.scope,
 		ScheduleName: e.name,
-		RunType:      s.runTypeOf(ctx, e.ownerSource, e.ownerName),
+		RunType:      s.runTypeOf(ctx, e.ownerUID, e.ownerSource, e.ownerName),
 	}, skipRecord{
 		Reason: reasonMissedFire,
 		Mode:   dedupeEpisodeReason,
@@ -519,6 +572,9 @@ func (s *Scheduler) recordMissedFire(ctx context.Context, e detectionEntry, t ti
 	s.raiseAlert(ctx, notify.AlertEvent{
 		Trigger: notify.TriggerMissedRun,
 		JobName: e.ownerName,
+		// By identity (present defect 69, 2.5.0): by name alone the dispatcher
+		// finds the job only when one job anywhere holds the name.
+		JobUID:  e.ownerUID,
 		Scope:   e.scope,
 		Subject: "[Cronomicon] " + e.ownerName + " did not run",
 		Detail: fmt.Sprintf("Schedule %q expected a run at %s and none appeared. "+
@@ -530,7 +586,7 @@ func (s *Scheduler) recordMissedFire(ctx context.Context, e detectionEntry, t ti
 // recordMissedWorkflowFire is recordMissedFire's workflow arm (FX-B3): the same
 // durable marker and the same alert, written to workflow_runs.
 func (s *Scheduler) recordMissedWorkflowFire(ctx context.Context, e detectionEntry, t time.Time) {
-	err := s.recordWorkflowSuppression(ctx, e.ownerSource, e.ownerName, e.name, skipRecord{
+	err := s.recordWorkflowSuppression(ctx, e.ownerUID, e.ownerSource, e.ownerName, e.name, skipRecord{
 		Reason: reasonMissedFire,
 		Mode:   dedupeEpisodeReason,
 		At:     t.UTC().Format(time.RFC3339),
@@ -542,20 +598,26 @@ func (s *Scheduler) recordMissedWorkflowFire(ctx context.Context, e detectionEnt
 	s.log.Warn("sla: expected workflow fire did not happen",
 		"workflow", e.ownerName, "source", e.ownerSource, "schedule", e.name, "expected", t.Format(time.RFC3339))
 	s.raiseAlert(ctx, notify.AlertEvent{
-		Trigger:   notify.TriggerMissedRun,
-		JobName:   e.ownerName,
-		OwnerKind: "workflow",
-		Subject:   "[Cronomicon] workflow " + e.ownerName + " did not run",
+		Trigger:     notify.TriggerMissedRun,
+		JobName:     e.ownerName,
+		WorkflowUID: e.ownerUID, // its agency, for AL-1 (2.5.0 C4)
+		OwnerKind:   "workflow",
+		Subject:     "[Cronomicon] workflow " + e.ownerName + " did not run",
 		Detail: fmt.Sprintf("Workflow schedule %q expected a run at %s and none appeared. "+
 			"No calendar or pause suppression was recorded to explain it.",
 			e.name, t.In(s.location()).Format(time.RFC3339)),
 	}, "Missed run", "missed")
 }
 
-func (s *Scheduler) runTypeOf(ctx context.Context, source, name string) string {
+func (s *Scheduler) runTypeOf(ctx context.Context, uid, source, name string) string {
+	// By the identity where the caller has one: two agencies' jobs of one name
+	// need not be of one run type.
+	q, args := `SELECT run_type FROM jobs WHERE source = ? AND name = ?`, []any{source, name}
+	if uid != "" {
+		q, args = `SELECT run_type FROM jobs WHERE uid = ?`, []any{uid}
+	}
 	var rt string
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT run_type FROM jobs WHERE source = ? AND name = ?`, source, name).Scan(&rt); err != nil || rt == "" {
+	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&rt); err != nil || rt == "" {
 		return "bash"
 	}
 	return rt

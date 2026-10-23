@@ -66,9 +66,9 @@ func TestRunsListBuildsOneRedactorPerScope(t *testing.T) {
 
 	builds := 0
 	orig := newRunRedactor
-	newRunRedactor = func(ctx context.Context, d *sql.DB, cfg *config.Config, scope string, extra ...string) (*runner.Redactor, error) {
+	newRunRedactor = func(ctx context.Context, d *sql.DB, cfg *config.Config, scope string, agencies []string, extra ...string) (*runner.Redactor, error) {
 		builds++
-		return orig(ctx, d, cfg, scope, extra...)
+		return orig(ctx, d, cfg, scope, agencies, extra...)
 	}
 	t.Cleanup(func() { newRunRedactor = orig })
 
@@ -79,6 +79,7 @@ func TestRunsListBuildsOneRedactorPerScope(t *testing.T) {
 	req = req.WithContext(auth.WithIdentity(req.Context(), auth.Identity{
 		Roles:         []string{"admin"},
 		AllowedScopes: []string{auth.AllScopes},
+		Grants:        []auth.RoleGrant{{Role: "admin", Scopes: []string{auth.AllScopes}}},
 	}))
 	w := httptest.NewRecorder()
 	s.listRuns(w, req)

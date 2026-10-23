@@ -2,6 +2,9 @@ package settings
 
 import (
 	"context"
+	"database/sql"
+	"github.com/ResetSmith/cronomicon/internal/db"
+	"path/filepath"
 	"testing"
 )
 
@@ -107,23 +110,6 @@ func TestShadowFindingsCoversVariablesToo(t *testing.T) {
 	}
 }
 
-// TestPreflightCarriesShadowFindings — the report an operator reads before a
-// tightening must also show the rows whose resolution is ALREADY ambiguous, or
-// they review membership against a catalogue they cannot see clearly.
-func TestPreflightCarriesShadowFindings(t *testing.T) {
-	pool, exec := preflightDB(t)
-	const now = "2026-01-01T00:00:00Z"
-	exec(`INSERT INTO secrets(id, key, scope, source, created_at) VALUES('s-prod','TOKEN','prod','stored',?)`, now)
-
-	rep, err := AgencyPreflight(context.Background(), pool)
-	if err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	if len(rep.ShadowFindings) != 1 {
-		t.Fatalf("preflight shadowFindings = %+v, want 1", rep.ShadowFindings)
-	}
-}
-
 // TestAmbiguitiesReportsMultiOwnerNames is RA-18's authoring-time warning: the
 // operator must meet a cross-department ambiguity in a REPORT, not as a run that
 // refuses to start. The likeliest victim is an unrestricted admin's ad-hoc run,
@@ -198,4 +184,44 @@ func TestAmbiguitiesEmptyOnASharedCatalogue(t *testing.T) {
 	if len(got) != 0 {
 		t.Errorf("expected no ambiguities on an unowned catalogue, got %+v", got)
 	}
+}
+
+// preflightDB is the two-department fixture these reports are tested on. (It is
+// named for the agency preflight report it was written for, removed in v2.3.0.)
+func preflightDB(t *testing.T) (*sql.DB, func(string, ...any)) {
+	t.Helper()
+	pool, err := db.Open(filepath.Join(t.TempDir(), "preflight.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { pool.Close() })
+	if err := db.Migrate(pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	const now = "2026-01-01T00:00:00Z"
+	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-dss','DSS',?)`, now)
+	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-nwd','NWD',?)`, now)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc-prod','prod','cronomicon',?)`, now)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc-dev','dev','cronomicon',?)`, now)
+	exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES('sc-prod','ag-dss')`)
+	exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES('sc-dev','ag-nwd')`)
+	exec(`INSERT INTO jobs(source, name, run_type, command, scope, synced_at) VALUES('cronomicon','prod-job','bash','true','prod',?)`, now)
+	exec(`INSERT INTO jobs(source, name, run_type, command, scope, synced_at) VALUES('cronomicon','dev-job','bash','true','dev',?)`, now)
+	exec(`INSERT INTO secrets(id, key, source, created_at) VALUES('s-global','TOKEN','stored',?)`, now)
+	exec(`INSERT INTO ssh_credentials(id, label, source, created_at, last_modified_at) VALUES('k1','deploy_key','stored',?,?)`, now, now)
+	bind := func(job, kind, name string) {
+		exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_by, created_at)
+		      VALUES('job','cronomicon',?,?,?,'seed',?)`, job, kind, name, now)
+	}
+	bind("prod-job", "secret", "TOKEN")
+	bind("dev-job", "secret", "TOKEN")
+	bind("prod-job", "key", "deploy_key")
+	bind("dev-job", "key", "deploy_key")
+	return pool, exec
 }

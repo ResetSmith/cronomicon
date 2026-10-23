@@ -140,7 +140,7 @@ func TestSyncCalendarValidationRefusals(t *testing.T) {
 	seedTestCalendar(t, pool, "holidays", false)
 	seedTestCalendar(t, pool, "freeze", true)
 
-	known, global, err := calendar.LoadFlags(context.Background(), pool)
+	known, global, err := calendar.LoadFlagsFor(context.Background(), pool, "global")
 	if err != nil {
 		t.Fatalf("load flags: %v", err)
 	}

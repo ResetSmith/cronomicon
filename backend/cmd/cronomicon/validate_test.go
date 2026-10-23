@@ -114,4 +114,30 @@ func TestValidatePaths(t *testing.T) {
 			t.Fatalf("want the broken job named in stderr, got %q", errOut.String())
 		}
 	})
+
+	// -agency (2.4.0, GR-14): what the checkout is. A reference the checkout
+	// does not have is an error either way (§0a, IN-8); `-library`, which
+	// looked in a checkout of Global's repository too, is gone.
+	t.Run("agency", func(t *testing.T) {
+		repo := t.TempDir()
+		writeFixture(t, filepath.Join(repo, "inventory", "fin.ini"), "[web]\nhost1\n")
+		writeFixture(t, filepath.Join(repo, "jobs", "borrows.yaml"),
+			"apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: borrows\nspec:\n  script_ref: global-script\n  scope: fin\n")
+		for _, c := range []struct {
+			args []string
+			code int
+			says string
+		}{
+			{[]string{repo}, 1, `script_ref "global-script" does not resolve`},
+			{[]string{"-agency", repo}, 1, `script_ref "global-script" does not resolve`},
+			{[]string{"-library", repo, repo}, 2, "usage:"}, // the flag is gone
+			{[]string{"-no-such-flag", repo}, 2, "usage:"},
+		} {
+			var out, errOut bytes.Buffer
+			code := validatePaths(c.args, &out, &errOut)
+			if code != c.code || !strings.Contains(out.String()+errOut.String(), c.says) {
+				t.Errorf("validate %v = %d, want %d saying %q\nstdout=%q\nstderr=%q", c.args, code, c.code, c.says, out.String(), errOut.String())
+			}
+		}
+	})
 }

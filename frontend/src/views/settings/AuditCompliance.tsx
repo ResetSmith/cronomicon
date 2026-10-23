@@ -25,6 +25,7 @@ const DEFAULT_DAYS: RetentionDays = {
   runnerPlacementHistory: 30,
   archivedLogFiles: 0,
   hostKeyLedger: 365,
+  secretUses: 365,
 };
 
 // Ordered runs → audit → disk, which is roughly increasing blast radius.
@@ -38,7 +39,7 @@ const RETENTION_FIELDS: { k: keyof RetentionDays; label: string; hint: string }[
   { k: "activity", label: "Activity Log", hint: "How long an entry stays in the Activity feed." },
   { k: "workflowRuns", label: "Workflow Runs", hint: "How long a workflow's own run record is kept. The job runs inside it follow Run History." },
   { k: "changeLog", label: "Change Log", hint: "Who changed what, and when. Sign-in events are kept for the same window." },
-  { k: "schedulePushes", label: "Schedule Pushes", hint: "How long the record of each schedule published to GitLab is kept." },
+  { k: "schedulePushes", label: "Schedule Pushes", hint: "How long the record of each schedule published to its repository is kept." },
   {
     k: "logFiles",
     label: "Run Log Files",
@@ -73,6 +74,11 @@ const RETENTION_FIELDS: { k: keyof RetentionDays; label: string; hint: string }[
     k: "hostKeyLedger",
     label: "Host Key History",
     hint: "How long a rejected, removed or replaced runner host key stays on record. A key a runner currently trusts is never pruned, whatever this is set to.",
+  },
+  {
+    k: "secretUses",
+    label: "Secret Use Records",
+    hint: "How long the record of which runs used which stored secret and SSH key is kept: what each agency's Usage view and secrets report show. Its own window, so an agency can review who used a secret long after the runs themselves are gone.",
   },
 ];
 
@@ -145,15 +151,34 @@ const EVENT_TYPES: { k: EventType; l: string }[] = [
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 
-// `canWrite` — global administrator for configureApp (GC, v2.2.2): both the
-// retention PUT and GET /audit/export (the whole installation's history) are
-// install-wide. An administrator of one agency reads the windows and finds Save
-// and Export disabled with the reason.
+// Audit & Compliance, the Installation group's: the retention windows (an
+// installation setting, a global administrator's) and the export of the whole
+// installation's trail. `canWrite` is configureApp everywhere.
 export function AuditComplianceSection({ canWrite }: { canWrite: boolean }) {
-  const why = globalOnly(canWrite);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <RetentionCard canWrite={canWrite} />
+      <AuditExportCard everything={canWrite} />
+    </div>
+  );
+}
+
+// Audit Export, the Agency group's (2.5.0 C7; C1, CF-5): an agency's
+// administrator exports the rows of the agencies they administer. The server
+// decides what the file holds (GET /audit/export): every agency's rows and the
+// sign-in events for a global administrator, the administered agencies' rows
+// and no sign-in events for anyone else, whatever agency is in use.
+export function AuditExportSection() {
+  return <AuditExportCard everything={false} />;
+}
+
+function AuditExportCard({ everything }: { everything: boolean }) {
+  // Sign-in events are a global administrator's alone: not offered to anyone
+  // else, whose export the server leaves them out of.
+  const types = everything ? EVENT_TYPES : EVENT_TYPES.filter((e) => e.k !== "authEvents");
   const [from, setFrom] = useState(isoDate(new Date(Date.now() - 30 * 86400000)));
   const [to, setTo] = useState(isoDate(new Date()));
-  const [eventTypes, setEventTypes] = useState<EventType[]>(EVENT_TYPES.map((e) => e.k));
+  const [eventTypes, setEventTypes] = useState<EventType[]>(types.map((e) => e.k));
   const [format, setFormat] = useState<"csv" | "json">("csv");
   const [exporting, setExporting] = useState(false);
   const [exportErr, setExportErr] = useState<string | null>(null);
@@ -194,11 +219,11 @@ export function AuditComplianceSection({ canWrite }: { canWrite: boolean }) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <RetentionCard canWrite={canWrite} />
       <Card title="Audit Export">
         <div style={{ fontSize: c.fontSm, color: c.textSec, marginBottom: 14, lineHeight: 1.6 }}>
-          Export the audit trail for a date range. The file downloads as soon as it is ready.
+          {everything
+            ? "Export the audit trail for a date range. The file downloads as soon as it is ready."
+            : "Export the audit trail of the agencies you administer, for a date range: every agency you administer, whichever you are working in. Sign-in events are a global administrator's. The file downloads as soon as it is ready."}
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
@@ -215,7 +240,7 @@ export function AuditComplianceSection({ canWrite }: { canWrite: boolean }) {
         <div style={{ marginBottom: 14 }}>
           <div style={lblStyle()}>Event Types</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {EVENT_TYPES.map(({ k, l }) => (
+            {types.map(({ k, l }) => (
               <Chip key={k} label={l} on={eventTypes.includes(k)} onClick={() => toggleType(k)} />
             ))}
           </div>
@@ -245,13 +270,12 @@ export function AuditComplianceSection({ canWrite }: { canWrite: boolean }) {
               </div>
             ))}
           </div>
-          <Btn primary onClick={doExport} disabled={exporting || !!why} title={why || undefined}>
+          <Btn primary onClick={doExport} disabled={exporting}>
             {exporting ? "Preparing…" : "Export Audit Trail"}
           </Btn>
           {exportedAt && <span style={{ fontSize: c.fontSm, color: c.success, fontWeight: 600 }}>✓ Export downloaded at {exportedAt}</span>}
           {exportErr && <span style={{ fontSize: c.fontSm, color: c.danger }}>Export failed: {exportErr}</span>}
         </div>
       </Card>
-    </div>
   );
 }

@@ -170,25 +170,27 @@ func TestFireWorkflowHonorsWfSentinelPause(t *testing.T) {
 
 	s := New(pool, quietLog(), nil)
 	var fired []string
-	s.SetWorkflowFirer(func(_ context.Context, _ string, name, _, _ string) { fired = append(fired, name) })
+	s.SetWorkflowFirer(func(_ context.Context, f WorkflowFire) { fired = append(fired, f.Name) })
 
-	s.fireWorkflow("git", "wf1", "default", "") // disabled via pause row → skip
-	s.fireWorkflow("git", "wf2", "default", "") // enabled → fire
+	s.fireWorkflow("", "git", "wf1", "default", "") // disabled via pause row → skip
+	s.fireWorkflow("", "git", "wf2", "default", "") // enabled → fire
 
 	if len(fired) != 1 || fired[0] != "wf2" {
 		t.Errorf("fired = %v, want [wf2] (wf1 paused via owner_kind=workflow row)", fired)
 	}
 }
 
-// TestReloadIfChangedGatesOnSHA checks that ReloadIfChanged gates on both
-// the synced SHA and the database-level definition fingerprint.
-func TestReloadIfChangedGatesOnSHA(t *testing.T) {
+// TestReloadIfChangedGatesOnTheGeneration checks that ReloadIfChanged gates on
+// both the definitions generation (a counter every repository's sync advances;
+// it was the one repository's commit until 2.4.0, GR-29) and the database-level
+// definition fingerprint.
+func TestReloadIfChangedGatesOnTheGeneration(t *testing.T) {
 	pool := mustPool(t)
 	ctx := context.Background()
 	seedJobRow(t, pool, "j", 1)
 	seedSchedule(t, pool, "job", "j", "default", "0 2 * * *", 0)
-	if _, err := pool.ExecContext(ctx, `INSERT INTO git_sync_state (id, last_sha) VALUES (1, 'sha1')`); err != nil {
-		t.Fatalf("sync state: %v", err)
+	if _, err := pool.ExecContext(ctx, `UPDATE definitions_generation SET n = 7 WHERE id = 1`); err != nil {
+		t.Fatalf("generation: %v", err)
 	}
 
 	s := New(pool, quietLog(), nil)
@@ -202,26 +204,43 @@ func TestReloadIfChangedGatesOnSHA(t *testing.T) {
 		t.Fatalf("reload count = %d, want 1", s.reloads)
 	}
 
-	// 1. Same SHA, same DB: must be a no-op.
-	s.ReloadIfChanged(ctx, "sha1")
+	// 1. Same generation, same DB: must be a no-op.
+	s.ReloadIfChanged(ctx, "7")
 	if s.reloads != 1 {
-		t.Fatalf("same-SHA + same-DB reloaded (count = %d, want 1)", s.reloads)
+		t.Fatalf("same-generation + same-DB reloaded (count = %d, want 1)", s.reloads)
 	}
 
-	// 2. Same SHA, changed DB: must reload.
+	// 2. Same generation, changed DB: must reload.
 	seedSchedule(t, pool, "job", "j", "extra", "0 */6 * * *", 1)
-	s.ReloadIfChanged(ctx, "sha1")
+	s.ReloadIfChanged(ctx, "7")
 	if s.reloads != 2 {
-		t.Fatalf("same-SHA + changed-DB did not reload (count = %d, want 2)", s.reloads)
+		t.Fatalf("same-generation + changed-DB did not reload (count = %d, want 2)", s.reloads)
 	}
 	if n := len(s.cr.Entries()); n != 2 {
 		t.Fatalf("after DB-change reload: %d entries, want 2", n)
 	}
 
-	// 3. Changed SHA, same DB: must reload.
-	s.ReloadIfChanged(ctx, "sha2")
+	// 3. A sync of ANY repository advanced the generation, same DB: must reload.
+	// (What Global's last commit is has nothing to do with it: an agency's
+	// repository syncs at commits of its own.)
+	if _, err := pool.ExecContext(ctx, `UPDATE definitions_generation SET n = n + 1 WHERE id = 1`); err != nil {
+		t.Fatalf("generation: %v", err)
+	}
+	s.ReloadIfChanged(ctx, "8")
 	if s.reloads != 3 {
-		t.Fatalf("changed-SHA + same-DB did not reload (count = %d, want 3)", s.reloads)
+		t.Fatalf("an advanced generation + same-DB did not reload (count = %d, want 3)", s.reloads)
+	}
+	// And the backstop, which reads the generation itself, now finds nothing to do.
+	s.ReloadIfChanged(ctx, s.currentGeneration(ctx))
+	if s.reloads != 3 {
+		t.Fatalf("the backstop reloaded with nothing changed (count = %d, want 3)", s.reloads)
+	}
+	if _, err := pool.ExecContext(ctx, `UPDATE git_repos SET last_sha = 'another-commit' WHERE id = 'global'`); err != nil {
+		t.Fatal(err)
+	}
+	s.ReloadIfChanged(ctx, s.currentGeneration(ctx))
+	if s.reloads != 3 {
+		t.Fatalf("a changed commit of Global's, with the generation unchanged, reloaded (count = %d, want 3)", s.reloads)
 	}
 }
 

@@ -17,7 +17,7 @@ type Script = components["schemas"]["Script"];
 // via GET /scripts/{name}, or marks it "missing" when the script was deleted (§2.5).
 //
 // `onResolved` lifts the resolved Script object to the Composer so its downstream
-// derivation (runType → executor lock, lint warnings, declared-variable hints)
+// derivation (run type, lint warnings, declared-variable hints)
 // reads the selection without a second fetch.
 export function ScriptPicker({
   value,
@@ -83,7 +83,7 @@ export function ScriptPicker({
 
   const selected = resolved?.name === value ? resolved : null;
 
-  // Lift the resolved selection to the parent (drives runType/executor, lint, vars).
+  // Lift the resolved selection to the parent (drives the run type, lint, vars).
   useEffect(() => {
     onResolved?.(selected);
     // eslint-disable-next-line react-hooks/exhaustive-deps

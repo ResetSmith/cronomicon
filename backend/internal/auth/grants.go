@@ -1,134 +1,23 @@
 package auth
 
-import (
-	"context"
-	"database/sql"
-	"sort"
-)
+import "sort"
 
 // Grant resolution (RB-13, the rbac-update plan Phase 2).
 //
-// AUTHORITATIVE since the RB-15 switch (v0.56.5): ResolveGrants runs at login,
-// the result rides Identity.Grants, and every authorization decision —
-// Identity.Can/CanAnywhere/CanUnbound/CanAgency — reads those grants. Roles and
-// AllowedScopes are DERIVED unions kept for display and visibility. This is the
-// single resolver (the legacy pair rolesForGroups + ResolveAllowedScopes is
-// retired from the login path; the scope half is deleted); V2-5, if built,
-// extends this function rather than adding a second.
+// AUTHORITATIVE since the RB-15 switch (v0.56.5): every authorization decision —
+// Identity.Can/CanAnywhere/CanUnbound/CanAgency — reads the grants an Identity
+// carries, and Roles and AllowedScopes are DERIVED unions kept for display and
+// visibility. Until v2.3.0 those grants were resolved once, at login, and rode
+// the session cookie; they are resolved per request now (LR-78, snapshot.go).
+// expandGrants below is the single definition of what a grant row grants; V2-5,
+// if built, extends it rather than adding a second. The loader and ResolveGrants
+// are in snapshot.go.
 
-// AgencyScopes returns the scope NAMES belonging to an agency. It is the inverse
-// of execspec.ScopeAgencies, and it is the expansion that lets a grant be authored
-// on an agency and evaluated on a scope: add a scope to Tax next month and every
-// Tax grant covers it with no grant edit.
-//
-// Written here rather than as a second join in the resolver so there is one
-// definition of "what is in this agency" on the read side.
-func AgencyScopes(ctx context.Context, db *sql.DB, agencyIDs []string) (map[string][]string, error) {
-	out := map[string][]string{}
-	if len(agencyIDs) == 0 {
-		return out, nil
-	}
-	args := make([]any, len(agencyIDs))
-	ph := make([]byte, 0, len(agencyIDs)*2)
-	for i, a := range agencyIDs {
-		args[i] = a
-		if i > 0 {
-			ph = append(ph, ',')
-		}
-		ph = append(ph, '?')
-	}
-	rows, err := db.QueryContext(ctx, `
-		SELECT sa.agency_id, s.name
-		FROM scope_agencies sa
-		JOIN scopes s ON s.id = sa.scope_id
-		WHERE sa.agency_id IN (`+string(ph)+`)
-		ORDER BY s.name`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var agencyID, scope string
-		if err := rows.Scan(&agencyID, &scope); err != nil {
-			return nil, err
-		}
-		out[agencyID] = append(out[agencyID], scope)
-	}
-	return out, rows.Err()
-}
-
-// ResolveGrants resolves a user's AD groups to their grants, expanding each
-// agency-shaped grant to the scopes in that agency.
-//
-// Group matching is EXACT, mirroring rolesForGroups: ad_group is plain TEXT with
-// no COLLATE NOCASE and the claim is trimmed but not case-folded, so a mapping
-// stored in a different case grants nothing at login. Folding case here would make
-// grants resolve differently from roles on the same request, which is worse than
-// the existing inconsistency.
-//
-// Expansion happens HERE, at login, not per request (RB-Q10): a per-request
-// expansion puts a scope_agencies join on every authorized call, and login-time
-// expansion is what ResolveAllowedScopes already does. The cost is that adding a
-// scope to an agency does not reach live sessions — paid for by bumping the
-// session epoch on scope_agencies writes, which is the same machinery every other
-// RBAC change uses.
-func ResolveGrants(ctx context.Context, db *sql.DB, groups []string) ([]RoleGrant, error) {
-	if len(groups) == 0 {
-		return nil, nil
-	}
-	args := make([]any, len(groups))
-	ph := make([]byte, 0, len(groups)*2)
-	for i, g := range groups {
-		args[i] = g
-		if i > 0 {
-			ph = append(ph, ',')
-		}
-		ph = append(ph, '?')
-	}
-	rows, err := db.QueryContext(ctx, `
-		SELECT role, COALESCE(agency_id,''), all_scopes
-		FROM access_grants
-		WHERE ad_group IN (`+string(ph)+`)`, args...)
-	if err != nil {
-		return nil, err
-	}
-	type raw struct {
-		role, agencyID string
-		all            bool
-	}
-	var rawGrants []raw
-	agencySet := map[string]bool{}
-	for rows.Next() {
-		var r raw
-		var all int
-		if err := rows.Scan(&r.role, &r.agencyID, &all); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		r.role = CanonRole(r.role)
-		r.all = all != 0
-		rawGrants = append(rawGrants, r)
-		if r.agencyID != "" {
-			agencySet[r.agencyID] = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close() // close BEFORE the expansion query — the pool deadlocks on a
-	// query issued inside an open cursor (db.maxOpenConns).
-
-	agencyIDs := make([]string, 0, len(agencySet))
-	for a := range agencySet {
-		agencyIDs = append(agencyIDs, a)
-	}
-	sort.Strings(agencyIDs)
-	expanded, err := AgencyScopes(ctx, db, agencyIDs)
-	if err != nil {
-		return nil, err
-	}
-
+// expandGrants turns access_grants rows into the grants an Identity carries:
+// deduplicated, each agency-shaped grant expanded to that agency's scopes, in a
+// stable order. It is the ONE definition of that step: the per-request snapshot
+// and ResolveGrants both end here (snapshot.go).
+func expandGrants(rawGrants []grantRow, scopesOf func(agencyID string) []string) []RoleGrant {
 	// Deduplicate: two groups mapped to the same (role, where) is one grant.
 	seen := map[string]bool{}
 	var out []RoleGrant
@@ -146,7 +35,7 @@ func ResolveGrants(ctx context.Context, db *sql.DB, groups []string) ([]RoleGran
 			g.Scopes = []string{AllScopes}
 		} else {
 			g.Agency = r.agencyID
-			g.Scopes = expanded[r.agencyID]
+			g.Scopes = scopesOf(r.agencyID)
 			// An agency with no scopes yet grants nothing. That is correct rather
 			// than "everything": an empty MEMBERSHIP set on an entity means "no
 			// restriction" (AG-Q1(b)), but an empty grant means zero access (A5).
@@ -163,7 +52,7 @@ func ResolveGrants(ctx context.Context, db *sql.DB, groups []string) ([]RoleGran
 		}
 		return out[i].Agency < out[j].Agency
 	})
-	return out, nil
+	return out
 }
 
 // WithBootstrapGrant adds the break-glass grant when the bootstrap admin floor

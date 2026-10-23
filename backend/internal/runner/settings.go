@@ -42,32 +42,17 @@ func parseManagedSettings(raw string) (runnerproto.PollSettingsValues, error) {
 	return v, nil
 }
 
-// effectiveClaimCaps subtracts a capability mask from a runner's declared
-// capability tokens — the server-side enforcement of the subtract-only mask.
-// Order-preserving; a nil/empty mask returns caps unchanged.
-func effectiveClaimCaps(caps []string, mask []string) []string {
-	if len(mask) == 0 {
-		return caps
-	}
-	masked := make(map[string]bool, len(mask))
-	for _, m := range mask {
-		masked[m] = true
-	}
-	out := make([]string, 0, len(caps))
-	for _, c := range caps {
-		if !masked[c] {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
 // validateAndNormalize checks an incoming managed-settings object and returns
 // its canonical JSON for storage. An all-empty object stores as "" (NULL) so
 // the poll layer reports "no server opinion".
 func validateAndNormalize(v runnerproto.PollSettingsValues) (string, error) {
 	if v.MaxConcurrent != nil && *v.MaxConcurrent <= 0 {
 		return "", fmt.Errorf("maxConcurrent must be > 0")
+	}
+	if p := v.PollIntervalSeconds; p != nil &&
+		(*p < runnerproto.MinManagedPollIntervalSeconds || *p > runnerproto.MaxManagedPollIntervalSeconds) {
+		return "", fmt.Errorf("pollIntervalSeconds must be between %d and %d (a runner that has not polled for two minutes is shown as degraded)",
+			runnerproto.MinManagedPollIntervalSeconds, runnerproto.MaxManagedPollIntervalSeconds)
 	}
 	trimEmpty := func(p *string, name string) error {
 		if p != nil && strings.TrimSpace(*p) == "" {
@@ -100,7 +85,7 @@ func validateAndNormalize(v runnerproto.PollSettingsValues) (string, error) {
 	// All-nil ⇒ no opinion; store NULL.
 	if v.MaxConcurrent == nil && v.SandboxMemoryMax == nil && v.SandboxCPUQuota == nil &&
 		v.SandboxTasksMax == nil && v.AllowCheckout == nil && v.CheckoutRepos == nil &&
-		len(v.CapabilityMask) == 0 {
+		len(v.CapabilityMask) == 0 && v.PollIntervalSeconds == nil {
 		return "", nil
 	}
 	b, err := json.Marshal(v)
@@ -169,7 +154,7 @@ func (s *Service) HandleUpdateRunnerSettings(w http.ResponseWriter, r *http.Requ
 	}
 
 	if idn, ok := auth.IdentityFrom(r.Context()); ok {
-		_ = settings.WriteChangeLog(r.Context(), s.db, idn.Email, "Runners", "settings updated",
+		_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "runners", "owner_agency", runnerID), idn.Email, "Runners", "settings updated",
 			name, fmt.Sprintf("version %d", newVersion))
 	}
 

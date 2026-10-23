@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -101,7 +100,11 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 	// rather than resolved on independent axes — that independence is what produced
 	// the cross-product leak. A failure fails the login: continuing would mint an
 	// identity with no grants, which after the switch means zero authority.
-	grants, err := ResolveGrants(ctx, s.db, cl.Groups)
+	//
+	// LR-78: the grants resolved here are for the login record and to fail a
+	// login the server could not authorise. They are NOT stored in the cookie;
+	// every later request resolves its own.
+	grants, err := s.grantsFor(ctx, cl.Groups)
 	if err != nil {
 		s.log.Error("grant resolution failed", "error", err)
 		s.auditLoginFailed(ctx, r, "grant_resolution_failed")
@@ -226,20 +229,48 @@ func (s *Service) RecentLogins(w http.ResponseWriter, r *http.Request) {
 	// Agency NAMES are resolved once, up front, rather than per row: the ids on a
 	// grant are meaningless to a reader, and a per-row lookup would put a query
 	// inside this loop for a table that is two dozen rows at most.
-	agencyNames, err := agencyNameByID(r.Context(), s.db)
+	//
+	// LR-78: both come from the grant snapshot, one read for the whole list. This
+	// loop issued two queries per row before v2.3.0.
+	snap, err := s.snapshot(r.Context())
 	if err != nil {
-		httpx.Fail(w, http.StatusInternalServerError, "query_failed", "could not read agencies")
+		httpx.Fail(w, http.StatusInternalServerError, "role_resolution_failed", "could not resolve roles")
 		return
 	}
-	for i := range out {
-		grants, err := ResolveGrants(r.Context(), s.db, out[i].Groups)
-		if err != nil {
-			httpx.Fail(w, http.StatusInternalServerError, "role_resolution_failed", "could not resolve roles")
-			return
-		}
-		out[i].Grants = grantViews(grants, agencyNames)
+	// Who reads which (2.5.0 C2, the owner's answer to question 68): a global
+	// administrator for manageRoles reads every row; an agency's administrator
+	// the people whose grants name an agency they administer, with only those
+	// grants and no groups (another agency's group names are its content);
+	// anyone else nothing. Every signed-in session read every row before.
+	caller, _ := IdentityFrom(r.Context())
+	everywhere := caller.GlobalAdmin(PermManageRoles)
+	mine := map[string]bool{}
+	for _, a := range caller.AgenciesFor(PermManageRoles) {
+		mine[a] = true
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+	if !everywhere && len(mine) == 0 {
+		httpx.Fail(w, http.StatusForbidden, "forbidden", "insufficient permissions: manageRoles is required")
+		return
+	}
+	kept := out[:0]
+	for _, lr := range out {
+		grants := snap.resolve(lr.Groups)
+		if !everywhere {
+			var own []RoleGrant
+			for _, g := range grants {
+				if !g.Unrestricted() && mine[g.Agency] {
+					own = append(own, g)
+				}
+			}
+			if len(own) == 0 {
+				continue
+			}
+			grants, lr.Groups = own, []string{}
+		}
+		lr.Grants = grantViews(grants, snap.agencyNames)
+		kept = append(kept, lr)
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": kept})
 }
 
 // recordLogin upserts the Honest-View row (A3.2): first_seen_at is preserved,
@@ -302,24 +333,6 @@ type grantView struct {
 	// differently — an unrestricted grant is the one worth auditing first, and a
 	// sentinel string sorts in among real department names.
 	AllScopes bool `json:"allScopes"`
-}
-
-// agencyNameByID loads the agency id → name map used to render grants.
-func agencyNameByID(ctx context.Context, db *sql.DB) (map[string]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id, name FROM agencies`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]string{}
-	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
-			return nil, err
-		}
-		out[id] = name
-	}
-	return out, rows.Err()
 }
 
 // grantViews renders a resolved grant set for display. ResolveGrants has already

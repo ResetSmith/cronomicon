@@ -109,7 +109,7 @@ func TestUIDRuleStillFiresForAnAlertWithNoRun(t *testing.T) {
 	d.sendEmail = func(SMTP, []string, string, string) error { sent++; return nil }
 	if err := d.dispatch(t.Context(), dispatchEvent{
 		jobName: "nightly", matchKey: TriggerMissedRun, isRunOutcome: false,
-		subject: "missed", body: "no run appeared",
+		render: fixed("missed", "no run appeared"),
 	}); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}

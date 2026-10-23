@@ -3,6 +3,7 @@ package agent
 import (
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/runnerproto"
 )
@@ -61,6 +62,21 @@ func (s *settingsStore) maxConcurrent(local int) int {
 	defer s.mu.RUnlock()
 	if s.vals.MaxConcurrent != nil && *s.vals.MaxConcurrent > 0 {
 		return *s.vals.MaxConcurrent
+	}
+	return local
+}
+
+// pollInterval returns the effective poll cadence: the managed override when
+// set (and positive), else the local declared value (2.3.2). The server bounds
+// what an operator may set; the agent takes what it is sent.
+func (s *settingsStore) pollInterval(local time.Duration) time.Duration {
+	if s == nil {
+		return local
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if p := s.vals.PollIntervalSeconds; p != nil && *p > 0 {
+		return time.Duration(*p) * time.Second
 	}
 	return local
 }

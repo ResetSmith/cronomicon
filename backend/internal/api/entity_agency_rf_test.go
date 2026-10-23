@@ -30,10 +30,11 @@ func TestSSHKeyUpdateIsDepartmental(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-fin','Finance','2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO ssh_credentials (id,label,source,created_at,last_modified_at)
-	      VALUES ('k-own','key-own','stored','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO ssh_credentials (id,label,source,created_at,last_modified_at)
-	      VALUES ('k-fin','key-fin','stored','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
+	// Each key OWNED by its department (2.5.1 SG-42: the owner decides).
+	exec(`INSERT INTO ssh_credentials (id,label,source,owner_agency,created_at,last_modified_at)
+	      VALUES ('k-own','key-own','stored','ag:prod','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO ssh_credentials (id,label,source,owner_agency,created_at,last_modified_at)
+	      VALUES ('k-fin','key-fin','stored','ag-fin','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES ('k-own','ag:prod')`)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES ('k-fin','ag-fin')`)
 
@@ -44,16 +45,18 @@ func TestSSHKeyUpdateIsDepartmental(t *testing.T) {
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/ssh/credentials/k-own", "sec-admins", body); rec.Code == http.StatusForbidden {
 		t.Fatalf("update of an own-agency key = 403, want the gate to pass (%s)", rec.Body.String())
 	}
+	// Another department's key is not the caller's to read: refused with the 404
+	// (2.5.1 question 140), never a 403 that says whose it is.
 	finBody := `{"label":"key-fin","source":"stored","material":"rotated"}`
-	if rec := reqAs(t, h, http.MethodPut, "/api/v1/ssh/credentials/k-fin", "sec-admins", finBody); rec.Code != http.StatusForbidden {
-		t.Errorf("update of ANOTHER department's key material = %d, want 403 — this is the "+
+	if rec := reqAs(t, h, http.MethodPut, "/api/v1/ssh/credentials/k-fin", "sec-admins", finBody); rec.Code != http.StatusNotFound {
+		t.Errorf("update of ANOTHER department's key material = %d, want 404 — this is the "+
 			"route RB-16 was about and the one v0.56.6 left open", rec.Code)
 	}
 
 	// Tags sit beside the material and now carry the same gate (RF-5).
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/ssh-credential-tags/k-fin", "sec-admins",
-		`{"tags":["x"]}`); rec.Code != http.StatusForbidden {
-		t.Errorf("tagging another department's key = %d, want 403", rec.Code)
+		`{"tags":["x"]}`); rec.Code != http.StatusNotFound {
+		t.Errorf("tagging another department's key = %d, want 404", rec.Code)
 	}
 }
 
@@ -201,7 +204,7 @@ func TestRehomingIsAuthorized(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rec := reqAs(t, h2, http.MethodPut, "/api/v1/secret-agencies", "sec-admins",
-		`[{"id":"`+s2+`","agencyIds":["ag-any"]}]`); rec.Code != http.StatusOK {
+		asRepair(`[{"id":"`+s2+`","agencyIds":["ag-any"]}]`)); rec.Code != http.StatusOK {
 		t.Errorf("unrestricted admin setting membership = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
 }
@@ -276,15 +279,15 @@ func TestRunnerWritesAreDepartmental(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-fin','Finance','2026-01-01T00:00:00Z')`)
-	seedRunner := func(id, name string) {
-		exec(`INSERT INTO runners (id,name,status,registered_at,created_at)
-		      VALUES (?,?,'online','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`, id, name)
+	// A runner belongs to its OWNER since 2.3.0 (LR-59); the serve row follows
+	// from it (migration 1250's trigger).
+	seedRunner := func(id, name, owner string) {
+		exec(`INSERT INTO runners (id,name,status,registered_at,created_at,owner_agency)
+		      VALUES (?,?,'online','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',?)`, id, name, owner)
 	}
-	seedRunner("r-own", "runner-own")
-	seedRunner("r-fin", "runner-fin")
-	seedRunner("r-pool", "runner-pool") // deliberately unmembered: the general pool
-	exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES ('r-own','ag:prod')`)
-	exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES ('r-fin','ag-fin')`)
+	seedRunner("r-own", "runner-own", "ag:prod")
+	seedRunner("r-fin", "runner-fin", "ag-fin")
+	seedRunner("r-pool", "runner-pool", "global") // Global's own: what the general pool became
 
 	// Own agency: the gate lets the request through to the handler. Any non-403 is
 	// a pass — the handler's own outcome (200/404/409) is not what this test is about.
@@ -389,6 +392,7 @@ func TestPerRunReferencesAreDepartmental(t *testing.T) {
 	// would resolve it. Only the actor's grants stand between her and its value.
 	prodSecret := secretID(t, pool, "SEC_PROD")
 	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES (?, 'ag-prod')`, prodSecret)
+	exec(`UPDATE secrets SET owner_agency = 'ag-prod' WHERE id = ?`, prodSecret) // as the write path makes it (§0a: a row Global owns is Global's)
 
 	jobPath := runPath(t, pool, "j-prod")
 
@@ -440,6 +444,7 @@ func TestPerRunReferencesAreDepartmental(t *testing.T) {
 	// variables ship ungated in v0.56.6.
 	exec(`INSERT INTO env_vars (id,key,value,scope,created_at) VALUES ('v-prod','V_PROD','x','prod','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO env_var_agencies (env_var_id, agency_id) VALUES ('v-prod','ag-prod')`)
+	exec(`UPDATE env_vars SET owner_agency = 'ag-prod' WHERE id = 'v-prod'`)
 	if rec := reqAs(t, h, http.MethodPost, jobPath, "alice",
 		`{"references":[{"kind":"var","name":"V_PROD"}]}`); rec.Code != http.StatusForbidden {
 		t.Errorf("attaching a VARIABLE from a department where she lacks manageEnvVars = %d, want 403", rec.Code)
@@ -447,6 +452,7 @@ func TestPerRunReferencesAreDepartmental(t *testing.T) {
 	exec(`INSERT INTO ssh_credentials (id,label,source,created_at,last_modified_at)
 	      VALUES ('k-prod','KEY_PROD','stored','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES ('k-prod','ag-prod')`)
+	exec(`UPDATE ssh_credentials SET owner_agency = 'ag-prod' WHERE id = 'k-prod'`)
 	if rec := reqAs(t, h, http.MethodPost, jobPath, "alice",
 		`{"references":[{"kind":"key","name":"KEY_PROD"}]}`); rec.Code != http.StatusForbidden {
 		t.Errorf("attaching a KEY from a department where she lacks manageEnvVars = %d, want 403", rec.Code)

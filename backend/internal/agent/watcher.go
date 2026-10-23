@@ -236,7 +236,7 @@ func watchIdentity(s runnerproto.WatchSpec) string {
 // next tick retries — an arrival the server never heard about must not be lost
 // because one request failed.
 func (wt *watcher) report(ctx context.Context, ready []sightingOut) {
-	if err := wt.a.client.ReportFileSightings(ctx, wt.a.id, ready); err != nil {
+	if err := wt.a.client.ReportFileSightings(ctx, wt.a.identity(), ready); err != nil {
 		wt.a.log.Warn("file watch: could not report arrivals; will retry", "count", len(ready), "err", err)
 		wt.mu.Lock()
 		for _, s := range ready {

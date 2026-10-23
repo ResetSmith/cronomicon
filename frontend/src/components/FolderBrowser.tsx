@@ -23,6 +23,7 @@ export function FolderBrowser<T>({
   hideBreadcrumbAtRoot = false,
   paginate = false,
   preserveLeafOrder = false,
+  focusName,
 }: {
   items: T[];
   getPath: (t: T) => string;
@@ -49,6 +50,10 @@ export function FolderBrowser<T>({
   // governs browse mode too; folders stay alpha-first either way. Off by
   // default, so a caller that wants the plain tree order is unchanged.
   preserveLeafOrder?: boolean;
+  // The leaf a link asked for (2.5.2 OP-3, by its getName key): the pager opens
+  // on the page that holds it, once, when it appears in the current level. The
+  // caller navigates to its folder; after that the pager is the person's again.
+  focusName?: string;
 }) {
   const root = buildTree(items, getPath, getName);
   const { folders, leaves } = childrenOf(root, path, preserveLeafOrder ? { leafOrder: "input" } : undefined);
@@ -73,8 +78,18 @@ export function FolderBrowser<T>({
   const prevPathRef = useRef(path);
   const pathChanged = prevPathRef.current !== path;
   if (pathChanged) prevPathRef.current = path;
-  const page = pathChanged ? 0 : clampPage(pager.page, total, pager.pageSize);
+  let page = pathChanged ? 0 : clampPage(pager.page, total, pager.pageSize);
   if (pathChanged && pager.page !== 0) pager.setPage(0);
+  // The same during-render correction for a linked leaf, applied once per name.
+  const focusedRef = useRef<string | undefined>(undefined);
+  if (paginate && focusName && focusedRef.current !== focusName) {
+    const at = level.findIndex((e) => e.kind === "leaf" && e.name === focusName);
+    if (at >= 0) {
+      focusedRef.current = focusName;
+      page = Math.floor(at / pager.pageSize);
+      if (pager.page !== page) pager.setPage(page);
+    }
+  }
   const rendered = paginate ? sliceForPage(level, page, pager.pageSize) : level;
   // Suppress the lone redundant root crumb for opted-in catalogs; subfolders
   // always keep the breadcrumb so the navigate-up affordance survives.

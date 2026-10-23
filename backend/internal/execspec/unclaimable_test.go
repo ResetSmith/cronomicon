@@ -55,6 +55,8 @@ func (f *unclaimFixture) runner(id, status string, caps string, agency string, i
 	        VALUES(?,?,?,?,?,'t','t')`, id, id, status, caps, injection)
 	if agency != "" {
 		f.exec(`INSERT INTO runner_agencies(runner_id,agency_id) VALUES(?,?)`, id, agency)
+		// Owned by it, as an agent enrolled for it is (§0a: its owner's work only).
+		f.exec(`UPDATE runners SET owner_agency = ? WHERE id = ?`, agency, id)
 	}
 }
 
@@ -127,10 +129,23 @@ func TestUnclaimableReasonExplainsTheUnboundTrap(t *testing.T) {
 	f.seedRun("run-unbound", "ansible", `[]`, "")
 	f.runner("r-dept", "online", `["ansible"]`, "a1", 1) // every runner is departmental
 
+	// Since 2.4.0 (§0a) such a run is Global's and only Global's runners take
+	// it; binding it to an agency's scope is refused (2.5.0 C2), so the remedy
+	// named is a runner for Global.
 	got := f.reason(t, "run-unbound")
-	if !strings.Contains(got, "no scope") || !strings.Contains(got, "bind a scope") {
+	if !strings.Contains(got, "no scope") || !strings.Contains(got, "enrol a runner for Global") {
 		t.Errorf("unbound run on a departmentalised fleet = %q, want it to explain that "+
-			"only an un-agencied runner can take it and name the remedy", got)
+			"it is Global's and name the remedy", got)
+	}
+	// 2.5.0 C11, defect 90: the local runner runs shell types only, so it is
+	// not offered to an Ansible run, and is to a shell one.
+	if strings.Contains(got, "local runner") {
+		t.Errorf("an Ansible run of Global's is offered the local runner, which cannot run it: %q", got)
+	}
+	f.runner("r-dept-sh", "online", `["bash"]`, "a1", 1) // a shell runner, departmental too
+	f.seedRun("run-unbound-bash", "bash", `[]`, "")
+	if got := f.reason(t, "run-unbound-bash"); !strings.Contains(got, "turn on the local runner") {
+		t.Errorf("a shell run of Global's is not offered the local runner: %q", got)
 	}
 }
 

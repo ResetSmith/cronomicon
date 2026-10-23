@@ -8,11 +8,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/envref"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
@@ -78,7 +80,11 @@ func (s *Server) validateReferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Scope      string `json:"scope"`
+		Scope string `json:"scope"`
+		// AgencyID is whose run the preview is for: a scope's name is unique
+		// within an agency only (I2). Absent, it is the agency of the one scope
+		// of that name (execspec.ScopeOwnerByName).
+		AgencyID   string `json:"agencyId"`
 		References []struct {
 			Kind string `json:"kind"`
 			Name string `json:"name"`
@@ -89,10 +95,21 @@ func (s *Server) validateReferences(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", "request body is not valid JSON")
 		return
 	}
+	// Whose run the preview is for (I2): the agency named, else the agency of
+	// the one scope of that name.
+	agency := strings.TrimSpace(body.AgencyID)
+	if agency == "" {
+		a, aerr := execspec.ScopeOwnerByName(r.Context(), s.db, body.Scope)
+		if aerr != nil {
+			httpx.Fail500(w, s.log, "db_error", aerr)
+			return
+		}
+		agency = a
+	}
 	// The scope being previewed must itself be readable: a restricted actor may not
 	// ask "what would resolve in prod?" about a scope they cannot see, or the
 	// per-row filter below would be answering a question they may not pose.
-	if !auth.ScopeReadable(actor, body.Scope) {
+	if !auth.ScopeReadableIn(actor, agency, body.Scope) {
 		s.denyScope(w, r, body.Scope, "scope access denied")
 		return
 	}
@@ -105,7 +122,7 @@ func (s *Server) validateReferences(w http.ResponseWriter, r *http.Request) {
 	for _, b := range body.References {
 		in = append(in, runref.Binding{Kind: runref.Kind(b.Kind), Name: b.Name, As: strings.TrimSpace(b.As)})
 	}
-	results, err := runref.ValidateAll(r.Context(), s.db, in, body.Scope, actor.Grant().CanRead)
+	results, err := runref.ValidateAll(r.Context(), s.db, in, agency, body.Scope, auth.ReaderIn(actor, agency))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -121,7 +138,11 @@ func (s *Server) validateReferences(w http.ResponseWriter, r *http.Request) {
 	//
 	// Downgraded rather than dropped: the operator still sees the row and is told
 	// why it will be refused, which is what makes the dialog actionable.
-	runAgencies, _ := execspec.ScopeAgencies(r.Context(), s.db, body.Scope)
+	runAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, agency, body.Scope)
+	if aerr != nil {
+		httpx.Fail500(w, s.log, "db_error", aerr)
+		return
+	}
 	for i := range results {
 		if !results[i].OK {
 			continue
@@ -195,7 +216,9 @@ func (s *Server) getReferenceUsage(w http.ResponseWriter, r *http.Request) {
 	// One flat query joined to jobs for the owner's scope — never a nested iterator
 	// (pool deadlock, see db.maxOpenConns).
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT rb.ref_kind, rb.ref_name, rb.owner_kind, COALESCE(j.scope,'')
+		SELECT rb.ref_kind, rb.ref_name, rb.owner_kind, COALESCE(j.scope,''),
+		       COALESCE(CASE rb.owner_kind WHEN 'job' THEN `+agencyid.JobSQL("j")+`
+		                ELSE (SELECT `+agencyid.ScriptOwnerSQL("sx")+` FROM scripts sx WHERE sx.uid = rb.owner_uid) END, '')
 		FROM reference_bindings rb
 		LEFT JOIN jobs j
 		  ON rb.owner_kind = 'job' AND j.source = rb.owner_source AND j.name = rb.owner_name`)
@@ -212,12 +235,17 @@ func (s *Server) getReferenceUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	agg := map[string]*usage{}
 	for rows.Next() {
-		var refKind, refName, ownerKind, jobScope string
-		if err := rows.Scan(&refKind, &refName, &ownerKind, &jobScope); err != nil {
+		var refKind, refName, ownerKind, jobScope, jobOwner string
+		if err := rows.Scan(&refKind, &refName, &ownerKind, &jobScope, &jobOwner); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		if ownerKind == "job" && !auth.ScopeReadable(actor, jobScope) {
+		// Whose the binding's owner is (2.5.0 C2, CF-1): a script's, and a
+		// no-scope job's, had been counted for everyone.
+		if !readsAgency(r, jobOwner) {
+			continue
+		}
+		if ownerKind == "job" && !auth.ScopeReadableIn(actor, jobOwner, jobScope) {
 			continue
 		}
 		k := refKind + "\x00" + refName
@@ -259,9 +287,10 @@ func (s *Server) getReferenceUsage(w http.ResponseWriter, r *http.Request) {
 // a valid 200.
 func (s *Server) getRunReferences(w http.ResponseWriter, r *http.Request) {
 	traceID := r.PathValue("traceId")
-	var scope string
+	var scope, runOwner, owner string // runOwner: the agency the run's scope is looked for in (I2); owner: whose the run is (1480)
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT COALESCE(scope,'') FROM runs WHERE id = ?`, traceID).Scan(&scope)
+		`SELECT COALESCE(scope,''), `+agencyid.RunScopeOwnerSQL("agencies_json")+`, `+agencyid.ColumnOwnerSQL("runs", "owner_agency")+`
+		   FROM runs WHERE id = ?`, traceID).Scan(&scope, &runOwner, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 		return
@@ -270,10 +299,10 @@ func (s *Server) getRunReferences(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	// Scope guard, mirroring getRun (FR-H2): a restricted operator must not see the
-	// references of an out-of-scope run.
-	if id, ok := auth.IdentityFrom(r.Context()); ok && !auth.ScopeReadable(id, scope) {
-		s.denyScope(w, r, scope, "scope access denied")
+	// Whose the run is, then its scope, mirroring getRun (FR-H2; 2.5.0 C2, CF-1):
+	// refused as absent (question 72).
+	if id, ok := auth.IdentityFrom(r.Context()); ok && (!id.ReadsAgency(owner) || !auth.ScopeReadableIn(id, runOwner, scope)) {
+		s.notReadable(w, r, scope, "run")
 		return
 	}
 
@@ -339,7 +368,12 @@ func (s *Server) writeBindings(w http.ResponseWriter, r *http.Request, owner run
 	// M7: record the RESULTING binding set (kinds + bare names, never values) so a
 	// stale full-replace that silently revokes/resurrects a binding is visible in the
 	// audit — not an empty "updated" row indistinguishable from a tag edit.
-	_ = settings.WriteChangeLog(r.Context(), s.db, actor, category, "updated", target, runref.AuditBindingSet(bs))
+	// The job's agency, or the script's repository's (C1).
+	agency := s.jobAgency(r.Context(), owner.UID)
+	if owner.Kind == "script" {
+		agency = s.ownerBy(r.Context(), `SELECT `+agencyid.ScriptOwnerSQL("sx")+` FROM scripts sx WHERE sx.uid = ?`, owner.UID)
+	}
+	_ = settings.WriteChangeLog(r.Context(), s.db, agency, actor, category, "updated", target, runref.AuditBindingSet(bs))
 	httpx.JSON(w, http.StatusOK, map[string]any{"bindings": bs})
 	return true
 }
@@ -354,9 +388,15 @@ func (s *Server) getJobBindings(w http.ResponseWriter, r *http.Request) {
 	// scope-restricted operator must not read those for an out-of-scope job. Mirror
 	// getRunReferences' guard (403 on out-of-scope). (Job DETAIL is now scope-gated
 	// too — getJob returns 404 out-of-scope, SU-2.)
-	if id, ok := auth.IdentityFrom(r.Context()); ok && jr.Scope != nil &&
-		!auth.ScopeReadable(id, *jr.Scope) {
-		s.denyScope(w, r, *jr.Scope, "scope access denied")
+	// Whose the job is first (2.5.0 C2, CF-1: a no-scope job of another agency
+	// passed), then its scope; refused as absent (question 72).
+	if id, ok := auth.IdentityFrom(r.Context()); ok && (!id.ReadsAgency(agencyOrGlobal(jr.OwnerAgency)) ||
+		(jr.Scope != nil && !auth.ScopeReadableIn(id, jr.OwnerAgency, *jr.Scope))) {
+		scope := ""
+		if jr.Scope != nil {
+			scope = *jr.Scope
+		}
+		s.notReadable(w, r, scope, "job")
 		return
 	}
 	bs, err := runref.ListBindings(r.Context(), s.db, runref.Owner{Kind: "job", Source: jr.Source, Name: jr.Name, UID: jr.UID})
@@ -389,11 +429,11 @@ func (s *Server) putJobBindings(w http.ResponseWriter, r *http.Request) {
 	if jr.Scope != nil {
 		jobScope = *jr.Scope
 	}
-	if !auth.ScopeReadable(actor, jobScope) {
+	if !auth.ScopeReadableIn(actor, jr.OwnerAgency, jobScope) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
-	if !auth.ScopeWritable(actor, jobScope) {
+	if !auth.ScopeWritableIn(actor, jr.OwnerAgency, jobScope) {
 		s.denyScope(w, r, jobScope, "cannot modify bindings on a job outside your access")
 		return
 	}
@@ -404,7 +444,7 @@ func (s *Server) putJobBindings(w http.ResponseWriter, r *http.Request) {
 	// its next run executed without its declared secrets. Ask the question the
 	// grants can answer: does a grant that carries manageEnvVars cover THIS
 	// job's scope (or every scope, for a job that has none)?
-	holds := actor.Can(auth.PermManageEnvVars, jobScope)
+	holds := actor.CanIn(auth.PermManageEnvVars, jr.OwnerAgency, jobScope)
 	if jobScope == "" {
 		holds = actor.CanUnbound(auth.PermManageEnvVars)
 	}
@@ -423,24 +463,20 @@ func (s *Server) putJobBindings(w http.ResponseWriter, r *http.Request) {
 	s.writeBindings(w, r, runref.Owner{Kind: "job", Source: jr.Source, Name: jr.Name, UID: jr.UID}, in, actor.Email, "Jobs", jr.Name)
 }
 
-// scriptExists reports whether a script row with this exact name is in the
-// catalog. Scripts are keyed by name only (no source dimension), so binding
-// owners use owner_source="".
-func (s *Server) scriptExists(r *http.Request, name string) bool {
-	var n int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM scripts WHERE name = ?`, name).Scan(&n); err != nil {
-		return false
-	}
-	return n > 0
-}
+// A script's reference bindings are filed under its uid (migration 1290), so
+// both handlers below resolve the name first (Server.scriptUID: in Global's
+// repository, until a route can name another) and hand the store an owner that
+// carries the uid. An owner with the name alone reads nothing and cannot write.
+// owner_source stays "" for a script: it has no source dimension.
 
 func (s *Server) getScriptBindings(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !s.scriptExists(r, name) {
+	uid, found := s.scriptUID(r, name)
+	if !found {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "script not found")
 		return
 	}
-	bs, err := runref.ListBindings(r.Context(), s.db, runref.Owner{Kind: "script", Name: name})
+	bs, err := runref.ListBindings(r.Context(), s.db, runref.Owner{Kind: "script", Name: name, UID: uid})
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -458,7 +494,7 @@ func (s *Server) putScriptBindings(w http.ResponseWriter, r *http.Request) {
 	// scopes, so a per-scope gate is not well-defined. Require an UNRESTRICTED
 	// manager to edit script bindings — the simplest safe rule (a restricted manager
 	// rarely authors shared scripts). A restricted actor is refused with 403.
-	if !actor.CanAgency(auth.PermManageEnvVars, "") { // GC-3: the grant must carry the verb
+	if !actor.GlobalAdmin(auth.PermManageEnvVars) { // GC-3: the grant must carry the verb
 		// The requirement is not a scope but "any scope", so this audits with the
 		// AllScopes target rather than a scope name (see denyUnrestricted).
 		s.denyUnrestricted(w, r,
@@ -466,7 +502,8 @@ func (s *Server) putScriptBindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	if !s.scriptExists(r, name) {
+	uid, found := s.scriptUID(r, name)
+	if !found {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "script not found")
 		return
 	}
@@ -474,7 +511,7 @@ func (s *Server) putScriptBindings(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.writeBindings(w, r, runref.Owner{Kind: "script", Name: name}, in, actor.Email, "Scripts", name)
+	s.writeBindings(w, r, runref.Owner{Kind: "script", Name: name, UID: uid}, in, actor.Email, "Scripts", name)
 }
 
 // scanScriptBindings scans a script's body and returns the reference bindings it
@@ -499,7 +536,7 @@ func (s *Server) scanScriptBindings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) loadScriptBody(w http.ResponseWriter, r *http.Request, name string) (string, bool) {
 	var command, script, scriptPath sql.NullString
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT command, script, script_path FROM scripts WHERE name = ?`, name).
+		`SELECT command, script, script_path FROM scripts WHERE repo_id = ? AND name = ?`, repoid.Global, name).
 		Scan(&command, &script, &scriptPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "script not found")
@@ -515,7 +552,7 @@ func (s *Server) loadScriptBody(w http.ResponseWriter, r *http.Request, name str
 	case script.Valid && script.String != "":
 		return script.String, true
 	case scriptPath.Valid && scriptPath.String != "":
-		data, _, rerr := execspec.SafeReadRepoFile(gitlab.DefaultCloneDir(), scriptPath.String, scriptBodyDisplayCap)
+		data, _, rerr := execspec.ReadSyncedFile(r.Context(), s.db, gitlab.CloneDirFor, repoid.Global, scriptPath.String, scriptBodyDisplayCap)
 		if rerr != nil {
 			httpx.Fail(w, http.StatusConflict, "script_unreadable",
 				"script file could not be read from the synced repository")
@@ -549,15 +586,16 @@ func (s *Server) knownReferenceNames(r *http.Request) map[string]runref.Kind {
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var name string
+			var name, owner string
 			var scope sql.NullString
-			if rows.Scan(&name, &scope) == nil && name != "" && auth.ScopeReadable(id, scope.String) {
+			if rows.Scan(&name, &scope, &owner) == nil && name != "" && auth.ScopeReadableIn(id, owner, scope.String) {
 				known[name] = kind
 			}
 		}
 	}
-	loadScoped(`SELECT key, scope FROM secrets`, runref.KindSecret)
-	loadScoped(`SELECT key, scope FROM env_vars`, runref.KindVar)
+	// A row's scope is its owner's scope of that name (I2).
+	loadScoped(`SELECT key, scope, owner_agency FROM secrets`, runref.KindSecret)
+	loadScoped(`SELECT key, scope, owner_agency FROM env_vars`, runref.KindVar)
 	// Keys: no scope column (§8) — labels are not scope-filtered.
 	rows, err := s.db.QueryContext(r.Context(), `SELECT label FROM ssh_credentials`)
 	if err == nil {

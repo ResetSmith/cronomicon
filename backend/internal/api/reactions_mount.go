@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,9 +12,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/reaction"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
+	"github.com/ResetSmith/cronomicon/internal/scheduler"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 )
 
@@ -47,8 +51,13 @@ func (s *Server) mountReactions(mux *http.ServeMux) {
 	requireSession := s.auth.RequireSession
 	mux.Handle("GET /api/v1/reactions", requireSession(http.HandlerFunc(s.listReactions)))
 	mux.Handle("GET /api/v1/reactions/{ownerKind}/{ownerName}", requireSession(http.HandlerFunc(s.getDefinitionReactions)))
-	mux.Handle("PUT /api/v1/reactions/{ownerKind}/{ownerName}", s.requireComposeAdmin(http.HandlerFunc(s.replaceDefinitionReactions)))
-	mux.Handle("DELETE /api/v1/reactions/{ownerKind}/{ownerName}/{name}", s.requireComposeAdmin(http.HandlerFunc(s.deleteReaction)))
+	// Compose on the agency of the definition the reactions are of (2.4.2, the
+	// owner's answer to question 61), as calendars and schedules since §0a: a
+	// reaction's upstream is its own agency's (upstreamExistsFor), so it can no
+	// longer trigger another agency's definition, which is what kept these
+	// routes an administrator's of every agency.
+	mux.Handle("PUT /api/v1/reactions/{ownerKind}/{ownerName}", s.requireCompose(http.HandlerFunc(s.replaceDefinitionReactions)))
+	mux.Handle("DELETE /api/v1/reactions/{ownerKind}/{ownerName}/{name}", s.requireCompose(http.HandlerFunc(s.deleteReaction)))
 }
 
 // ErrCodeReactionsWatching is the error code both definition-delete routes
@@ -73,9 +82,13 @@ type reactionInput struct {
 
 // reactionOut is one reaction as served.
 type reactionOut struct {
-	OwnerKind               string `json:"ownerKind"`
-	OwnerName               string `json:"ownerName"`
-	OwnerSource             string `json:"ownerSource"`
+	OwnerKind   string `json:"ownerKind"`
+	OwnerName   string `json:"ownerName"`
+	OwnerSource string `json:"ownerSource"`
+	// OwnerUID says which definition of the name the row is, for the agency
+	// the upstream is looked for in (I2); not shown.
+	OwnerUID                string `json:"-"`
+	OnUID                   string `json:"-"`
 	Name                    string `json:"name"`
 	OnKind                  string `json:"onKind"`
 	OnName                  string `json:"onName"`
@@ -113,6 +126,25 @@ func (s *Server) getDefinitionReactions(w http.ResponseWriter, r *http.Request) 
 	// definitions' reactions into one list. A missing definition simply yields
 	// no rows rather than a 404: a caller listing reactions for something that
 	// does not exist wants an empty list, not an error.
+	//
+	// With ?uid= it is ONE definition's reactions (present defect 36): a name
+	// can be held by a definition in each agency, and by the name alone their
+	// lists are one list.
+	if uid := r.URL.Query().Get("uid"); uid != "" {
+		owner, status := s.reactionOwner(r, kind, name)
+		if status != 0 {
+			httpx.JSON(w, http.StatusOK, []reactionOut{})
+			return
+		}
+		cond, args := owner.rowsSQL(kind, name)
+		rows, err := s.loadReactionsWhere(r, cond, args)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, rows)
+		return
+	}
 	source, _ := s.definitionSource(r, kind, name)
 	rows, err := s.loadReactions(r, kind, source, name)
 	if err != nil {
@@ -120,6 +152,120 @@ func (s *Server) getDefinitionReactions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	httpx.JSON(w, http.StatusOK, rows)
+}
+
+// reactionOwner is the ONE definition a per-definition reactions route
+// addresses (present defect 36).
+//
+// The routes name a definition by its kind and name, and a name can be held by
+// a definition in each agency. The write found "the" definition by the name,
+// replaced every reaction row of that source, kind and NAME, and stamped the
+// new rows' owner only when one definition held the name: saving one twin's
+// reactions deleted the other twin's, and the rows it wrote belonged to
+// neither by identity.
+//
+// ?uid= says which definition. Without it the name must be enough: where more
+// than one definition of the source holds it, a write is refused (409) and
+// told to say which.
+type reactionOwner struct {
+	source string
+	uid    string // "" only for a definition that records none
+	// alone: no other definition of the source holds the name, so a reaction
+	// row of the name that records no owner is this definition's.
+	alone bool
+}
+
+// reactionOwner resolves it. status is 0, or the HTTP status of the refusal:
+// 404 (no such definition), 409 (the name does not say which).
+func (s *Server) reactionOwner(r *http.Request, kind, name string) (reactionOwner, int) {
+	table := "jobs"
+	if kind == "workflow" {
+		table = "workflows"
+	}
+	uid := r.URL.Query().Get("uid")
+	var o reactionOwner
+	if uid != "" {
+		//nolint:gosec // table is a package-local constant chosen by the kind switch
+		if err := s.db.QueryRowContext(r.Context(),
+			"SELECT source FROM "+table+" WHERE uid = ? AND name = ?", uid, name).Scan(&o.source); err != nil {
+			return o, http.StatusNotFound
+		}
+		o.uid = uid
+	} else {
+		src, ok := s.definitionSource(r, kind, name)
+		if !ok {
+			return o, http.StatusNotFound
+		}
+		o.source = src
+	}
+	//nolint:gosec // as above
+	rows, err := s.db.QueryContext(r.Context(),
+		"SELECT COALESCE(uid, '') FROM "+table+" WHERE source = ? AND name = ?", o.source, name)
+	if err != nil {
+		return o, http.StatusNotFound
+	}
+	defer rows.Close()
+	var uids []string
+	for rows.Next() {
+		var u string
+		if rows.Scan(&u) == nil {
+			uids = append(uids, u)
+		}
+	}
+	o.alone = len(uids) == 1
+	if uid == "" {
+		if !o.alone {
+			return o, http.StatusConflict
+		}
+		o.uid = uids[0]
+	}
+	return o, 0
+}
+
+// rowsSQL is the condition over `reactions` for the rows that are this
+// definition's, with its arguments: the rows that record it as their owner,
+// and, where no other definition holds the name, the rows of the name that
+// record no owner (written before a reaction recorded one).
+func (o reactionOwner) rowsSQL(kind, name string) (string, []any) {
+	switch {
+	case o.uid == "":
+		return "owner_source = ? AND owner_kind = ? AND owner_name = ?", []any{o.source, kind, name}
+	case o.alone:
+		return "owner_kind = ? AND (owner_uid = ? OR (owner_uid IS NULL AND owner_source = ? AND owner_name = ?))",
+			[]any{kind, o.uid, o.source, name}
+	default:
+		return "owner_kind = ? AND owner_uid = ?", []any{kind, o.uid}
+	}
+}
+
+// refuseReactionOwner writes the answer for a definition reactionOwner could
+// not settle on.
+func refuseReactionOwner(w http.ResponseWriter, status int, kind, name string) {
+	if status == http.StatusConflict {
+		httpx.Fail(w, http.StatusConflict, "ambiguous_definition",
+			"more than one "+kind+" is called "+name+": say which by its uid (?uid=)")
+		return
+	}
+	httpx.Fail(w, http.StatusNotFound, "not_found", kind+" not found")
+}
+
+// binned reports whether THIS definition is in the recycle bin (see
+// definitionIsBinned, which asks by the name).
+func (s *Server) reactionOwnerBinned(r *http.Request, kind, name string, o reactionOwner) bool {
+	if o.uid == "" {
+		return s.definitionIsBinned(r, kind, o.source, name)
+	}
+	table := "jobs"
+	if kind == "workflow" {
+		table = "workflows"
+	}
+	var binned int
+	//nolint:gosec // table is a package-local constant chosen by the kind switch
+	if err := s.db.QueryRowContext(r.Context(),
+		"SELECT deleted_at IS NOT NULL FROM "+table+" WHERE uid = ?", o.uid).Scan(&binned); err != nil {
+		return false
+	}
+	return binned == 1
 }
 
 // replaceDefinitionReactions replaces one definition's whole reaction list.
@@ -135,21 +281,25 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 		httpx.Fail(w, http.StatusBadRequest, "bad_request", "ownerKind must be job or workflow")
 		return
 	}
-	source, ok := s.definitionSource(r, kind, name)
-	if !ok {
-		httpx.Fail(w, http.StatusNotFound, "not_found", kind+" not found")
+	owner, status := s.reactionOwner(r, kind, name)
+	if status != 0 {
+		refuseReactionOwner(w, status, kind, name)
 		return
 	}
+	source := owner.source
 	// FX-A4: no authoring a standing instruction onto a definition in the recycle
 	// bin — it would go live, unannounced, the moment the definition was restored.
 	// Matches updateJob/updateWorkflow/updateScheduleDef, which all refuse to edit
 	// a binned definition. Listing and deleting stay open (see definitionIsBinned).
-	if s.definitionIsBinned(r, kind, source, name) {
+	if s.reactionOwnerBinned(r, kind, name, owner) {
 		httpx.Fail(w, http.StatusConflict, "conflict",
 			kind+" is in the recycle bin — restore it before editing its reactions")
 		return
 	}
 	if !s.requireCronomiconOwner(w, kind, source, name) {
+		return
+	}
+	if !s.requireReactionOwnerCompose(w, r, reactionRef{Source: source, Kind: kind, Name: name, UID: owner.uid}) {
 		return
 	}
 
@@ -161,8 +311,8 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	owner := reactionRef{Source: source, Kind: kind, Name: name}
-	if err := s.validateReactions(r, owner, body.Reactions); err != nil {
+	ownerRef := reactionRef{Source: source, Kind: kind, Name: name, UID: owner.uid}
+	if err := s.validateReactions(r, ownerRef, body.Reactions); err != nil {
 		if ve, ok := errors.AsType[*reactionValidationError](err); ok {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", ve.Error())
 			return
@@ -178,9 +328,9 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(r.Context(),
-		`DELETE FROM reactions WHERE owner_source=? AND owner_kind=? AND owner_name=?`,
-		source, kind, name); err != nil {
+	// THIS definition's rows, and no other definition's of the name.
+	mine, mineArgs := owner.rowsSQL(kind, name)
+	if _, err := tx.ExecContext(r.Context(), `DELETE FROM reactions WHERE `+mine, mineArgs...); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -200,10 +350,10 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 			                       include_workflow_children, enabled, position,
 			                       owner_uid, on_uid)
 			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,
-				CASE ?
-				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
-				END,
+				-- The owner is the definition the route addressed, by its
+				-- identity. (It was "the one definition of the name", and NULL
+				-- when two held it.)
+				NULLIF(?, ''),
 				CASE ?
 				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
 				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
@@ -212,20 +362,32 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 			onSource, in.OnKind, in.OnName, in.OnOutcome,
 			in.DelaySeconds, in.MinIntervalSeconds,
 			boolToInt(in.IncludeWorkflowChildren), enabled, i,
-			kind, name, source, name, source,
+			owner.uid,
 			in.OnKind, in.OnName, onSource, in.OnName, onSource); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
+	}
+	// GR-16 — a GIT upstream's identity is not "the one definition of that name,
+	// wherever it is", which with a repository per agency can be another
+	// agency's. It is the one the engine would find by the name: in the owner's
+	// agency's repository, then in Global's. The same expression the engine
+	// uses, so the two cannot disagree; a name neither holds is left with no
+	// identity and fires on nothing.
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE reactions SET on_uid = `+scheduler.ReactionUpstreamByNameSQL+`
+		 WHERE `+mine+` AND on_source = 'git'`, mineArgs...); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
 	}
 	if err := tx.Commit(); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
 
-	s.auditReaction(r, id.Email, "Replaced", kind+"/"+name,
+	s.auditReaction(r, s.definitionAgency(r.Context(), kind, owner.uid), id.Email, "Replaced", kind+"/"+name,
 		"Reactions replaced ("+strconv.Itoa(len(body.Reactions))+" entries)")
-	rows, err := s.loadReactions(r, kind, source, name)
+	rows, err := s.loadReactionsWhere(r, mine, mineArgs)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -240,17 +402,20 @@ func (s *Server) deleteReaction(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusBadRequest, "bad_request", "ownerKind must be job or workflow")
 		return
 	}
-	source, ok := s.definitionSource(r, kind, name)
-	if !ok {
-		httpx.Fail(w, http.StatusNotFound, "not_found", kind+" not found")
+	owner, status := s.reactionOwner(r, kind, name)
+	if status != 0 {
+		refuseReactionOwner(w, status, kind, name)
 		return
 	}
-	if !s.requireCronomiconOwner(w, kind, source, name) {
+	if !s.requireCronomiconOwner(w, kind, owner.source, name) {
 		return
 	}
+	if !s.requireReactionOwnerCompose(w, r, reactionRef{Source: owner.source, Kind: kind, Name: name, UID: owner.uid}) {
+		return
+	}
+	mine, mineArgs := owner.rowsSQL(kind, name)
 	res, err := s.db.ExecContext(r.Context(),
-		`DELETE FROM reactions WHERE owner_source=? AND owner_kind=? AND owner_name=? AND name=?`,
-		source, kind, name, entry)
+		`DELETE FROM reactions WHERE `+mine+` AND name = ?`, append(mineArgs, entry)...)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -259,7 +424,7 @@ func (s *Server) deleteReaction(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "reaction not found")
 		return
 	}
-	s.auditReaction(r, id.Email, "Deleted", kind+"/"+name, "Reaction "+entry+" deleted")
+	s.auditReaction(r, s.definitionAgency(r.Context(), kind, owner.uid), id.Email, "Deleted", kind+"/"+name, "Reaction "+entry+" deleted")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -287,7 +452,10 @@ func (s *Server) reactionIntervalCeiling() int {
 }
 
 // reactionRef identifies one side of a reaction edge.
-type reactionRef struct{ Source, Kind, Name string }
+// reactionRef names a definition. UID, when set, says which definition of
+// the name (I2: a name may be held in each agency); it is not part of the
+// String key.
+type reactionRef struct{ Source, Kind, Name, UID string }
 
 func (r reactionRef) String() string { return r.Kind + ":" + r.Source + "/" + r.Name }
 
@@ -344,11 +512,15 @@ func (s *Server) validateReactions(r *http.Request, owner reactionRef, in []reac
 		// own completion is an unconditional infinite loop, and the depth ceiling
 		// should be a backstop for cycles nobody can see rather than the thing
 		// that catches the obvious one.
-		if upstream == owner {
+		if upstream.Source == owner.Source && upstream.Kind == owner.Kind && upstream.Name == owner.Name {
 			return badReaction(x.Name + ": a definition cannot react to itself")
 		}
 
-		exists, err := s.definitionExists(r, upstream)
+		// For the OWNER: a Git name means the definition the engine would find
+		// for it (GR-16), not any repository's. Saved against a name that only
+		// another agency's repository holds, the reaction would be stamped with
+		// no upstream, never fire, and be shown as healthy.
+		exists, err := s.upstreamExistsFor(r, owner, upstream)
 		if err != nil {
 			return err
 		}
@@ -553,6 +725,104 @@ func (s *Server) definitionExists(r *http.Request, ref reactionRef) (bool, error
 	return true, nil
 }
 
+// upstreamExistsFor is definitionExists as the reaction's OWNER would find the
+// upstream: a definition of the owner's agency, and no other's (§0a, IN-8). A
+// Git one is of the owner agency's repository (from GR-16 until §0a, Global's
+// next); one built in the app is the owner agency's (until §0a, any of the
+// name). This is the question the engine asks when the upstream finishes, so
+// "missing" here is "will not fire".
+func (s *Server) upstreamExistsFor(r *http.Request, owner, upstream reactionRef) (bool, error) {
+	agency := s.reactionOwnerAgency(r.Context(), owner)
+	var one int
+	var err error
+	switch {
+	case upstream.Source == "git":
+		table := "jobs"
+		if upstream.Kind == "workflow" {
+			table = "workflows"
+		}
+		//nolint:gosec // the table is one of two literals
+		err = s.db.QueryRowContext(r.Context(),
+			"SELECT 1 FROM "+table+" WHERE source = 'git' AND name = ? AND deleted_at IS NULL AND COALESCE(repo_id, ?) = ? LIMIT 1",
+			upstream.Name, repoid.Global, s.agencyRepo(r.Context(), agency)).Scan(&one)
+	case upstream.Kind == "workflow":
+		err = s.db.QueryRowContext(r.Context(),
+			`SELECT 1 FROM workflows WHERE source = ? AND name = ? AND deleted_at IS NULL AND owner_agency = ? LIMIT 1`,
+			upstream.Source, upstream.Name, agency).Scan(&one)
+	default:
+		err = s.db.QueryRowContext(r.Context(),
+			`SELECT 1 FROM jobs WHERE source = ? AND name = ? AND deleted_at IS NULL AND `+inAppJobAgencySQL+` = ? LIMIT 1`,
+			upstream.Source, upstream.Name, agency).Scan(&one)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// inAppJobAgencySQL is the agency of the row `jobs` (agencyid.JobSQL; an
+// in-app job's owner since 1400).
+var inAppJobAgencySQL = `COALESCE(` + agencyid.JobSQL("jobs") + `, '` + agencyid.Global + `')`
+
+// reactionOwnerAgency is the agency of a reaction's owner: a Git owner's
+// repository's, a definition built in the app's owner. By the owner's uid
+// when the ref carries one (I2: a name may be held in each agency); by the
+// name otherwise, for a row that records no owner.
+// requireReactionOwnerCompose answers 403 unless the caller holds compose on
+// the agency of the definition whose reactions are written (question 61).
+func (s *Server) requireReactionOwnerCompose(w http.ResponseWriter, r *http.Request, owner reactionRef) bool {
+	id, _ := auth.IdentityFrom(r.Context())
+	agency := s.reactionOwnerAgency(r.Context(), owner)
+	if id.CanAgency(auth.PermCompose, agency) {
+		return true
+	}
+	s.denyEntityAgency(w, r, id, auth.PermCompose, agency,
+		"a reaction belongs to its definition's agency, and writing it takes compose on that agency")
+	return false
+}
+
+func (s *Server) reactionOwnerAgency(ctx context.Context, owner reactionRef) string {
+	agency := agencyid.Global
+	if owner.UID != "" {
+		var a sql.NullString
+		_ = s.db.QueryRowContext(ctx, `SELECT `+agencyid.DefinitionOf("?2", "?1"), owner.Kind, owner.UID).Scan(&a)
+		if a.Valid && a.String != "" {
+			return a.String
+		}
+		return agency
+	}
+	switch {
+	case owner.Source == "git":
+		table := "jobs"
+		if owner.Kind == "workflow" {
+			table = "workflows"
+		}
+		var a sql.NullString
+		//nolint:gosec // the table is one of two literals
+		_ = s.db.QueryRowContext(ctx,
+			"SELECT g.agency_id FROM "+table+" d JOIN git_repos g ON g.id = COALESCE(d.repo_id, ?) WHERE d.source = 'git' AND d.name = ? ORDER BY d.rowid LIMIT 1",
+			repoid.Global, owner.Name).Scan(&a)
+		if a.Valid {
+			agency = a.String
+		}
+	case owner.Kind == "workflow":
+		var a sql.NullString
+		_ = s.db.QueryRowContext(ctx,
+			`SELECT owner_agency FROM workflows WHERE source = 'cronomicon' AND name = ? ORDER BY rowid LIMIT 1`, owner.Name).Scan(&a)
+		if a.Valid {
+			agency = a.String
+		}
+	default:
+		var a sql.NullString
+		_ = s.db.QueryRowContext(ctx,
+			`SELECT `+inAppJobAgencySQL+` FROM jobs WHERE source = 'cronomicon' AND name = ? ORDER BY rowid LIMIT 1`, owner.Name).Scan(&a)
+		if a.Valid {
+			agency = a.String
+		}
+	}
+	return agency
+}
+
 // definitionReadable answers §2.9's can-the-author-see-it question against the
 // upstream's own scope, using the same scope predicate every read path uses.
 func (s *Server) definitionReadable(r *http.Request, id auth.Identity, ref reactionRef) (bool, error) {
@@ -568,25 +838,47 @@ func (s *Server) definitionReadableByScope(r *http.Request, id auth.Identity, ha
 		return true, nil
 	}
 	if ref.Kind == "workflow" {
-		// A workflow definition carries no scope of its own (scope is a property
-		// of the run), so there is nothing narrower than session access to check.
-		return true, nil
+		// A workflow carries no scope of its own (scope is a property of the
+		// run): it is its agency's (2.5.0 C2, CF-1; it had been everyone's).
+		q := `SELECT ` + agencyid.WorkflowOwnerSQL + ` FROM workflows w WHERE w.source = ? AND w.name = ? ORDER BY w.rowid LIMIT 1`
+		args := []any{ref.Source, ref.Name}
+		if ref.UID != "" {
+			q, args = `SELECT `+agencyid.WorkflowOwnerSQL+` FROM workflows w WHERE w.uid = ?`, []any{ref.UID}
+		}
+		var owner string
+		if err := s.db.QueryRowContext(r.Context(), q, args...).Scan(&owner); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return false, nil
+			}
+			return false, err
+		}
+		return hasID && id.ReadsAgency(owner), nil
 	}
+	// The definition the ref names, by its uid when the ref carries one (I2: a
+	// name may be held in each agency); by the name for a row that records none.
 	var scope sql.NullString
-	err := s.db.QueryRowContext(r.Context(),
-		`SELECT scope FROM jobs WHERE source = ? AND name = ?`, ref.Source, ref.Name).Scan(&scope)
+	var owner string
+	q := `SELECT scope, COALESCE(` + agencyid.JobSQL("jobs") + `, '` + agencyid.Global + `') FROM jobs WHERE source = ? AND name = ?`
+	args := []any{ref.Source, ref.Name}
+	if ref.UID != "" {
+		q, args = `SELECT scope, COALESCE(`+agencyid.JobSQL("jobs")+`, '`+agencyid.Global+`') FROM jobs WHERE uid = ?`, []any{ref.UID}
+	}
+	err := s.db.QueryRowContext(r.Context(), q, args...).Scan(&scope, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
+	// The job's agency first (2.5.0 C2, CF-1: an unscoped job had been
+	// everyone's), then its scope, as the job list reads it.
+	if !hasID || !id.ReadsAgency(owner) {
+		return false, nil
+	}
 	if !scope.Valid || scope.String == "" {
-		// An unscoped job is visible to anyone with a session, matching the job
-		// list's own read filter (scope IS NULL rows are global).
 		return true, nil
 	}
-	return auth.ScopeReadable(id, scope.String), nil
+	return auth.ScopeReadableIn(id, owner, scope.String), nil
 }
 
 // loadReactions reads reactions (all, or one definition's) and marks dangling
@@ -599,18 +891,27 @@ func (s *Server) definitionReadableByScope(r *http.Request, id auth.Identity, ha
 // definition's entries in as in-app rows. The next sync restores the git ones,
 // leaving both, and one upstream completion produces two runs.
 func (s *Server) loadReactions(r *http.Request, kind, source, name string) ([]reactionOut, error) {
-	q := `SELECT owner_source, owner_kind, owner_name, name, on_source, on_kind, on_name,
+	cond, args := "", []any(nil)
+	if kind != "" {
+		cond = `owner_kind = ? AND owner_name = ?`
+		args = append(args, kind, name)
+		if source != "" {
+			cond += ` AND owner_source = ?`
+			args = append(args, source)
+		}
+	}
+	return s.loadReactionsWhere(r, cond, args)
+}
+
+// loadReactionsWhere is loadReactions over the rows a condition picks (none:
+// every row), with the same filter on what the caller may read.
+func (s *Server) loadReactionsWhere(r *http.Request, cond string, args []any) ([]reactionOut, error) {
+	q := `SELECT owner_source, owner_kind, owner_name, COALESCE(owner_uid, ''), COALESCE(on_uid, ''), name, on_source, on_kind, on_name,
 	             on_outcome, delay_seconds, min_interval_seconds,
 	             include_workflow_children, enabled, position
 	        FROM reactions`
-	var args []any
-	if kind != "" {
-		q += ` WHERE owner_kind = ? AND owner_name = ?`
-		args = append(args, kind, name)
-		if source != "" {
-			q += ` AND owner_source = ?`
-			args = append(args, source)
-		}
+	if cond != "" {
+		q += ` WHERE ` + cond
 	}
 	rows, err := s.db.QueryContext(r.Context(), q, args...)
 	if err != nil {
@@ -620,7 +921,7 @@ func (s *Server) loadReactions(r *http.Request, kind, source, name string) ([]re
 	for rows.Next() {
 		var x reactionOut
 		var includeChildren, enabled int
-		if err := rows.Scan(&x.OwnerSource, &x.OwnerKind, &x.OwnerName, &x.Name,
+		if err := rows.Scan(&x.OwnerSource, &x.OwnerKind, &x.OwnerName, &x.OwnerUID, &x.OnUID, &x.Name,
 			&x.OnSource, &x.OnKind, &x.OnName, &x.OnOutcome,
 			&x.DelaySeconds, &x.MinIntervalSeconds, &includeChildren, &enabled, &x.Position); err != nil {
 			continue
@@ -644,7 +945,7 @@ func (s *Server) loadReactions(r *http.Request, kind, source, name string) ([]re
 	readable := out[:0]
 	for _, x := range out {
 		ownerOK, err := s.definitionReadableByScope(r, id, hasID, reactionRef{
-			Source: x.OwnerSource, Kind: x.OwnerKind, Name: x.OwnerName})
+			Source: x.OwnerSource, Kind: x.OwnerKind, Name: x.OwnerName, UID: x.OwnerUID})
 		if err != nil {
 			return nil, err
 		}
@@ -652,7 +953,7 @@ func (s *Server) loadReactions(r *http.Request, kind, source, name string) ([]re
 			continue
 		}
 		upstreamOK, err := s.definitionReadableByScope(r, id, hasID, reactionRef{
-			Source: x.OnSource, Kind: x.OnKind, Name: x.OnName})
+			Source: x.OnSource, Kind: x.OnKind, Name: x.OnName, UID: x.OnUID})
 		if err != nil {
 			return nil, err
 		}
@@ -674,8 +975,9 @@ func (s *Server) loadReactions(r *http.Request, kind, source, name string) ([]re
 	out = readable
 
 	for i := range out {
-		exists, err := s.definitionExists(r, reactionRef{
-			Source: out[i].OnSource, Kind: out[i].OnKind, Name: out[i].OnName})
+		exists, err := s.upstreamExistsFor(r,
+			reactionRef{Source: out[i].OwnerSource, Kind: out[i].OwnerKind, Name: out[i].OwnerName, UID: out[i].OwnerUID},
+			reactionRef{Source: out[i].OnSource, Kind: out[i].OnKind, Name: out[i].OnName})
 		if err != nil {
 			return nil, err
 		}
@@ -745,10 +1047,10 @@ func (s *Server) reactionDeleteGuard(r *http.Request, kind, source, name string)
 		" — pass ?force=true to delete and leave those reactions dangling", nil
 }
 
-func (s *Server) auditReaction(r *http.Request, actor, action, target, summary string) {
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Reactions", action, target, summary)
+func (s *Server) auditReaction(r *http.Request, agency, actor, action, target, summary string) {
+	_ = workflow.InsertChangeLog(r.Context(), s.db, agency, actor, "Reactions", action, target, summary)
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Reactions", Action: action, Target: target, Summary: summary,
+		AgencyID: agency, Kind: "config", Actor: actor, Category: "Reactions", Action: action, Target: target, Summary: summary,
 	})
 }
 

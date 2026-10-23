@@ -1,12 +1,17 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, fetchCapabilities } from "../../api/client";
 import { VAULT_SECRET_GLOBAL_ONLY, globalOnly } from "../../api/globalAdmin";
+import { GLOBAL_AGENCY, useAgencyIdByName } from "../../api/access";
+import { useVaultPrefixes, vaultPathWhy } from "../../api/vaultPaths";
+import { useAgencyOptional } from "../../agency";
+import { MoveAgency } from "./MoveAgency";
+import { HeldByGlobal, RowUsagePanel, SecretsReportButton } from "./RowUsage";
 import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
-import { DetailPanel, EmptyCell, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
+import { DetailCell, DetailPanel, EmptyCell, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
 import {
   Btn,
   Chevron,
@@ -39,7 +44,8 @@ import {
   useShadowWarnings,
   valueBoxStyle,
 } from "./ui";
-import { AgencyCell, useEntityAgencies } from "./ui";
+import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
+import { globalAgencyName } from "../../globalName";
 
 type SecretSource = "stored" | "vault";
 
@@ -52,9 +58,16 @@ interface EnvSecretRow {
   description?: string;
   vaultPath?: string | null;
   tags?: string[];
-  ownerAgency?: string; // RA-15 — the owning department's NAME; "" when shared.
+  ownerAgency?: string; // RA-15 — the owning agency's NAME; "Global" when shared (2.3.0).
+  canEdit?: boolean; // R8 — what the caller may do with this row, from the server
+  canDelete?: boolean;
+  canRepair?: boolean;
   createdBy?: string;
   lastModifiedAt?: string;
+  // 2.5.1 SG-19: its agency made it unrevealable (one way).
+  revealLocked?: boolean;
+  revealLockedBy?: string;
+  revealLockedAt?: string;
 }
 
 const MASK = "••••••••••••••••";
@@ -80,14 +93,21 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
 
   // Vault-source secrets are only offered when Vault is actually configured
   // (C.3); otherwise the local-KEK "stored" path is the only active option.
-  const [vaultEnabled, setVaultEnabled] = useState(false);
-  // GC-8 (v2.2.2) — there is ONE Vault connection for the installation and a
-  // secret's path is not divided by agency, so naming a path (creating a
-  // Vault-backed secret, editing one, migrating a stored one) is a global
-  // administrator's. `vaultWhy` is "" for them and the explanation for a
-  // departmental manageEnvVars holder, who keeps the controls — disabled.
+  // The installation's Vault, or (2.5.1 SG3) the agency in use's own.
+  const [installationVault, setVaultEnabled] = useState(false);
+  const inUse = useAgencyOptional()?.agency;
+  const inUseVault = useVaultPrefixes(inUse && inUse !== GLOBAL_AGENCY ? inUse : undefined, canEdit);
+  const vaultEnabled = installationVault || (inUseVault.kind === "prefixes" && inUseVault.ownVault);
+  // The installation's Vault is divided by agency since v2.3.0 (LR-80): a
+  // global administrator assigns each agency its path prefixes, and an
+  // agency's administrators name paths inside them for the rows their agency
+  // owns. An agency with a Vault of its own (2.5.1) names any path in it, or
+  // inside the prefixes it set itself. A row that is GLOBAL's has no path limit and stays a
+  // global administrator's: `vaultWhy` is "" for them and the explanation for
+  // anyone else, and it applies to Global's rows only (rowVaultWhy).
   const [vaultGlobal, setVaultGlobal] = useState(false);
   const vaultWhy = globalOnly(vaultGlobal, VAULT_SECRET_GLOBAL_ONLY);
+  const rowVaultWhy = (v: EnvSecretRow) => (!v.ownerAgency || v.ownerAgency === globalAgencyName() ? vaultWhy : "");
   useEffect(() => {
     let cancelled = false;
     fetchCapabilities().then((caps) => {
@@ -125,6 +145,24 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
   // Held only in component state — cleared on Hide, tab switch, or unmount.
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [revealBusy, setRevealBusy] = useState<string | null>(null);
+  const [locking, setLocking] = useState<EnvSecretRow | null>(null);
+  const [lockBusy, setLockBusy] = useState(false);
+  // 2.5.1 SG-19: one way — the dialog says so, and nothing in the app undoes it.
+  const lockReveal = async (row: EnvSecretRow) => {
+    if (!row.id) return;
+    setLockBusy(true);
+    const { error } = await api.POST("/env-secrets/{secretId}/lock-reveal", {
+      params: { path: { secretId: row.id }, header: csrfHeader },
+    });
+    setLockBusy(false);
+    setLocking(null);
+    if (error) {
+      setNotice({ kind: "error", text: errMsg(error) });
+      return;
+    }
+    setNotice({ kind: "info", text: `${row.key} can no longer be revealed by anyone. Runs still use it.` });
+    refetch();
+  };
   const cw = useColumnWidths("envvars-secrets");
   // RB-22 — each row shows its full agency membership; the matrix that used to
   // answer this is gone. `dep` reuses the row refetch, so a membership edit made
@@ -214,10 +252,10 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
       cell: (v) => (
         // Flex-wrap, not inline: JSX strips the newline between the key and its
         // chips, so there is no break opportunity and two badges spill out of
-        // the fixed-width column onto Scope.
+        // the fixed-width column onto Scope. The owner is not repeated here:
+        // the Agencies column says it (the owner, 2026-10-21).
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, rowGap: 4 }}>
           <span>{v.key}</span>
-          <OwnerChip owner={v.ownerAgency} />
           <ShadowBadge shadow={shadows.shadowFor("secret", v.key, v.scope)} />
           <AmbiguityBadge ambiguity={ambiguities.ambiguityFor("secret", v.key, v.scope)} />
         </div>
@@ -235,7 +273,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
       ),
     },
     { key: "usedBy", label: "Used by", sortKey: "usedBy", width: COL_W.usedBy, cell: (v) => <UsageCell {...usage.usageFor("secret", v.key)} /> },
-    { key: "agencies", label: "Agencies", width: COL_W.agencies, cell: (v) => <AgencyCell names={v.id ? entityAgencies[v.id] : undefined} /> },
+    { key: "agencies", label: "Agencies", width: COL_W.agencies, cell: (v) => <AgencyCell names={v.id ? entityAgencies[v.id] : undefined} owner={v.ownerAgency} /> },
     {
       key: "source",
       label: "Source",
@@ -274,16 +312,23 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         <span onClick={(e) => e.stopPropagation()}>
           {canEdit && (
             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              {/* A Vault-backed row may be edited only by a global administrator
-                  (the edit can re-point its path). Deleting it names no path. */}
+              {/* A Vault-backed row that is Global's may be edited only by a
+                  global administrator (the edit can re-point its path); an
+                  agency's own is its administrators', inside its Vault paths.
+                  Deleting it names no path. */}
               <Btn
                 onClick={() => setEditing(v)}
-                disabled={v.source === "vault" && !!vaultWhy}
-                title={v.source === "vault" && vaultWhy ? vaultWhy : undefined}
+                disabled={!!rowFlagWhy(v.canEdit, v.ownerAgency, "secret") || (v.source === "vault" && !!rowVaultWhy(v))}
+                title={rowFlagWhy(v.canEdit, v.ownerAgency, "secret") || (v.source === "vault" && rowVaultWhy(v) ? rowVaultWhy(v) : undefined)}
               >
                 Edit
               </Btn>
-              <Btn dangerQuiet onClick={() => setDeleting(v)}>
+              <Btn
+                dangerQuiet
+                onClick={() => setDeleting(v)}
+                disabled={!!rowFlagWhy(v.canDelete, v.ownerAgency, "secret")}
+                title={rowFlagWhy(v.canDelete, v.ownerAgency, "secret") || undefined}
+              >
                 Delete
               </Btn>
             </div>
@@ -340,12 +385,15 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         <ScopeFilterSelect scopes={scopeNames.filter((s) => s !== ALL_SCOPE_OPTION)} value={scopeFilter} onChange={setScopeFilter} />
         <TagFilterSelect items={items} selected={tagFilter} onChange={setTagFilter} getTags={(v) => tagState.tagsFor(v)} matchMode={tagMatch} onMatchModeChange={setTagMatch} />
         <ColumnsMenu cols={cols} cw={cw} />
+        <SecretsReportButton />
         {canEdit && (
           <Btn primary onClick={() => setAdding(true)}>
             + Add Secret
           </Btn>
         )}
       </div>
+
+      <HeldByGlobal kind="secret" />
 
       <NamespaceHelp>
         Reference a secret in a script or inventory as{" "}
@@ -384,127 +432,168 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         </div>
       )}
       {filtered.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
-          <thead>
-            <TableHead
-              columns={cols.visible}
-              sort={sort}
-              cw={cw}
-              trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
-            />
-          </thead>
-          <tbody>
-            {sort.sorted.map((v) => {
-              const isVault = v.source === "vault";
-              const shown = v.id != null ? revealed[v.id] : undefined;
-              const isExp = v.id != null && expanded === v.id;
-              const toggle = () => setExpanded(isExp ? null : (v.id ?? null));
-              const rowBg = isExp ? c.primaryBg : "transparent";
-              return (
-                <Fragment key={v.id ?? v.key}>
-                  <tr
-                    onClick={toggle}
-                    onMouseEnter={(e) => { if (!isExp) e.currentTarget.style.background = c.panelHover; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
-                    style={{ borderBottom: isExp ? "none" : `1px solid ${c.border}`, background: rowBg, cursor: "pointer", transition: "background 0.15s" }}
-                  >
-                    {renderCells(cols.visible, v, { rowStyle: { borderBottom: "none" } })}
-                  </tr>
-                  {isExp && (
-                    <tr style={{ background: rowBg, borderBottom: `1px solid ${c.border}` }}>
-                      <td style={{ borderBottom: "none" }} />
-                      <td colSpan={cols.visible.length - 1} style={{ padding: "2px 16px 16px", borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
-                        {/* EP-4 Shape B — this panel renders the LIST ROW, so
-                            "refresh this panel" means reload the list. Uses
-                            reloadList, not refetch: refetch also collapses the
-                            expansion, which would close the panel the button
-                            was asked to refresh. */}
-                        <DetailPanel also={reloadList}>
-                        <DetailGrid>
-                          <div>
-                            <DetailLabel
-                              action={
-                                !isVault && canEdit ? (
-                                  <span
-                                    onClick={() => toggleReveal(v)}
-                                    style={{ cursor: "pointer", color: c.primary, fontSize: c.fontSm, whiteSpace: "nowrap", flexShrink: 0 }}
-                                  >
-                                    {revealBusy === v.id ? "…" : shown !== undefined ? "Hide" : "Reveal"}
-                                  </span>
-                                ) : undefined
-                              }
-                            >
-                              {isVault ? "Vault Reference" : "Secret Value"}
-                            </DetailLabel>
-                            <div
-                              style={{
-                                ...valueBoxStyle(),
-                                fontFamily: c.mono,
-                                fontSize: isVault ? c.fontXs : shown !== undefined ? c.fontSm : c.fontXs,
-                                color: isVault ? c.primary : shown !== undefined ? c.text : c.textMuted,
-                                letterSpacing: !isVault && shown === undefined ? 2 : 0,
-                              }}
-                              title={isVault ? "Vault reference — resolved at run time" : undefined}
-                            >
-                              {isVault ? v.vaultPath || "—" : shown !== undefined ? shown : MASK}
-                            </div>
-                          </div>
-                          <div>
-                            <DetailLabel>Details</DetailLabel>
-                            <div style={detailBoxStyle()}>
-                              <DetailRow label="Scope" value={v.scope || "global (injectable from every scope)"} />
-                              <DetailRow label="Used by" value={<UsageCell {...usage.usageFor("secret", v.key)} />} />
-                              <DetailRow label="Description" value={v.description || "—"} />
-                              <DetailRow
-                                label="Source"
-                                value={
-                                  <span
-                                    style={{
-                                      display: "inline-flex",
-                                      padding: "2px 7px",
-                                      borderRadius: c.radiusChip,
-                                      fontSize: c.fontXs,
-                                      fontWeight: 600,
-                                      background: isVault ? `${c.primary}22` : c.panel2,
-                                      color: isVault ? c.primary : c.textMuted,
-                                    }}
-                                  >
-                                    {isVault ? "Vault reference" : "Stored in Cronomicon"}
-                                  </span>
-                                }
-                              />
-                              <DetailRow label={isVault ? "Last Resolved" : "Last Rotated"} value={fmtDate(v.lastModifiedAt)} />
-                              <DetailRow label="Created By" value={v.createdBy || "—"} last />
-                              {!isVault && vaultEnabled && (
-                                <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
-                                  <Btn onClick={() => setMigrating(v)} disabled={!!vaultWhy} title={vaultWhy || undefined}>
-                                    Migrate to Vault
-                                  </Btn>
-                                  <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
-                                    {vaultWhy || "Converts this entry to a vault reference"}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </DetailGrid>
-                        </DetailPanel>
-                        <ReferenceField reference={v.reference} semantics="Resolves to the secret value at run time (always redacted in logs)." />
-                        <div style={{ marginTop: 12 }}>
-                          <DetailLabel>Tags</DetailLabel>
-                          <TagEditor tags={tagState.tagsFor(v)} onChange={(next) => tagState.save(v, next)} disabled={!canEdit} />
-                          {tagState.errors[String(v.id)] && (
-                            <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(v.id)]}</div>
-                          )}
-                        </div>
-                      </td>
+        <div style={{ overflowX: "auto" }}>
+          {/* The table's own sideways scroll, which an open row's DetailCell holds itself to (2.5.2). */}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
+            <thead>
+              <TableHead
+                columns={cols.visible}
+                sort={sort}
+                cw={cw}
+                trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
+              />
+            </thead>
+            <tbody>
+              {sort.sorted.map((v) => {
+                const isVault = v.source === "vault";
+                const shown = v.id != null ? revealed[v.id] : undefined;
+                const isExp = v.id != null && expanded === v.id;
+                const toggle = () => setExpanded(isExp ? null : (v.id ?? null));
+                const rowBg = isExp ? c.primaryBg : "transparent";
+                return (
+                  <Fragment key={v.id ?? v.key}>
+                    <tr
+                      onClick={toggle}
+                      onMouseEnter={(e) => { if (!isExp) e.currentTarget.style.background = c.panelHover; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
+                      style={{ borderBottom: isExp ? "none" : `1px solid ${c.border}`, background: rowBg, cursor: "pointer", transition: "background 0.15s" }}
+                    >
+                      {renderCells(cols.visible, v, { rowStyle: { borderBottom: "none" } })}
                     </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                    {isExp && (
+                      <tr style={{ background: rowBg, borderBottom: `1px solid ${c.border}` }}>
+                        <td style={{ borderBottom: "none" }} />
+                        <DetailCell colSpan={cols.visible.length - 1} padding="2px 16px 16px" cellStyle={{ borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
+                          {/* EP-4 Shape B — this panel renders the LIST ROW, so
+                              "refresh this panel" means reload the list. Uses
+                              reloadList, not refetch: refetch also collapses the
+                              expansion, which would close the panel the button
+                              was asked to refresh. */}
+                          <DetailPanel also={reloadList}>
+                          <DetailGrid>
+                            <div>
+                              <DetailLabel
+                                action={
+                                  !isVault && v.revealLocked ? (
+                                    <span
+                                      title={`Made unrevealable${v.revealLockedBy ? ` by ${v.revealLockedBy}` : ""}${v.revealLockedAt ? ` on ${fmtDate(v.revealLockedAt)}` : ""}: runs still use it, and nobody reveals it.`}
+                                      style={{ color: c.textMuted, fontSize: c.fontSm, whiteSpace: "nowrap", flexShrink: 0 }}
+                                    >
+                                      Not revealable
+                                    </span>
+                                  ) : !isVault && canEdit ? (
+                                    <span
+                                      onClick={() => toggleReveal(v)}
+                                      style={{ cursor: "pointer", color: c.primary, fontSize: c.fontSm, whiteSpace: "nowrap", flexShrink: 0 }}
+                                    >
+                                      {revealBusy === v.id ? "…" : shown !== undefined ? "Hide" : "Reveal"}
+                                    </span>
+                                  ) : undefined
+                                }
+                              >
+                                {isVault ? "Vault Reference" : "Secret Value"}
+                              </DetailLabel>
+                              <div
+                                style={{
+                                  ...valueBoxStyle(),
+                                  fontFamily: c.mono,
+                                  fontSize: isVault ? c.fontXs : shown !== undefined ? c.fontSm : c.fontXs,
+                                  color: isVault ? c.primary : shown !== undefined ? c.text : c.textMuted,
+                                  letterSpacing: !isVault && shown === undefined ? 2 : 0,
+                                }}
+                                title={isVault ? "Vault reference — resolved at run time" : undefined}
+                              >
+                                {isVault ? v.vaultPath || "—" : shown !== undefined ? shown : MASK}
+                              </div>
+                            </div>
+                            <div>
+                              <DetailLabel>Details</DetailLabel>
+                              <div style={detailBoxStyle()}>
+                                <DetailRow label="Scope" value={v.scope || "global (injectable from every scope)"} />
+                                <DetailRow label="Used by" value={<UsageCell {...usage.usageFor("secret", v.key)} />} />
+                                <DetailRow label="Description" value={v.description || "—"} />
+                                <DetailRow
+                                  label="Source"
+                                  value={
+                                    <span
+                                      style={{
+                                        display: "inline-flex",
+                                        padding: "2px 7px",
+                                        borderRadius: c.radiusChip,
+                                        fontSize: c.fontXs,
+                                        fontWeight: 600,
+                                        background: isVault ? `${c.primary}22` : c.panel2,
+                                        color: isVault ? c.primary : c.textMuted,
+                                      }}
+                                    >
+                                      {isVault ? "Vault reference" : "Stored in Cronomicon"}
+                                    </span>
+                                  }
+                                />
+                                <DetailRow label={isVault ? "Last Resolved" : "Last Rotated"} value={fmtDate(v.lastModifiedAt)} />
+                                <DetailRow label="Created By" value={v.createdBy || "—"} last />
+                                {canEdit && v.id && (
+                                  <MoveAgency
+                                    kind="secret"
+                                    id={v.id}
+                                    name={v.key}
+                                    ownerName={v.ownerAgency}
+                                    canRepair={v.canRepair}
+                                    onMoved={(text) => {
+                                      setNotice({ kind: "info", text });
+                                      refetch();
+                                    }}
+                                    onError={(text) => setNotice({ kind: "error", text })}
+                                  />
+                                )}
+                                {!isVault && canEdit && !v.revealLocked && (
+                                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
+                                    {/* The row's own flag, as Edit and Delete: the lock is its
+                                        owner's (2.5.1 SG-42), not the page's verb anywhere. */}
+                                    <Btn
+                                      onClick={() => setLocking(v)}
+                                      disabled={!!rowFlagWhy(v.canEdit, v.ownerAgency, "secret")}
+                                      title={rowFlagWhy(v.canEdit, v.ownerAgency, "secret") || undefined}
+                                    >
+                                      Make unrevealable…
+                                    </Btn>
+                                    <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+                                      Nobody can reveal it afterwards, global administrators included. Runs still use it.
+                                    </span>
+                                  </div>
+                                )}
+                                {!isVault && vaultEnabled && (
+                                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
+                                    <Btn onClick={() => setMigrating(v)} disabled={!!rowVaultWhy(v)} title={rowVaultWhy(v) || undefined}>
+                                      Migrate to Vault
+                                    </Btn>
+                                    <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+                                      {rowVaultWhy(v) || "Converts this entry to a vault reference"}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </DetailGrid>
+                          {v.id && <RowUsagePanel kind="secret" id={v.id} />}
+                          </DetailPanel>
+                          <ReferenceField reference={v.reference} semantics="Resolves to the secret value at run time (always redacted in logs)." />
+                          <div style={{ marginTop: 12 }}>
+                            <DetailLabel>Tags</DetailLabel>
+                            <TagEditor tags={tagState.tagsFor(v)} onChange={(next) => tagState.save(v, next)} disabled={!canEdit} />
+                            {tagState.errors[String(v.id)] && (
+                              <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(v.id)]}</div>
+                            )}
+                          </div>
+                        </DetailCell>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {(adding || editing) && (
@@ -512,7 +601,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
           initial={editing}
           scopeNames={scopeNames}
           vaultEnabled={vaultEnabled}
-          vaultWhy={vaultWhy}
+          globalVaultWhy={vaultWhy}
           onClose={() => {
             setAdding(false);
             setEditing(null);
@@ -541,6 +630,27 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         />
       )}
 
+      {locking && (
+        <ConfirmDialog
+          title="Make this secret unrevealable?"
+          confirmLabel="Make unrevealable"
+          busy={lockBusy}
+          message={
+            <>
+              <p style={{ marginTop: 0 }}>
+                From now on nobody can reveal <strong>{locking.key}</strong> through Cronomicon: not your agency, not a
+                global administrator. Runs still use it, and you can still rotate it or move it to Vault.
+              </p>
+              <p style={{ marginBottom: 0 }}>
+                <strong>This cannot be undone.</strong> If you need the value again, keep it where it came from.
+              </p>
+            </>
+          }
+          onConfirm={() => void lockReveal(locking)}
+          onCancel={() => setLocking(null)}
+        />
+      )}
+
       {migrating && (
         <MigrateModal
           row={migrating}
@@ -560,16 +670,16 @@ function SecretFormModal({
   initial,
   scopeNames,
   vaultEnabled,
-  vaultWhy,
+  globalVaultWhy,
   onClose,
   onSaved,
 }: {
   initial: EnvSecretRow | null;
   scopeNames: string[];
   vaultEnabled: boolean;
-  /** GC-8 — non-empty when the caller may not name a Vault path: the Vault
-   *  source option renders disabled with this as its explanation. */
-  vaultWhy: string;
+  /** Non-empty when the caller may not name a Vault path for a row that is
+   *  GLOBAL's (they are not a global administrator). */
+  globalVaultWhy: string;
   onClose: () => void;
   onSaved: (msg: string) => void;
 }) {
@@ -585,8 +695,23 @@ function SecretFormModal({
   const [keyError, setKeyError] = useState("");
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
-  // RF-Q2(a): the create-time agency binding, shown only to restricted callers.
+  // The one agency a new secret belongs to (LR-54).
   const agencyPick = useCreationAgencies(isEdit, "manageEnvVars");
+
+  // LR-80 — whose Vault paths apply: the row's owner on an edit, the agency
+  // chosen on a create. Global's rows have no path limit and are a global
+  // administrator's; an agency's must lie inside that agency's prefixes.
+  const editOwnerId = useAgencyIdByName(isEdit ? initial?.ownerAgency || globalAgencyName() : undefined);
+  const ownerId = isEdit ? editOwnerId : agencyPick.selected || undefined;
+  const ownerName = isEdit
+    ? initial?.ownerAgency || globalAgencyName()
+    : agencyPick.agencies.find((a) => a.id === agencyPick.selected)?.name || "the agency";
+  const prefixes = useVaultPrefixes(ownerId);
+  // The owner's own Vault offers the source even where the installation has none.
+  const offerVault = vaultEnabled || (prefixes.kind === "prefixes" && prefixes.ownVault);
+  // Why the Vault SOURCE cannot be chosen at all, and why this PATH cannot be.
+  const vaultWhy = ownerId === GLOBAL_AGENCY ? globalVaultWhy : vaultPathWhy(prefixes, ownerName);
+  const pathWhy = source === "vault" && ownerId !== GLOBAL_AGENCY ? vaultPathWhy(prefixes, ownerName, vaultPath) : "";
 
   const onKeyChange = (raw: string) => {
     const up = raw.toUpperCase().replace(/[^A-Z0-9_]/g, "");
@@ -601,6 +726,10 @@ function SecretFormModal({
     }
     if (source === "vault" && !vaultPath.trim()) {
       setFormError("Vault path is required for vault-source secrets");
+      return;
+    }
+    if (source === "vault" && (vaultWhy || pathWhy)) {
+      setFormError(vaultWhy || pathWhy);
       return;
     }
     if (source === "stored" && !isEdit && !value) {
@@ -665,14 +794,15 @@ function SecretFormModal({
               Deliberately NOT appended at the bottom of the form — this modal's body
               is already at its height, so a block added there lands exactly at the
               fold and renders shaved behind the pinned footer. tsc and the unit tests
-              cannot see that; screenshotting the real dialog can. Read-only because
-              ownership is fixed at creation and there is no transfer action, so an
-              editable-looking control would promise what the API cannot do. */}
+              cannot see that; screenshotting the real dialog can. Read-only here: the
+              owner is chosen at creation and changed by MOVING the row (the expanded
+              row's "Move to another agency"), which is a decision of its own and not
+              a field of this form. */}
           {isEdit && initial?.ownerAgency && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 6, fontSize: c.fontXs, color: c.textMuted }}>
               <span>Owned by</span>
               <OwnerChip owner={initial.ownerAgency} />
-              <span>&middot; set at creation</span>
+              <span>&middot; set at creation; move it from the expanded row</span>
             </div>
           )}
             </>
@@ -697,11 +827,13 @@ function SecretFormModal({
                 [
                   { v: "stored", l: "Stored in Cronomicon" },
                   // Vault option only appears when Vault is configured (C.3).
-                  ...(vaultEnabled ? [{ v: "vault", l: "Vault reference" }] : []),
+                  ...(offerVault ? [{ v: "vault", l: "Vault reference" }] : []),
                 ] as { v: SecretSource; l: string }[]
               ).map((opt, i) => {
-                // Vault is configured (so the option is relevant) but naming a
-                // path is a global administrator's: disabled, with the reason.
+                // Vault is configured (so the option is relevant) but this row's
+                // owner cannot name a path — Global's for anyone who is not a
+                // global administrator, or an agency with no Vault paths
+                // assigned: disabled, with the reason.
                 const blocked = opt.v === "vault" && !!vaultWhy;
                 return (
                   <div
@@ -734,7 +866,7 @@ function SecretFormModal({
                 );
               })}
             </div>
-            {vaultEnabled && vaultWhy && (
+            {offerVault && vaultWhy && (
               <span role="note" style={{ fontSize: c.fontXs, color: c.textMuted, flex: 1, minWidth: 200 }}>{vaultWhy}</span>
             )}
           </div>
@@ -759,6 +891,22 @@ function SecretFormModal({
               style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm }}
             />
             <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>Format: engine/data/path#FIELD_NAME</div>
+            {prefixes.kind === "prefixes" && prefixes.prefixes.length > 0 && (
+              <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
+                {ownerName} may name paths inside:{" "}
+                {prefixes.prefixes.map((p, i) => (
+                  <span key={p}>
+                    {i > 0 && ", "}
+                    <code style={{ fontFamily: c.mono }}>{p}</code>
+                  </span>
+                ))}
+              </div>
+            )}
+            {pathWhy && (
+              <div role="alert" style={{ fontSize: c.fontXs, color: c.danger, marginTop: 4 }}>
+                {pathWhy}
+              </div>
+            )}
           </div>
         ) : (
           <div>
@@ -794,13 +942,7 @@ function SecretFormModal({
             the moment someone was reasoning about it. It is display-only on purpose:
             ownership is fixed at creation and there is no transfer action yet, so an
             editable-looking control would promise something the API cannot do. */}
-        <CreationAgencyPicker
-          label="secret"
-          required={agencyPick.required}
-          agencies={agencyPick.agencies}
-          selected={agencyPick.selected}
-          setSelected={agencyPick.setSelected}
-        />
+        <CreationAgencyPicker label="secret" pick={agencyPick} />
       </div>
     </Modal>
   );
@@ -818,11 +960,30 @@ function MigrateModal({
   const [vaultPath, setVaultPath] = useState(`secret/data/cronomicon#${row.key}`);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
+  // LR-80 — the path must lie inside the Vault paths of the agency that owns
+  // the row (no limit for one of Global's).
+  const ownerName = row.ownerAgency || globalAgencyName();
+  const ownerId = useAgencyIdByName(ownerName);
+  const prefixes = useVaultPrefixes(ownerId);
+  const pathWhy = ownerId === GLOBAL_AGENCY ? "" : vaultPathWhy(prefixes, ownerName, vaultPath);
+  // The suggested path is only a starting point. For an agency's row it is
+  // moved inside that agency's first prefix once the prefixes are known, so
+  // the dialog does not open on a refusal the operator did nothing to cause.
+  // Never after they have typed.
+  const [touched, setTouched] = useState(false);
+  const firstPrefix = prefixes.kind === "prefixes" ? prefixes.prefixes[0] : undefined;
+  useEffect(() => {
+    if (!touched && firstPrefix) setVaultPath(`${firstPrefix}/cronomicon#${row.key}`);
+  }, [touched, firstPrefix, row.key]);
 
   const migrate = async () => {
     if (row.id == null) return;
     if (!vaultPath.trim()) {
       setFormError("Vault path is required");
+      return;
+    }
+    if (pathWhy) {
+      setFormError(pathWhy);
       return;
     }
     setBusy(true);
@@ -861,10 +1022,23 @@ function MigrateModal({
         <label style={labelStyle()}>Vault Path *</label>
         <input
           value={vaultPath}
-          onChange={(e) => setVaultPath(e.target.value)}
+          onChange={(e) => {
+            setTouched(true);
+            setVaultPath(e.target.value);
+          }}
           style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm }}
         />
         <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>Format: engine/data/path#FIELD_NAME</div>
+        {prefixes.kind === "prefixes" && prefixes.prefixes.length > 0 && (
+          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
+            {ownerName} may name paths inside: <code style={{ fontFamily: c.mono }}>{prefixes.prefixes.join(", ")}</code>
+          </div>
+        )}
+        {pathWhy && (
+          <div role="alert" style={{ fontSize: c.fontXs, color: c.danger, marginTop: 4 }}>
+            {pathWhy}
+          </div>
+        )}
       </div>
     </Modal>
   );

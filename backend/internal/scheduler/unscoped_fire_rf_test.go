@@ -68,10 +68,10 @@ func TestScheduledFireOfAnUnscopedJobStaysUnbound(t *testing.T) {
 		t.Errorf("scheduled run scope = %q, want \"\" — a cron fire has no actor to bind one, "+
 			"and inventing one would be fiction (RB-Q11(c))", scope)
 	}
-	// The general pool, spelled as the empty ARRAY: claimRun byte-compares this
-	// column against '[]', so "" or NULL would silently change dispatch.
-	if agencies != "[]" {
-		t.Errorf("scheduled run agencies_json = %q, want [] (the general pool)", agencies)
+	// An unbound run is Global's (migration 1220) — what "the general pool"
+	// became when Global was given a row.
+	if agencies != `["Global"]` {
+		t.Errorf("scheduled run agencies_json = %q, want [\"Global\"]", agencies)
 	}
 	if triggerKind != "scheduled" || triggeredBy != "scheduler" {
 		t.Errorf("trigger provenance = %q/%q, want scheduled/scheduler — this is what makes "+
@@ -81,7 +81,7 @@ func TestScheduledFireOfAnUnscopedJobStaysUnbound(t *testing.T) {
 		t.Errorf("scheduled run status = %q, want queued", status)
 	}
 
-	// And it is claimable ONLY by a general-pool runner (AG-Q3a), which is the
+	// And it is claimable ONLY by a runner that serves Global, which is the
 	// practical consequence §10 of the parent plan documents: a department's
 	// agency-bound fleet cannot pick this up.
 	var idx int
@@ -90,8 +90,12 @@ func TestScheduledFireOfAnUnscopedJobStaysUnbound(t *testing.T) {
 		WHERE r.job_name = 'restart-service'`).Scan(&idx); err != nil {
 		t.Fatal(err)
 	}
-	if idx != 0 {
-		t.Errorf("run_agencies rows for an unbound scheduled run = %d, want 0", idx)
+	var only string
+	_ = pool.QueryRowContext(ctx, `
+		SELECT rag.agency FROM run_agencies rag JOIN runs r ON r.id = rag.run_id
+		WHERE r.job_name = 'restart-service'`).Scan(&only)
+	if idx != 1 || only != "Global" {
+		t.Errorf("run_agencies for an unbound scheduled run = %d row(s) (%q), want the one Global row", idx, only)
 	}
 }
 
@@ -111,12 +115,19 @@ func TestScheduledFireOfAScopedJobStillBindsItsScope(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := pool.ExecContext(ctx, `
-		INSERT INTO jobs (uid, name, source, run_type, scope, concurrency_policy, synced_at)VALUES ('uid-'||'tax-report', 'tax-report', 'git', 'bash', 'tax', 'Allow', '2026-01-01T00:00:00Z')`); err != nil {
-		t.Fatalf("seed job: %v", err)
-	}
-	if _, err := pool.ExecContext(ctx, `
 		INSERT INTO agencies (id, name, created_at) VALUES ('ag-tax','Tax','2026-01-01T00:00:00Z')`); err != nil {
 		t.Fatal(err)
+	}
+	// Tax's job, from Tax's repository: a scope's name is looked for in the job's
+	// agency (I2), and a job of Global's repository on Tax's scope is stopped
+	// since §0a (I1).
+	if _, err := pool.ExecContext(ctx, `
+		INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-tax', 'ag-tax', 'u', 'main')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.ExecContext(ctx, `
+		INSERT INTO jobs (uid, name, source, run_type, scope, concurrency_policy, synced_at, repo_id)VALUES ('uid-'||'tax-report', 'tax-report', 'git', 'bash', 'tax', 'Allow', '2026-01-01T00:00:00Z', 'repo-tax')`); err != nil {
+		t.Fatalf("seed job: %v", err)
 	}
 	if _, err := pool.ExecContext(ctx, `
 		INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-tax','tax','git','2026-01-01T00:00:00Z')`); err != nil {

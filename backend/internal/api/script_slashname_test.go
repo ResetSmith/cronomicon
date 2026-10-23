@@ -3,9 +3,9 @@ package api_test
 import (
 	"context"
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
+
+	"github.com/ResetSmith/cronomicon/internal/gittest"
 )
 
 // TestScriptSlashName proves the FB2 routing fix (scripts-browsing.md): a script
@@ -18,13 +18,8 @@ func TestScriptSlashName(t *testing.T) {
 
 	clone := t.TempDir()
 	t.Setenv("CRONOMICON_GIT_CACHE_DIR", clone) // getScriptContent reads gitlab.DefaultCloneDir()
-	if err := os.MkdirAll(filepath.Join(clone, "scripts", "ops-playbooks"), 0o750); err != nil {
-		t.Fatal(err)
-	}
 	body := "---\n- name: site\n  hosts: all\n"
-	if err := os.WriteFile(filepath.Join(clone, "scripts", "ops-playbooks", "site.yml"), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	gittest.CommitSynced(t, pool, "global", clone, map[string]string{"scripts/ops-playbooks/site.yml": body})
 	if _, err := pool.ExecContext(ctx,
 		`INSERT INTO scripts(name, run_type, script_path, content_hash, synced_at) VALUES(?,?,?,?,?)`,
 		"ops-playbooks/site.yml", "ansible", "scripts/ops-playbooks/site.yml", "sha256:z", "t"); err != nil {

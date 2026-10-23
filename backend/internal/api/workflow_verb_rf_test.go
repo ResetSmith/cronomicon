@@ -98,8 +98,14 @@ func TestUnscopedWorkflowIsNotAFreePass(t *testing.T) {
 	// Every constituent job is unscoped — the shape that produced an empty list.
 	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled)
 	      VALUES ('free-step','cronomicon','bash',NULL,1)`)
-	exec(`INSERT INTO workflows (name, source, steps, enabled, synced_at)
-	      VALUES ('wf-free','cronomicon','[{"type":"job","name":"free-step"}]',1,'2026-01-01T00:00:00Z')`)
+	// prod's own workflow (1360), so the verb rule is what refuses (2.5.0 C11:
+	// Global's would be absent to prod's operator).
+	exec(`UPDATE jobs SET uid = 'u-' || name WHERE uid IS NULL`) // these fixtures' jobs record none
+	// The steps pin their jobs by uid, as the editor saves them (R2F-2): since
+	// 2.5.0 C11 a name-only step of a workflow built in the app is looked up in
+	// its own agency only (defect 79), and these jobs are another agency's.
+	exec(`INSERT INTO workflows (name, source, steps, enabled, synced_at, owner_agency)
+	      VALUES ('wf-free','cronomicon',json_array(json_object('type','job','name','free-step','jobUid',(SELECT uid FROM jobs WHERE name = 'free-step'))),1,'2026-01-01T00:00:00Z','ag:prod')`)
 
 	path := workflowPath(t, pool, "wf-free")
 	// A viewer holds no execution verb anywhere: denied by the baseline.
@@ -179,6 +185,7 @@ func TestWorkflowRunCancelChecksEachChildScope(t *testing.T) {
 	exec(`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind,
 	                        executor, scope, workflow_run_id, created_at)
 	      VALUES ('c-prod','j1','bash','running','t','workflow','ssh','prod','wfr-c','2026-01-01T00:00:00Z')`)
+	stampRunAgencies(exec)
 
 	const path = "/api/v1/workflows/runs/wfr-c/cancel"
 	// All children are in the operator's own department: the guard passes.
@@ -191,6 +198,7 @@ func TestWorkflowRunCancelChecksEachChildScope(t *testing.T) {
 	exec(`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind,
 	                        executor, scope, workflow_run_id, created_at)
 	      VALUES ('c-fin','j2','bash','running','t','workflow','ssh','finance','wfr-c','2026-01-01T00:00:00Z')`)
+	stampRunAgencies(exec)
 	if rec := reqAs(t, h, http.MethodPost, path, "sec-operators", ""); rec.Code != http.StatusForbidden {
 		t.Errorf("operator cancelling a run with a child in another department = %d, want 403", rec.Code)
 	}
@@ -201,6 +209,7 @@ func TestWorkflowRunCancelChecksEachChildScope(t *testing.T) {
 	exec(`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind,
 	                        executor, scope, workflow_run_id, created_at)
 	      VALUES ('c-unbound','j3','bash','running','t','workflow','ssh','','wfr-c','2026-01-01T00:00:00Z')`)
+	stampRunAgencies(exec)
 	if rec := reqAs(t, h, http.MethodPost, path, "sec-operators", ""); rec.Code != http.StatusForbidden {
 		t.Errorf("restricted operator cancelling a run with an UNBOUND child = %d, want 403", rec.Code)
 	}

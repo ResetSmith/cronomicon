@@ -660,9 +660,10 @@ func TestReactionParamsMatchACronFire(t *testing.T) {
 	if got.SSHUser != "deploy" || got.SSHCredential != "cred-label" {
 		t.Errorf("identity = %q/%q, want deploy/cred-label", got.SSHUser, got.SSHCredential)
 	}
-	// PP-L8 — a Forbid job carries its key so the partial unique index applies.
-	if got.ConcurrencyKey != "rich-key" {
-		t.Errorf("concurrency key = %q, want rich-key", got.ConcurrencyKey)
+	// PP-L8 — a Forbid job carries its key so the partial unique index applies,
+	// shared within its agency (question 56).
+	if got.ConcurrencyKey != "global:rich-key" {
+		t.Errorf("concurrency key = %q, want global:rich-key", got.ConcurrencyKey)
 	}
 	// The frozen policy is what lets promoteOne re-judge Forbid without a
 	// jobs-table join a rename could invalidate.
@@ -859,8 +860,8 @@ func TestReactionForbidKeyRespectsAnExplicitKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ConcurrencyKey != "db-migration-lock" {
-		t.Errorf("concurrency key = %q, want the authored key", got.ConcurrencyKey)
+	if got.ConcurrencyKey != "global:db-migration-lock" {
+		t.Errorf("concurrency key = %q, want the authored key within its agency", got.ConcurrencyKey)
 	}
 }
 
@@ -1111,6 +1112,38 @@ func TestPromotionMarksAMissingWorkflowMissed(t *testing.T) {
 // row. A ceiling hit means a cycle static detection missed, which is a defect in
 // the graph or in the checker; it has to surface where a human actually looks
 // rather than only in a table nobody queries.
+// D5 (C1): the depth-ceiling row names the reacting definition's agency
+// itself; its trace is the UPSTREAM run. C0 listed this as present defect 73,
+// but a reaction to another agency's definition does not fire since 2.4.x
+// (IN-8), so the upstream run is the reacting definition's agency's and the
+// trace placed the row rightly. The stamp keeps it right if that changes.
+func TestDepthCeilingRowIsTheReactingDefinitionsAgency(t *testing.T) {
+	pool := mustPool(t)
+	s := New(pool, quietLog(), nil)
+	seedJobRow(t, pool, "up", 1)
+	seedJobRow(t, pool, "down", 1)
+	seedReaction(t, pool, "down", "r", "up", "success")
+	seedFinishedRun(t, pool, "r-deep", "up", "success", time.Minute)
+	for _, q := range []string{
+		`UPDATE jobs SET owner_agency = 'ag:TAX', repo_id = NULL WHERE name IN ('up', 'down')`,
+		`UPDATE runs SET reaction_depth = 4, owner_agency = 'ag:TAX' WHERE id = 'r-deep'`,
+	} {
+		if _, err := pool.ExecContext(ctxb(), q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	primeCursor(t, s)
+	s.ScanReactions(ctxb())
+
+	var agency sql.NullString
+	if err := pool.QueryRowContext(ctxb(), `SELECT agency_id FROM activity WHERE category = 'Reactions'`).Scan(&agency); err != nil {
+		t.Fatalf("no depth-ceiling activity row: %v", err)
+	}
+	if agency.String != "ag:TAX" {
+		t.Errorf("the depth-ceiling row is %q's; want ag:TAX, the reacting definition's", agency.String)
+	}
+}
+
 func TestDepthCeilingEmitsAnActivityRow(t *testing.T) {
 	pool := mustPool(t)
 	s := New(pool, quietLog(), nil)

@@ -23,14 +23,13 @@ func TestRbacPreflightEndpoint(t *testing.T) {
 	}
 
 	var rep struct {
-		UngrantedGroups         []string         `json:"ungrantedGroups"`
-		EmptyMembershipEntities []map[string]any `json:"emptyMembershipEntities"`
-		UnscopedJobs            []map[string]any `json:"unscopedJobs"`
-		UnscopedSchedules       []map[string]any `json:"unscopedSchedules"`
-		PendingUnbound          []map[string]any `json:"pendingUnbound"`
-		PendingRevoked          []map[string]any `json:"pendingRevoked"`
-		UsersEvaluated          int              `json:"usersEvaluated"`
-		GrantsEvaluated         int              `json:"grantsEvaluated"`
+		UngrantedGroups   []string         `json:"ungrantedGroups"`
+		UnscopedJobs      []map[string]any `json:"unscopedJobs"`
+		UnscopedSchedules []map[string]any `json:"unscopedSchedules"`
+		PendingUnbound    []map[string]any `json:"pendingUnbound"`
+		PendingRevoked    []map[string]any `json:"pendingRevoked"`
+		UsersEvaluated    int              `json:"usersEvaluated"`
+		GrantsEvaluated   int              `json:"grantsEvaluated"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &rep); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -50,6 +49,9 @@ func TestRbacPreflightEndpoint(t *testing.T) {
 		"losesExecute", "multiRoleUsers", "grantlessMappings",
 		"wideningRestrictions", "orphanScopes", "unmappedGroups",
 		"mappingsEvaluated", "restrictionsEvaluated",
+		// Gone in v2.3.0: "no agency membership" stopped being a state a row can
+		// be in when Global became an agency (migration 1220).
+		"emptyMembershipEntities",
 	} {
 		if _, present := raw[gone]; present {
 			t.Errorf("%q is still in the report — it described a conversion from the "+
@@ -58,12 +60,11 @@ func TestRbacPreflightEndpoint(t *testing.T) {
 	}
 
 	for name, isNil := range map[string]bool{
-		"ungrantedGroups":         rep.UngrantedGroups == nil,
-		"emptyMembershipEntities": rep.EmptyMembershipEntities == nil,
-		"unscopedJobs":            rep.UnscopedJobs == nil,
-		"unscopedSchedules":       rep.UnscopedSchedules == nil,
-		"pendingUnbound":          rep.PendingUnbound == nil,
-		"pendingRevoked":          rep.PendingRevoked == nil,
+		"ungrantedGroups":   rep.UngrantedGroups == nil,
+		"unscopedJobs":      rep.UnscopedJobs == nil,
+		"unscopedSchedules": rep.UnscopedSchedules == nil,
+		"pendingUnbound":    rep.PendingUnbound == nil,
+		"pendingRevoked":    rep.PendingRevoked == nil,
 	} {
 		if isNil {
 			t.Errorf("%s serialized as null; it must be [] so the SPA can map over it", name)

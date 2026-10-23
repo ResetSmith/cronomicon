@@ -91,12 +91,19 @@ func TestScheduleUsedByProjectsOwnerIdentity(t *testing.T) {
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc-dss','ag-dss')`)
 	// Two departments' jobs of ONE name — the state that makes this necessary.
 	exec(`INSERT INTO jobs (uid,name,source,run_type,scope,enabled) VALUES ('uid-fin','nightly','cronomicon','bash','fin-prod',1)`)
-	exec(`INSERT INTO jobs (uid,name,source,run_type,scope,enabled) VALUES ('uid-dss','nightly','git','bash','dss-prod',1)`)
+	// DSS's Git job comes from DSS's repository: a job's agency is its owner's
+	// (1400), and a Git job of Global's repository on DSS's scope is Global's.
+	exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-dss', 'ag-dss', 'u', 'main')`)
+	exec(`INSERT INTO jobs (uid,name,source,run_type,scope,enabled,repo_id) VALUES ('uid-dss','nightly','git','bash','dss-prod',1,'repo-dss')`)
 	exec(`INSERT INTO schedules (name,source,cron,content_hash,synced_at) VALUES ('overnight','git','0 2 * * *','sha256:x','t')`)
 	exec(`INSERT INTO definition_schedules (owner_source,owner_kind,owner_name,owner_uid,name,cron,source_ref)
 	      VALUES ('cronomicon','job','nightly','uid-fin','overnight','0 2 * * *','overnight')`)
 	exec(`INSERT INTO definition_schedules (owner_source,owner_kind,owner_name,owner_uid,name,cron,source_ref)
 	      VALUES ('git','job','nightly','uid-dss','overnight','0 2 * * *','overnight')`)
+	// An entry is tied to its schedule by uid (migration 1300); sync and the
+	// composer stamp it. The fixture writes rows by hand, so it does the same.
+	exec(`UPDATE schedules SET uid = 'uid-sched-' || name WHERE uid IS NULL`)
+	exec(`UPDATE definition_schedules SET schedule_uid = 'uid-sched-' || source_ref WHERE source_ref IS NOT NULL`)
 
 	rec := reqAs(t, h, http.MethodGet, "/api/v1/schedule-defs/overnight", "sec-admins", "")
 	if rec.Code != http.StatusOK {

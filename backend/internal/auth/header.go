@@ -96,7 +96,10 @@ func (s *Service) identityFromHeaders(ctx context.Context, r *http.Request) (Ide
 	// was inert): continuing would hand out an identity with no grants, which after
 	// the switch means zero authority. Failing closed on a transient DB error is
 	// correct; silently de-privileging every operator is not.
-	grants, err := ResolveGrants(ctx, s.db, groups)
+	//
+	// LR-78: resolved through the snapshot, as a cookie session's are. This path
+	// read the database on every request before v2.3.0.
+	grants, err := s.grantsFor(ctx, groups)
 	if err != nil {
 		s.log.Error("trusted-header grant resolution failed", "error", err)
 		return Identity{}, false

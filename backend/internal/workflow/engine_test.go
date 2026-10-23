@@ -380,7 +380,7 @@ func TestInsertChangeLog(t *testing.T) {
 	pool := openPool(t)
 	ctx := context.Background()
 
-	err := workflow.InsertChangeLog(ctx, pool, "admin@example.com", "Jobs", "Triggered", "my-job", "Manual run")
+	err := workflow.InsertChangeLog(ctx, pool, "global", "admin@example.com", "Jobs", "Triggered", "my-job", "Manual run")
 	if err != nil {
 		t.Fatalf("InsertChangeLog: %v", err)
 	}

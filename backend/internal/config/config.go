@@ -169,13 +169,32 @@ type Config struct {
 	WebhookSecret string
 	// GitLabWriteBranch is the GitOps branch used for BOTH sync-read and
 	// publish-write (V1.1-10). Empty ⇒ fall back to the DB-backed
-	// gitlab_config.write_branch, then "main". See gitlab.Service.writeBranch.
+	// Global's git_repos.branch, then "main". See gitlab.Service.writeBranch.
 	GitLabWriteBranch string
+	// GitFetchTimeout bounds ONE transfer of a sync: a fetch, a clone, or the
+	// update of one submodule. Every repository's syncs and publishes wait in
+	// one queue (GR-11), so a transfer that stalls would hold all of them; at
+	// the bound the sync fails, says so in the repository's sync problems, and
+	// the queue moves on. One figure for every repository. It has to leave
+	// room for the first clone of a large repository over a slow link.
+	GitFetchTimeout time.Duration
 
 	// SSH executor (execution-update.md EX.6). Opt-in: when enabled the app
 	// holds SSH private keys and opens outbound SSH to job targets. Default off.
+	//
+	// Since 2.3.0 that engine is the LOCAL RUNNER, turned on and off by an app
+	// setting (settings.LocalRunnerEnabled). These two are read ONCE, when the
+	// local runner's row is first created, as the seeds of that setting and of
+	// its concurrency (LR-44, LR-45): an upgrade that silently read "off" would
+	// stop production jobs.
 	SSHExecutorEnabled     bool
 	SSHExecutorConcurrency int
+	// LocalRunnerForbid is CRONOMICON_LOCAL_RUNNER=forbid (LR-17): the host says
+	// this process must never run jobs itself. The setting then reads off and
+	// cannot be turned on from the app. It is about RUNNING JOBS: a global
+	// administrator's "Test connection" on an SSH target still dials from here.
+	// Any value that is not forbid, allow or empty refuses to start (Load).
+	LocalRunnerForbid bool
 
 	// SecretsInjectionEnabled is the one-release kill-switch for dispatch-time
 	// reference injection (vault-integration.md D5). Default ON: when a run's
@@ -185,8 +204,8 @@ type Config struct {
 	// config and references disjoint. Set CRONOMICON_SECRETS_INJECTION_ENABLED=false
 	// to hard-disable injection for a release.
 	SecretsInjectionEnabled bool
-	// SSHExecutorStaleAfter bounds the periodic SSH-orphan reaper (PP-H2): an
-	// executor='ssh' run still 'running' longer than this is reconciled to
+	// SSHExecutorStaleAfter bounds the periodic orphan reaper (PP-H2): a run
+	// the local runner claimed that is still 'running' longer than this is reconciled to
 	// failure (executor_lost). Must stay safely above the longest plausible job
 	// (its A12 timeout) so it never kills a live run — the synchronous startup
 	// sweep, not this window, provides fast crash recovery. Default 24h.
@@ -226,6 +245,11 @@ type Config struct {
 	// BackupAt is the daily wall-clock UTC time ("HH:MM") for the retention/backup
 	// sweep (PP-H6). Default 02:00.
 	BackupAt string
+	// BackupRecipients seeds Settings → Backups' keys once, on the first boot
+	// that finds none stored (2.5.1 SG-3): age X25519 public keys (age1…),
+	// separated by commas or newlines. Afterwards the stored list is the one
+	// in force and this is not read.
+	BackupRecipients string
 }
 
 // OIDCConfig holds the OIDC relying-party settings.
@@ -243,6 +267,10 @@ type OIDCConfig struct {
 func (o OIDCConfig) Enabled() bool {
 	return o.Issuer != "" && o.ClientID != "" && o.ClientSecret != "" && o.RedirectURL != ""
 }
+
+// DefaultGitFetchTimeout is GitFetchTimeout when the environment does not say
+// (CRONOMICON_GIT_FETCH_TIMEOUT), and for a Config that was not built by Load.
+const DefaultGitFetchTimeout = 10 * time.Minute
 
 // Load reads configuration from the environment, applying defaults.
 func Load() (*Config, error) {
@@ -304,8 +332,10 @@ func Load() (*Config, error) {
 		GitLabBaseURL:           env("CRONOMICON_GITLAB_BASE_URL", ""),
 		WebhookSecret:           env("CRONOMICON_GITLAB_WEBHOOK_SECRET", ""),
 		GitLabWriteBranch:       env("CRONOMICON_GITLAB_WRITE_BRANCH", ""),
+		GitFetchTimeout:         envDuration("CRONOMICON_GIT_FETCH_TIMEOUT", DefaultGitFetchTimeout),
 		SSHExecutorEnabled:      envBool("CRONOMICON_SSH_EXECUTOR_ENABLED", false),
 		SSHExecutorConcurrency:  envInt("CRONOMICON_SSH_EXECUTOR_CONCURRENCY", 4),
+		LocalRunnerForbid:       strings.EqualFold(strings.TrimSpace(env("CRONOMICON_LOCAL_RUNNER", "")), "forbid"),
 		SecretsInjectionEnabled: envBool("CRONOMICON_SECRETS_INJECTION_ENABLED", true),
 		SSHExecutorStaleAfter:   envDuration("CRONOMICON_SSH_EXECUTOR_STALE_AFTER", 24*time.Hour),
 		MaxRunLogBytes:          envInt("CRONOMICON_MAX_RUN_LOG_BYTES", 512<<20),
@@ -320,10 +350,22 @@ func Load() (*Config, error) {
 		BackupS3UseSSL:          envBool("CRONOMICON_BACKUP_S3_USE_SSL", true),
 		BackupS3CAFile:          env("CRONOMICON_BACKUP_S3_CA_FILE", ""),
 		BackupAt:                env("CRONOMICON_BACKUP_AT", "02:00"),
+		BackupRecipients:        env("CRONOMICON_BACKUP_RECIPIENTS", ""),
 	}
 
 	if c.SecretKEKVersion < 1 {
 		return nil, fmt.Errorf("invalid CRONOMICON_KEK_VERSION %d (must be >= 1)", c.SecretKEKVersion)
+	}
+	// A switch that exists to keep SSH keys off a host must not read a typo as
+	// "allowed": "forbidden", "true" or "off" would otherwise start a server
+	// its operator believes cannot run jobs.
+	if v := strings.TrimSpace(os.Getenv("CRONOMICON_LOCAL_RUNNER")); v != "" && !c.LocalRunnerForbid && !strings.EqualFold(v, "allow") {
+		return nil, fmt.Errorf("invalid CRONOMICON_LOCAL_RUNNER %q (want forbid, or allow, or leave it unset)", v)
+	}
+	// Zero is not "no bound": a transfer given no time fails at once, and so
+	// would every sync.
+	if c.GitFetchTimeout <= 0 {
+		return nil, fmt.Errorf("invalid CRONOMICON_GIT_FETCH_TIMEOUT %s (must be more than zero, e.g. 10m)", c.GitFetchTimeout)
 	}
 	if !validLogLevel(c.LogLevel) {
 		return nil, fmt.Errorf("invalid CRONOMICON_LOG_LEVEL %q (want debug|info|warn|error)", c.LogLevel)

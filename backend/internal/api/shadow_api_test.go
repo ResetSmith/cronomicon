@@ -56,6 +56,9 @@ func TestEnvVarShadowsAreScopeFiltered(t *testing.T) {
 	exec(`INSERT INTO secrets(id,key,scope,source,created_at) VALUES('s-p','TOKEN','prod','stored',?)`, now)
 	exec(`INSERT INTO env_vars(id,key,value,created_at) VALUES('v-g','REGION','us',?)`, now)
 	exec(`INSERT INTO env_vars(id,key,value,scope,created_at) VALUES('v-s','REGION','eu','staging',?)`, now)
+	// A scoped row is the agency's whose scope it is in (I2).
+	exec(`UPDATE secrets SET owner_agency = COALESCE((SELECT owner_agency FROM scopes WHERE name = secrets.scope), 'global') WHERE scope IS NOT NULL`)
+	exec(`UPDATE env_vars SET owner_agency = COALESCE((SELECT owner_agency FROM scopes WHERE name = env_vars.scope), 'global') WHERE scope IS NOT NULL`)
 
 	// The unrestricted admin sees both.
 	if got := getShadows(t, h, "sec-admins"); len(got) != 2 {

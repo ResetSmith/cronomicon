@@ -35,6 +35,10 @@ func TestScheduleDefsCatalog(t *testing.T) {
 	seed(`INSERT INTO workflows(name, steps, synced_at) VALUES('pipeline','[]','2026-01-01T00:00:00Z')`)
 	seed(`INSERT INTO definition_schedules(owner_kind, owner_name, name, cron, position, source_ref)
 	      VALUES('workflow','pipeline','nightly','0 0 2 * * *',0,'nightly')`)
+	// An entry is tied to its schedule by uid (migration 1300); sync and the
+	// composer stamp it. The fixture writes rows by hand, so it does the same.
+	seed(`UPDATE schedules SET uid = 'uid-sched-' || name WHERE uid IS NULL`)
+	seed(`UPDATE definition_schedules SET schedule_uid = 'uid-sched-' || source_ref WHERE source_ref IS NOT NULL`)
 
 	client := devLoginClient(t, ts)
 

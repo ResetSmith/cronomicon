@@ -3,7 +3,10 @@ package execspec
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
+
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 )
 
 // Scope↔runner bindings (the scope-bound-runners plan, SB band; mig. 1180).
@@ -48,8 +51,10 @@ type rowQueryer interface {
 }
 
 // boundRunnersSelect lists a scope's bindings with the live runner beside each.
-// The eligibility CASE is claimRun's disjoint agency split (AG-Q3a), restated
-// for one scope and one runner so the two cannot disagree about who may serve.
+// The eligibility test is claimRun's agency rule, restated for one scope and
+// one runner so the two cannot disagree about who may serve: the runner serves
+// one of the scope's agencies. (One arm since migration 1220: a scope with "no
+// agency" is Global's and a runner with none serves Global.)
 const boundRunnersSelect = `
 	SELECT sr.runner_id,
 	       COALESCE(rn.name, sr.runner_name),
@@ -57,11 +62,9 @@ const boundRunnersSelect = `
 	       COALESCE(rn.status, ''),
 	       CASE
 	         WHEN rn.id IS NULL THEN 0
-	         WHEN EXISTS (SELECT 1 FROM scope_agencies sa WHERE sa.scope_id = sr.scope_id)
-	           THEN EXISTS (SELECT 1 FROM scope_agencies sa
-	                          JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
-	                         WHERE sa.scope_id = sr.scope_id AND ra.runner_id = sr.runner_id)
-	         ELSE NOT EXISTS (SELECT 1 FROM runner_agencies ra WHERE ra.runner_id = sr.runner_id)
+	         ELSE EXISTS (SELECT 1 FROM scope_agencies sa
+	                        JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
+	                       WHERE sa.scope_id = sr.scope_id AND ra.runner_id = sr.runner_id AND ra.agency_id = rn.owner_agency)
 	       END
 	  FROM scope_runners sr
 	  LEFT JOIN runners rn ON rn.id = sr.runner_id`
@@ -94,14 +97,14 @@ func BoundRunners(ctx context.Context, q rowQueryer, scopeID string) ([]BoundRun
 // BoundRunnersByScopeName is BoundRunners for callers holding the scope NAME a
 // run or a job carries. An empty name, or one with no scopes row, has no
 // binding by construction.
-func BoundRunnersByScopeName(ctx context.Context, q rowQueryer, scope string) ([]BoundRunner, error) {
+func BoundRunnersByScopeName(ctx context.Context, q rowQueryer, agency, scope string) ([]BoundRunner, error) {
 	if strings.TrimSpace(scope) == "" {
 		return []BoundRunner{}, nil
 	}
 	rows, err := q.QueryContext(ctx, boundRunnersSelect+`
 		  JOIN scopes sc ON sc.id = sr.scope_id
-		 WHERE sc.name = ?
-		 ORDER BY (rn.id IS NULL), COALESCE(rn.name, sr.runner_name), sr.runner_id`, scope)
+		 WHERE `+agencyid.ScopeIn("sc", "?", "?")+`
+		 ORDER BY (rn.id IS NULL), COALESCE(rn.name, sr.runner_name), sr.runner_id`, scope, ownerOrGlobal(agency))
 	if err != nil {
 		return nil, err
 	}
@@ -113,17 +116,17 @@ func BoundRunnersByScopeName(ctx context.Context, q rowQueryer, scope string) ([
 // restricted one only when this runner is named. It says nothing about agency,
 // capability or injection — callers apply those rules separately, as claimRun
 // does.
-func ScopeBindingPermits(ctx context.Context, q rowQueryer, scope, runnerID string) (bool, error) {
+func ScopeBindingPermits(ctx context.Context, q rowQueryer, agency, scope, runnerID string) (bool, error) {
 	if strings.TrimSpace(scope) == "" {
 		return true, nil
 	}
 	var ok bool
 	err := q.QueryRowContext(ctx, `
 		SELECT NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-		                    WHERE sc.name = ?)
+		                    WHERE `+agencyid.ScopeIn("sc", "?1", "?2")+`)
 		    OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-		                WHERE sc.name = ? AND sr.runner_id = ?)`,
-		scope, scope, runnerID).Scan(&ok)
+		                WHERE `+agencyid.ScopeIn("sc", "?1", "?2")+` AND sr.runner_id = ?3)`,
+		scope, ownerOrGlobal(agency), runnerID).Scan(&ok)
 	return ok, err
 }
 
@@ -162,23 +165,20 @@ func scopeBindingReason(scope string, bound []BoundRunner) string {
 }
 
 // RunnerEligibleForScope reports whether a REGISTERED runner passes claimRun's
-// agency rule for a scope (by id): a member of one of the scope's agencies, or —
-// for a scope with none — a runner with no agencies. False for a runner that is
-// not registered. This is the bind-time check: binding a runner the claim query
+// agency rule for a scope (by id): it serves one of the scope's agencies (Global
+// among them, for a scope that is Global's). False for a runner that is not
+// registered. This is the bind-time check: binding a runner the claim query
 // would refuse produces a scope nothing can serve, which is better refused at
 // the form than discovered as a stuck run.
 func RunnerEligibleForScope(ctx context.Context, q rowQueryer, scopeID, runnerID string) (bool, error) {
 	var ok bool
 	err := q.QueryRowContext(ctx, `
 		SELECT EXISTS (SELECT 1 FROM runners rn WHERE rn.id = ?)
-		   AND CASE
-		         WHEN EXISTS (SELECT 1 FROM scope_agencies sa WHERE sa.scope_id = ?)
-		           THEN EXISTS (SELECT 1 FROM scope_agencies sa
-		                          JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
-		                         WHERE sa.scope_id = ? AND ra.runner_id = ?)
-		         ELSE NOT EXISTS (SELECT 1 FROM runner_agencies ra WHERE ra.runner_id = ?)
-		       END`,
-		runnerID, scopeID, scopeID, runnerID, runnerID).Scan(&ok)
+		   AND EXISTS (SELECT 1 FROM scope_agencies sa
+		                 JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
+		                 JOIN runners rown ON rown.id = ra.runner_id AND rown.owner_agency = ra.agency_id
+		                WHERE sa.scope_id = ? AND ra.runner_id = ?)`,
+		runnerID, scopeID, runnerID).Scan(&ok)
 	return ok, err
 }
 
@@ -196,11 +196,17 @@ func ScopeBindingBlock(ctx context.Context, database *sql.DB, runID string) (str
 	if err != nil || reason == "" {
 		return "", err
 	}
-	var scope sql.NullString
-	if err := database.QueryRowContext(ctx, `SELECT scope FROM runs WHERE id = ?`, runID).Scan(&scope); err != nil {
+	var scope, agencies sql.NullString
+	if err := database.QueryRowContext(ctx, `SELECT scope, agencies_json FROM runs WHERE id = ?`, runID).Scan(&scope, &agencies); err != nil {
 		return "", nil //nolint:nilerr // a run that vanished mid-read has no hint to give
 	}
-	bound, err := BoundRunnersByScopeName(ctx, database, scope.String)
+	var names []string
+	_ = json.Unmarshal([]byte(agencies.String), &names)
+	owner, err := RunScopeOwner(ctx, database, names)
+	if err != nil {
+		return "", err
+	}
+	bound, err := BoundRunnersByScopeName(ctx, database, owner, scope.String)
 	if err != nil || len(bound) == 0 {
 		return "", err
 	}

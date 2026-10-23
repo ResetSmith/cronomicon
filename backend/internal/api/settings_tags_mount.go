@@ -139,7 +139,7 @@ func (s *Server) updateEnvVarTags(w http.ResponseWriter, r *http.Request) {
 	// surface in the activity feed the same way a value edit does. The secret/SSH
 	// tag handlers below deliberately stay change_log-only because THEIR value
 	// writes are change_log-only too — each tag write matches its own entity.
-	settings.Audit(r.Context(), s.db, tagsActor(r), "Env Vars", "updated", ev.Key, "")
+	settings.Audit(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "env_vars", "owner_agency", ev.ID), tagsActor(r), "Env Vars", "updated", ev.Key, "")
 	httpx.JSON(w, http.StatusOK, ev)
 }
 
@@ -172,7 +172,7 @@ func (s *Server) updateScopeTags(w http.ResponseWriter, r *http.Request) {
 	}
 	// settings.Audit (change_log + activity): the scope edit (settings.UpdateScope)
 	// emits both, so a tag edit surfaces in the feed the same way.
-	settings.Audit(r.Context(), s.db, tagsActor(r), "Scopes", "updated", sc.Scope, "Scope tags updated")
+	settings.Audit(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "scopes", "owner_agency", id), tagsActor(r), "Scopes", "updated", sc.Scope, "Scope tags updated")
 	httpx.JSON(w, http.StatusOK, sc)
 }
 
@@ -189,7 +189,7 @@ func (s *Server) updateSecretTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// RB-32 (RF-5): same departmental gate as the secret value write.
-	if !s.requireEntityAgency(w, r, actor, auth.PermManageEnvVars, "secret_agencies", "secret_id", id, "secret") {
+	if !s.requireRowOwner(w, r, actor, auth.PermManageEnvVars, "secrets", id, "secret") {
 		return
 	}
 	if _, ok := s.writeTagsUpdate(w, r, "secrets", "id = ?", "secret not found", id); !ok {
@@ -204,7 +204,7 @@ func (s *Server) updateSecretTags(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 		return
 	}
-	s.mountWriteChangeLog(r, "Secrets", "updated", sc.Key, tagsActor(r))
+	s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", id), "Secrets", "updated", sc.Key, tagsActor(r))
 	httpx.JSON(w, http.StatusOK, sc)
 }
 
@@ -215,7 +215,7 @@ func (s *Server) updateCredentialTags(w http.ResponseWriter, r *http.Request) {
 	// RB-16 (RF-5): this handler previously had NO ownership guard at all —
 	// key-material writes are agency-gated, so the metadata beside them is too.
 	actor, _ := auth.IdentityFrom(r.Context())
-	if !s.requireEntityAgency(w, r, actor, auth.PermConfigureApp, "ssh_credential_agencies", "credential_id", id, "SSH key") {
+	if !s.requireRowOwner(w, r, actor, auth.PermConfigureApp, "ssh_credentials", id, "SSH key") {
 		return
 	}
 	if _, ok := s.writeTagsUpdate(w, r, "ssh_credentials", "id = ?", "ssh credential not found", id); !ok {
@@ -230,7 +230,7 @@ func (s *Server) updateCredentialTags(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "ssh credential not found")
 		return
 	}
-	s.mountWriteChangeLog(r, "SSH Keys", "updated", c.Label, tagsActor(r))
+	s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "ssh_credentials", "owner_agency", id), "SSH Keys", "updated", c.Label, tagsActor(r))
 	httpx.JSON(w, http.StatusOK, c)
 }
 
@@ -257,6 +257,6 @@ func (s *Server) updateRunnerTags(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "runner not found")
 		return
 	}
-	s.mountWriteChangeLog(r, "Runners", "updated", name, tagsActor(r))
+	s.mountWriteChangeLog(r, settings.RowAgency(r.Context(), s.db, "runners", "owner_agency", id), "Runners", "updated", name, tagsActor(r))
 	httpx.JSON(w, http.StatusOK, map[string]any{"id": id, "name": name, "tags": tags})
 }

@@ -2,11 +2,11 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { fetchCapabilities } from "../api/client";
-import { COMPOSE_ADMIN_ONLY, globalOnly } from "../api/globalAdmin";
 import { useGet, rows } from "../hooks";
+import { useAgencyOptional, useEnsureAgency } from "../agency";
 import { c } from "../theme";
 import { guideForRunType } from "../components/docLinks";
-import { EnvRowsEditor, Btn, ExecutorChoice, InfoBody, InfoToggle, Input, Select, SourceBadge, fieldLabelStyle, inputStyle, type EnvKV,
+import { EnvRowsEditor, Btn, InfoBody, InfoToggle, Input, Select, SourceBadge, fieldLabelStyle, inputStyle, type EnvKV,
   DocLink,
 } from "../components/ui";
 import { ComposeKeyPicker, ComposeReferencePicker, putBindings } from "../components/ReferenceBindings";
@@ -183,6 +183,9 @@ export function JobComposer() {
   const isEdit = !!editId;
   // The job to prefill the form from, in either mode.
   const loadId = editId ?? cloneId;
+  // 2.4.4 (SW-8) — a link to another agency's job switches to its agency.
+  const [jobOwner, setJobOwner] = useState<string | undefined>(undefined);
+  useEnsureAgency(jobOwner);
 
   const [canCompose, setCanCompose] = useState<boolean | null>(null);
   // EV-6 parity — key-binding writes go through the reference-bindings PUT, which
@@ -193,17 +196,22 @@ export function JobComposer() {
   // (RB-30). A departmental composer is offered named scopes only, rather than
   // being shown an option the server will refuse.
   const [canComposeUnbound, setCanComposeUnbound] = useState(false);
-  // GC (v2.2.2) — reactions are the one part of this form the server takes only
-  // from a compose ADMINISTRATOR (PUT /reactions/…): a reaction couples this job
-  // to another definition, whoever owns it. The job itself, and its inline
-  // schedules, stay per-scope compose.
-  const [composeAdmin, setComposeAdmin] = useState(false);
+  // What "No scope" means, said of the agency the job is created in (2.5.0 C11,
+  // defect 90: it said "visible to every agency", and even the 2.5.0 hint was
+  // true only in Global): the agency's job, a scope of its given to each run.
+  const inAgency = useAgencyOptional();
+  const noScopeMeans =
+    !inAgency || inAgency.agency === "global"
+      ? "the job is Global's, and runs on Global's hosts and runners"
+      : `the job is ${inAgency.agencyName}'s, and each run is given one of ${inAgency.agencyName}'s scopes when it starts`;
+  // Reactions were, from GC (v2.2.2) until 2.4.2, the one part of this form the
+  // server took only from a compose administrator; since question 61 they are
+  // the job's agency's, like the job.
   useEffect(() => {
     fetchCapabilities().then((caps) => {
       setCanCompose(caps.compose);
       setCanManageEnv(caps.manageEnvVars);
       setCanComposeUnbound(caps.composeUnbound);
-      setComposeAdmin(!!caps.composeAdmin);
     });
   }, []);
 
@@ -246,7 +254,7 @@ export function JobComposer() {
   const [scriptRef, setScriptRef] = useState(loadId ? "" : (search.get("script") ?? ""));
   // JC17 — the resolved Script object for the current scriptRef, lifted from the
   // ScriptPicker (which owns the catalog load + the GET /scripts/{name} prefill so
-  // an off-page or edit-loaded ref still resolves). Drives run-type/executor, the
+  // an off-page or edit-loaded ref still resolves). Drives the run type, the
   // lint indicator, and declared-variable hints below.
   const [selectedScript, setSelectedScript] = useState<Script | null>(null);
   // A3 — true when scriptRef points at a deleted/unknown script (the picker resolved
@@ -264,9 +272,8 @@ export function JobComposer() {
   const [sshUser, setSshUser] = useState("");
   const [sshCredential, setSshCredential] = useState("");
   const [becomePasswordSecret, setBecomePasswordSecret] = useState("");
-  const [executor, setExecutor] = useState("");
   // EV-6 parity — the job's declared SSH-key bindings (labels only), promoted to
-  // their own section beside Executor exactly as job detail promoted JobKeyField.
+  // their own section exactly as job detail promoted JobKeyField.
   // Draft-until-save like every other composer field: loaded from
   // /job-reference-bindings on edit, written back through putBindings AFTER the
   // job row saves (create mode has no jobId to write against until then).
@@ -340,6 +347,7 @@ export function JobComposer() {
         return;
       }
       const j = data as Job;
+      if (editId) setJobOwner((j as { ownerAgency?: string }).ownerAgency || undefined);
       if (j.source !== "cronomicon") {
         setGitSource(true);
         return;
@@ -353,7 +361,6 @@ export function JobComposer() {
       setSshUser(j.sshUser ?? "");
       setSshCredential(j.sshCredential ?? "");
       setBecomePasswordSecret(j.becomePasswordSecret ?? "");
-      setExecutor(j.executor ?? "");
       // JC10 — prefill job-level env for an exact round-trip (full-state resend).
       setJobEnvRows(Object.entries(j.env ?? {}).map(([key, value]) => ({ key, value })));
       // UDV1 — prefill declared prompts for an exact round-trip (full-state resend).
@@ -456,8 +463,9 @@ export function JobComposer() {
   });
   const inlineHasEnv = inlineSchedules.some((e) => e.env.some((r) => r.key.trim() !== ""));
 
-  // JC-P5 — run-type / executor awareness from the selected script. The SSH lock
-  // is hard (the backend 422s ssh × ansible/terraform at run time). selectedScript is
+  // JC-P5 — run-type awareness from the selected script: ansible and terraform
+  // need an agent's local toolchain, the shell types may also be taken by the
+  // local runner. Nothing is chosen here (2.3.0, LR-50). selectedScript is
   // resolved by the ScriptPicker (state above), so it works for off-page scripts too.
   const runType = selectedScript?.runType;
   const runnerOnly = isRunnerOnly(runType);
@@ -465,6 +473,11 @@ export function JobComposer() {
   // ansible may carry a declared "connect as"; terraform 422s.
   const identityCapable = isIdentityCapable(runType);
   const chosenScope = scopesList.find((s) => s.scope === scope);
+  // The job's agency is its scope's (2.4.0, I2): its schedule entries are
+  // judged by that agency's calendars (2.4.1). No scope is Global's; a scope
+  // not chosen yet, or in no single agency, leaves it unknown.
+  const jobAgency =
+    scope === "" ? "global" : (chosenScope?.agencies ?? []).length === 1 ? chosenScope!.agencies![0].id : undefined;
   const scopeHosts = chosenScope?.hosts ?? [];
 
   // JC-P4 — env context for the chosen scope. '*'/empty scope = a global (mirrors the
@@ -590,11 +603,6 @@ export function JobComposer() {
   // JC-P7 — count of complete inline schedules, for the effective-binding preview.
   const nInlineValid = inlineSchedules.filter((s) => s.name.trim() && s.cron.trim()).length;
 
-  // JC-P5 — runner-only run-types can't use SSH; drop a stale ssh override to runner.
-  useEffect(() => {
-    if (runnerOnly && executor === "ssh") setExecutor("runner");
-  }, [runnerOnly, executor]);
-
   // RP-10 — same shape for identity: re-binding the job to a script whose run
   // type can't carry one (terraform) hides the fields, and a hidden value would
   // otherwise still be submitted and 422 at save with no visible cause.
@@ -672,9 +680,7 @@ export function JobComposer() {
     // the author is told in the form rather than by a 422 after a full round-trip;
     // the server enforces the same rule for every other client.
     if (scope == null) {
-      return setErr(
-        'Pick a scope — it decides which agencies can see this job. Choose "All agencies (global)" if it should be visible to everyone.',
-      );
+      return setErr(`Pick a scope — it decides where this job runs. Or pick "No scope": ${noScopeMeans}.`);
     }
     setBusy(true);
     const body: Record<string, unknown> = {
@@ -723,7 +729,6 @@ export function JobComposer() {
       // ssh-family job, whose remote env is built entirely from the manifest.
       envPassthrough: runnerOnly ? preserved.envPassthrough : [],
     };
-    if (executor) body.executor = executor;
     setKeyErr(null);
     // PUT/DELETE /jobs/{jobId} declare `header?: never` — the csrf middleware
     // injects the token, so pass NO header placeholder (only path + body).
@@ -795,7 +800,6 @@ export function JobComposer() {
     setTargetHost("");
     setSshUser("");
     setSshCredential("");
-    setExecutor("");
     setSshKeys([]);
     setLoadedKeys([]);
     setScheduleRefs([]);
@@ -809,7 +813,7 @@ export function JobComposer() {
     return (
       <div style={{ color: c.textSec, maxWidth: 560 }}>
         In-app job composition requires the <strong>Compose</strong> capability (Admin-only in v20).
-        Git-defined jobs are authored through the GitLab publish flow.
+        Git-defined jobs are authored through the publish flow.
       </div>
     );
   }
@@ -924,10 +928,10 @@ export function JobComposer() {
           />
           {scope == null && (
             <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
-              Decides which agencies can see this job.{" "}
+              Decides where this job runs.{" "}
               {canComposeUnbound ? (
                 <>
-                  Pick <strong>All agencies (global)</strong> if everyone should.
+                  <strong>No scope</strong>: {noScopeMeans}.
                 </>
               ) : (
                 <>Pick one of the scopes your role is granted.</>
@@ -936,7 +940,7 @@ export function JobComposer() {
           )}
           {scope === "" && (
             <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
-              Visible to every agency, and runnable by anyone who may trigger jobs.
+              No scope: {noScopeMeans}.
             </div>
           )}
           {/* AF-Q3 — advisory, never blocking: a scope that maps to no agency is
@@ -947,8 +951,8 @@ export function JobComposer() {
               to read agencies from, and warning about it would be guessing. */}
           {scope != null && scope !== "" && chosenScope && (chosenScope.agencies ?? []).length === 0 && (
             <div style={{ fontSize: c.fontXs, color: c.warning, marginTop: 4 }}>
-              ⚠ <code style={{ fontFamily: c.mono }}>{scope}</code> is not mapped to any agency, so only unrestricted
-              admins will see this job. Map it under Settings → Scopes to give a department access.
+              ⚠ <code style={{ fontFamily: c.mono }}>{scope}</code> is in no agency, so only global administrators will
+              see this job. A global administrator sets its agency on the Scopes page.
             </div>
           )}
         </Field>
@@ -1065,48 +1069,35 @@ export function JobComposer() {
         </div>
       )}
 
-      {/* Run-dialog parity — the same ExecutorChoice cards the Run modal uses,
-          plus the composer's third option: no override, resolved from the script. */}
-      <Field label="Executor">
-        <div style={{ display: "flex", gap: 8 }}>
-          <ExecutorChoice
-            label="Auto"
-            sub="From script / run type"
-            selected={executor === ""}
-            onClick={() => setExecutor("")}
-          />
-          <ExecutorChoice
-            label="SSH"
-            sub="In-app SSH"
-            selected={executor === "ssh"}
-            disabled={runnerOnly}
-            title={runnerOnly ? `SSH can't run ${runType} — it needs a runner with the local ${runType} toolchain.` : undefined}
-            onClick={() => setExecutor("ssh")}
-          />
-          <ExecutorChoice
-            label="Runner"
-            sub="Runner agent"
-            selected={executor === "runner"}
-            onClick={() => setExecutor("runner")}
-          />
-        </div>
-        <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6 }}>
-          {runnerOnly ? (
-            <>
-              <strong>{runType}</strong> needs a runner with the local toolchain — SSH can't run it.
-            </>
-          ) : executor === "" ? (
-            <>Resolved from the script at trigger time — shell run-types default to SSH.</>
-          ) : (
-            <>Will run via <strong>{executor === "ssh" ? "the in-app SSH executor" : "a runner agent"}</strong>.</>
-          )}
-        </div>
-      </Field>
+      {/* LR-50 — where the job runs is not authored on the job. One line says
+          the rule for the chosen script's run type, because an author used to
+          answer it here and would otherwise look for the field. */}
+      {runType && (
+        <Field label="Runs on">
+          <div style={{ fontSize: c.fontXs, color: c.textSec, maxWidth: "70ch" }}>
+            {runnerOnly ? (
+              <>
+                <strong>{runType}</strong> needs the local toolchain, so an agent that serves the job&rsquo;s scope takes
+                its runs.
+              </>
+            ) : sshKeys.length > 0 ? (
+              <>
+                This job binds an SSH key, which only an agent delivers as a file, so an agent that serves the
+                job&rsquo;s scope takes its runs.
+              </>
+            ) : (
+              <>
+                Whichever runner that serves the job&rsquo;s scope asks first takes a run: an agent, or the local runner
+                (this server, over SSH) where it is switched on, for a job of Global&rsquo;s.
+              </>
+            )}{" "}
+            To keep a scope&rsquo;s jobs on particular runners, bind them on Scopes → Runners.
+          </div>
+        </Field>
+      )}
 
-      {/* EV-6 parity — SSH keys as their own section, directly after Executor (the
-          field they complete: one says how the job runs, the other what key
-          material the run gets). Same presentation as job detail's JobKeyField;
-          draft-until-save like the rest of the form. */}
+      {/* EV-6 parity — SSH keys as their own section. Same presentation as job
+          detail's JobKeyField; draft-until-save like the rest of the form. */}
       <Field
         label="SSH keys"
         info={
@@ -1124,7 +1115,7 @@ export function JobComposer() {
           </>
         }
       >
-        <ComposeKeyPicker keys={sshKeys} onChange={setSshKeys} scope={scope} executor={executor || null} canManage={canManageEnv} />
+        <ComposeKeyPicker keys={sshKeys} onChange={setSshKeys} scope={scope} runType={runType} canManage={canManageEnv} />
         {!canManageEnv && sshKeys.length === 0 && (
           <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 4 }}>
             Assigning keys needs the Manage Env Vars permission.
@@ -1187,7 +1178,9 @@ export function JobComposer() {
           ownerKind="job"
           ownerName={isEdit ? name : ""}
           ownerSource="cronomicon"
-          disabledReason={globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY) || undefined}
+          // 2.4.2 (question 61): reactions are written by compose on the
+          // definition's agency, which whoever may save the job holds.
+          disabledReason={undefined}
           loadError={reactions.loadError}
         />
         {reactionsError({ kind: "job", name, source: "cronomicon" }, reactions.list) && (
@@ -1377,6 +1370,7 @@ export function JobComposer() {
                 onChange={(patch) => updateInline(i, patch)}
                 onRemove={() => removeInline(i)}
                 nameError={inlineErrors[i]}
+                agency={jobAgency}
               />
             ))}
           </div>
@@ -1672,7 +1666,7 @@ export function JobComposer() {
             "no scope"
           )}
           {" × "}
-          <strong>{executor || "auto"}</strong>
+          <strong>{!runType ? "a runner" : runnerOnly || sshKeys.length > 0 ? "an agent" : "any runner"}</strong>
           {sshKeys.length > 0 ? ` (+${sshKeys.length} SSH key${sshKeys.length === 1 ? "" : "s"})` : ""}
         </div>
       </div>
@@ -1739,11 +1733,14 @@ function InlineScheduleRow({
   onChange,
   onRemove,
   nameError,
+  agency,
 }: {
   entry: InlineSchedule;
   onChange: (patch: Partial<InlineSchedule>) => void;
   onRemove: () => void;
   nameError?: string | null;
+  /** The job's agency, whose calendars the entry is judged by (2.4.1). */
+  agency?: string;
 }) {
   const cronTrim = entry.cron.trim();
   const mode = modeOf(entry);
@@ -1837,6 +1834,7 @@ function InlineScheduleRow({
           onChange={(b) => onChange({ skipCalendars: b.skipCalendars, onlyCalendars: b.onlyCalendars })}
           spec={entry}
           compact
+          agency={agency}
         />
       </div>
 

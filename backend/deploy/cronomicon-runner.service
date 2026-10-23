@@ -51,7 +51,19 @@ ExecStart=/usr/local/bin/cronomicon-runner
 
 # Graceful drain on stop: SIGTERM makes the agent stop claiming new work and let
 # active runs finish. Give long-running ansible/terraform plays time to wind down.
+# (True of agents from 2.3.2. Before it, SIGTERM ended every run at once and the
+# server was told nothing.) A run still going after TimeoutStopSec is killed by
+# systemd; the agent's next start tells the server, which records it as lost. For
+# longer runs, drain the runner from the Runners view first and stop it after.
+#
+# KillMode=mixed is what makes that true of Ansible and Terraform runs. They are
+# the agent's own child processes, in this unit's control group, and systemd's
+# default (control-group) sends SIGTERM to every process in the group: the play
+# is cut off by systemd while the agent waits for it. mixed signals the agent
+# alone, and kills whatever is left once it has exited or the timeout has run
+# out. Shell runs go over SSH and were never in the group.
 KillSignal=SIGTERM
+KillMode=mixed
 TimeoutStopSec=300
 
 Restart=on-failure
@@ -77,10 +89,20 @@ MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
+# A filtered call answers EPERM instead of killing the calling thread. The
+# agent is a Go program, and Go's PATH lookup first tries a system call
+# (faccessat2) that an older systemd's @system-service list does not know
+# (239, on RHEL 8, for one). Killed, that thread never answers: the lookup
+# hangs, the agent finds no bash, perl or python, and it refuses to start.
+# Told EPERM, Go falls back to the older call.
+SystemCallErrorNumber=EPERM
 
 # Only the identity/key state directory is writable; everything else is read-only
 # (ProtectSystem=strict). /var/lib/cronomicon-runner is created and owned by us.
 StateDirectory=cronomicon-runner
+# Without this systemd resets the state directory to 0755 at every start, and
+# another user on the machine (a second agent's, for one) can list it.
+StateDirectoryMode=0750
 ReadWritePaths=/var/lib/cronomicon-runner
 
 # Network: the agent only needs outbound HTTPS to the server and SSH to targets
@@ -94,11 +116,28 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 # `systemd-run --scope` transient cgroup for resource caps (configure with
 # -sandbox-memory-max / -sandbox-cpu-quota / -sandbox-tasks-max, or their
 # CRONOMICON_RUNNER_SANDBOX_* env). Sandbox availability is probed at startup and
-# reported per-run; where no usable systemd manager exists the run is executed
-# and reported UNSANDBOXED. Creating scopes requires the agent to reach the
-# systemd manager — if the directives above prove too restrictive for that on
-# your host, the runs still inherit this unit's sandbox; they just lose the
-# per-run resource caps.
+# reported per-run; where the agent cannot create a scope the run is executed
+# and reported UNSANDBOXED.
+#
+# UNDER THIS UNIT IT CANNOT. Creating a scope is a request to the system
+# manager that polkit refuses to a user who is not root ("Interactive
+# authentication required"), and User= above is not root. The hardening is not
+# the cause (root creates a scope under all of it), and the permission that
+# would grant it is the one to manage units: more than an agent should hold.
+# So with this unit every local-toolchain run inherits the hardening and has
+# NO resource cap of its own: the -sandbox-* settings do nothing and the agent
+# does not advertise `sandboxed`.
+#
+# ── Resource limits ──────────────────────────────────────────────────────────
+# What does work is a limit on this unit: the agent and everything it runs,
+# together. On a machine with several agents, give each one limits so that no
+# agency's run can starve the others. runner-install.sh writes them with
+# --memory-max, --cpu-quota and --tasks-max; on an installed agent,
+# `systemctl set-property cronomicon-runner.service MemoryMax=4G …` sets them
+# without a restart. None is set by default.
+#   MemoryMax=4G
+#   CPUQuota=200%
+#   TasksMax=1024
 #
 # ── Egress allowlist (P5 — opt-in, commented) ────────────────────────────────
 # Restrict where this runner (and its ansible/terraform children) may connect.

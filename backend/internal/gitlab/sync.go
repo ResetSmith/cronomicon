@@ -7,15 +7,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/auth"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/config"
@@ -25,6 +31,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/inventory"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/watchspec"
@@ -68,27 +75,76 @@ func (s *Service) installGuardedGitTransport() {
 
 // Service manages the Git clone and drives sync operations.
 type Service struct {
-	db            *sql.DB
-	log           *slog.Logger
-	cloneDir      string // path to the local git clone
-	repoURL       string // full GitLab HTTPS URL
+	db       *sql.DB
+	log      *slog.Logger
+	cloneDir string // path to the local git clone
+	repoURL  string // full GitLab HTTPS URL
+	// repoID is the repository this Service syncs (GR-3). Empty means Global's,
+	// which is the only repository an installation has until the repositories
+	// table arrives (2.4.0, Phase R2); read it through repo(). It is stamped on
+	// every script this Service writes and bounds the scripts it prunes.
+	repoID string
+	// agencyID is the agency that repository belongs to (GR-1): every row it
+	// supplies is that agency's. Empty means Global, for the same reason; read
+	// it through agency(). It is stamped on the schedules this Service writes
+	// (schedules.owner_agency, migration 1300).
+	agencyID      string
 	token         string // CRONOMICON_GITLAB_TOKEN (may be empty — unauthenticated)
 	webhookSecret string
 	Cfg           *config.Config // added for KEK-based webhook secret decryption
 
-	mu      sync.Mutex // guards in-progress sync to prevent overlapping runs
-	syncing bool
+	// gate is the one queue a sync, a blocking sync and a publish wait in: the
+	// Registry's, shared by the Services of every repository (GR-11). nil for a
+	// Service built on its own (tests), which gets one of its own from queue().
+	gate     chan struct{}
+	gateOnce sync.Once
+	// ctx is the Service's lifetime: cancelled by Stop, and by the end of the
+	// process. Everything the Service does on its own account (the syncs
+	// TriggerSync starts) runs on it, and everything it does for a caller is
+	// cancelled with it. nil for a Service built on its own; read it through
+	// lifetime().
+	ctx    context.Context
+	cancel context.CancelFunc
+	// wg counts the operations in flight, so that Stop can wait for them.
+	wg sync.WaitGroup
 
-	// onSyncComplete, when set, is invoked at the end of a successful sync with
-	// the synced HEAD SHA so the scheduler can reload newly-synced schedules
-	// immediately (it self-gates on SHA change). Optional — nil is a no-op.
-	onSyncComplete func(ctx context.Context, sha string)
+	mu      sync.Mutex // guards syncing, pending, pendingTrigger and stopped
+	syncing bool       // a sync started by TriggerSync is queued or running
+	// pending: a trigger arrived while that sync was queued or running. One more
+	// sync follows it, with pendingTrigger as its label.
+	pending        bool
+	pendingTrigger string
+	stopped        bool
+
+	// afterFetch, when set, is called once the clone is at the remote's commit
+	// and before anything is parsed. Tests use it to act "during a sync".
+	afterFetch func()
+
+	// beforePush, when set, is called by a publish once its commit is made and
+	// before it is pushed. Tests use it to act between a publish's fetch and
+	// its push.
+	beforePush func()
+
+	// problems collects what the sync that is under way has to say about the
+	// repository's files (GR-30, problems.go). nil between syncs. One sync of a
+	// Service runs at a time (the queue), so there is one collector at a time;
+	// but a warning can be logged by a goroutine that is not the one syncing
+	// (the line that follows a sync started by a trigger), so the pointer is
+	// read and set under problemsMu.
+	problemsMu sync.Mutex
+	problems   *problemSet
+
+	// onSyncComplete, when set, is invoked at the end of a sync that committed,
+	// with the definitions generation that sync advanced to, so the scheduler can
+	// reload newly-synced schedules immediately (it compares the generation with
+	// the one it loaded at). Optional — nil is a no-op.
+	onSyncComplete func(ctx context.Context, generation string)
 }
 
 // SetOnSyncComplete installs the post-sync hook (wired in main.go to the
-// scheduler's SHA-gated reload). Passing a func value avoids an api→scheduler
-// import edge.
-func (s *Service) SetOnSyncComplete(f func(ctx context.Context, sha string)) {
+// scheduler's generation-gated reload). Passing a func value avoids an
+// api→scheduler import edge.
+func (s *Service) SetOnSyncComplete(f func(ctx context.Context, generation string)) {
 	s.onSyncComplete = f
 }
 
@@ -110,10 +166,15 @@ func NewService(db *sql.DB, log *slog.Logger, repoURL, token, cloneDir, webhookS
 	}
 }
 
-// ValidateWebhookToken validates the GitLab webhook token.
+// ValidateWebhookToken validates a webhook token against THIS repository's
+// secret set (its row of git_repos).
 // If CRONOMICON_GITLAB_WEBHOOK_SECRET is set, only that secret is accepted.
 // Otherwise, it checks the active secret and, if the overlap window has not expired,
 // the previous secret stored in the database (encrypted using KEK).
+//
+// The environment's secret and the secret read at start-up are Global's
+// repository's alone (GR-21): they are scalar, and a second repository that
+// honoured them would open its webhook to whoever holds Global's secret.
 func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
 	// ctEq is a local alias for constant-time string comparison to prevent
 	// timing-based webhook secret enumeration (PP-L10).
@@ -122,27 +183,31 @@ func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
 	}
 
 	// 1. Env var override check
-	if envSecret := os.Getenv("CRONOMICON_GITLAB_WEBHOOK_SECRET"); envSecret != "" {
+	if envSecret := settings.EnvWebhookSecret(s.repo()); envSecret != "" {
 		return ctEq(token, envSecret)
+	}
+	bootSecret := ""
+	if s.repo() == repoid.Global {
+		bootSecret = s.webhookSecret
 	}
 
 	// 2. Read secrets from database
 	row := s.db.QueryRowContext(ctx, `
 		SELECT webhook_secret_enc, webhook_secret_prev_enc, webhook_overlap_until
-		FROM gitlab_config WHERE id=1`)
+		FROM git_repos WHERE id=?`, s.repo())
 	var secretEnc, prevEnc, overlapUntil sql.NullString
 	if err := row.Scan(&secretEnc, &prevEnc, &overlapUntil); err != nil {
 		// Fallback to static webhookSecret loaded at boot if DB query fails or has no rows
-		return s.webhookSecret != "" && ctEq(token, s.webhookSecret)
+		return bootSecret != "" && ctEq(token, bootSecret)
 	}
 
 	// 3. Decrypt and check active secret
 	if secretEnc.Valid && secretEnc.String != "" && s.Cfg != nil {
-		decrypted, err := secrets.DecryptString(s.Cfg, secretEnc.String)
+		decrypted, err := secrets.DecryptSetting(s.Cfg, secrets.SettingsBinding(secrets.LabelGitWebhookSecret, s.repo()), secretEnc.String)
 		if err == nil && ctEq(token, decrypted) {
 			return true
 		}
-	} else if s.webhookSecret != "" && ctEq(token, s.webhookSecret) {
+	} else if bootSecret != "" && ctEq(token, bootSecret) {
 		// If DB has no active secret but boot secret matches, accept it
 		return true
 	}
@@ -151,7 +216,7 @@ func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
 	if prevEnc.Valid && prevEnc.String != "" && overlapUntil.Valid && overlapUntil.String != "" && s.Cfg != nil {
 		expiry, err := time.Parse(time.RFC3339, overlapUntil.String)
 		if err == nil && time.Now().UTC().Before(expiry) {
-			decryptedPrev, err := secrets.DecryptString(s.Cfg, prevEnc.String)
+			decryptedPrev, err := secrets.DecryptSetting(s.Cfg, secrets.SettingsBinding(secrets.LabelGitWebhookSecretPrev, s.repo()), prevEnc.String)
 			if err == nil && ctEq(token, decryptedPrev) {
 				return true
 			}
@@ -159,6 +224,24 @@ func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
 	}
 
 	return false
+}
+
+// repo is the id of the repository this Service syncs: Global's, unless the
+// Service was built for another.
+func (s *Service) repo() string {
+	if s.repoID == "" {
+		return repoid.Global
+	}
+	return s.repoID
+}
+
+// agency is the id of the agency this Service's repository belongs to:
+// Global, unless the Service was built for another's.
+func (s *Service) agency() string {
+	if s.agencyID == "" {
+		return agencyid.Global
+	}
+	return s.agencyID
 }
 
 // SyncResult carries the outcome of a single sync attempt.
@@ -174,50 +257,183 @@ type SyncResult struct {
 	StartedAt       time.Time
 	FinishedAt      time.Time
 	Errors          []ValidationError
+	// notRun: the sync was never attempted, because the Service was stopped or
+	// the caller went away while it waited its turn. Status is "failed", and no
+	// history row was written: nothing happened to record.
+	notRun bool
 }
 
-// TriggerSync starts an async sync and returns immediately. Overlapping calls are
-// coalesced — if a sync is already running, this is a no-op.
-func (s *Service) TriggerSync(ctx context.Context, triggeredBy string) {
+// TriggerSync starts an async sync and returns immediately. At most one sync
+// of this repository started this way is queued or running at a time. A
+// trigger that arrives meanwhile is not dropped: it is remembered, and ONE
+// more sync runs after the current one, however many arrived.
+//
+// Until 2.4.0 such a trigger was dropped ("coalesced"). The sync it was
+// coalesced into may already have fetched, so a push that arrived during a
+// sync was picked up by nothing until the next delivery or a manual sync: no
+// timer polls the repository.
+func (s *Service) TriggerSync(_ context.Context, triggeredBy string) {
 	s.mu.Lock()
-	if s.syncing {
+	if s.stopped {
 		s.mu.Unlock()
-		s.logInfo("sync already in progress — coalescing", "trigger", triggeredBy)
+		return
+	}
+	if s.syncing {
+		s.pending, s.pendingTrigger = true, triggeredBy
+		s.mu.Unlock()
+		s.logInfo("sync already queued or running — one more will follow it", "trigger", triggeredBy)
 		return
 	}
 	s.syncing = true
+	s.wg.Add(1)
 	s.mu.Unlock()
 
 	go func() {
-		defer func() {
+		defer s.wg.Done()
+		for trig := triggeredBy; ; {
+			s.syncLogged(trig)
 			s.mu.Lock()
-			s.syncing = false
+			again := s.pending && !s.stopped
+			trig = s.pendingTrigger
+			s.pending, s.pendingTrigger = false, ""
+			if !again {
+				s.syncing = false
+				s.mu.Unlock()
+				return
+			}
 			s.mu.Unlock()
-		}()
-		defer func() {
-			if r := recover(); r != nil {
-				s.logError("git sync panicked", "panic", r)
-			}
-		}()
-		res := s.sync(context.Background(), triggeredBy)
-		if res.Status != "success" {
-			// GitLab is an optional dependency that degrades gracefully (T12):
-			// an unconfigured/unreachable remote is a warning, not an error.
-			if s.repoURL == "" {
-				s.logWarn("git sync skipped — GitLab not configured", "status", res.Status)
-			} else {
-				s.logError("git sync failed", "status", res.Status, "error", res.ErrorMessage)
-			}
-		} else {
-			s.logInfo("git sync complete",
-				"sha", res.SHA,
-				"jobs", res.JobsSynced,
-				"scripts", res.ScriptsSynced,
-				"schedules", res.SchedulesSynced,
-				"workflows", res.WfsSynced,
-				"scopes", res.ScopesSynced)
 		}
 	}()
+}
+
+// syncLogged runs one sync on the Service's own account and logs how it went.
+func (s *Service) syncLogged(triggeredBy string) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logError("git sync panicked", "panic", r)
+		}
+	}()
+	res := s.sync(s.lifetime(), triggeredBy)
+	switch {
+	case res.Status == "success":
+		s.logInfo("git sync complete",
+			"repo_id", s.repo(),
+			"sha", res.SHA,
+			"jobs", res.JobsSynced,
+			"scripts", res.ScriptsSynced,
+			"schedules", res.SchedulesSynced,
+			"workflows", res.WfsSynced,
+			"scopes", res.ScopesSynced)
+	case res.notRun, s.lifetime().Err() != nil:
+		// The Service was stopped while the sync waited its turn, or part of the
+		// way through it: its repository was disconnected, its connection
+		// rewritten, or the server is shutting down. Nothing is wrong.
+	case s.repoURL == "":
+		// GitLab is an optional dependency that degrades gracefully (T12):
+		// an unconfigured/unreachable remote is a warning, not an error.
+		s.logWarn("git sync skipped — GitLab not configured", "repo_id", s.repo(), "status", res.Status)
+	default:
+		s.logError("git sync failed", "repo_id", s.repo(), "status", res.Status, "error", res.ErrorMessage)
+	}
+}
+
+// lifetime is the context the Service lives on: its own, or the background
+// context for a Service built on its own.
+func (s *Service) lifetime() context.Context {
+	if s.ctx != nil {
+		return s.ctx
+	}
+	return context.Background()
+}
+
+// queue is the gate this Service waits in: the Registry's, or one of its own.
+func (s *Service) queue() chan struct{} {
+	s.gateOnce.Do(func() {
+		if s.gate == nil {
+			s.gate = make(chan struct{}, 1)
+		}
+	})
+	return s.gate
+}
+
+// errServiceStopped is what an operation asked of a stopped Service gets.
+var errServiceStopped = errors.New("the repository's sync service has been stopped")
+
+// enter queues one operation on the clone (a sync, a publish) and returns when
+// it is this operation's turn: no other operation of ANY repository's Service
+// is then running (GR-11). The context it returns ends when the caller's does
+// or when the Service is stopped, whichever is first. release must be called
+// when the operation is done.
+//
+// It fails, having started nothing, when the Service is stopped or either
+// context ends before the turn comes.
+func (s *Service) enter(ctx context.Context) (context.Context, func(), error) {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return nil, nil, errServiceStopped
+	}
+	s.wg.Add(1)
+	s.mu.Unlock()
+
+	opCtx, cancel := context.WithCancel(ctx)
+	unhook := context.AfterFunc(s.lifetime(), cancel)
+	gate := s.queue()
+	leave := func() error {
+		unhook()
+		cancel()
+		s.wg.Done()
+		if s.lifetime().Err() != nil {
+			return errServiceStopped
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return errServiceStopped
+	}
+	select {
+	case gate <- struct{}{}:
+	case <-opCtx.Done():
+		return nil, nil, leave()
+	}
+	if opCtx.Err() != nil {
+		// The turn came at the moment the Service was stopped or the caller
+		// went away: give it up rather than start work that is already cancelled.
+		<-gate
+		return nil, nil, leave()
+	}
+	return opCtx, func() {
+		<-gate
+		unhook()
+		cancel()
+		s.wg.Done()
+	}, nil
+}
+
+// Stop ends the Service: it starts nothing more, whatever it has in flight is
+// cancelled, and Stop returns when that has unwound. A cancelled sync leaves
+// the database as it was (its transaction rolls back) and the clone as far as
+// the fetch got, which the next Service of the repository repairs by fetching
+// and resetting, as every sync does.
+func (s *Service) Stop() {
+	s.halt()
+	s.wg.Wait()
+}
+
+// halt is Stop without the wait: the Service starts nothing more and whatever
+// it has in flight is cancelled, and halt returns at once. Parts of a sync
+// cannot be interrupted (parsing, the reset of the working tree), so "at once"
+// and "unwound" are different moments. The registry replaces a Service with
+// halt: the successor cannot touch the clone before the predecessor has left
+// it, because both wait in the one queue.
+func (s *Service) halt() {
+	s.mu.Lock()
+	s.stopped = true
+	s.pending, s.pendingTrigger = false, ""
+	s.mu.Unlock()
+	if s.cancel != nil {
+		s.cancel()
+	}
 }
 
 // logInfo logs at Info level, safely handling a nil logger.
@@ -240,11 +456,11 @@ func (s *Service) logError(msg string, args ...any) {
 // for the warning — the prune statements apply the same predicate themselves.
 // A read error yields nil: the predicate in the DELETE is what protects the
 // rows, and a missing log line must not fail a sync.
-func heldBoundScopes(ctx context.Context, tx *sql.Tx, nowStr string) []string {
+func heldBoundScopes(ctx context.Context, tx *sql.Tx, nowStr, repoID string) []string {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT name FROM scopes
-		 WHERE synced_at < ? AND source = 'git' AND `+settings.BoundScopeBusySQL+`
-		 ORDER BY name`, nowStr)
+		 WHERE synced_at < ? AND source = 'git' AND repo_id = ? AND `+settings.BoundScopeBusySQL+`
+		 ORDER BY name`, nowStr, repoID)
 	if err != nil {
 		return nil
 	}
@@ -260,7 +476,12 @@ func heldBoundScopes(ctx context.Context, tx *sql.Tx, nowStr string) []string {
 }
 
 // logWarn logs at Warn level, safely handling a nil logger.
+//
+// During a sync it is also a row of the repository's problems (noteWarning):
+// whatever a sync warns of is told to the repository's agency, not only to
+// whoever reads the server's log.
 func (s *Service) logWarn(msg string, args ...any) {
+	s.noteWarning(msg, args)
 	if s.log != nil {
 		s.log.Warn(msg, args...)
 	}
@@ -272,8 +493,49 @@ func (s *Service) SyncBlocking(ctx context.Context, triggeredBy string) SyncResu
 	return s.sync(ctx, triggeredBy)
 }
 
-// sync is the internal sync implementation.
+// sync waits its turn in the queue and runs one sync.
 func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
+	opCtx, release, err := s.enter(ctx)
+	if err != nil {
+		now := time.Now().UTC()
+		return SyncResult{Status: "failed", ErrorMessage: "sync not run: " + err.Error(), StartedAt: now, FinishedAt: now, notRun: true}
+	}
+	defer release()
+	res := s.syncNow(opCtx, triggeredBy)
+	res.ErrorMessage = s.scrubURL(res.ErrorMessage)
+	return res
+}
+
+// scrubURL takes the connection's URL out of a message, in the forms an error
+// can carry it (as given, redacted, and its user part): it may carry a
+// credential, and a sync's message reaches the history and the activity log,
+// which every session of the agency reads (present defect 64: Global's URL,
+// exempt from the allowed hosts, may carry one).
+func (s *Service) scrubURL(msg string) string {
+	if s.repoURL == "" || msg == "" {
+		return msg
+	}
+	msg = strings.ReplaceAll(msg, s.repoURL, "the repository")
+	if u, err := url.Parse(s.repoURL); err == nil && u.User != nil {
+		if p, ok := u.User.Password(); ok && p != "" {
+			msg = strings.ReplaceAll(msg, p, "***")
+		}
+	}
+	// Whatever form a transport quoted it in (net/http's, with the password
+	// masked and its own path after it): no user part of any URL.
+	return urlUserinfo.ReplaceAllString(msg, "$1")
+}
+
+// urlUserinfo matches the user part of a URL in a message.
+var urlUserinfo = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s"']+@`)
+
+// syncNow is the sync itself. The caller holds the queue.
+func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
+	// LR-78: a sync may add, rename away or prune a scope, and a scope's existence
+	// decides what an agency grant reaches. The grant snapshot is told on the way
+	// out, after the transaction has committed or rolled back. (gitlab cannot be
+	// handed the auth Service; the counter is the hook.)
+	defer auth.GrantsChanged()
 	start := time.Now().UTC()
 	res := SyncResult{Status: "failed", StartedAt: start}
 	if s.db == nil {
@@ -283,12 +545,28 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	branch := s.writeBranch(ctx)
-	repo, err := s.cloneOrFetch(branch)
+	// From here to the end of the sync, whatever it warns of or reports is
+	// collected for the repository's problem rows (GR-30).
+	s.setProblems(&problemSet{})
+	defer s.setProblems(nil)
+	repo, err := s.cloneOrFetch(ctx, branch)
 	if err != nil {
 		res.ErrorMessage = err.Error()
 		res.FinishedAt = time.Now().UTC()
 		_ = s.recordSyncEvent(ctx, triggeredBy, res)
+		// Not for a sync cut short because its Service was stopped. A repository
+		// with no URL has nothing to fetch (the history says "not configured"),
+		// and nothing to say about files nobody reads any more.
+		switch {
+		case s.repoURL == "":
+			s.clearProblems(context.WithoutCancel(ctx))
+		case s.lifetime().Err() == nil && ctx.Err() == nil:
+			s.noteFetchFailure(ctx, err)
+		}
 		return res
+	}
+	if s.afterFetch != nil {
+		s.afterFetch()
 	}
 
 	sha, err := s.headSHA(repo)
@@ -328,6 +606,26 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	collect(wfErrs)
 	collect(scopeErrs)
 
+	// A name that two files of this repository both define (present defect 19).
+	// One of the two is used, the one read last, and until 2.4.0 the sync said
+	// nothing: a clean success, and which file's definition ran was the order the
+	// directory happened to be walked in. It is REPORTED now, per file, and the
+	// sync is partial. It is not refused, and it switches no prune off: both
+	// would change what a repository that has such a pair runs today.
+	var dupErrs []ValidationError
+	dupErrs = append(dupErrs, duplicateNames("script", scripts,
+		func(x ScriptYAML) string { return x.Metadata.Name }, func(x ScriptYAML) string { return x.SourcePath })...)
+	dupErrs = append(dupErrs, duplicateNames("schedule", scheds,
+		func(x ScheduleYAML) string { return x.Metadata.Name }, func(x ScheduleYAML) string { return x.SourcePath })...)
+	dupErrs = append(dupErrs, duplicateNames("job", jobs,
+		func(x JobYAML) string { return x.Metadata.Name }, func(x JobYAML) string { return x.SourcePath })...)
+	dupErrs = append(dupErrs, duplicateNames("workflow", wfs,
+		func(x WorkflowYAML) string { return x.Metadata.Name }, func(x WorkflowYAML) string { return x.SourcePath })...)
+	for _, ve := range dupErrs {
+		allErrs = append(allErrs, ve.Error())
+		res.Errors = append(res.Errors, ve)
+	}
+
 	// PP-B2: per-subsystem parse health. A subsystem's GitOps prune runs ONLY
 	// when that subsystem parsed cleanly — directory readable AND zero parse /
 	// resolve / cross-ref errors — so a transient read error, one corrupt file,
@@ -355,8 +653,8 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 		if strings.TrimSpace(sc.Spec.ProjectRoot) == "" {
 			continue
 		}
-		for _, f := range LintProject(s.cloneDir, sc.Spec.ProjectRoot) {
-			s.log.Warn("git sync: checkout project lint (advisory)",
+		for _, f := range lintProjectWith(s.cloneDir, sc.Spec.ProjectRoot, s.readCloned) {
+			s.logWarn("git sync: checkout project lint (advisory)",
 				"project", sc.Spec.ProjectRoot, "file", f.File, "detail", f.Message)
 		}
 	}
@@ -366,6 +664,10 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	resolvedScheds, schedResolveErrs := s.resolveSchedules(scheds)
 	collect(schedResolveErrs)
 	schedsOK = schedsOK && len(schedResolveErrs) == 0
+
+	// A reference resolves in this repository and nowhere else (§0a, IN-1,
+	// IN-8): an agency's repository takes nothing from Global's (as it did from
+	// 2.4.0's GR-16 until §0a), and Global's nothing from an agency's.
 
 	// dangleScheduleRefs reports any scheduleRef that resolves to no schedule, as a
 	// hard sync error (caught at sync/MR time, not run time — same as script_ref).
@@ -394,7 +696,13 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	// validation is skipped rather than failing the whole repo's sync. That
 	// matches the window/mode precedent above — a bad spec must not wedge a sync —
 	// and the fire-time gate is fail-open for the same reason.
-	knownCals, globalCals, calErr := calendar.LoadFlags(ctx, s.db)
+	//
+	// Among this repository's agency's calendars (§0a, 2.4.0): an entry names
+	// its own agency's, and a name is unique within an agency only (I2; the
+	// migration gave each agency a copy of what its files named of another's,
+	// so a file that named Global's holidays names its own now). Another
+	// agency's calendar reads as one that is not there.
+	knownCals, globalCals, calErr := calendar.LoadFlagsFor(ctx, s.db, s.agency())
 	if calErr != nil {
 		s.logError("sync: load calendars for binding validation — bindings not validated", "err", calErr)
 	}
@@ -469,6 +777,7 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	}
 	definitionExists := func(kind, source, name string) bool {
 		if source == "git" {
+			// This repository's own, and no other's (§0a, IN-8).
 			if kind == "workflow" {
 				return incomingWfs[name]
 			}
@@ -478,10 +787,16 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 		if kind == "workflow" {
 			table = "workflows"
 		}
+		// A definition built in the app: one of this repository's agency's, and
+		// no other's (2.4.0; Global's repository too since §0a, IN-8). "Any
+		// in-app definition of the name" told a repository's committers which
+		// names other agencies hold (this file's error, or its absence), and
+		// then the timing and outcome of their runs.
+		ofAgency, ofAgencyArgs := s.inAppOfThisAgency(kind)
 		var one int
 		//nolint:gosec // table is chosen from two literals by the kind switch
 		err := s.db.QueryRowContext(ctx,
-			"SELECT 1 FROM "+table+" WHERE source = ? AND name = ?", source, name).Scan(&one)
+			"SELECT 1 FROM "+table+" WHERE source = ? AND name = ?"+ofAgency, append([]any{source, name}, ofAgencyArgs...)...).Scan(&one)
 		if err == nil {
 			return true
 		}
@@ -560,6 +875,45 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 		jobsOK = false
 	}
 
+	// Confinement (GR-14): a job in an AGENCY's repository must name a scope
+	// that agency owns. A file that does not is not written, and is told so.
+	//
+	// It is that file's error and no more. It is taken out AFTER jobsOK is
+	// settled, so that it does not switch the jobs' prune off: one refused file
+	// must not freeze a repository's whole job list. And because the prune still
+	// runs, a job that WAS synced and whose file now names another agency's
+	// scope is removed rather than left running as it was.
+	//
+	// Global's repository is the exception to "removed" (§0a, open point 1): a
+	// job of it that was synced, and names an agency's scope (I-7, allowed
+	// until §0a), is KEPT as it was, not pruned. It does not run (run-time
+	// confinement refuses it, with the reason), the notice
+	// global_job_on_agency_scope lists it, and it goes when its file does.
+	var keepAsWas []string
+	if kept, refused, cerr := s.confineJobs(ctx, goodJobs, scopes); cerr != nil {
+		// What could not be asked is not answered "no": nothing is refused,
+		// nothing is pruned, and the sync says why.
+		allErrs = append(allErrs, "confinement: "+cerr.Error())
+		jobsOK = false
+	} else {
+		if s.repo() == repoid.Global {
+			stays := make(map[string]bool, len(kept))
+			for _, j := range kept {
+				stays[j.Metadata.Name] = true
+			}
+			for _, j := range goodJobs {
+				if !stays[j.Metadata.Name] {
+					keepAsWas = append(keepAsWas, j.Metadata.Name)
+				}
+			}
+		}
+		goodJobs = kept
+		for _, ve := range refused {
+			allErrs = append(allErrs, ve.Error())
+			res.Errors = append(res.Errors, ve)
+		}
+	}
+
 	// Same dangling-scheduleRef guard for workflows.
 	goodWfs := make([]WorkflowYAML, 0, len(wfs))
 	for _, wf := range wfs {
@@ -625,11 +979,26 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	if dbErr == nil {
-		if uErr := s.upsertScopes(ctx, tx, scopes, nowStr, sha); uErr != nil {
+		if uErr := s.pointReactionsAtTheirUpstreams(ctx, tx); uErr != nil {
+			allErrs = append(allErrs, "resolve reaction upstreams: "+uErr.Error())
+			dbErr = uErr
+		}
+	}
+
+	if dbErr == nil {
+		taken, uErr := s.upsertScopes(ctx, tx, scopes, nowStr, sha)
+		if uErr != nil {
 			allErrs = append(allErrs, "upsert scopes: "+uErr.Error())
 			dbErr = uErr
 		} else {
-			res.ScopesSynced = len(scopes)
+			res.ScopesSynced = len(scopes) - len(taken)
+			// An inventory whose name is taken was not synced, and its file is
+			// told so (GR-19). It is that file's error and no more: it is not one
+			// of this repository's scopes, so the prune has nothing to hold back.
+			for _, ve := range taken {
+				allErrs = append(allErrs, ve.Error())
+				res.Errors = append(res.Errors, ve)
+			}
 		}
 	}
 
@@ -638,11 +1007,11 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	// any parse/resolve/cross-ref error keeps its stale rows for this cycle rather
 	// than wiping the catalog. prune() no-ops once dbErr is set so a real DB error
 	// still halts the chain.
-	prune := func(label, query string) int64 {
+	prune := func(label, query string, more ...any) int64 {
 		if dbErr != nil {
 			return 0
 		}
-		r, err := tx.ExecContext(ctx, query, nowStr)
+		r, err := tx.ExecContext(ctx, query, append([]any{nowStr}, more...)...)
 		if err != nil {
 			allErrs = append(allErrs, "prune "+label+": "+err.Error())
 			dbErr = err
@@ -667,24 +1036,68 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	var prunedJobs, prunedWfs, prunedScripts, prunedScopes int64
 	var skipped []string
 
+	// Every prune below removes rows of THIS repository that this pass did not
+	// stamp, and no other repository's (GR-13). Until 2.4.0 there was one
+	// repository and the statements said `source = 'git'`: a second repository's
+	// sync would have deleted every definition the first had supplied.
+	//
+	// The satellites of a definition (its schedule entries, its pause) are found
+	// by the definition's uid, not by its name: two repositories may each have a
+	// `nightly`. A satellite row with NO owner uid predates the uid, when the one
+	// repository there was is the one that is Global's now, so only Global's sync
+	// still clears those by name.
+	repoID := s.repo()
+	legacyByName := 0
+	if repoID == repoid.Global {
+		legacyByName = 1
+	}
+
+	// Global's jobs on an agency's scope that were synced before: kept as
+	// they were (see keepAsWas), by being counted as seen by this sync. Their
+	// row, its schedule entries, enabled and paused are not touched. Only a
+	// row whose stored scope is ANOTHER agency's (what an upgrade finds): a
+	// job of Global's scope whose file is edited onto an agency's, or onto a
+	// scope that is not there, is removed, as an agency's repository's is
+	// (found by the review of I1: it was kept running its old body).
+	if jobsOK && dbErr == nil {
+		for _, name := range keepAsWas {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE jobs SET synced_at = ? WHERE source = 'git' AND repo_id = ? AND name = ?
+				    AND EXISTS (SELECT 1 FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+				                 WHERE sc.name = jobs.scope AND sa.agency_id <> ?)`, nowStr, repoID, name, agencyid.Global); err != nil {
+				allErrs = append(allErrs, "keep Global's job on an agency's scope: "+err.Error())
+				dbErr = err
+				break
+			}
+		}
+	}
+
 	if jobsOK {
 		prune("job schedules", `
 			DELETE FROM definition_schedules
-			WHERE owner_source = 'git' AND owner_kind = 'job' AND owner_name IN (
-				SELECT name FROM jobs WHERE source = 'git' AND synced_at < ? AND source_path LIKE 'jobs/%'
-			)`)
+			WHERE owner_kind = 'job' AND (
+				owner_uid IN (SELECT uid FROM jobs
+				               WHERE source = 'git' AND synced_at < ?1 AND source_path LIKE 'jobs/%' AND repo_id = ?2)
+				OR (?3 = 1 AND owner_uid IS NULL AND owner_source = 'git' AND owner_name IN (
+					SELECT name FROM jobs
+					 WHERE source = 'git' AND synced_at < ?1 AND source_path LIKE 'jobs/%' AND repo_id = ?2)))`,
+			repoID, legacyByName)
 		prunedJobs = prune("jobs", `
 			DELETE FROM jobs
-			WHERE source = 'git' AND synced_at < ? AND source_path LIKE 'jobs/%'`)
+			WHERE source = 'git' AND synced_at < ? AND source_path LIKE 'jobs/%' AND repo_id = ?`, repoID)
 		// PP-H9: clean paused_jobs orphaned by the prune above so a re-added
 		// same-named git job doesn't silently inherit a stale pause. Migration 200's
 		// AFTER DELETE trigger already does this per-row; this is order-independent
 		// defense-in-depth that survives a future trigger regression. Kept INSIDE
 		// the jobsOK gate so a parse-skipped subsystem keeps its valid pauses.
+		// By the owner's uid: a pause whose job is gone, whichever repository the
+		// job was in. (By name it kept an orphan whenever ANOTHER repository had a
+		// job of that name.) A pause with no owner uid is matched by name still.
 		pruneNoArg("orphaned job pauses", `
 			DELETE FROM paused_jobs
 			WHERE owner_kind = 'job' AND source = 'git'
-			  AND name NOT IN (SELECT name FROM jobs WHERE source = 'git')`)
+			  AND ((owner_uid IS NOT NULL AND owner_uid NOT IN (SELECT uid FROM jobs WHERE source = 'git'))
+			    OR (owner_uid IS NULL AND name NOT IN (SELECT name FROM jobs WHERE source = 'git')))`)
 	} else {
 		skipped = append(skipped, "jobs")
 	}
@@ -692,25 +1105,35 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	if wfsOK {
 		prune("workflow schedules", `
 			DELETE FROM definition_schedules
-			WHERE owner_source = 'git' AND owner_kind = 'workflow' AND owner_name IN (
-				SELECT name FROM workflows WHERE source = 'git' AND synced_at < ? AND source_path LIKE 'workflows/%'
-			)`)
+			WHERE owner_kind = 'workflow' AND (
+				owner_uid IN (SELECT uid FROM workflows
+				               WHERE source = 'git' AND synced_at < ?1 AND source_path LIKE 'workflows/%' AND repo_id = ?2)
+				OR (?3 = 1 AND owner_uid IS NULL AND owner_source = 'git' AND owner_name IN (
+					SELECT name FROM workflows
+					 WHERE source = 'git' AND synced_at < ?1 AND source_path LIKE 'workflows/%' AND repo_id = ?2)))`,
+			repoID, legacyByName)
 		prunedWfs = prune("workflows", `
 			DELETE FROM workflows
-			WHERE source = 'git' AND synced_at < ? AND source_path LIKE 'workflows/%'`)
+			WHERE source = 'git' AND synced_at < ? AND source_path LIKE 'workflows/%' AND repo_id = ?`, repoID)
 		// PP-H9: workflow analog of the paused_jobs orphan sweep above.
 		pruneNoArg("orphaned workflow pauses", `
 			DELETE FROM paused_jobs
 			WHERE owner_kind = 'workflow' AND source = 'git'
-			  AND name NOT IN (SELECT name FROM workflows WHERE source = 'git')`)
+			  AND ((owner_uid IS NOT NULL AND owner_uid NOT IN (SELECT uid FROM workflows WHERE source = 'git'))
+			    OR (owner_uid IS NULL AND name NOT IN (SELECT name FROM workflows WHERE source = 'git')))`)
 	} else {
 		skipped = append(skipped, "workflows")
 	}
 
 	if scriptsOK {
+		// This repository's scripts only (1290, GR-13). The statement used to ask
+		// neither for a Git row nor for a repository, so a second repository's
+		// sync deleted every script the first had supplied. (From GR-17 until
+		// §0a it also waited while another repository's job used the script;
+		// no other repository's job can now.)
 		prunedScripts = prune("scripts", `
 			DELETE FROM scripts
-			WHERE synced_at < ? AND source_path LIKE 'scripts/%'`)
+			WHERE synced_at < ? AND source_path LIKE 'scripts/%' AND repo_id = ?`, repoID)
 	} else {
 		skipped = append(skipped, "scripts")
 	}
@@ -718,9 +1141,11 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	// git-source schedules only (source='cronomicon' rows are operator-authored and
 	// untouched — same guard as scopes; A9/§5.6).
 	if schedsOK {
+		// This repository's schedules only (1300, GR-13), like the scripts
+		// above and for the same reason: the column arrived with this phase.
 		prune("schedules", `
 			DELETE FROM schedules
-			WHERE source = 'git' AND synced_at < ?`)
+			WHERE source = 'git' AND synced_at < ? AND repo_id = ?`, repoID)
 	} else {
 		skipped = append(skipped, "schedules")
 	}
@@ -734,7 +1159,7 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 		// through a commit instead. It is a deferral, not an override of Git: the
 		// scope goes on the first sync after its queue drains, and until then the
 		// warning below says which scopes are waiting and on what.
-		if held := heldBoundScopes(ctx, tx, nowStr); len(held) > 0 {
+		if held := heldBoundScopes(ctx, tx, nowStr, repoID); len(held) > 0 {
 			s.logWarn("git sync: scope removed from Git but kept this cycle — it is bound to runners and has runs "+
 				"waiting under its name; it will be pruned once they finish or are cancelled",
 				"scopes", strings.Join(held, ", "))
@@ -742,18 +1167,30 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 		prune("scope hosts", `
 			DELETE FROM scope_hosts
 			WHERE scope_id IN (
-				SELECT id FROM scopes WHERE synced_at < ? AND source = 'git'
+				SELECT id FROM scopes WHERE synced_at < ? AND source = 'git' AND repo_id = ?
 				   AND NOT `+settings.BoundScopeBusySQL+`
-			)`)
+			)`, repoID)
 		// M4 — reap imported (git) ssh_hosts rows dropped from inventory this sync.
 		// Only source='git' rows; operator (cronomicon) overlays are never touched.
+		//
+		// The records of THIS repository's scopes, and not of a scope that is being
+		// held back above: a held scope is kept "hosts and all", and until 2.4.0
+		// this statement asked neither which scope a record belonged to nor whether
+		// that scope was held, so a held scope kept its host membership and lost
+		// the records its hosts are reached by (present defect 8). A record that
+		// belongs to no scope at all goes whichever repository is syncing.
 		prune("imported ssh hosts", `
 			DELETE FROM ssh_hosts
-			WHERE source = 'git' AND (synced_at IS NULL OR synced_at < ?)`)
+			WHERE source = 'git' AND (synced_at IS NULL OR synced_at < ?1)
+			  AND (scope_id IS NULL
+			       OR scope_id NOT IN (SELECT id FROM scopes)
+			       OR scope_id IN (SELECT id FROM scopes
+			                        WHERE source = 'git' AND repo_id = ?2
+			                          AND NOT (synced_at < ?1 AND `+settings.BoundScopeBusySQL+`)))`, repoID)
 		prunedScopes = prune("scopes", `
 			DELETE FROM scopes
-			WHERE synced_at < ? AND source = 'git'
-			  AND NOT `+settings.BoundScopeBusySQL)
+			WHERE synced_at < ? AND source = 'git' AND repo_id = ?
+			  AND NOT `+settings.BoundScopeBusySQL, repoID)
 	} else {
 		skipped = append(skipped, "scopes")
 	}
@@ -762,36 +1199,64 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	// errors are already in allErrs (status → "partial"); this names the affected
 	// subsystems for the operator.
 	if len(skipped) > 0 {
-		s.log.Warn("git sync: prune skipped for subsystems with parse errors — stale rows retained this cycle",
-			"subsystems", skipped)
+		s.logWarn("git sync: prune skipped for subsystems with parse errors — stale rows retained this cycle",
+			"subsystems", strings.Join(skipped, ", "))
 	}
 	// PP-B2 (B2-4): a full wipe of a kind (rows deleted while zero synced) is the
 	// signature of an accidental empty/rewritten tree — log it loudly even when the
 	// parse looked clean, so an operator can catch a bad force-push.
 	if (prunedJobs > 0 && res.JobsSynced == 0) || (prunedWfs > 0 && res.WfsSynced == 0) ||
 		(prunedScripts > 0 && res.ScriptsSynced == 0) || (prunedScopes > 0 && res.ScopesSynced == 0) {
-		s.log.Warn("git sync: a definition kind was fully pruned (0 synced, rows deleted) — verify the repo was not mid-rewrite",
+		s.logWarn("git sync: a definition kind was fully pruned (0 synced, rows deleted) — verify the repo was not mid-rewrite",
 			"jobs_pruned", prunedJobs, "workflows_pruned", prunedWfs,
 			"scripts_pruned", prunedScripts, "scopes_pruned", prunedScopes)
 	}
 
 	if dbErr == nil {
-		// Update git_sync_state.
-		_, dbErr = tx.ExecContext(ctx,
-			`INSERT INTO git_sync_state(id, last_sha, last_synced_at, last_status)
-	         VALUES(1, ?, ?, ?)
-	         ON CONFLICT(id) DO UPDATE SET
-	             last_sha=excluded.last_sha,
-	             last_synced_at=excluded.last_synced_at,
-	             last_status=excluded.last_status`,
+		// What this sync saw, on the repository's own row (was the singleton
+		// git_sync_state until migration 1310). An UPDATE: a repository that is
+		// being synced has a row, and a sync never creates one.
+		var stateRes sql.Result
+		stateRes, dbErr = tx.ExecContext(ctx,
+			`UPDATE git_repos SET last_sha=?, last_synced_at=?, last_status=? WHERE id=?`,
 			sha, nowStr, func() string {
 				if len(allErrs) == 0 {
 					return "success"
 				}
 				return "partial"
-			}())
+			}(), s.repo())
 		if dbErr != nil {
 			allErrs = append(allErrs, "update sync state: "+dbErr.Error())
+		} else if n, _ := stateRes.RowsAffected(); n == 0 {
+			// The definitions are written and the commit is in the history row;
+			// only "what the last sync saw" has nowhere to go. Said, not failed.
+			s.logWarn("git sync: the repository has no row to record its sync state on", "repo_id", s.repo())
+		}
+	}
+
+	// The definitions generation (GR-29, migration 1330): one more, in this
+	// transaction, whichever repository this is. It is what the scheduler
+	// reloads on. It was the commit of the one repository; with a repository per
+	// agency there is no one commit, and a sync of an agency's repository at an
+	// unchanged commit of Global's must still be seen.
+	var generation int64
+	if dbErr == nil {
+		dbErr = tx.QueryRowContext(ctx, `
+			INSERT INTO definitions_generation (id, n) VALUES (1, 1)
+			ON CONFLICT(id) DO UPDATE SET n = n + 1
+			RETURNING n`).Scan(&generation)
+		if dbErr != nil {
+			allErrs = append(allErrs, "advance the definitions generation: "+dbErr.Error())
+		}
+	}
+
+	// The repository's problems as of this sync (GR-30), in this transaction:
+	// every file error it reported and everything it warned of. If the
+	// transaction does not commit, the rows of the last sync that did stay.
+	if dbErr == nil {
+		s.noteErrors(res.Errors)
+		if dbErr = s.writeProblems(ctx, tx, nowStr, s.currentProblems()); dbErr != nil {
+			allErrs = append(allErrs, "record the sync's problems: "+dbErr.Error())
 		}
 	}
 
@@ -813,24 +1278,33 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	_ = s.recordSyncEvent(ctx, triggeredBy, res)
 
 	// Notify the scheduler so freshly-synced schedules take effect at once. The
-	// callback self-gates on SHA change, so a no-op poll (same SHA) is cheap.
-	if s.onSyncComplete != nil {
-		s.onSyncComplete(ctx, sha)
+	// callback compares the generation with the one it loaded at.
+	//
+	// Only when the sync COMMITTED, and on a context that cannot end. The
+	// scheduler's reload removes every cron entry and then reads them back; run
+	// on a cancelled context it removes them and reads nothing, and since a
+	// rolled-back sync changed neither the commit nor the tables, nothing tells
+	// it to try again: every schedule stops firing. A sync is cancelled whenever
+	// its Service is stopped (a connection was saved, GR-11) or its caller goes
+	// away (a scope resync), and its transaction is where the cancellation lands.
+	if s.onSyncComplete != nil && dbErr == nil {
+		s.onSyncComplete(context.WithoutCancel(ctx), strconv.FormatInt(generation, 10))
 	}
 	return res
 }
 
 // writeBranch resolves the working branch used for both sync (read) and publish
-// (write): env override → DB gitlab_config.write_branch → "main". Read fresh per
-// operation so a settings change takes effect without a restart (V1.1-10).
+// (write): env override (Global's repository only, GR-21) → the repository's
+// row (git_repos.branch) → "main". Read fresh per operation so a settings
+// change takes effect without a restart (V1.1-10).
 func (s *Service) writeBranch(ctx context.Context) string {
-	if s.Cfg != nil && s.Cfg.GitLabWriteBranch != "" {
-		return s.Cfg.GitLabWriteBranch
+	if b := settings.EnvBranch(s.Cfg, s.repo()); b != "" {
+		return b
 	}
 	if s.db != nil {
 		var b sql.NullString
 		if err := s.db.QueryRowContext(ctx,
-			`SELECT write_branch FROM gitlab_config WHERE id=1`).Scan(&b); err == nil && b.Valid && b.String != "" {
+			`SELECT branch FROM git_repos WHERE id=?`, s.repo()).Scan(&b); err == nil && b.Valid && b.String != "" {
 			return b.String
 		}
 	}
@@ -841,9 +1315,19 @@ func (s *Service) writeBranch(ctx context.Context) string {
 // After either path it initializes/updates any git submodules (best-effort) so
 // files contributed by a submodule — e.g. an Ansible playbooks repo mounted at
 // scripts/playbooks — are present in the working tree for script discovery.
-func (s *Service) cloneOrFetch(branch string) (*gogit.Repository, error) {
+//
+// An existing clone is made to follow the CONNECTION before it is fetched
+// (GR-12): its `origin` is set to the configured URL and to fetch the
+// configured branch. Until 2.4.0 the URL was used once, to clone, and the
+// clone was single-branch, so a changed URL was never applied (the server went
+// on syncing the old repository) and a changed branch was never fetched (every
+// sync after it failed).
+func (s *Service) cloneOrFetch(ctx context.Context, branch string) (*gogit.Repository, error) {
 	if s.repoURL == "" {
 		return nil, fmt.Errorf("CRONOMICON_GITLAB_BASE_URL not configured")
+	}
+	if err := s.checkURL(ctx); err != nil {
+		return nil, err
 	}
 	s.installGuardedGitTransport() // SU-7/SU-8: guard go-git http(s) egress (once)
 
@@ -856,12 +1340,21 @@ func (s *Service) cloneOrFetch(branch string) (*gogit.Repository, error) {
 		if err != nil {
 			return nil, fmt.Errorf("worktree: %w", err)
 		}
-		fetchOpts := &gogit.FetchOptions{RemoteName: "origin", Force: true}
+		refSpec := gitconfig.RefSpec(fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", branch, branch))
+		if err := s.pointOriginAt(repo, refSpec); err != nil {
+			return nil, err
+		}
+		fetchOpts := &gogit.FetchOptions{RemoteName: "origin", Force: true, RefSpecs: []gitconfig.RefSpec{refSpec}}
 		if auth != nil {
 			fetchOpts.Auth = auth
 		}
-		ferr := repo.Fetch(fetchOpts)
-		if ferr != nil && ferr != gogit.NoErrAlreadyUpToDate {
+		ferr := s.transfer(ctx, func(tctx context.Context) error {
+			if err := repo.FetchContext(tctx, fetchOpts); err != gogit.NoErrAlreadyUpToDate {
+				return err
+			}
+			return nil
+		})
+		if ferr != nil {
 			return nil, fmt.Errorf("git fetch: %w", ferr)
 		}
 		// Hard-reset to origin/<branch>.
@@ -869,15 +1362,36 @@ func (s *Service) cloneOrFetch(branch string) (*gogit.Repository, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolve origin/%s: %w", branch, err)
 		}
+		// A submodule whose name is not its path, with its pin moved, is what
+		// the reset below cannot do (present defect 43): refused here, in a
+		// sentence, before a ref or a file has been moved, so that the clone
+		// stays whole at the commit it was last synced to.
+		if bad, merr := misnamedSubmodulePin(repo, remoteRef.Hash()); merr != nil {
+			return nil, fmt.Errorf("read the repository's submodules: %w", merr)
+		} else if bad != nil {
+			return nil, bad
+		}
+		// The local branch of that name, at that commit, with HEAD on it: what
+		// `git checkout -B <branch> origin/<branch>` does. On a clone made at
+		// this branch it changes nothing (the reset below moves the same ref).
+		// After the connection's branch has changed, it is what gives publish a
+		// local branch of the new name to commit on and push.
+		local := plumbing.NewBranchReferenceName(branch)
+		if err := repo.Storer.SetReference(plumbing.NewHashReference(local, remoteRef.Hash())); err != nil {
+			return nil, fmt.Errorf("set %s: %w", local, err)
+		}
+		if err := repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, local)); err != nil {
+			return nil, fmt.Errorf("point HEAD at %s: %w", local, err)
+		}
 		if err := wt.Reset(&gogit.ResetOptions{
 			Commit: remoteRef.Hash(),
 			Mode:   gogit.HardReset,
 		}); err != nil {
-			return nil, fmt.Errorf("git reset --hard: %w", err)
+			return nil, fmt.Errorf("git reset --hard: %w", explainSubmoduleNotFound(err))
 		}
 		// Pull any submodules up to their pinned commits so their files are
 		// present for discovery (e.g. scripts/playbooks). Best-effort.
-		s.updateSubmodules(repo, wt, auth)
+		s.updateSubmodules(ctx, repo, wt, auth)
 		return repo, nil
 	}
 
@@ -893,18 +1407,102 @@ func (s *Service) cloneOrFetch(branch string) (*gogit.Repository, error) {
 	if auth != nil {
 		cloneOpts.Auth = auth
 	}
-	repo, err = gogit.PlainClone(s.cloneDir, false, cloneOpts)
+	err = s.transfer(ctx, func(tctx context.Context) error {
+		var cerr error
+		repo, cerr = gogit.PlainCloneContext(tctx, s.cloneDir, false, cloneOpts)
+		return cerr
+	})
 	if err != nil {
-		return nil, fmt.Errorf("git clone %s: %w", s.repoURL, err)
+		// Not the URL: it may carry a credential, and this error is recorded in
+		// the sync history every session reads (present defect 64). The log
+		// lines name the repository by its id.
+		return nil, fmt.Errorf("git clone: %w", err)
 	}
 	// Initialize + check out submodules so their files are present for discovery.
 	// RecurseSubmodules is intentionally NOT set on CloneOptions above so that a
 	// submodule fetch failure cannot fail the whole clone — updateSubmodules runs
 	// it as a separate best-effort step instead.
 	if wt, werr := repo.Worktree(); werr == nil {
-		s.updateSubmodules(repo, wt, auth)
+		s.updateSubmodules(ctx, repo, wt, auth)
 	}
 	return repo, nil
+}
+
+// fetchTimeout is how long one transfer may take (config.GitFetchTimeout).
+func (s *Service) fetchTimeout() time.Duration {
+	if s.Cfg != nil && s.Cfg.GitFetchTimeout > 0 {
+		return s.Cfg.GitFetchTimeout
+	}
+	return config.DefaultGitFetchTimeout
+}
+
+// transfer runs one transfer (a fetch, a clone, the update of one submodule)
+// and gives it up when it has taken fetchTimeout. Until 2.4.0 a transfer had
+// no bound but the 30 seconds a server is given to begin its answer: one that
+// stalled part of the way held the queue, and with it every repository's
+// syncs and publishes, for as long as the connection stayed open.
+//
+// The bound is on the transfer and not on the sync: ctx itself has not ended
+// when it is reached, so the sync goes on to record its failure and to write
+// the repository's problem row, as for any fetch that fails.
+func (s *Service) transfer(ctx context.Context, do func(context.Context) error) error {
+	limit := s.fetchTimeout()
+	tctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	err := do(tctx)
+	if err != nil && ctx.Err() == nil && errors.Is(tctx.Err(), context.DeadlineExceeded) {
+		// Not go-git's own words for it, which differ by transport and by how
+		// far the transfer had got. And not when it is ctx that ended (a caller
+		// that went away, a Service that was stopped): that is not the bound.
+		return fmt.Errorf("given up after %s, the bound on one transfer (CRONOMICON_GIT_FETCH_TIMEOUT)", limit)
+	}
+	return err
+}
+
+// testLocalRemotes is set by this package's tests alone (main_test.go). An
+// agency's repository is reached over http or https, on a host a global
+// administrator has listed (GR-10); a test's second repository is a directory
+// on the test's own disk. Nothing outside this package's tests can set it.
+var testLocalRemotes bool
+
+// checkURL is GR-10, asked before every transfer of a sync and of a publish:
+// an agency's repository's URL is http or https, on an allowed host
+// (settings.CheckRepoURL). Global's repository is exempt. Asked here as well
+// as when the connection is written, so that a host taken off the list stops
+// being fetched and a row written around the API is held to the list too.
+func (s *Service) checkURL(ctx context.Context) error {
+	if testLocalRemotes && !strings.Contains(s.repoURL, "://") {
+		return nil
+	}
+	return settings.CheckRepoURL(ctx, s.db, s.repo(), s.repoURL)
+}
+
+// pointOriginAt makes the clone's `origin` name the configured URL and fetch
+// the configured branch, writing the clone's config only when it says
+// otherwise (which is: never, on a clone whose connection has not changed).
+func (s *Service) pointOriginAt(repo *gogit.Repository, refSpec gitconfig.RefSpec) error {
+	cfg, err := repo.Config()
+	if err != nil {
+		return fmt.Errorf("read the clone's config: %w", err)
+	}
+	origin := cfg.Remotes["origin"]
+	if origin != nil && len(origin.URLs) == 1 && origin.URLs[0] == s.repoURL &&
+		len(origin.Fetch) == 1 && origin.Fetch[0] == refSpec {
+		return nil
+	}
+	if origin != nil && len(origin.URLs) > 0 && origin.URLs[0] != s.repoURL {
+		// Not the URL: it may carry a credential. That it changed is the news.
+		s.logInfo("git sync: the repository's URL has changed; the clone now fetches from the new one", "repo_id", s.repo())
+	}
+	cfg.Remotes["origin"] = &gitconfig.RemoteConfig{
+		Name:  "origin",
+		URLs:  []string{s.repoURL},
+		Fetch: []gitconfig.RefSpec{refSpec},
+	}
+	if err := repo.SetConfig(cfg); err != nil {
+		return fmt.Errorf("point the clone's origin at the configured repository: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) gitAuth() *gogithttp.BasicAuth {
@@ -924,7 +1522,23 @@ func (s *Service) gitAuth() *gogithttp.BasicAuth {
 // files always load. Submodules are fetched with the same token as the parent
 // repo via SubmoduleUpdateOptions.Auth; a repo with no .gitmodules yields an
 // empty list and is a no-op.
-func (s *Service) updateSubmodules(repo *gogit.Repository, wt *gogit.Worktree, auth *gogithttp.BasicAuth) {
+//
+// Only for Global's repository. A submodule's URL is whatever .gitmodules
+// says, which is whatever a committer wrote, and it is fetched with the
+// repository's token. Global's committers are the installation's
+// administrators. An agency's are not, and the URL its connection may name is
+// held to an allowlist (GR-10) that a submodule's URL would walk around: an
+// agency's repository's submodules are not fetched, and the sync says so.
+func (s *Service) updateSubmodules(ctx context.Context, repo *gogit.Repository, wt *gogit.Worktree, auth *gogithttp.BasicAuth) {
+	if s.repo() != repoid.Global {
+		if f, err := wt.Filesystem.Open(".gitmodules"); err == nil {
+			_ = f.Close()
+			s.logWarn("git sync: this repository declares submodules, which are fetched for the installation's own "+
+				"repository only; their files are not present and nothing in them is synced",
+				"file", ".gitmodules", "repo_id", s.repo())
+		}
+		return
+	}
 	// Sync submodule URLs from .gitmodules to .git/config (equivalent to git submodule sync).
 	// Since go-git does not sync them automatically on URL change, we manually synchronize
 	// the configured URL from .gitmodules.
@@ -970,14 +1584,270 @@ func (s *Service) updateSubmodules(repo *gogit.Repository, wt *gogit.Worktree, a
 	for _, sub := range subs {
 		cfg := sub.Config()
 		declared[cfg.Path] = true
-		if err := sub.Update(opts); err != nil {
+		// With the sync's context: a submodule fetch is a transfer like the
+		// repository's own, and a Service that is stopped must not have to wait
+		// for one that has stalled. And under the same bound, each on its own.
+		// One bound for the submodule and everything nested in it, as before.
+		var reset []string
+		err := s.transfer(ctx, func(tctx context.Context) error {
+			var uerr error
+			reset, uerr = updateSubmodule(tctx, sub, opts, int(opts.RecurseSubmodules))
+			return uerr
+		})
+		for _, path := range reset {
+			s.logWarn("a submodule's working tree differed from its commit and was reset to it (files there that its commit does not hold were removed)",
+				"submodule", cfg.Name, "path", filepath.ToSlash(filepath.Join(cfg.Path, path)))
+		}
+		if err != nil {
 			s.logWarn("update submodule failed; its files will be skipped this sync",
 				"submodule", cfg.Name, "path", cfg.Path, "err", err)
 			continue
 		}
 		s.logInfo("submodule updated", "submodule", cfg.Name, "path", cfg.Path)
+		// Said ahead of time, and only here, for a submodule that has just
+		// been checked out: one that could not be fetched is not, and its pin
+		// moving stops nothing.
+		if cfg.Name != path.Clean(filepath.ToSlash(cfg.Path)) {
+			s.logWarn("a submodule's name in .gitmodules is not its path: the sync will be refused when its pin moves. "+
+				"Rename its section to its path and commit (a submodule added with --name, or moved with git mv)",
+				"submodule", cfg.Name, "path", cfg.Path)
+		}
 	}
 	s.warnUndeclaredGitlinks(repo, declared)
+}
+
+// updateSubmodule fetches a submodule and checks it out at the commit its
+// parent pins, then does the same for the submodules nested in it, depth
+// levels down. It returns the paths, relative to sub ("." for sub itself), of
+// the submodules whose working tree had to be reset.
+//
+// It is go-git's own recursive update with one difference. A submodule's
+// update is a checkout that refuses a working tree that differs from its
+// commit, and a sync resets the repository's OWN tree hard and never a
+// submodule's. So a submodule whose tree was left different was refused on
+// every sync after, for good (present defect 42): one file cut short by a
+// server stopped while it checked the submodule out, a full disk, an edit by
+// hand; and, since go-git counts a nested submodule that is not at the commit
+// its parent pins as such a difference, any submodule that has a nested one
+// whose update failed once. A submodule that is refused for that is reset
+// hard to its pinned commit, as the repository's own tree is, and the walk
+// goes on into what is nested in it.
+//
+// The walk is this function's and not go-git's (RecurseSubmodules) because the
+// refusal has to be met at the level it happens at: a parent that has just
+// been reset is, until its nested submodules have been updated, exactly the
+// tree go-git refuses.
+func updateSubmodule(ctx context.Context, sub *gogit.Submodule, opts *gogit.SubmoduleUpdateOptions, depth int) (reset []string, err error) {
+	one := *opts
+	one.RecurseSubmodules = gogit.NoRecurseSubmodules
+	// A submodule NESTED in this one whose name is not its path, with its pin
+	// moved in the commit this one is about to be checked out at: the checkout
+	// would stop there, part of the way through (present defect 43). This
+	// submodule is left whole at the commit it is at, and the sync says why.
+	if bad, merr := misnamedNestedPin(ctx, sub, &one); merr != nil {
+		return reset, merr
+	} else if bad != nil {
+		return reset, bad
+	}
+	err = explainSubmoduleNotFound(sub.UpdateContext(ctx, &one))
+	if errors.Is(err, gogit.ErrUnstagedChanges) {
+		if err = resetSubmoduleToPin(sub); err == nil {
+			reset = append(reset, ".")
+		}
+	}
+	if err != nil || depth <= 0 {
+		return reset, err
+	}
+	r, err := sub.Repository()
+	if err != nil {
+		return reset, err
+	}
+	wt, err := r.Worktree()
+	if err != nil {
+		return reset, err
+	}
+	nested, err := wt.Submodules()
+	if err != nil {
+		return reset, err
+	}
+	for _, n := range nested {
+		below, nerr := updateSubmodule(ctx, n, opts, depth-1)
+		for _, path := range below {
+			reset = append(reset, filepath.Join(n.Config().Path, path))
+		}
+		if nerr != nil {
+			return reset, nerr
+		}
+	}
+	return reset, nil
+}
+
+// misnamedSubmoduleError is the refusal to move the pin of a submodule whose
+// name in .gitmodules is not its path (present defect 43).
+//
+// A submodule has a name and a path, and they are the same unless somebody
+// made them differ: `git submodule add --name`, or a submodule moved with
+// `git mv`, which keeps the name it had. go-git (5.19.2) finds a submodule by
+// NAME, and when a checkout changes a submodule's pin it asks for it by PATH
+// (worktree.go, checkoutChangeSubmodule): it does not find it, and the
+// checkout stops where it was. At the top level that was "git reset --hard:
+// submodule not found" on every sync from the pin's first move, and Global's
+// repository stopped syncing; one level down it left the parent submodule
+// part of the way through a checkout.
+type misnamedSubmoduleError struct {
+	// Path and Name as the .gitmodules that declares it has them. In is the
+	// path of the submodule whose .gitmodules that is, empty for the
+	// repository's own.
+	Path, Name, In string
+}
+
+func (e *misnamedSubmoduleError) Error() string {
+	where, whose := e.Path, ".gitmodules"
+	if e.In != "" {
+		where, whose = e.In+"/"+e.Path, "the .gitmodules of the submodule at "+e.In
+	}
+	return fmt.Sprintf("the submodule at %s is named %q in %s and its pin has moved: a submodule whose name is not its path "+
+		"cannot be synced. Rename its section there to [submodule %q], commit, and sync again",
+		where, e.Name, whose, e.Path)
+}
+
+// explainSubmoduleNotFound turns go-git's "submodule not found" into that
+// sentence's general form, for a clone that is already in the state the check
+// before the reset exists to prevent (it was refused this way before 2.4.0,
+// and its HEAD has moved since).
+func explainSubmoduleNotFound(err error) error {
+	if errors.Is(err, gogit.ErrSubmoduleNotFound) {
+		return fmt.Errorf("%w: a submodule whose pin has moved is not named by its path in .gitmodules "+
+			"(a submodule added with --name, or moved with git mv). Rename its section to its path, commit, and sync again", err)
+	}
+	return err
+}
+
+// misnamedSubmodulePin looks at the commit a repository is about to be checked
+// out at and returns a submodule of it that the checkout cannot do: one whose
+// name in THAT commit's .gitmodules is not its path, whose pin there is not
+// the one in the index (what the checkout compares with), and which has a
+// commit checked out in this clone. A submodule that is new to the index is
+// not one: go-git makes its directory without asking for it by name. Nor is
+// one that is not checked out: the checkout takes its pin from the index, sees
+// nothing to change, and goes through. That is every submodule of an agency's
+// repository (they are never fetched) and one of Global's that the server
+// cannot fetch, and such a repository synced before this check was there
+// (found by the review of this check). Nil when there is none.
+func misnamedSubmodulePin(repo *gogit.Repository, to plumbing.Hash) (*misnamedSubmoduleError, error) {
+	commit, err := repo.CommitObject(to)
+	if err != nil {
+		return nil, nil // not here to be read: the checkout will say so
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, err
+	}
+	f, err := tree.File(".gitmodules")
+	if err != nil {
+		return nil, nil // no submodules declared
+	}
+	content, err := f.Contents()
+	if err != nil {
+		return nil, err
+	}
+	modules := gitconfig.NewModules()
+	if err := modules.Unmarshal([]byte(content)); err != nil {
+		return nil, nil // go-git reads the same file and says what is wrong with it
+	}
+	idx, err := repo.Storer.Index()
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range modules.Submodules {
+		at := path.Clean(filepath.ToSlash(m.Path))
+		if m.Name == at {
+			continue
+		}
+		pinned, err := tree.FindEntry(at)
+		if err != nil || pinned.Mode != filemode.Submodule {
+			continue
+		}
+		have, err := idx.Entry(at)
+		if err != nil || have.Hash == pinned.Hash {
+			continue // new to the index, or its pin has not moved
+		}
+		if !submoduleCheckedOut(repo, at) {
+			continue
+		}
+		return &misnamedSubmoduleError{Path: at, Name: m.Name}, nil
+	}
+	return nil, nil
+}
+
+// submoduleCheckedOut reports whether the submodule at a path of this clone has
+// a commit checked out, as go-git sees it: declared in the working tree's
+// .gitmodules at that path, with a HEAD. False when it cannot be told.
+func submoduleCheckedOut(repo *gogit.Repository, at string) bool {
+	wt, err := repo.Worktree()
+	if err != nil {
+		return false
+	}
+	subs, err := wt.Submodules()
+	if err != nil {
+		return false
+	}
+	for _, sub := range subs {
+		if path.Clean(filepath.ToSlash(sub.Config().Path)) != at {
+			continue
+		}
+		st, err := sub.Status()
+		return err == nil && !st.Current.IsZero()
+	}
+	return false
+}
+
+// misnamedNestedPin asks misnamedSubmodulePin of the commit a submodule is
+// about to be checked out at. That commit has to be here to be read, so the
+// submodule is fetched first; the update that follows finds it fetched.
+func misnamedNestedPin(ctx context.Context, sub *gogit.Submodule, opts *gogit.SubmoduleUpdateOptions) (*misnamedSubmoduleError, error) {
+	st, err := sub.Status()
+	if err != nil || st.Current.IsZero() || st.Current == st.Expected {
+		return nil, nil // never checked out, or nothing to check out
+	}
+	r, err := sub.Repository()
+	if err != nil {
+		return nil, nil
+	}
+	if _, err := r.CommitObject(st.Expected); err != nil {
+		ferr := r.FetchContext(ctx, &gogit.FetchOptions{Auth: opts.Auth})
+		if ferr != nil && ferr != gogit.NoErrAlreadyUpToDate {
+			return nil, nil // the update will fail on the same fetch, and say so
+		}
+	}
+	bad, err := misnamedSubmodulePin(r, st.Expected)
+	if err != nil || bad == nil {
+		return nil, nil
+	}
+	bad.In = filepath.ToSlash(sub.Config().Path)
+	return bad, nil
+}
+
+// resetSubmoduleToPin resets a submodule's working tree, index and HEAD hard
+// to the commit its parent pins for it. The refused update has fetched before
+// it was refused, so the commit is there. A hard reset also removes the files
+// in that tree that the commit does not hold (untracked ones), as it does in
+// the repository's own tree; a submodule that is not refused is not reset and
+// keeps them.
+func resetSubmoduleToPin(sub *gogit.Submodule) error {
+	st, err := sub.Status()
+	if err != nil {
+		return err
+	}
+	r, err := sub.Repository()
+	if err != nil {
+		return err
+	}
+	wt, err := r.Worktree()
+	if err != nil {
+		return err
+	}
+	return wt.Reset(&gogit.ResetOptions{Commit: st.Expected, Mode: gogit.HardReset})
 }
 
 // warnUndeclaredGitlinks scans the HEAD tree for submodule gitlinks (mode
@@ -1036,11 +1906,103 @@ type manifestFile struct {
 	data []byte
 }
 
+// fileReader reads one file by its path.
+type fileReader func(path string) ([]byte, error)
+
+// errLeavesRepository is what the contained reader answers for a file that is
+// not inside the repository once its symbolic links are followed.
+var errLeavesRepository = errors.New("is a symbolic link that leads out of the repository; not read")
+
+// errLinkNotFollowed is what it answers for a link whose target is not there.
+var errLinkNotFollowed = errors.New("is a symbolic link that cannot be followed; not read")
+
+// containedReader reads files of a clone, and only of that clone: a path
+// that, with its symbolic links followed, is outside root is refused.
+//
+// A repository can hold a symbolic link, and a link can point anywhere. Until
+// 2.4.0 only a script's BODY was read this way (execspec.SafeReadRepoFile);
+// job, schedule, workflow and inventory files were read with os.ReadFile, so a
+// committed link named `inventory/x.ini` was read from wherever it pointed,
+// and its content stored as a scope's inventory or quoted in a parse error.
+// With one repository whose committers are the installation's administrators
+// that reads nothing they could not read anyway. With a clone per agency side
+// by side in one directory (GR-12), it is one agency's committer reading
+// another agency's repository.
+//
+// A link that stays inside the repository is followed, as before.
+func containedReader(root string) fileReader {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		resolvedRoot = root
+	}
+	return func(path string) ([]byte, error) {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			// A link that cannot be followed. The error would name where it
+			// points, which is not this repository's reader's to be told.
+			if fi, lerr := os.Lstat(path); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+				return nil, errLinkNotFollowed
+			}
+			return nil, err
+		}
+		rel, err := filepath.Rel(resolvedRoot, resolved)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+			return nil, errLeavesRepository
+		}
+		// Nor the clone's own .git: it is inside the directory and is no part of
+		// what the repository holds. Its config names the connection's URL, and a
+		// link `inventory/x.ini -> ../.git/config` would store that as a scope's
+		// inventory.
+		if rel == ".git" || strings.HasPrefix(rel, ".git"+string(os.PathSeparator)) {
+			return nil, errLeavesRepository
+		}
+		return os.ReadFile(resolved)
+	}
+}
+
+// readCloned reads one file of this Service's clone through the contained
+// reader. Everything a sync reads from the clone comes through here or
+// through execspec.SafeReadRepoFile.
+func (s *Service) readCloned(path string) ([]byte, error) {
+	return containedReader(s.cloneDir)(path)
+}
+
+// readClonedDir says where a directory of the clone really is, refusing one
+// that, with its links followed, is outside the clone or in its .git.
+func (s *Service) readClonedDir(dir string) (string, error) {
+	return resolveDirInside(s.cloneDir, dir)
+}
+
+// directoryInside is readClonedDir's question for any checkout, `cronomicon
+// validate`'s included: nil when dir, with its links followed, is inside root
+// and not in its .git.
+func directoryInside(root, dir string) error {
+	_, err := resolveDirInside(root, dir)
+	return err
+}
+
+func resolveDirInside(cloneDir, dir string) (string, error) {
+	root, err := filepath.EvalSymlinks(cloneDir)
+	if err != nil {
+		root = cloneDir
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", errLinkNotFollowed
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) ||
+		rel == ".git" || strings.HasPrefix(rel, ".git"+string(os.PathSeparator)) {
+		return "", errLeavesRepository
+	}
+	return resolved, nil
+}
+
 // walkManifests recursively collects every .yaml/.yml file under dir so jobs,
 // workflows, and schedules can live in sub-folders (folder support). A missing
 // dir is not an error; a read failure is recorded but never aborts the walk,
 // mirroring discoverScripts' advisory model.
-func walkManifests(dir string) ([]manifestFile, []error) {
+func walkManifests(dir string, read fileReader) ([]manifestFile, []error) {
 	var out []manifestFile
 	var errs []error
 	werr := filepath.WalkDir(dir, func(p string, d os.DirEntry, e error) error {
@@ -1057,7 +2019,7 @@ func walkManifests(dir string) ([]manifestFile, []error) {
 		if !strings.HasSuffix(n, ".yaml") && !strings.HasSuffix(n, ".yml") {
 			return nil
 		}
-		data, rerr := os.ReadFile(p)
+		data, rerr := read(p)
 		if rerr != nil {
 			errs = append(errs, fmt.Errorf("read %s: %w", p, rerr))
 			return nil
@@ -1074,7 +2036,7 @@ func walkManifests(dir string) ([]manifestFile, []error) {
 
 func (s *Service) parseJobs() ([]JobYAML, []error) {
 	dir := filepath.Join(s.cloneDir, "jobs")
-	files, errs := walkManifests(dir)
+	files, errs := walkManifests(dir, s.readCloned)
 	var jobs []JobYAML
 	for _, f := range files {
 		// Validate apiVersion/kind first.
@@ -1109,7 +2071,7 @@ func normalizeConcurrencyPolicy(p string) string { return cronutil.NormalizePoli
 
 func (s *Service) parseScripts() ([]ScriptYAML, []error) {
 	dir := filepath.Join(s.cloneDir, "scripts")
-	return discoverScripts(dir)
+	return discoverScriptsWith(dir, s.readCloned)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1118,7 +2080,7 @@ func (s *Service) parseScripts() ([]ScriptYAML, []error) {
 
 func (s *Service) parseSchedules() ([]ScheduleYAML, []error) {
 	dir := filepath.Join(s.cloneDir, "schedules")
-	files, errs := walkManifests(dir)
+	files, errs := walkManifests(dir, s.readCloned)
 	var scheds []ScheduleYAML
 	for _, f := range files {
 		valErrs, _ := validateYAMLBytes(f.path, f.data)
@@ -1145,7 +2107,7 @@ func (s *Service) parseSchedules() ([]ScheduleYAML, []error) {
 
 func (s *Service) parseWorkflows() ([]WorkflowYAML, []error) {
 	dir := filepath.Join(s.cloneDir, "workflows")
-	files, errs := walkManifests(dir)
+	files, errs := walkManifests(dir, s.readCloned)
 	var wfs []WorkflowYAML
 	for _, f := range files {
 		valErrs, _ := validateYAMLBytes(f.path, f.data)
@@ -1200,6 +2162,15 @@ func parseInventoryHosts(content string) []string {
 
 func (s *Service) parseInventories() ([]inventoryScope, []error) {
 	dir := filepath.Join(s.cloneDir, "inventory")
+	// `inventory` itself may be a link. os.ReadDir follows it, so one that led
+	// out of the repository would be LISTED here, and each name in it reported
+	// by the refusal of the file: the names of another repository's scopes.
+	// (The walkers of the other kinds do not follow a linked directory.)
+	if fi, lerr := os.Lstat(dir); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		if _, cerr := s.readClonedDir(dir); cerr != nil {
+			return nil, []error{ValidationError{File: "inventory", Message: cerr.Error()}}
+		}
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1216,7 +2187,7 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(path)
+		data, err := s.readCloned(path)
 		if err != nil {
 			continue
 		}
@@ -1236,9 +2207,9 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(path)
+		data, err := s.readCloned(path)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("read %s: %w", path, err))
+			errs = append(errs, fmt.Errorf("read %s: %w", "inventory/"+e.Name(), err))
 			continue
 		}
 		content := string(data)
@@ -1294,11 +2265,16 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 // read from the clone). It feeds both the scripts-table upsert and the
 // denormalization of fields onto referencing jobs (Decision 7).
 type resolvedScript struct {
+	// uid is the script's identity in the scripts table (migration 1290). It is
+	// empty until upsertScripts has written the row, which fills it in: a row
+	// that already existed keeps its uid, a new one is given one. upsertJobs
+	// reads it to stamp jobs.script_uid.
+	uid         string
 	runType     string
 	command     string
 	script      string
 	scriptPath  string
-	executor    string
+	executor    string // what is STORED: storableExecutor of the sidecar's value
 	description string
 	contentHash string
 	sourcePath  string
@@ -1306,6 +2282,21 @@ type resolvedScript struct {
 	warnings    string // JSON array of body-lint Warnings ("[]" when clean)
 	variables   string // JSON array of referenced env Variables ("[]" when none)
 	prompts     string // JR-Q6 — JSON array of DECLARED run inputs ("[]" when none)
+}
+
+// storableExecutor is what a retired `spec.executor` value becomes on its way
+// to `jobs.executor` / `scripts.executor` (2.3.0, LR-48). The key is read by
+// nothing, and validation no longer refuses a value it never had — but both
+// columns still carry CHECK (executor IN ('runner','ssh')), so a value outside
+// it would fail the INSERT and, with it, the whole sync. The two values the
+// key did have are kept, because the leftover_executor_key notice reads them;
+// anything else is stored as nothing and reported by the warnings alone.
+func storableExecutor(v string) string {
+	switch v = strings.TrimSpace(v); v {
+	case "ssh", execspec.ExecutorRunner:
+		return v
+	}
+	return ""
 }
 
 // resolveBodyHash computes the Decision-8 content hash for an executable body
@@ -1340,16 +2331,31 @@ func (s *Service) resolveScripts(scripts []ScriptYAML) (map[string]resolvedScrip
 		// scan is advisory: it never errors and a finding never drops the script.
 		raw, err := s.resolveBody(sc.Spec.Command, sc.Spec.Script, sc.Spec.ScriptPath)
 		if err != nil {
-			errs = append(errs, ValidationError{File: sc.SourcePath,
-				Message: "compute content hash: " + err.Error()})
+			// Not the reader's own text when the body is a file: it names where a
+			// link resolves to, which tells whoever reads the sync's problems what
+			// is on the server's disk (a file that exists and one that does not
+			// answer differently).
+			msg := "compute content hash: " + err.Error()
+			if strings.TrimSpace(sc.Spec.ScriptPath) != "" {
+				msg = fmt.Sprintf("compute content hash: the script's file %q could not be read: "+
+					"it is missing, or is a link that leads out of the repository", sc.Spec.ScriptPath)
+			}
+			errs = append(errs, ValidationError{File: sc.SourcePath, Message: msg})
 			continue
+		}
+		// LR-48 — a sidecar's `executor` is retired with the job's. Said here
+		// for the script itself: one that only composed jobs reference, or none,
+		// would otherwise be named by no job's warning.
+		if v := strings.TrimSpace(sc.Spec.Executor); v != "" {
+			s.logWarn("git sync: script still declares executor, which is no longer read; remove the line",
+				"script", name, "source_path", sc.SourcePath, "executor", v)
 		}
 		out[name] = resolvedScript{
 			runType:     sc.Spec.RunType,
 			command:     sc.Spec.Command,
 			script:      sc.Spec.Script,
 			scriptPath:  sc.Spec.ScriptPath,
-			executor:    sc.Spec.Executor,
+			executor:    storableExecutor(sc.Spec.Executor),
 			description: sc.Spec.Description,
 			contentHash: ContentHash(raw),
 			sourcePath:  sc.SourcePath,
@@ -1364,7 +2370,15 @@ func (s *Service) resolveScripts(scripts []ScriptYAML) (map[string]resolvedScrip
 	return out, errs
 }
 
-// upsertScripts writes the resolved scripts into the scripts cache table.
+// upsertScripts writes the resolved scripts into the scripts cache table, and
+// records each row's uid back into resolved (see resolvedScript.uid).
+//
+// A script is unique by (repo_id, name) since migration 1290, and its uid is
+// its identity: an edit in Git updates the row and keeps the uid, so the
+// reference bindings filed under it and the jobs joined to it stay put. The uid
+// is therefore ABSENT from the DO UPDATE below, like tags. A script that was
+// pruned and comes back is a new row with a new uid, and its bindings went
+// with the old one (the cleanup trigger).
 //
 // NOTE: scripts.tags (migration 280) is deliberately ABSENT from both the column
 // list and the ON CONFLICT DO UPDATE SET below. Unlike warnings/variables (which
@@ -1387,11 +2401,11 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 			prompts = "[]"
 		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO scripts(name, description, run_type, command, script, script_path,
+			INSERT INTO scripts(uid, repo_id, name, description, run_type, command, script, script_path,
 			                    executor, content_hash, source_path, synced_at, warnings, variables,
 			                    project_root, prompts_json)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(name) DO UPDATE SET
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(repo_id, name) DO UPDATE SET
 				description=excluded.description,
 				run_type=excluded.run_type,
 				command=excluded.command,
@@ -1405,19 +2419,130 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 				variables=excluded.variables,
 				project_root=excluded.project_root,
 				prompts_json=excluded.prompts_json`,
-			name, nullStr(rs.description), rs.runType,
+			db.NewID(), s.repo(), name, nullStr(rs.description), rs.runType,
 			nullStr(rs.command), nullStr(rs.script), nullStr(rs.scriptPath),
 			nullStr(rs.executor), rs.contentHash, nullStr(rs.sourcePath), now, warnings, variables,
 			nullStr(rs.projectRoot), prompts)
 		if err != nil {
 			return fmt.Errorf("upsert script %q: %w", name, err)
 		}
+		// The blind upsert cannot say whether it inserted or updated, so the uid
+		// is read back: the minted one for a new script, the standing one for a
+		// script that was already there.
+		if err := tx.QueryRowContext(ctx,
+			`SELECT uid FROM scripts WHERE repo_id = ? AND name = ?`, s.repo(), name).Scan(&rs.uid); err != nil {
+			return fmt.Errorf("resolve uid for script %q: %w", name, err)
+		}
+		resolved[name] = rs
+		// An in-app job names its script and holds a copy of it. If the script
+		// had gone (the trigger cleared the job's script_uid) and is back, the
+		// job is joined to it again by the name its author wrote, which is what
+		// the name did by itself while a script WAS its name.
+		//
+		// Which repository an in-app job's name is looked up in: its agency's,
+		// and no other (§0a, IN-8; the owner's yes to question 31). So a
+		// repository joins the in-app jobs of ITS agency only, Global's
+		// included: a job with no scope is Global's. (From GR-16 until then
+		// Global's joined every other agency's job too, when that agency's
+		// repository had no script of the name.) A job that HAS a script is
+		// never moved from it to another: only a job with none is joined.
+		//
+		// "No script" is a NULL, or a uid that names no row: the composer reads
+		// the script before it opens its transaction, so a prune between the two
+		// can leave a job holding the uid of a script that has just gone, written
+		// after the trigger that would have cleared it had already run.
+		const scriptless = `source = 'cronomicon' AND script_ref = ?
+				    AND (script_uid IS NULL OR script_uid NOT IN (SELECT uid FROM scripts))`
+		// The jobs it joins are named (RETURNING), so that the sync can say so.
+		rejoined, rejoinErr := tx.QueryContext(ctx,
+			`UPDATE jobs SET script_uid = ? WHERE `+scriptless+` AND COALESCE(`+jobsAgencySQL+`, '`+agencyid.Global+`') = ? RETURNING name`,
+			rs.uid, name, s.agency())
+		if rejoinErr != nil {
+			return fmt.Errorf("rejoin in-app jobs to script %q: %w", name, rejoinErr)
+		}
+		var rejoinedJobs []string
+		for rejoined.Next() {
+			var job string
+			if err := rejoined.Scan(&job); err != nil {
+				rejoined.Close()
+				return fmt.Errorf("rejoin in-app jobs to script %q: %w", name, err)
+			}
+			rejoinedJobs = append(rejoinedJobs, job)
+		}
+		rejoined.Close()
+		if err := rejoined.Err(); err != nil {
+			return fmt.Errorf("rejoin in-app jobs to script %q: %w", name, err)
+		}
+		// Said, since 2.4.0, because of what it now means: a job built in the app
+		// runs its script as synced, so a job that had no script did not run, and
+		// from this sync it runs THIS repository's script of that name, which may
+		// not be the script it was built on (only a job of this repository's
+		// agency is rejoined, above).
+		for _, job := range rejoinedJobs {
+			s.logWarn("a job built in the app had no script and is joined to this repository's script of the name it was built on: it runs that script from now on",
+				"job", job, "script", name, "repo_id", s.repo())
+		}
+		// An in-app job follows its script (the owner's decision of 2026-10-09).
+		// A job holds a COPY of its script: the run type, the body or the path to
+		// it, the executor, the hash. upsertJobs rewrites that copy for a Git job
+		// on every sync; nothing rewrote it for a job built in the app, which went
+		// on running the body it had when it was last saved while the catalogue
+		// showed the new one. Every in-app job joined to this script
+		// (jobs.script_uid, 1290) now takes the copy as it is written here. A
+		// binned job too, so that restoring it does not bring an old body back.
+		// last_modified_* is left alone: nobody edited the job.
+		//
+		// The columns are exactly the ones the composer copies when the job is
+		// saved (api.writeComposedJob). Since 2.4.0 project_root, the checkout
+		// marker, is among them (present defect 24): an in-app job on a project
+		// is a checkout job, as a Git job on it has always been, and a script
+		// that becomes a project or stops being one takes its in-app jobs with
+		// it.
+		//
+		// EVERY in-app job joined to the script, whatever agency its scope is
+		// in now (the owner's decision of 2026-10-13; present defect 46). An
+		// in-app job is joined to an agency's repository's script because it
+		// was that agency's (GR-16), and its scope can be given to another
+		// agency afterwards. From the review of Phase R4 until this decision
+		// such a job kept the copy it had, so that the repository's committers
+		// could not change the body of a job that now ran on another agency's
+		// hosts. Two things have changed since. That job is refused on those
+		// hosts wherever a run is produced and at dispatch
+		// (runref.RepoScopeMismatch asks about the script's repository). And
+		// dispatch reads the body from the script's record, not from this copy
+		// (execspec.ResolveCommand), while the run's TYPE, its project marker
+		// and its entry are still the copy's. A copy that is not refreshed
+		// protected nothing, and let the job run its script's new body under
+		// its copy's old interpreter on a scope of the script's own agency.
+		// The job's row and the script's are written together, for every job.
+		//
+		// The same job's SCHEDULE is another matter and is not refreshed
+		// (upsertSchedules, the propagate statement): its timing is not confined by
+		// anything else.
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE jobs
+			    SET run_type = ?, command = ?, script = ?, script_path = ?, executor = ?,
+			        content_hash = ?, project_root = ?
+			  WHERE source = 'cronomicon' AND script_uid = ?`,
+			rs.runType, nullStr(rs.command), nullStr(rs.script), nullStr(rs.scriptPath), nullStr(rs.executor),
+			rs.contentHash, nullStr(rs.projectRoot), rs.uid); err != nil {
+			return fmt.Errorf("refresh in-app jobs of script %q: %w", name, err)
+		}
+		// A Git job of ANOTHER repository joined to this script is not refreshed
+		// (§0a, IN-8: a Git job uses its own repository's scripts, upsertJobs).
+		// Until 2.4.2 one was, from GR-16; what an upgrade leaves joined across
+		// repositories stops and is listed (notice global_script_job).
 	}
 	return nil
 }
 
 // resolvedSchedule is a first-class Schedule with its content hash computed (A10a).
 type resolvedSchedule struct {
+	// uid is the schedule's identity in the schedules table. Empty until
+	// upsertSchedules has written the row, which fills it in (the standing uid
+	// of a row that was there, a new one otherwise). mergeScheduleRefs copies it
+	// onto every entry expanded from this schedule.
+	uid         string
 	cron        string
 	env         map[string]string
 	description string
@@ -1553,10 +2678,16 @@ func (s *Service) upsertSchedules(ctx context.Context, tx *sql.Tx, resolved map[
 			}
 			envJSON = string(b)
 		}
+		// A Git schedule is its repository's agency's, and unique by name within
+		// that owner (migration 1300, GR-6): two repositories may each supply a
+		// `nightly`. owner_agency and repo_id are written at first sight and are
+		// ABSENT from the update, like the uid: a repository's agency never
+		// changes (GR-2).
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO schedules(name, source, description, cron, env, content_hash, source_path, synced_at, start_at, end_at, interval, skip_calendars, only_calendars, uid)
-			VALUES(?, 'git', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(source, name) DO UPDATE SET
+			INSERT INTO schedules(name, source, description, cron, env, content_hash, source_path, synced_at, start_at, end_at, interval, skip_calendars, only_calendars, uid,
+			                      owner_agency, repo_id)
+			VALUES(?, 'git', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(source, owner_agency, name) DO UPDATE SET
 				description=excluded.description,
 				cron=excluded.cron,
 				env=excluded.env,
@@ -1580,9 +2711,65 @@ func (s *Service) upsertSchedules(ctx context.Context, tx *sql.Tx, resolved map[
 			// from DO UPDATE so a re-sync never re-mints it (same preservation-by-
 			// omission as tags). NEVER derived from the name: the whole point is
 			// an identity that survives what happens to names.
-			db.NewID())
+			db.NewID(), s.agency(), s.repo())
 		if err != nil {
 			return fmt.Errorf("upsert schedule %q: %w", name, err)
+		}
+		// The blind upsert cannot say whether it inserted or updated, so the uid
+		// is read back, for the entries expanded from this schedule below.
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(uid, '') FROM schedules WHERE source = 'git' AND owner_agency = ? AND name = ?`,
+			s.agency(), name).Scan(&rs.uid); err != nil {
+			return fmt.Errorf("resolve uid for schedule %q: %w", name, err)
+		}
+		resolved[name] = rs
+		// An in-app definition bound to this schedule follows its edits (2.4.0,
+		// present defect 13). A definition holds a COPY of its schedule's timing.
+		// The Git definitions' copies are rewritten further down this sync, with
+		// the definitions themselves; an in-app definition's was written when it
+		// was last saved and by nothing since, so it went on firing at the old
+		// time after the schedule was edited in Git, where an in-app schedule's
+		// edit has always reached its users (D1c). The same columns that edit
+		// propagates, found the same way: by schedule_uid.
+		//
+		// This repository's own definitions are left to the rewrite further
+		// down, as before. (From 2.4.0's GR-16 until §0a another repository's
+		// definitions that used this schedule were reached here too; since §0a
+		// none can.)
+		//
+		// An in-app definition follows a repository's schedule only while it is
+		// that repository's agency's: one whose scope has since been given to
+		// another agency keeps the timing it has, and since §0a (the owner's
+		// answer to question 32) so does another agency's definition bound to
+		// one of Global's before then: it keeps the timing it copied, and the
+		// notice global_schedule_bound says so. (Until §0a Global's repository's
+		// schedules reached every in-app definition bound to them.) Nothing but
+		// this condition keeps one agency's committers from retiming a job that
+		// runs on another's hosts.
+		propagate := []any{rs.cron, envJSON, nullStr(rs.startAt), nullStr(rs.endAt), nullStr(rs.interval),
+			nullStr(calendar.MarshalNames(rs.skipCals)), nullStr(calendar.MarshalNames(rs.onlyCals)), rs.uid, s.agency()}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE definition_schedules
+			   SET cron=?, env=?, start_at=?, end_at=?, interval=?, skip_calendars=?, only_calendars=?
+			 WHERE schedule_uid = ? AND owner_source = 'cronomicon'
+			   AND `+agencyid.DefinitionOf("definition_schedules.owner_uid", "definition_schedules.owner_kind")+` = ?`,
+			propagate...); err != nil {
+			return fmt.Errorf("propagate schedule %q to the definitions that use it: %w", name, err)
+		}
+		// The legacy display mirror (jobs/workflows.schedule, the lowest-position
+		// cron) of each owner just touched, as the in-app edit recomputes it.
+		for kind, table := range map[string]string{"job": "jobs", "workflow": "workflows"} {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE `+table+`
+				   SET schedule = (SELECT d.cron FROM definition_schedules d
+				                    WHERE d.owner_kind = ? AND d.owner_uid = `+table+`.uid
+				                    ORDER BY d.position LIMIT 1)
+				 WHERE source = 'cronomicon'
+				   AND uid IN (SELECT owner_uid FROM definition_schedules
+				                WHERE schedule_uid = ? AND owner_kind = ?)`,
+				kind, rs.uid, kind); err != nil {
+				return fmt.Errorf("refresh the schedule column of the %ss bound to %q: %w", kind, name, err)
+			}
 		}
 	}
 	return nil
@@ -1608,7 +2795,7 @@ func mergeScheduleRefs(entries []ScheduleEntry, refs []string, resolved map[stri
 		// activation window is copied down with cron/env (AW-5) so the runtime
 		// row is self-contained — the scheduler never joins back to `schedules`.
 		entries = append(entries, ScheduleEntry{
-			Name: ref, Cron: rs.cron, Env: rs.env, SourceRef: ref,
+			Name: ref, Cron: rs.cron, Env: rs.env, SourceRef: ref, SourceUID: rs.uid,
 			StartAt: rs.startAt, EndAt: rs.endAt, Interval: rs.interval,
 			SkipCalendars: rs.skipCals, OnlyCalendars: rs.onlyCals,
 		})
@@ -1671,12 +2858,25 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		// inline body and hash it. Danglers were filtered by the caller, so a
 		// script_ref here is guaranteed present in `resolved`.
 		runType := j.Spec.RunType
-		command, script, scriptPath, executor := j.Spec.Command, j.Spec.Script, j.Spec.ScriptPath, j.Spec.Executor
-		var scriptRef, contentHash, projectRoot string
+		command, script, scriptPath, executor := j.Spec.Command, j.Spec.Script, j.Spec.ScriptPath, storableExecutor(j.Spec.Executor)
+		// Where the stored executor came from, for the warning below.
+		executorFrom := "the job's file"
+		var scriptRef, scriptUID, contentHash, projectRoot string
 		if j.Spec.ScriptRef != "" {
 			rs := resolved[j.Spec.ScriptRef]
+			// Which script the name means: the row upsertScripts wrote earlier in
+			// this transaction (1290). The name stays beside it, as authored.
+			scriptUID = rs.uid
 			runType = rs.runType
-			command, script, scriptPath, executor = rs.command, rs.script, rs.scriptPath, rs.executor
+			command, script, scriptPath = rs.command, rs.script, rs.scriptPath
+			// The script's executor was the one a run read (Decision 7), so it is
+			// the one stored. A job that sets its own over a script that sets none
+			// keeps its own: the value was never read there, and is kept only so
+			// the leftover_executor_key notice names every job whose FILE still
+			// carries the line.
+			if rs.executor != "" {
+				executor, executorFrom = rs.executor, "its script's sidecar ("+rs.sourcePath+")"
+			}
 			scriptRef = j.Spec.ScriptRef
 			contentHash = rs.contentHash
 			// §7 — denormalize the checkout marker from the referenced script (the
@@ -1707,8 +2907,27 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		// the whole repo's sync on one file. The warning is the fix path — the row
 		// is written either way, so the operator can see it and add the field.
 		if strings.TrimSpace(j.Spec.Scope) == "" {
-			s.logWarn("git sync: job declares no scope, so it lands in All — visible to every agency; add `spec.scope` to place it with one department",
+			// 2.5.0 C11, defect 90: it said the job "lands in All — visible to
+			// every agency", the pre-2.4 model.
+			s.logWarn("git sync: job declares no scope: in Global's repository it is Global's and runs on Global's hosts and runners, and an agency's repository refuses it; add `spec.scope`",
 				"job", j.Metadata.Name, "source_path", j.SourcePath)
+		}
+		// LR-71 — a fixed target_host must be one of the job's scope's hosts, or
+		// its runs fail for that host (execspec.ResolveTargets). A WARNING, never an
+		// error: a sync error would mark the sync partial and suppress pruning over
+		// one field, and the run-time refusal is the control. The standing record
+		// is the notice the inbox raises (target_host_outside_scope); this line is
+		// for whoever reads the sync log. Skipped when the scope is not in the
+		// catalog yet: there is no membership to ask about until it is.
+		if th := strings.TrimSpace(j.Spec.TargetHost); th != "" && strings.TrimSpace(j.Spec.Scope) != "" {
+			var member bool
+			if err := tx.QueryRowContext(ctx, `
+				SELECT EXISTS (SELECT 1 FROM scope_hosts sh WHERE sh.scope_id = sc.id AND sh.host = ?)
+				    OR NOT EXISTS (SELECT 1 FROM scope_hosts sh WHERE sh.scope_id = sc.id)
+				  FROM scopes sc WHERE sc.name = ? AND sc.owner_agency = ?`, th, j.Spec.Scope, s.agency()).Scan(&member); err == nil && !member {
+				s.logWarn("git sync: job target_host is not a host of its scope; its runs will fail for that host until the host is added to the scope or the job names one of the scope's hosts",
+					"job", j.Metadata.Name, "source_path", j.SourcePath, "scope", j.Spec.Scope, "target_host", th)
+			}
 		}
 		// CA-8 — advisory warnings for the declarative "connect as" identity;
 		// like TG-4, a sync must never wedge a repo over one field, and both
@@ -1721,9 +2940,16 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			s.logWarn("git sync: ssh_user/ssh_credential cannot be applied to this run type (terraform authenticates through its providers, not SSH); the field is stored but ignored for this job's runs",
 				"job", j.Metadata.Name, "source_path", j.SourcePath, "run_type", runType)
 		}
+		// Asked within the repository's agency: what a job can use is its own
+		// agency's (§0a, IN-6; until then an agency's job could use Global's
+		// too, and Global's repository's jobs anyone's). A warning that said
+		// otherwise would tell one agency which names another holds.
+		ownerArm := ` AND owner_agency = ?`
+		ownerArgs := []any{s.agency()}
 		if sshCred != "" {
 			var one int
-			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM ssh_credentials WHERE label = ? LIMIT 1`, sshCred).Scan(&one); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM ssh_credentials WHERE label = ?`+ownerArm+` LIMIT 1`,
+				append([]any{sshCred}, ownerArgs...)...).Scan(&one); err != nil {
 				s.logWarn("git sync: job ssh_credential names no stored SSH credential; runs will fail at dispatch until it exists",
 					"job", j.Metadata.Name, "source_path", j.SourcePath, "ssh_credential", sshCred)
 			}
@@ -1740,7 +2966,8 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 					"job", j.Metadata.Name, "source_path", j.SourcePath, "run_type", runType)
 			}
 			var one int
-			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM secrets WHERE key = ? LIMIT 1`, bp).Scan(&one); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM secrets WHERE key = ?`+ownerArm+` LIMIT 1`,
+				append([]any{bp}, ownerArgs...)...).Scan(&one); err != nil {
 				s.logWarn("git sync: job become_password_secret names no stored Secret; runs will fail closed at dispatch until it exists",
 					"job", j.Metadata.Name, "source_path", j.SourcePath, "become_password_secret", bp)
 			}
@@ -1751,33 +2978,29 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		watches := watchspec.Normalize(j.Spec.Watch)
 		if verrs := watchspec.Validate(watches); len(verrs) > 0 {
 			for _, ve := range verrs {
-				s.log.Warn("job declares an unusable file watch; ignoring it", "job", name, "problem", ve)
+				s.logWarn("job declares an unusable file watch; ignoring it", "job", name, "source_path", j.SourcePath, "problem", ve)
 			}
 			watches = nil
 		}
 		watchJSON := watchspec.Marshal(watches)
-		// SB — advisory-warn, like the checks above: a job that asks for the ssh
-		// executor on a scope bound to runners is refused at every fire
-		// (execspec.CodeScopeRequiresRunner), and a cron fire has nobody watching
-		// it. Saying so at sync is the earliest the author can hear about it. Not
-		// an error: the definition is valid, and whether its scope is bound is an
-		// operator's overlay that can change without a commit. An unreadable
-		// binding says nothing here — the fire-time check is the one that counts.
-		//
-		// `executor` is the value about to be STORED, which for a script_ref job
-		// is the script's and not this file's — it is the stored one the fire
-		// reads, so it is the one to warn about.
-		if executor == execspec.ExecutorSSH {
-			if bound, berr := execspec.ScopeIsBound(ctx, tx, j.Spec.Scope); berr == nil && bound {
-				s.logWarn("git sync: job asks for the ssh executor on a scope bound to runners; its runs will be "+
-					"refused until the executor line is removed or the scope is unbound",
-					"job", name, "source_path", j.SourcePath, "scope", j.Spec.Scope)
-			}
+		// LR-48 — `executor` is retired: stored (the 2.3.0 upgrade pass reads
+		// what jobs used to say) and read by nothing else. Said at sync, because
+		// the decode is not strict and the key would otherwise be ignored in
+		// silence; the inbox carries it too (notices: leftover_executor_key),
+		// since nobody reads a sync log. A value the key never had is stored as
+		// nothing (storableExecutor) and is validation's to report, by file and
+		// line.
+		if executor != "" {
+			s.logWarn("git sync: job still declares executor, which is no longer read — every job is taken by "+
+				"whichever runner that serves its scope asks first; remove the line, and bind the scope to the "+
+				"runners that should serve it",
+				"job", name, "source_path", j.SourcePath, "scope", j.Spec.Scope, "executor", executor,
+				"declared_in", executorFrom)
 		}
 		warnDeadline := strings.TrimSpace(j.Spec.MustFinishBy)
 		if warnDeadline != "" && !cronutil.ValidDeadline(warnDeadline) {
-			s.log.Warn("job declares an unparseable must_finish_by; ignoring it",
-				"job", name, "value", warnDeadline)
+			s.logWarn("job declares an unparseable must_finish_by; ignoring it",
+				"job", name, "source_path", j.SourcePath, "value", warnDeadline)
 			warnDeadline = ""
 		}
 		// SB — spec.runner_tag is RETIRED. It used to confine the job to runners
@@ -1795,7 +3018,7 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		leftoverPin := strings.TrimSpace(j.Spec.RunnerTag)
 		leftoverPinUnconfined := false
 		if leftoverPin != "" {
-			bound, berr := execspec.ScopeIsBound(ctx, tx, j.Spec.Scope)
+			bound, berr := execspec.ScopeIsBound(ctx, tx, s.agency(), j.Spec.Scope)
 			switch {
 			case berr != nil:
 				// Unreadable: say only what is certain. No notice is written on a
@@ -1823,9 +3046,9 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			                 source_path, synced_at, prompts_json, env_passthrough,
 			                 project_root, requires_json, prompt_enforcement,
 			                 ssh_user, ssh_credential, become_password_secret,
-			                 warn_after_seconds, must_finish_by, watch_json, uid)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(source, name) WHERE source = 'git' DO UPDATE SET
+			                 warn_after_seconds, must_finish_by, watch_json, uid, script_uid, repo_id)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(repo_id, name) WHERE source = 'git' DO UPDATE SET
 				run_type=excluded.run_type,
 				description=excluded.description,
 				scope=excluded.scope,
@@ -1842,6 +3065,7 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 				script_path=excluded.script_path,
 				executor=excluded.executor,
 				script_ref=excluded.script_ref,
+				script_uid=excluded.script_uid,
 				content_hash=excluded.content_hash,
 				source_path=excluded.source_path,
 				synced_at=excluded.synced_at,
@@ -1875,7 +3099,10 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			nullIfZero(j.Spec.WarnAfterSeconds), nullStr(warnDeadline), watchJSON,
 			// AF-4a — see the schedules upsert: first-sight identity, preserved on
 			// conflict by omission from DO UPDATE.
-			db.NewID())
+			db.NewID(), nullStr(scriptUID),
+			// The repository the job comes from (GR-3, migration 1310): written
+			// at first sight and absent from DO UPDATE, like the uid.
+			s.repo())
 		if err != nil {
 			return fmt.Errorf("upsert job %q: %w", name, err)
 		}
@@ -1886,10 +3113,11 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		// empty metadata name degrades to the target-host basename above, and the
 		// code must key on whatever actually lands in the jobs row.
 		// R2-5: the allocator keys on the uid; the row was just upserted, so its
-		// uid is authoritative here (the git pool is name-unique by constraint).
+		// uid is authoritative here (a Git name is unique within its repository
+		// by constraint, migration 1320, and this is THIS repository's row).
 		var jobUID string
 		if err := tx.QueryRowContext(ctx,
-			`SELECT uid FROM jobs WHERE source='git' AND name = ?`, name).Scan(&jobUID); err != nil {
+			`SELECT uid FROM jobs WHERE source='git' AND repo_id = ? AND name = ?`, s.repo(), name).Scan(&jobUID); err != nil {
 			return fmt.Errorf("resolve uid for job %q: %w", name, err)
 		}
 		// SB — the notice list's half of the runner_tag warning above. A job whose
@@ -1901,19 +3129,28 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		// line is the fix, and nobody should have to dismiss what they fixed.
 		// The migration's own rows are never deleted here; they record a pin that
 		// existed, whatever the YAML says now.
+		//
+		// "A row for this job" is one that names this job's uid, or names its NAME
+		// and no job that exists: the row of this job as it was before a prune
+		// and a return gave it a new uid, or one from before rows carried a uid.
+		// A row that names ANOTHER job of this name, which is another
+		// repository's, is that job's notice and neither suppresses nor is
+		// cleared by this one.
+		const thisJobsPin = `job_source = 'git' AND job_name = ?
+		                      AND (job_uid = ? OR job_uid IS NULL OR job_uid = ''
+		                           OR job_uid NOT IN (SELECT uid FROM jobs))`
 		if leftoverPinUnconfined {
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO retired_runner_pins (job_uid, job_name, job_source, scope, runner_tag, reason, recorded_at)
 				SELECT ?, ?, 'git', ?, ?, 'leftover_git_key', ?
-				 WHERE NOT EXISTS (SELECT 1 FROM retired_runner_pins
-				                    WHERE job_source = 'git' AND job_name = ?)`,
-				jobUID, name, j.Spec.Scope, leftoverPin, now, name); err != nil {
+				 WHERE NOT EXISTS (SELECT 1 FROM retired_runner_pins WHERE `+thisJobsPin+`)`,
+				jobUID, name, j.Spec.Scope, leftoverPin, now, name, jobUID); err != nil {
 				return fmt.Errorf("record leftover runner_tag for job %q: %w", name, err)
 			}
 		} else if leftoverPin == "" {
 			if _, err := tx.ExecContext(ctx, `
 				DELETE FROM retired_runner_pins
-				 WHERE job_source = 'git' AND job_name = ? AND reason = 'leftover_git_key'`, name); err != nil {
+				 WHERE reason = 'leftover_git_key' AND `+thisJobsPin, name, jobUID); err != nil {
 				return fmt.Errorf("clear leftover runner_tag notice for job %q: %w", name, err)
 			}
 		}
@@ -1921,22 +3158,113 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		// tags rule) but must NOT mint a fresh log folder: re-point the surviving
 		// live registry row at the new identity before allocating, so Allocate
 		// finds it instead of opening a new era.
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE entity_codes SET uid = ? WHERE kind = ? AND source = 'git' AND name = ? AND deleted_at IS NULL`,
-			jobUID, entitycode.KindJob, name); err != nil {
-			return fmt.Errorf("re-point entity code for job %q: %w", name, err)
+		if err := s.entityCodeFor(ctx, tx, entitycode.KindJob, name, jobUID); err != nil {
+			return fmt.Errorf("entity code for job %q: %w", name, err)
 		}
-		if _, err := entitycode.Allocate(ctx, tx, entitycode.KindJob, "git", name, jobUID); err != nil {
-			return fmt.Errorf("allocate entity code for job %q: %w", name, err)
-		}
-		if err := writeDefinitionReactions(ctx, tx, "git", "job", name, j.Spec.Reactions); err != nil {
+		if err := s.writeDefinitionReactions(ctx, tx, "job", name, jobUID, j.Spec.Reactions); err != nil {
 			return fmt.Errorf("write reactions for job %q: %w", name, err)
 		}
-		if err := writeDefinitionSchedules(ctx, tx, "git", "job", name, entries); err != nil {
+		if err := s.writeDefinitionSchedules(ctx, tx, "job", name, jobUID, entries); err != nil {
 			return fmt.Errorf("write schedules for job %q: %w", name, err)
 		}
 	}
 	return nil
+}
+
+// entityCodeFor makes sure a Git definition has its log-folder code, and that
+// a definition which was pruned and has come back has the SAME one.
+//
+// LU-6 §5.6.1 — a prune/return cycle mints a FRESH uid (first-sight, the tags
+// rule) but must NOT mint a fresh log folder: the surviving live registry row
+// is re-pointed at the new identity before allocating, so Allocate finds it
+// instead of opening a new era.
+//
+// The surviving row is found by its name AMONG THIS REPOSITORY'S codes
+// (entity_codes.repo_id, migration 1320). By the name alone, two repositories
+// that each have a `nightly` would each take the other's code at every sync,
+// and the two jobs would take turns owning one log folder.
+func (s *Service) entityCodeFor(ctx context.Context, tx *sql.Tx, kind, name, uid string) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE entity_codes SET uid = ?
+		 WHERE kind = ? AND source = 'git' AND name = ? AND deleted_at IS NULL
+		   AND COALESCE(repo_id, 'global') = ?`,
+		uid, kind, name, s.repo()); err != nil {
+		return fmt.Errorf("re-point: %w", err)
+	}
+	if _, err := entitycode.Allocate(ctx, tx, kind, "git", name, uid); err != nil {
+		return fmt.Errorf("allocate: %w", err)
+	}
+	// Allocate does not know about repositories; the code it has just written
+	// (or found, from before the column) is stamped here.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE entity_codes SET repo_id = ?
+		 WHERE kind = ? AND uid = ? AND deleted_at IS NULL AND repo_id IS NULL`,
+		s.repo(), kind, uid); err != nil {
+		return fmt.Errorf("stamp the repository: %w", err)
+	}
+	return nil
+}
+
+// pointReactionsAtTheirUpstreams gives every reaction of this repository's
+// definitions the uid of the definition it watches, when that definition is
+// one of this repository's own. It runs once every job and workflow of the
+// sync has been written.
+//
+// A reaction row is written with its owner, in whatever order the files were
+// read, so an upstream that is written LATER in the same sync is not there to
+// be found: the reaction was left with no upstream uid until the next sync,
+// and the reaction engine then matches it by NAME. With one repository that
+// was only late. With two it is wrong: a reaction in one repository that
+// watches `nightly` would fire on the other repository's `nightly` as well.
+// The repository's own definition of the name; a name it does not have is
+// left as the writer resolved it (an in-app definition of its agency, or none).
+func (s *Service) pointReactionsAtTheirUpstreams(ctx context.Context, tx *sql.Tx) error {
+	repo := s.repo()
+	for _, kind := range []string{"job", "workflow"} {
+		table := ownerTable(kind)
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE reactions
+			   SET on_uid = (SELECT u.uid FROM `+table+` u
+			                  WHERE u.source = 'git' AND u.repo_id = ?1 AND u.name = reactions.on_name)
+			 WHERE on_kind = ?2 AND on_source = 'git' AND owner_source = 'git'
+			   AND (owner_uid IN (SELECT uid FROM jobs      WHERE source = 'git' AND repo_id = ?1)
+			     OR owner_uid IN (SELECT uid FROM workflows WHERE source = 'git' AND repo_id = ?1))
+			   AND EXISTS (SELECT 1 FROM `+table+` u
+			                WHERE u.source = 'git' AND u.repo_id = ?1 AND u.name = reactions.on_name)`,
+			repo, kind); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ownerTable is the table a definition of a kind lives in.
+func ownerTable(kind string) string {
+	if kind == "workflow" {
+		return "workflows"
+	}
+	return "jobs"
+}
+
+// clearOwnedRows deletes one Git definition's rows from a satellite table
+// (definition_schedules, reactions) before they are written afresh.
+//
+// By the owner's uid. Two repositories may each have a definition of one name,
+// and by the name each sync deleted the other's rows. A row with NO owner uid
+// predates the uid, when the one repository there was is the one that is
+// Global's now: only Global's sync clears those, by name, as it always did.
+func (s *Service) clearOwnedRows(ctx context.Context, tx *sql.Tx, table, ownerKind, ownerName, ownerUID string) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM `+table+` WHERE owner_kind = ? AND owner_uid = ?`, ownerKind, ownerUID); err != nil {
+		return err
+	}
+	if s.repo() != repoid.Global {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx,
+		`DELETE FROM `+table+` WHERE owner_source = 'git' AND owner_kind = ? AND owner_name = ? AND owner_uid IS NULL`,
+		ownerKind, ownerName)
+	return err
 }
 
 // writeDefinitionSchedules replaces all schedule rows for one definition
@@ -1966,10 +3294,17 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 //
 // Source-scoped replace (A9): only this owner's git rows are cleared, so a sync
 // can never wipe an operator's in-app reactions on the same definition name.
-func writeDefinitionReactions(ctx context.Context, tx *sql.Tx, ownerSource, ownerKind, ownerName string, entries []ReactionEntry) error {
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM reactions WHERE owner_source = ? AND owner_kind = ? AND owner_name = ?`,
-		ownerSource, ownerKind, ownerName); err != nil {
+//
+// The owner is named by its uid, which the caller has just read (2.4.0, GR-13):
+// see clearOwnedRows. The UPSTREAM a reaction watches is still found by name.
+// A Git one: this repository's definition of the name, and NEVER another
+// repository's, Global's included (§0a, IN-8; present defect 53: until 2.4.2
+// Global's came next, GR-16, so a reaction whose own upstream did not sync
+// was pinned to Global's definition of the name). One built in the app: only
+// when one such definition of this agency holds the name (Phase R4's rule).
+func (s *Service) writeDefinitionReactions(ctx context.Context, tx *sql.Tx, ownerKind, ownerName, ownerUID string, entries []ReactionEntry) error {
+	const ownerSource = "git"
+	if err := s.clearOwnedRows(ctx, tx, "reactions", ownerKind, ownerName, ownerUID); err != nil {
 		return err
 	}
 	// Normalised again here rather than trusting the caller: this function is the
@@ -1985,6 +3320,18 @@ func writeDefinitionReactions(ctx context.Context, tx *sql.Tx, ownerSource, owne
 		if e.IncludeWorkflowChildren {
 			children = 1
 		}
+		// An in-app upstream, for a repository of an agency: that agency's only
+		// (see the validation in syncNow).
+		ofAgency, ofAgencyArgs := s.inAppOfThisAgency(e.OnKind)
+		args := []any{
+			ownerSource, ownerKind, ownerName, e.Name,
+			e.OnSourceOrDefault(), e.OnKind, e.OnName, e.OnOutcome,
+			e.DelaySeconds, e.MinIntervalSeconds, children, enabled, i,
+			ownerUID,
+			e.OnSourceOrDefault(), s.repo(), e.OnName,
+			e.OnSourceOrDefault(), e.OnName, e.OnSourceOrDefault(),
+		}
+		args = append(args, ofAgencyArgs...)
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO reactions(owner_source, owner_kind, owner_name, name,
 			                      on_source, on_kind, on_name, on_outcome,
@@ -1992,31 +3339,24 @@ func writeDefinitionReactions(ctx context.Context, tx *sql.Tx, ownerSource, owne
 			                      include_workflow_children, enabled, position,
 			                      owner_uid, on_uid)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,
-				CASE ?
-				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
-				END,
-				CASE ?
-				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
-				END)`,
-			ownerSource, ownerKind, ownerName, e.Name,
-			e.OnSourceOrDefault(), e.OnKind, e.OnName, e.OnOutcome,
-			e.DelaySeconds, e.MinIntervalSeconds, children, enabled, i,
-			ownerKind, ownerName, ownerSource, ownerName, ownerSource,
-			e.OnKind, e.OnName, e.OnSourceOrDefault(), e.OnName, e.OnSourceOrDefault()); err != nil {
+				?,
+				COALESCE(
+					(SELECT uid FROM `+ownerTable(e.OnKind)+` WHERE ? = 'git' AND source = 'git' AND repo_id = ? AND name = ?),
+					(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM `+ownerTable(e.OnKind)+` WHERE ? <> 'git' AND name = ? AND source = ?`+ofAgency+`)))`,
+			args...); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeDefinitionSchedules(ctx context.Context, tx *sql.Tx, ownerSource, ownerKind, ownerName string, entries []ScheduleEntry) error {
+func (s *Service) writeDefinitionSchedules(ctx context.Context, tx *sql.Tx, ownerKind, ownerName, ownerUID string, entries []ScheduleEntry) error {
+	const ownerSource = "git"
 	// Source-scoped replace (A9): only this owner's (source-qualified) rows are
 	// cleared, so a git sync can never wipe an operator's cronomicon bindings.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM definition_schedules WHERE owner_source = ? AND owner_kind = ? AND owner_name = ?`,
-		ownerSource, ownerKind, ownerName); err != nil {
+	// And only THIS owner's, by its uid (clearOwnedRows): not those of another
+	// repository's definition of the same name.
+	if err := s.clearOwnedRows(ctx, tx, "definition_schedules", ownerKind, ownerName, ownerUID); err != nil {
 		return err
 	}
 	for i, e := range entries {
@@ -2032,17 +3372,20 @@ func writeDefinitionSchedules(ctx context.Context, tx *sql.Tx, ownerSource, owne
 			INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, env, position, source_ref, start_at, end_at, interval, skip_calendars, only_calendars,
 				owner_uid, schedule_uid)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,
-				CASE ?
-				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
-				END,
-				(SELECT s.uid FROM schedules s WHERE s.name = ?
-				   AND (SELECT COUNT(*) FROM schedules s2 WHERE s2.name = s.name) = 1))`,
+				-- The owner, by the uid the caller has just read. It used to be looked
+				-- up here by NAME and kept only when one definition held that name.
+				?,
+				-- The schedule this entry was expanded from, by its uid (1300, GR-8).
+				-- It used to be looked up here by NAME and kept only when one
+				-- schedule held that name, so a name shared with an in-app schedule
+				-- left every Git entry without one. The caller knows which schedule
+				-- it expanded: the one this sync wrote.
+				?)`,
 			ownerSource, ownerKind, ownerName, e.Name, e.Cron, envJSON, i, nullStr(e.SourceRef),
 			nullStr(e.StartAt), nullStr(e.EndAt), nullStr(e.Interval),
 			nullStr(calendar.MarshalNames(e.SkipCalendars)), nullStr(calendar.MarshalNames(e.OnlyCalendars)),
-			ownerKind, ownerName, ownerSource, ownerName, ownerSource,
-			nullStr(e.SourceRef)); err != nil {
+			ownerUID,
+			nullStr(e.SourceUID)); err != nil {
 			return err
 		}
 	}
@@ -2079,8 +3422,8 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 		// else in the repo. The runtime depth ceiling is the real backstop.
 		if parsed, perr := workflow.ParseSteps(string(stepsJSON)); perr == nil {
 			for _, verr := range workflow.ValidateSteps(parsed) {
-				s.log.Warn("git workflow has a structural problem; syncing it anyway",
-					"workflow", name, "step", verr.Step, "field", verr.Field, "problem", verr.Message)
+				s.logWarn("git workflow has a structural problem; syncing it anyway",
+					"workflow", name, "source_path", wf.SourcePath, "step", verr.Step, "field", verr.Field, "problem", verr.Message)
 			}
 		}
 		enabled := 1
@@ -2094,9 +3437,9 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 			legacyMirror = entries[0].Cron
 		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO workflows(name, description, steps, schedule, enabled, source_path, synced_at, uid)
-			VALUES(?,?,?,?,?,?,?,?)
-			ON CONFLICT(source, name) WHERE source = 'git' DO UPDATE SET
+			INSERT INTO workflows(name, description, steps, schedule, enabled, source_path, synced_at, uid, repo_id, owner_agency)
+			VALUES(?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(repo_id, name) WHERE source = 'git' DO UPDATE SET
 				description=excluded.description,
 				steps=excluded.steps,
 				schedule=excluded.schedule,
@@ -2106,35 +3449,37 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 			name, wf.Spec.Description, string(stepsJSON),
 			nullStr(legacyMirror), enabled,
 			defPath(wf.SourcePath, "workflows/"+name+".yaml"), now,
-			db.NewID())
+			db.NewID(),
+			// The repository it comes from (GR-3): see upsertJobs. And its owner,
+			// that repository's agency (GR-6, 1360): written at first sight and
+			// absent from the update, like the uid, since a repository's agency
+			// never changes (GR-2).
+			s.repo(), s.agency())
 		if err != nil {
 			return fmt.Errorf("upsert workflow %q: %w", name, err)
 		}
 		// LU-6: see upsertJobs. Same idempotent allocation, workflow kind.
 		var wfUID string
 		if err := tx.QueryRowContext(ctx,
-			`SELECT uid FROM workflows WHERE source='git' AND name = ?`, name).Scan(&wfUID); err != nil {
+			`SELECT uid FROM workflows WHERE source='git' AND repo_id = ? AND name = ?`, s.repo(), name).Scan(&wfUID); err != nil {
 			return fmt.Errorf("resolve uid for workflow %q: %w", name, err)
 		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE entity_codes SET uid = ? WHERE kind = ? AND source = 'git' AND name = ? AND deleted_at IS NULL`,
-			wfUID, entitycode.KindWorkflow, name); err != nil {
-			return fmt.Errorf("re-point entity code for workflow %q: %w", name, err)
+		if err := s.entityCodeFor(ctx, tx, entitycode.KindWorkflow, name, wfUID); err != nil {
+			return fmt.Errorf("entity code for workflow %q: %w", name, err)
 		}
-		if _, err := entitycode.Allocate(ctx, tx, entitycode.KindWorkflow, "git", name, wfUID); err != nil {
-			return fmt.Errorf("allocate entity code for workflow %q: %w", name, err)
-		}
-		if err := writeDefinitionReactions(ctx, tx, "git", "workflow", name, wf.Spec.Reactions); err != nil {
+		if err := s.writeDefinitionReactions(ctx, tx, "workflow", name, wfUID, wf.Spec.Reactions); err != nil {
 			return fmt.Errorf("write reactions for workflow %q: %w", name, err)
 		}
-		if err := writeDefinitionSchedules(ctx, tx, "git", "workflow", name, entries); err != nil {
+		if err := s.writeDefinitionSchedules(ctx, tx, "workflow", name, wfUID, entries); err != nil {
 			return fmt.Errorf("write schedules for workflow %q: %w", name, err)
 		}
 	}
 	return nil
 }
 
-func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []inventoryScope, now string, sha string) error {
+// It returns the inventories it did NOT write because their name is already a
+// scope's: each as that file's error.
+func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []inventoryScope, now string, sha string) ([]ValidationError, error) {
 	// Scopes table is owned by B6 (settings) but B3 writes git-source rows.
 	// Check if the table exists before writing to avoid failing when B6 hasn't
 	// been applied yet (test isolation). In production all migrations run before
@@ -2142,20 +3487,84 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 	var exists int
 	_ = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='scopes'`).Scan(&exists)
 	if exists == 0 {
-		return nil // scopes table not yet created — no-op
+		return nil, nil // scopes table not yet created — no-op
 	}
 
+	// One wording, whoever holds the name and however (GR-19): a scope built in
+	// the app, another repository's, another agency's. A repository's
+	// committers are told that the name is taken and not whose it is, which is
+	// the rule the composers follow (execspec.NamePoolRefusal).
+	var taken []ValidationError
+	nameTaken := func(sc inventoryScope) {
+		taken = append(taken, ValidationError{
+			File: sc.SourcePath,
+			Message: fmt.Sprintf("the scope name %q is already in use: this inventory was not synced; rename the file",
+				sc.Name),
+		})
+	}
 	for _, sc := range scopes {
 		// OD-1: a git inventory must NEVER clobber an operator-authored (cronomicon)
 		// scope of the same name. The ON CONFLICT(name) upsert below would otherwise
 		// flip its source to 'git' and overwrite its authored raw/projection/hosts —
 		// a silent hijack. Skip the colliding git scope loudly; the operator renames
 		// one. (Names are unique, so an cronomicon row owning the name blocks the git one.)
+		// This repository's own scope of the name. Found by its repository
+		// rather than by (agency, name). (Until 2.4.3 one of Global's
+		// repository's could have been given to an agency by a repair, LR-31,
+		// and this went on writing it; migration 1470 made those the agencies'
+		// own, released_from below, and a repair refuses it now.)
+		var ownID string
+		_ = tx.QueryRowContext(ctx, `SELECT id FROM scopes WHERE source = 'git' AND COALESCE(repo_id, ?) = ? AND name = ?`,
+			repoid.Global, s.repo(), sc.Name).Scan(&ownID)
+		// A scope of this file's that a repair gave to an agency before 2.4.3
+		// is that agency's own now (migration 1470; question 58): the file is
+		// no longer any scope's, and is not made a second one for this
+		// repository's agency. Said, as a name that is taken is said (whose it
+		// is, is not), until the file is removed or renamed, or the agency
+		// deletes its scope (the mark goes with the row).
+		if ownID == "" {
+			var released int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM scopes WHERE released_from = ? AND name = ?`,
+				s.repo(), sc.Name).Scan(&released); err != nil {
+				return nil, fmt.Errorf("read the scopes released from this repository: %w", err)
+			}
+			if released > 0 {
+				taken = append(taken, ValidationError{
+					File: sc.SourcePath,
+					Message: fmt.Sprintf("the scope %q was given to an agency, and is that agency's own: this inventory was not synced; "+
+						"remove or rename the file", sc.Name),
+				})
+				continue
+			}
+		}
 		var existingSource string
-		_ = tx.QueryRowContext(ctx, `SELECT source FROM scopes WHERE name=?`, sc.Name).Scan(&existingSource)
+		var existingRepo sql.NullString
+		// Otherwise within this repository's agency: a scope's name is unique
+		// within an agency only (I2), and another agency's scope of the name is
+		// nothing to this one (until then it took the name, GR-19).
+		if ownID == "" {
+			_ = tx.QueryRowContext(ctx, `SELECT source, repo_id FROM scopes WHERE name = ? AND owner_agency = ?`, sc.Name, s.agency()).Scan(&existingSource, &existingRepo)
+		}
 		if existingSource == "cronomicon" {
-			s.logWarn("git inventory name collides with an cronomicon-authored scope — skipping (rename one)", "name", sc.Name)
+			nameTaken(sc)
 			continue
+		}
+		// Nor a scope that ANOTHER repository supplies (GR-13). A scope's name is
+		// unique across the installation, so the upsert below would take the
+		// other repository's scope over: its hosts and inventory replaced by this
+		// file's, under the agency and the runner bindings the other one has. It
+		// is skipped, and says only that the name is in use: whose it is, is not
+		// this repository's to learn (GR-19). A Git scope that records no
+		// repository is from before a scope recorded one, and is Global's.
+		if existingSource == "git" {
+			holder := repoid.Global
+			if existingRepo.Valid && existingRepo.String != "" {
+				holder = existingRepo.String
+			}
+			if holder != s.repo() {
+				nameTaken(sc)
+				continue
+			}
 		}
 		// git_meta_json — {owner, sidecarPath, errors}. settings.applyGitMeta is
 		// the one reader. (capability_json until migration 1170, when it also
@@ -2170,6 +3579,12 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// column list and the ON CONFLICT DO UPDATE SET below (agency-support.md M1,
 		// §3.2 / D-OWN) — so an operator's agency binding survives re-sync, the same
 		// operator-owned model as tags. Do NOT add agency_id here.
+		//
+		// Since 2.4.0 (GR-18) a scope from an AGENCY's repository is that agency's.
+		// That is still not written here: the database gives a new scope its
+		// repository's agency when the row is inserted (migration 1350), from the
+		// repo_id this statement supplies, and refuses to let it be moved. A row
+		// this statement UPDATES fires neither.
 		//
 		// The SAME RULE now covers the scope_agencies join table (migration 670,
 		// the agencies plan AG-Q6/T2.9), which supersedes agency_id in
@@ -2192,30 +3607,38 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// UPSERT that keeps the row. Do NOT turn it into a delete-and-insert or an
 		// INSERT OR REPLACE — a new id cascades the binding away and the scope reopens
 		// to its whole agency. TestSyncPreservesScopeRunners pins that.
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO scopes(id, name, source, source_path, git_meta_json, synced_at, description, created_by, created_at)
-			VALUES(?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(name) DO UPDATE SET
-				source=excluded.source,
-				source_path=excluded.source_path,
-				git_meta_json=excluded.git_meta_json,
-				synced_at=excluded.synced_at,
-				description=excluded.description`,
-			id, sc.Name, "git", sc.SourcePath, string(metaJSON), now, sc.Description, "gitlab", now)
+		//
+		// Since I2 it is an UPDATE of the row found above, by its id, or an
+		// INSERT into this repository's agency: the row keeps its id either way.
+		var err error
+		scopeID := ownID
+		if ownID != "" {
+			_, err = tx.ExecContext(ctx, `
+				UPDATE scopes SET source = 'git', repo_id = ?, source_path = ?, git_meta_json = ?, synced_at = ?, description = ?
+				 WHERE id = ?`,
+				s.repo(), sc.SourcePath, string(metaJSON), now, sc.Description, ownID)
+		} else {
+			scopeID = id
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO scopes(id, name, source, source_path, git_meta_json, synced_at, description, created_by, created_at, repo_id, owner_agency)
+				VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+				id, sc.Name, "git", sc.SourcePath, string(metaJSON), now, sc.Description, "gitlab", now, s.repo(), s.agency())
+		}
 		if err != nil {
-			// Gracefully skip if columns don't exist yet (schema mismatch in parallel dev).
-			s.logWarn("upsert scope skipped", "name", sc.Name, "error", err)
+			// Not written: said to its file, and not counted among the scopes
+			// synced. (The one cause in a working installation is a repository
+			// whose agency is not in the catalog: the scope cannot be given its
+			// owner, and is not born Global's instead, migration 1350.) The
+			// database's own words go to the server's log.
+			s.logError("git sync: an inventory could not be written", "name", sc.Name, "source_path", sc.SourcePath, "err", err)
+			taken = append(taken, ValidationError{File: sc.SourcePath,
+				Message: fmt.Sprintf("the scope %q could not be written: this inventory was not synced", sc.Name)})
 			continue
 		}
 
 		// EX.5 — persist inventory host membership into scope_hosts so the
 		// in-app SSH executor (which has no clone) can resolve a git scope's
 		// targets. Replace the set each sync.
-		var scopeID string
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM scopes WHERE name = ?`, sc.Name).Scan(&scopeID); err != nil {
-			s.logWarn("scope id lookup skipped", "name", sc.Name, "error", err)
-			continue
-		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM scope_hosts WHERE scope_id = ?`, scopeID); err != nil {
 			s.logWarn("scope_hosts clear skipped", "name", sc.Name, "error", err)
 			continue
@@ -2250,7 +3673,7 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// in-app SSH executor can dial inventory hosts with zero operator action.
 		s.importGitHosts(ctx, tx, scopeID, sc, now)
 	}
-	return nil
+	return taken, nil
 }
 
 // sidecarAuthKeyEnvVar returns the per-scope default auth-key env-var NAME from an
@@ -2276,8 +3699,9 @@ func authKeyBindings(conns []inventory.HostConn) []string {
 
 // importGitHosts upserts ssh_hosts rows (source='git') from a scope's parsed
 // connection vars (M4 / §9). It is gated on a usable projection — a degraded
-// inventory can't be reliably imported. The upsert leaves host_key/status/
-// last_checked_at UNTOUCHED so a TOFU-captured key survives re-sync (§9.4), and
+// inventory can't be reliably imported. The upsert leaves status/
+// last_checked_at UNTOUCHED (§9.4; a host's approved key is the local runner's
+// and is keyed by address, not kept on the row), and
 // stamps synced_at=now so the prune-by-owner can reap rows dropped from inventory.
 // Best-effort: log-and-continue if the 400 schema isn't present (isolated tests).
 func (s *Service) importGitHosts(ctx context.Context, tx *sql.Tx, scopeID string, sc inventoryScope, now string) {
@@ -2286,8 +3710,8 @@ func (s *Service) importGitHosts(ctx context.Context, tx *sql.Tx, scopeID string
 		// are still in the file. A projection degrade is NOT a scopeErr, so the
 		// prune-by-owner still runs; re-stamp synced_at on this scope's EXISTING git
 		// rows so the prune leaves them, preserving their last-good connection detail
-		// AND any TOFU-captured host_key (OD-13/§9.4 — a captured key must survive a
-		// transient degrade, e.g. a host-range line or one bad [group:vars]).
+		// (OD-13/§9.4 — it must survive a transient degrade, e.g. a host-range line
+		// or one bad [group:vars]).
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE ssh_hosts SET synced_at=? WHERE scope_id=? AND source='git'`, now, scopeID); err != nil {
 			s.logWarn("ssh_hosts degrade re-stamp skipped", "name", sc.Name, "error", err)
@@ -2352,13 +3776,25 @@ func (s *Service) writeScopeProjection(ctx context.Context, tx *sql.Tx, scopeID 
 }
 
 // recordSyncEvent writes a row to git_sync_events and inserts a gitsync activity entry.
+//
+// Not for a sync that was cut short because its own Service was stopped: the
+// connection was rewritten, the repository disconnected or the server is
+// shutting down, and "failed: context canceled" in the history, once for every
+// save that happened to land during a sync, would describe nothing that went
+// wrong. The Service that replaces this one syncs at once and records that.
 func (s *Service) recordSyncEvent(ctx context.Context, triggeredBy string, res SyncResult) error {
 	if s.db == nil {
 		return nil
 	}
+	if res.Status != "success" && s.lifetime().Err() != nil {
+		s.logInfo("git sync: cut short because the repository's sync service was stopped; not recorded", "repo_id", s.repo())
+		return nil
+	}
+	res.ErrorMessage = s.scrubURL(res.ErrorMessage)
 	_, err := s.db.Exec(`
-		INSERT INTO git_sync_events(triggered_by, sha, status, jobs_synced, scripts_synced, schedules_synced, wfs_synced, scopes_synced, error_message, started_at, finished_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		INSERT INTO git_sync_events(repo_id, triggered_by, sha, status, jobs_synced, scripts_synced, schedules_synced, wfs_synced, scopes_synced, error_message, started_at, finished_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		s.repo(),
 		triggeredBy,
 		nullStr(res.SHA),
 		res.Status,
@@ -2381,14 +3817,11 @@ func (s *Service) recordSyncEvent(ctx context.Context, triggeredBy string, res S
 		outcome = "warning"
 	}
 
-	var repoPath, branch string
-	_ = s.db.QueryRow(`SELECT project_path, branch FROM gitlab_config WHERE id=1`).Scan(&repoPath, &branch)
-	if repoPath == "" {
-		repoPath = "infra/job-defs"
-	}
-	if branch == "" {
-		branch = "main"
-	}
+	// The repository and the branch that were synced. Until 1310 both came from
+	// two columns of the connection that nothing had written since migration
+	// 060, so every installation's line said `infra/job-defs`, `main`.
+	repoPath := repoDisplayPath(s.repoURL)
+	branch := s.writeBranch(ctx)
 
 	summary := fmt.Sprintf("Synced %d jobs, %d scripts, %d schedules, %d workflows, %d scopes", res.JobsSynced, res.ScriptsSynced, res.SchedulesSynced, res.WfsSynced, res.ScopesSynced)
 	if res.Status == "failed" {
@@ -2409,9 +3842,27 @@ func (s *Service) recordSyncEvent(ctx context.Context, triggeredBy string, res S
 		CommitSha:  res.SHA,
 		Repository: repoPath,
 		Branch:     branch,
+		AgencyID:   s.agency(), // 2.4.4: in its agency's Activity
 	})
 
 	return nil
+}
+
+// repoDisplayPath is how a repository is named in the activity stream: the
+// path of its URL (`group/project`), without the host, a trailing `.git`, or
+// anything else a URL can carry (a user, a password, a query). A URL that is
+// not one (a bare path, as tests use) is named by its last element.
+func repoDisplayPath(repoURL string) string {
+	if repoURL == "" {
+		return ""
+	}
+	p := repoURL
+	if u, err := url.Parse(repoURL); err == nil && u.Host != "" {
+		p = u.Path
+	} else {
+		p = filepath.Base(filepath.Clean(repoURL))
+	}
+	return strings.TrimSuffix(strings.Trim(p, "/"), ".git")
 }
 
 func nullStr(s string) any {
@@ -2428,10 +3879,10 @@ type SyncState struct {
 	LastStatus   string
 }
 
-// GetSyncState reads the current git_sync_state row.
+// GetSyncState reads what the last sync of this repository saw.
 func (s *Service) GetSyncState(ctx context.Context) (SyncState, error) {
 	var st SyncState
-	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(last_sha,''), COALESCE(last_synced_at,''), COALESCE(last_status,'') FROM git_sync_state WHERE id=1`).
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(last_sha,''), COALESCE(last_synced_at,''), COALESCE(last_status,'') FROM git_repos WHERE id=?`, s.repo()).
 		Scan(&st.LastSHA, &st.LastSyncedAt, &st.LastStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return st, nil
@@ -2455,12 +3906,15 @@ func (s *Service) ListSyncEvents(ctx context.Context, page, pageSize int, orderB
 	offset := (page - 1) * pageSize
 
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_sync_events`).Scan(&total); err != nil {
+	// This repository's syncs (2.4.0). The list had no repository in it: with a
+	// second repository it showed both, and the publish form, which takes its
+	// base commit from the first row, was handed the other repository's.
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_sync_events WHERE repo_id = ?`, s.repo()).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, triggered_by, sha, status, jobs_synced, scripts_synced, schedules_synced, wfs_synced, scopes_synced, error_message, started_at, finished_at
-		FROM git_sync_events`+orderBy+` LIMIT ? OFFSET ?`, pageSize, offset)
+		FROM git_sync_events WHERE repo_id = ?`+orderBy+` LIMIT ? OFFSET ?`, s.repo(), pageSize, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2550,3 +4004,20 @@ func nullIfZero(v int) any {
 	}
 	return v
 }
+
+// inAppOfThisAgency is the condition, over the table of a kind, that confines
+// a lookup of a definition BUILT IN THE APP to this repository's agency: a
+// job whose scope is that agency's alone, a workflow that agency owns. For
+// Global's repository, Global's: a job with no scope, or on a scope that is not
+// one agency's, is Global's, as its runs are. (Until §0a, IN-8, Global's
+// repository might name any.)
+func (s *Service) inAppOfThisAgency(kind string) (string, []any) {
+	if kind == "workflow" {
+		return ` AND owner_agency = ?`, []any{s.agency()}
+	}
+	return ` AND COALESCE(` + jobsAgencySQL + `, '` + agencyid.Global + `') = ?`, []any{s.agency()}
+}
+
+// jobsAgencySQL is the agency of the row `jobs` (agencyid.JobSQL; an in-app
+// job's owner since 1400).
+var jobsAgencySQL = agencyid.JobSQL("jobs")

@@ -152,7 +152,7 @@ func TestListJobsBatchesPerRowQueries(t *testing.T) {
 
 	call := func(pageSize int) (envelope, int64) {
 		jobsListQueryCount.Store(0)
-		req := httptest.NewRequest("GET", fmt.Sprintf("/api/v1/jobs?pageSize=%d&page=1", pageSize), nil)
+		req := asEverywhereReader(httptest.NewRequest("GET", fmt.Sprintf("/api/v1/jobs?pageSize=%d&page=1", pageSize), nil))
 		w := httptest.NewRecorder()
 		s.listJobs(w, req)
 		if w.Code != 200 {

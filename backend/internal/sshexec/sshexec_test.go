@@ -18,6 +18,8 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/gittest"
+	"github.com/ResetSmith/cronomicon/internal/runref"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -150,18 +152,19 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	}
 	// SSH host record (strict host-key verification using the server's key).
 	if _, err := pool.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1', ?, ?, ?, 'tester', 'SSH_KEY', ?, ?)`,
-		"testhost", host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1', ?, ?, ?, 'tester', 'SSH_KEY', ?)`,
+		"testhost", host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	// Job with an inline command + a queued ssh run targeting the host.
 	if _, err := pool.Exec(`INSERT INTO jobs(name, run_type, command, concurrency_policy, synced_at) VALUES('j1','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','bash','testscope','testhost','queued','tester','manual','ssh',?)`, now); err != nil {
+		VALUES('run-1','j1','bash','testscope','testhost','queued','tester','manual','runner',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -173,7 +176,7 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	svc.WithShutdownWG(endWG)
 	t.Cleanup(endWG.Wait)
 
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: run=%v err=%v", claimed, err)
 	}
@@ -214,6 +217,246 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	}
 	if strings.Contains(logStr, "[REDACTED]") {
 		t.Errorf("unexpected redaction marker for a plain Variable:\n%s", logStr)
+	}
+
+	// Present defect 4: a run of one of two jobs of a name is run as ITS job.
+	// The local runner hands the command resolver the run's job_uid; with the
+	// name alone, a name two jobs hold is refused and the run fails.
+	for _, uid := range []string{"uid-twin-a", "uid-twin-b"} {
+		if _, err := pool.Exec(`INSERT INTO jobs(uid, name, source, run_type, command, concurrency_policy, synced_at)
+			VALUES(?, 'twin', 'cronomicon', 'bash', 'echo '||?, 'Allow', ?)`, uid, uid, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(`
+		INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
+		VALUES('run-twin','twin','cronomicon','uid-twin-b','bash','testscope','testhost','queued','tester','manual','runner',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the twin's run: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	if err := pool.QueryRow(`SELECT status FROM runs WHERE id='run-twin'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "success" {
+		twinLog, _ := os.ReadFile(filepath.Join(logDir, "run-twin.log"))
+		t.Fatalf("the run of one of two jobs of a name is %q, want success:\n%s", status, twinLog)
+	}
+
+	// GR-22: a body kept as a file is read from the clone of the script's
+	// repository. The file is in an agency's repository's clone and in no
+	// other: read anywhere else, there is no body and the run fails.
+	agencyClone := t.TempDir()
+	agencySynced := gittest.Commit(t, agencyClone, map[string]string{"scripts/only-here.sh": "echo hi\n"})
+	elsewhere := t.TempDir()
+	svc.WithCloneDirs(func(repo string) string {
+		if repo == "repo-a" {
+			return agencyClone
+		}
+		return elsewhere
+	})
+	for _, q := range []string{
+		`INSERT INTO agencies (id, name, created_at) VALUES ('ag-a', 'A', 't')`,
+		// The scope is that agency's: a job built in the app on a script of an
+		// agency's repository runs on that agency's scopes (present defect 40).
+		`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-test', 'testscope', 'cronomicon', 't')`,
+		`DELETE FROM scope_agencies WHERE scope_id = 'sc-test'`,
+		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-test', 'ag-a')`,
+		`INSERT INTO git_repos (id, agency_id, url, branch, last_sha) VALUES ('repo-a', 'ag-a', 'u', 'main', '` + agencySynced + `')`,
+		`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at)
+		   VALUES ('s-a', 'repo-a', 'only-here.sh', 'bash', 'scripts/only-here.sh', 'h', 't')`,
+		// A's job on A's scope, as the composer writes it (its owner since 1400;
+		// a job finds its scope in its own agency, I2).
+		`INSERT INTO jobs (uid, name, source, run_type, script_uid, script_path, concurrency_policy, synced_at, scope, owner_agency)
+		   VALUES ('uid-file', 'filejob', 'cronomicon', 'bash', 's-a', 'scripts/only-here.sh', 'Allow', 't', 'testscope', 'ag-a')`,
+		`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
+		   VALUES('run-file','filejob','cronomicon','uid-file','bash','testscope','testhost','queued','tester','manual','runner','` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	// The scope is A's now, so its runs reach A's record for the host, not
+	// Global's (§0a, question 33).
+	if _, err := pool.Exec(`
+		INSERT INTO ssh_hosts(id, source, hostname, address, port, username, auth_key_env_var, created_at, owner_agency)
+		VALUES('h-a', 'cronomicon', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?, 'ag-a')`, host, atoiPort(port), now); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the file job's run: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	if err := pool.QueryRow(`SELECT status FROM runs WHERE id='run-file'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "success" {
+		fileLog, _ := os.ReadFile(filepath.Join(logDir, "run-file.log"))
+		t.Fatalf("the run of a job whose body is in an agency's repository's clone is %q, want success:\n%s", status, fileLog)
+	}
+
+	// GR-15 at the moment of dispatch: a run of a job of an agency's
+	// repository, on a scope that is not that agency's, is not executed. It
+	// ends failed, with the reason every producer gives, stored and in its log.
+	// The scope is given away first, with a run of the job built in the app on
+	// that agency's script waiting: it is refused in the same words (present
+	// defect 40).
+	for _, q := range []string{
+		`DELETE FROM scope_agencies WHERE scope_id = 'sc-test'`,
+		`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
+		   VALUES('run-file-stranded','filejob','cronomicon','uid-file','bash','testscope','testhost','queued','tester','manual','runner','` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the in-app job's stranded run: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	var fileReason sql.NullString
+	if err := pool.QueryRow(`SELECT status, queued_reason FROM runs WHERE id='run-file-stranded'`).Scan(&status, &fileReason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failure" || fileReason.String != runref.ReasonRepoScopeMismatch {
+		t.Fatalf("the in-app job on an agency's script, on a scope that is no longer that agency's, is %q (%q), want failure with the refusal", status, fileReason.String)
+	}
+	if fileLog, _ := os.ReadFile(filepath.Join(logDir, "run-file-stranded.log")); strings.Contains(string(fileLog), "[testhost]") {
+		t.Errorf("the refused run ran on the host:\n%s", fileLog)
+	}
+	for _, q := range []string{
+		`INSERT INTO jobs (uid, name, source, repo_id, run_type, command, concurrency_policy, synced_at)
+		   VALUES ('uid-conf', 'confined', 'git', 'repo-a', 'bash', 'echo hi', 'Allow', 't')`,
+		`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
+		   VALUES('run-stranded','confined','git','uid-conf','bash','testscope','testhost','queued','tester','manual','runner','` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the stranded run: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	var reason sql.NullString
+	if err := pool.QueryRow(`SELECT status, queued_reason FROM runs WHERE id='run-stranded'`).Scan(&status, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failure" || reason.String != runref.ReasonRepoScopeMismatch {
+		t.Fatalf("the run on a scope that is not its repository's agency's is %q (%q), want failure with the refusal", status, reason.String)
+	}
+	strandedLog, _ := os.ReadFile(filepath.Join(logDir, "run-stranded.log"))
+	if !strings.Contains(string(strandedLog), runref.ReasonRepoScopeMismatch) || strings.Contains(string(strandedLog), "[testhost]") {
+		t.Errorf("the refused run's log should say why and show nothing run on the host:\n%s", strandedLog)
+	}
+
+	// And the WORKFLOW's repository (the review of Phase R5): a step of a
+	// workflow of an agency's repository, whose job is Global's and so is not
+	// refused above, on a scope that is not that agency's. The engine asked when
+	// the step was queued; the scope can be given away after that.
+	for _, q := range []string{
+		`INSERT INTO workflows (uid, name, source, repo_id, steps, synced_at) VALUES ('wf-a', 'flow', 'git', 'repo-a', '[]', 't')`,
+		`INSERT INTO workflow_runs (id, workflow_name, workflow_source, workflow_uid, status, triggered_by, trigger_kind, created_at)
+		   VALUES ('wfrun-a', 'flow', 'git', 'wf-a', 'running', 'tester', 'manual', '` + now + `')`,
+		`INSERT INTO runs(id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, workflow_run_id, created_at)
+		   VALUES('run-step-stranded','j1','bash','testscope','testhost','queued','tester','workflow','runner','wfrun-a','` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the stranded step: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	if err := pool.QueryRow(`SELECT status, queued_reason FROM runs WHERE id='run-step-stranded'`).Scan(&status, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failure" || reason.String != runref.ReasonWorkflowScopeMismatch {
+		t.Fatalf("the step of an agency's repository's workflow on a scope that is not that agency's is %q (%q), want failure with the refusal", status, reason.String)
+	}
+	stepLog, _ := os.ReadFile(filepath.Join(logDir, "run-step-stranded.log"))
+	if !strings.Contains(string(stepLog), runref.ReasonWorkflowScopeMismatch) || strings.Contains(string(stepLog), "[testhost]") {
+		t.Errorf("the refused step's log should say why and show nothing run on the host:\n%s", stepLog)
+	}
+
+	// And a job built in the app whose script has gone: the same list the
+	// manifest asks (runref.RefuseDispatch), so the run is refused before
+	// anything of it is resolved, and its reason says so. Until the list was
+	// one, the local runner said this only in the run's log, after the run's
+	// references had been resolved.
+	for _, q := range []string{
+		`INSERT INTO jobs (uid, name, source, run_type, script_ref, concurrency_policy, synced_at)
+		   VALUES ('uid-gone', 'built-gone', 'cronomicon', 'bash', 'was.sh', 'Allow', 't')`,
+		`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
+		   VALUES('run-script-gone','built-gone','cronomicon','uid-gone','bash','testscope','testhost','queued','tester','manual','runner','` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the run of the job whose script has gone: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	if err := pool.QueryRow(`SELECT status, queued_reason FROM runs WHERE id='run-script-gone'`).Scan(&status, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failure" || reason.String != runref.ReasonScriptGone {
+		t.Fatalf("the run of a job whose script has gone is %q (%q), want failure with the refusal", status, reason.String)
+	}
+	goneLog, _ := os.ReadFile(filepath.Join(logDir, "run-script-gone.log"))
+	if !strings.Contains(string(goneLog), runref.ReasonScriptGone) || strings.Contains(string(goneLog), "[testhost]") {
+		t.Errorf("the refused run's log should say why and show nothing run on the host:\n%s", goneLog)
+	}
+
+	// The same job on a scope that IS its agency's runs.
+	for _, q := range []string{
+		`DELETE FROM scope_agencies WHERE scope_id = 'sc-test'`,
+		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-test', 'ag-a')`,
+		`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
+		   VALUES('run-own-scope','confined','git','uid-conf','bash','testscope','testhost','queued','tester','manual','runner','` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the run on the agency's own scope: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	if err := pool.QueryRow(`SELECT status FROM runs WHERE id='run-own-scope'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "success" {
+		ownLog, _ := os.ReadFile(filepath.Join(logDir, "run-own-scope.log"))
+		t.Fatalf("the run on its agency's own scope is %q, want success:\n%s", status, ownLog)
+	}
+	// And so does a step of that agency's repository's workflow.
+	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, workflow_run_id, created_at)
+		   VALUES('run-step-own','j1','bash','testscope','testhost','queued','tester','workflow','runner','wfrun-a','` + now + `')`); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the step on the agency's own scope: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	if err := pool.QueryRow(`SELECT status FROM runs WHERE id='run-step-own'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "success" {
+		ownLog, _ := os.ReadFile(filepath.Join(logDir, "run-step-own.log"))
+		t.Fatalf("the step on its workflow's agency's own scope is %q, want success:\n%s", status, ownLog)
 	}
 }
 
@@ -262,18 +505,19 @@ func setupBlockingRun(t *testing.T, timeoutSeconds int) (*Service, *sql.DB) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1', ?, ?, ?, 'tester', 'SSH_KEY', ?, ?)`,
-		"testhost", host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1', ?, ?, ?, 'tester', 'SSH_KEY', ?)`,
+		"testhost", host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	if _, err := pool.Exec(`INSERT INTO jobs(name, run_type, command, concurrency_policy, timeout_seconds, synced_at) VALUES('j1','bash','sleep 999','Allow',?,?)`,
 		timeoutSeconds, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','bash','testscope','testhost','queued','tester','manual','ssh',?)`, now); err != nil {
+		VALUES('run-1','j1','bash','testscope','testhost','queued','tester','manual','runner',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -306,7 +550,7 @@ func runExecuteWithDeadline(t *testing.T, svc *Service, r claimedRun, d time.Dur
 // remote command hangs is interrupted, finalizes failure, and logs the timeout.
 func TestSSHExecutorTimeoutInterruptsRun(t *testing.T) {
 	svc, pool := setupBlockingRun(t, 1)
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: run=%v err=%v", claimed, err)
 	}
@@ -330,7 +574,7 @@ func TestSSHExecutorTimeoutInterruptsRun(t *testing.T) {
 // finalizes terminal, and the kill signal is consumed.
 func TestSSHExecutorKillInterruptsRun(t *testing.T) {
 	svc, pool := setupBlockingRun(t, 0)
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: run=%v err=%v", claimed, err)
 	}

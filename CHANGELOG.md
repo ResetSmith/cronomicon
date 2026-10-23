@@ -13,6 +13,1677 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.5.2] - 2026-10-22
+
+Operations: who to call, and what the last shift knew. A run, an alert and
+each item that needs attention now say whose it is and who to contact; a run
+can be acknowledged and carry notes that the next shift reads; the Operations
+overview becomes the Dashboard with *All agencies* chosen; the installation
+freeze can be scheduled; and the built-in agency can be renamed, which a new
+installation does by calling it *Central*. Three migrations (1640 to 1660,
+schema v1660); runner protocol 14 is unchanged.
+
+### Upgrading
+
+**From 2.2.3 (production, and every published image):** follow 2.5.1's
+upgrade below with the 2.5.2 image. It is one step, and one-way for 2.5.1's
+reason (the caution there); the schema goes from 1210 to 1660. 2.5.1 was not
+published: like 2.5.0, 2.4.x and 2.3.x it is a step of the development line,
+and what it changed arrives with 2.5.2.
+
+**From a build of 2.5.1:** take a snapshot as for every release, replace the
+image and start it; the three migrations run at the first start. Nothing is
+one-way beyond what 2.5.1 already did.
+
+Either way, then:
+
+- The built-in agency keeps the name *Global* on an upgraded installation; only
+  a new one calls it *Central*. Rename it, if you like, in Scopes → Agencies →
+  Edit.
+- **Check the alert link address after your first visit.** It fills itself
+  in from the browser of the first global administrator to open the app,
+  whatever address that visit used: localhost, a tunnel or a raw IP address
+  sticks, and later visits do not correct it. Open Settings → Notifications →
+  Alert Link Address and change it if it is not the address people reach the
+  app by. A database restored on another host keeps it too.
+- Every alert now has an `Agency:` line: a mail filter or push consumer that
+  matches the whole body sees one more line.
+- `/overview` leads to `/?agency=overview`, so bookmarks keep working.
+
+### Added
+
+- **Who to call.** A run's detail (a job run's and a workflow run's) and each
+  item of Needs attention show the job's or workflow's contact and whether it
+  is critical, and a run's detail has **Open job** (**Open workflow**), which
+  opens the definition on the Jobs (Workflows) page: those pages take `?job=`
+  and `?workflow=` with the definition's uid.
+- **The agency's contact**: an optional line on Settings → Alerts, kept by
+  the agency's administrators (Global's by a global administrator). Where a
+  job or workflow names no contact, the app and the alert show the agency's,
+  marked "(agency)".
+- **Alerts say whose run it was, and link to it.** Every alert has an
+  `Agency:` line with the agency's current name; a run's alert has an
+  `Open:` link to the run in History; the `Contact:` line falls back to the
+  agency's contact. The subject is unchanged.
+- **The alert link address, learned from the browser**: the first time a
+  global administrator opens the app, the server keeps the address the
+  browser used, and only while none is stored. Settings → Notifications →
+  Alert Link Address shows how it got there, by whom and when, with Change
+  and Remove. Nothing to configure, and no environment setting.
+- **Acknowledgement and notes on a run.** A panel on a run's detail, between
+  its fields and its log: **Acknowledge** (with an optional first note),
+  **Remove acknowledgement**, and an append-only thread of notes (at most 1,000
+  characters each; newest first, about five in view with the rest scrolling,
+  paged ten at a time past ten), each with its author and how they stood to
+  the run's agency (the agency's name, *Global administrator*, or the built-in
+  agency's name). Anyone who can read the run may write, so a viewer whose access
+  reaches every agency can acknowledge any agency's run. Each entry is
+  recorded in the run's agency's change log (category `Runs`) and Activity.
+  History has a **Notes** column (a tick and the count, or *Not
+  acknowledged* on a failed, stopped or lost run). What is acknowledged is the
+  run: the next failure of the same job is a new item, which says who
+  acknowledged the previous one.
+- **A scheduled installation freeze**: Settings → General's freeze card offers
+  **Now** or **Schedule…**, with a beginning and an optional end in the app's
+  time zone. A scheduled freeze shows a warning banner until it begins; every
+  producer judges a run at its own moment, so the Upcoming list and the Score
+  mark only the fires inside the window; and a window that ends lifts itself.
+  The change log names the window, and says when a freeze was cancelled before
+  it began.
+
+### Changed
+
+- **The Operations overview is the Dashboard with *All agencies* chosen.** The
+  switcher's first choice reads *All agencies* (its id stays `overview`, so a
+  saved default still works) and shows the Dashboard across every agency at
+  `/?agency=overview`: a strip saying how many items need attention and how
+  many nobody has acknowledged, the tiles summed over every agency (Failed in
+  the last day scrolls to Needs attention), the Score, Needs attention with
+  its Contact and Acknowledgement columns (acknowledged items dimmed, an
+  *Unacknowledged only* filter off by default), and the Agencies table with
+  the search in its header. The `/overview` page is gone; its address leads
+  there.
+- **The built-in agency can be renamed** (Scopes → Agencies → Edit, a global
+  administrator's); it still cannot be deleted, and its id stays `global`. No
+  agency name is reserved any longer: once the built-in agency is renamed,
+  *Global* is free for another agency. A run waiting for a runner follows the
+  rename; a run that has started keeps the name it started with.
+- **A new installation calls the built-in agency *Central*.** An upgraded one
+  keeps *Global* until someone renames it.
+
+### Fixed
+
+- **A failed workflow step is listed once in Needs attention.** A workflow
+  failed by one of its steps showed two items, the step's job and the
+  workflow, each with its own *Acknowledge*, so acknowledging the workflow
+  left the job's item counted as not yet acknowledged. The workflow's item
+  now stands for both. A step failure the workflow got past (continue on
+  error, a failure branch), or one whose workflow has run again since, is
+  still listed as the job's own item: nothing else shows it.
+- **An opened row stays within the window when its table is wider than
+  the window.** A row that opens into a detail spans every column, so in a
+  narrower window its right side (a run's *Remove acknowledgement* and its
+  notes' *Next →*, a job's *Run*, a workflow's *Pause*, a secret's or a
+  scope's actions) sat off screen behind the table's sideways scroll, or the
+  whole page scrolled sideways. The opened row now fits the visible part of
+  its table and stays put while the row's cells scroll beneath it, and its
+  contents no longer widen the table. This covers History (Executions,
+  Workflow Runs, Git Sync), Jobs and a job's Recent runs, Scripts,
+  Schedules, Workflows, Env Vars (Variables, Secrets, SSH Keys), Scopes
+  (Scopes, Agencies), Runners and Settings → SSH Targets. Tables that had no
+  sideways scroll of their own (Workflows, Schedules' search results, Env
+  Vars, Scopes) now scroll inside the page instead of the page scrolling.
+- **Settings no longer widens the page for a wide table.** SSH Targets' host
+  and bastion tables pushed the whole Settings page past the window; they
+  now scroll inside their cards, as Recent Logins does on Users & Access.
+
+### Known, and worth knowing
+
+- **The manuals say "Global" for the built-in agency, whatever it is
+  called.** Each says so where it introduces it. About 58 help texts in the
+  app also still say "Global" in prose. The names the app shows (the
+  switcher, owners, labels) read the current name.
+- Notes are not redacted; the box says not to paste credentials. They are
+  deleted with their run by retention; the change log keeps their text for its
+  own retention.
+- A deep link to a job (`?job=`) finds it in the first 200 of the agency's
+  jobs; a job past them says it is not in the agency's list.
+
+### For developers
+
+- New routes: `GET/POST /runs/{traceId}/notes` and
+  `/workflow-runs/{traceId}/notes` (by the run's own read check, not narrowed
+  by `X-Cronomicon-Agency`; both `clsVisible` with object probes),
+  `PUT /agencies/{id}/contact`, `GET/PUT /settings/alert-link-address` and
+  `POST /settings/alert-link-address/detect`. `GET /runs/{traceId}` and
+  `GET /workflow-runs/{traceId}` carry `annotation` (`RunAnnotation`, with
+  `agencyContact`); the workflow run detail carries `workflowUid` and
+  `ownerAgency`; run and workflow-run list rows carry `notes` only when the run
+  has entries; attention items carry `contact`, `critical`, `agencyContact`,
+  `acknowledged`, `latestNote`, `noteCount` and `previousAck`; overview agency
+  rows carry `scheduledJobs`. `GET/PUT /settings/freeze` take and return
+  `from`/`until` and return `state`. `GET /me/context` returns `globalName`.
+- `calendar.FreezeState` and `FreezeVerdictAt` replace `FreezeVerdict`;
+  `freezeTier` takes the moment judged.
+- `agencyid.CurrentGlobalName` reads the built-in agency's name by id; every
+  Go path that stamped "Global" reads it. In the frontend, `globalAgencyName()`
+  (`globalName.ts`, set from `/me/context`) and `nameOf("global")` replace the
+  literal. `settings.ErrAgencyNameReserved` and the `name_reserved` error are
+  gone; `ErrBuiltinAgency` means "cannot be deleted".
+- `notify`: a dispatched event carries a renderer, run once the agency is
+  known (`msgContext{agencyName, link}`); the alert link address is read per
+  dispatched alert.
+- Migrations: 1640 `agencies.contact`; 1650 `run_notes` (one of `run_id` /
+  `workflow_run_id`, both `ON DELETE CASCADE`); 1660 `global_renamable`
+  (`agencies_builtin_stays_builtin` replaces `agencies_builtin_no_rename`, the
+  name-reservation triggers are dropped, `runs_born_global` stamps the current
+  name; its down names the agency Global again). A new database is named
+  *Central* at boot (`settings.NameNewInstallationAgency`), not by a migration.
+
+## [2.5.1] - 2026-10-21
+
+Secrets guarded. Backups can be encrypted to keys whose private halves never
+reach the server; an agency can see which runs used each of its secrets and
+keys, who changed them and who revealed them, and be alerted when that
+happens; each sealed value is bound to the row it belongs to; a secret can be
+made unrevealable; an agency may connect a Vault of its own; and an agency may
+be created before it has a repository. Four migrations (1600 to 1630, schema
+v1630); runner protocol 14 is unchanged.
+
+> [!CAUTION]
+> **2.5.1 is a one-way upgrade. Take a backup before you start it.** At its
+> first start 2.5.1 re-seals every stored secret, SSH key and sealed setting so
+> that each value is bound to its own row (it logs when it does). From then on
+> **the release you came from cannot open those values**: starting 2.2.3 (or a
+> build of 2.5.0) again on the same database leaves every secret, key,
+> repository token and Vault credential unreadable. Rolling back means
+> restoring the backup taken before the upgrade, and losing what changed since.
+> Reversing the migrations does not undo the binding either (the down of
+> migration 1620 leaves bound values unreadable).
+
+### Upgrading from 2.2.3 (or any release since)
+
+2.5.1 was not published: production and every published image go from 2.2.3
+to **2.5.2** in one step, by these steps with the 2.5.2 image (see 2.5.2 above;
+the schema then goes to 1660). With a build of 2.5.1 the schema goes from 1210
+to 1630 in the first start; runner protocol 14 is unchanged either way. 2.5.0
+was not published either; like 2.3.x and 2.4.x it is a step of the development
+line, and what it changed arrives with 2.5.1.
+
+**Steps 1 to 7 are those of 2.5.0's entry below**, with the 2.5.1 binary: let
+queued runs finish, take the backup (the one the caution above means; keep it
+apart) and run `cronomicon preflight`, upgrade the agents with the server,
+start 2.5.1, then read the Notices inbox, list each agency's groups, give each
+agency its repository and assign Vault path prefixes.
+
+**Step 8: what the first start of 2.5.1 binds, and what is optional.** The
+first start binds the sealed values and seals the push targets' URLs. With no
+encryption key (KEK) configured there is nothing to bind. If a value cannot be
+opened (a KEK version that is not configured), the start leaves it readable,
+writes no marker, and tries again at the next start: configure the missing KEK
+version. Optionally, add backup keys (Settings → Backups), list the hosts an
+agency's own Vault may be on (Settings → Vault, Installation), and review the
+Notices inbox again: each agency also sees the former secrets of its own that
+Global holds.
+
+**From a build of 2.5.0** (schema 1590): take a backup and keep it apart (the
+only way back to 2.5.0); start 2.5.1, which also empties the unread list of
+Apprise URLs that 2.5.0 left in `notification_config`; upgrade the agents with
+the server; and optionally as in step 8.
+
+### Added
+
+- **Encrypted backups** (Settings → Backups, a global administrator's).
+  Optional: with one or more [age](https://age-encryption.org) X25519 public
+  keys stored, every nightly snapshot is encrypted to them before it is kept
+  or uploaded (`cronomicon-YYYYMMDD.db.age`); with none, backups are written as
+  before. Turning encryption on is a deliberate step: the card says, in a
+  danger banner, that **losing every private key makes every encrypted backup
+  unreadable**, shows the whole key to compare, and asks for three
+  confirmations. `cronomicon restore --identity <file>` opens an encrypted
+  backup (the live database is untouched if the key is wrong), and
+  `restore --file <path>` restores a local copy. `CRONOMICON_BACKUP_RECIPIENTS`
+  seeds the keys once.
+- **A secret's and an SSH key's Usage** (Env Vars → Secrets and SSH Keys, in
+  each row's detail): what refers to it, which runs used it (counts over 7, 30
+  and 90 days, and the latest 25), and every change, reveal and move with who
+  did it, marked when that person was a global administrator or outside the
+  agency.
+- **An agency's secrets report**: a CSV or JSON download, per agency, of every
+  secret and key it owns, with last rotated, last used, uses and reveals in the
+  window, references, and changes made from outside the agency. No values.
+- **Held by Global**: an agency sees its former secrets and keys that Global
+  holds since 2.4.0 (shared before 2.3.0), read only, each with its Usage; the
+  `shared_ownership` notice is filed under each such agency too.
+- **Alerts on secrets and the backup keys**: three triggers that are not about
+  runs: a secret revealed, a secret changed (created, rotated, updated, moved,
+  deleted, migrated to Vault), and the backup keys changed (Global's rules
+  only). An agency's rule hears its own agency's secrets; a Global rule hears
+  every agency's.
+- **Unrevealable secrets**: *Make unrevealable…* on a stored secret (one way,
+  `manageEnvVars` on its agency). Nobody can reveal it afterwards, global
+  administrators included; runs still use it, and it can still be rotated,
+  moved and migrated.
+- **A Vault per agency** (Settings → Agency Vault): an agency may connect a
+  Vault of its own (AppRole, with an optional namespace and CA bundle), on a
+  host a global administrator lists (Settings → Vault, Installation). Its
+  Vault-backed secrets and keys are then read there and only there: if it
+  cannot be reached they fail, and are never read from the installation's
+  Vault instead. Saving first reads each of the agency's Vault references in
+  the new Vault (no value is shown) and asks before saving when any would not
+  resolve. With its own Vault, an agency's path prefixes are optional and its
+  own. A *Test* button on both Vault cards. The notice
+  `agency_vault_unreachable` says when an agency's own Vault does not answer.
+- **Change log**: every row records the actor's relation to the row's agency
+  (member, global administrator, outside, system), and History's change log
+  marks it. A secret's and key's rotations are told apart from other updates,
+  and a move is written in both agencies.
+- A thirteenth retention window in Audit & Compliance: secret uses (365 days).
+
+### Changed
+
+- **Each sealed value is bound to its row.** A stored secret, an SSH key and
+  every sealed setting (repository tokens and webhook secrets, the Vault,
+  S3, SMTP and metrics credentials, push-target URLs, an agency's Vault
+  credentials) carries the row it belongs to in its encryption, so a value
+  copied into another row, another agency's or another repository's, no
+  longer opens there, even with the key. This is what makes the upgrade
+  one-way (above).
+- **A run's log is masked with its own agency's and Global's secrets**, not
+  every agency's: a run could otherwise test a guess at another agency's
+  secret by printing it. The audit stream is still masked with every agency's.
+- **Push-target URLs are encrypted at rest**, and the plaintext Apprise list
+  2.5.0 no longer read is emptied.
+- **An agency may be created without a repository**: the repository fields
+  of the form are an optional section. Its administrator connects one later
+  in Settings → Repositories; until then it cannot be given a job or published
+  to (422 `no_repository`), and the `agency_no_repository` notice says so.
+- An agency with its own Vault sets its own Vault path prefixes; any other's
+  are still a global administrator's. **Disconnecting its Vault clears them**:
+  in the installation's Vault an agency's paths are a global administrator's
+  to assign, and until they are, it names none.
+- **A row Global holds is read only to its agencies.** A secret or key that
+  several agencies shared before 2.3.0 is Global's, with those agencies listed:
+  they read it and its Usage, and nothing more. Revealing it, making it
+  unrevealable, editing, tagging, migrating or deleting it is a global
+  administrator's, as for any of Global's rows. Before this release any listed
+  agency's administrator could reveal it, lock it for good or delete a key
+  Global's hosts use. The same holds for a row of one agency that listed
+  another before 2.3.0: the other agency does not read it, and its routes
+  answer 404.
+- **Another agency's secret or key is 404** to its routes (reveal, edit, tags,
+  delete, lock, migrate), not a 403 that named whose it is.
+- A key's Usage names only the host records and bastions the reader can read;
+  it counts the others.
+- Moving a secret or key through an agency's member list (Scopes → Agencies)
+  raises the same secret-changed alerts, in both agencies, as a repair on the
+  row itself.
+- **Moving a Vault-backed secret or key to an owner on another Vault** (an
+  agency's own, the installation's, or another agency's own) is refused until
+  it is confirmed: the dialog says which Vault each row would be read from,
+  since the same path there may hold another value, or none, and *Move anyway*
+  sends it again. A confirmed move is marked so in the change log. Over the
+  API: 409 `vault_changes` with the rows, and `confirmVaultChange: true`.
+- **The agency Vault health check never logs in**: it asks the Vault's
+  `sys/health`, as the installation's status does. It used to log in each
+  time, up to twice a minute: a Vault token each time, and with a limited
+  AppRole secret id, a use of it. `agency_vault_unreachable` now says that the
+  Vault does not answer, is sealed or is not initialized; refused credentials
+  show on the next read instead. The *Test* button and the preview use a
+  client of their own, so they no longer drop the live one.
+- **A bad `CRONOMICON_BACKUP_RECIPIENTS` stops the start** when no backup keys
+  are stored: set but holding no usable key, it used to be logged, and the
+  first backup was written and uploaded unencrypted. Beside stored keys it is
+  logged as before, and the stored keys apply.
+- **A private key is refused in any form**, quoted, in lower case, after
+  `key=` or inside the whole `age-keygen` file, and no refusal repeats what was
+  pasted: the refusal used to carry the private key into the response, the
+  card and, from the environment variable, the boot log.
+- Giving a job or workflow to an agency whose repository is not connected
+  (Global's never connected, an agency's from before 2.4.0) is 422
+  `no_repository`, as a publish is; it answered 409 `target_unsynced`,
+  "assign again", for good.
+- Env Vars → Variables and Secrets: the agency chip beside a name is gone; the
+  Agencies column says whose a row is, and names the owner (marked *owner*)
+  where a row shared before 2.3.0 does not list it. *Make unrevealable…* is
+  disabled, with the reason, on a row the reader cannot change.
+- The *Installation freeze* card is shown to global administrators only, at the
+  bottom of Settings → General; freezing opens a danger dialog with an
+  acknowledgement to tick, and the banner above every page has a red border.
+
+### Known, and worth knowing
+
+- The record that the values were bound lives in the database: someone who
+  can write the database can delete it, and the next start then accepts
+  unbound values once more until it binds them again.
+- Turning backup encryption on does not encrypt or remove the unencrypted
+  backups already in the bucket or on disk; delete them yourself once an
+  encrypted backup exists.
+- A restore that is killed part-way can leave its decrypted copy beside the
+  database; remove it by hand.
+- Sync and scope resync of a repository with no URL still answer with a
+  recorded "not configured" result rather than 422.
+
+### For developers
+
+- `secrets.Binding`/`RowBinding`/`SettingsBinding` are the GCM additional data
+  of every seal; `TestProductionSealsAreBound` fails on an unbound seal or
+  open in production code (`Sealer.SealLegacy` is for tests).
+  `secrets.BindSeals` runs at start and `rewrap-secrets` honours its marker.
+- `secrets.VaultForOwner` is the one place a caller asks for a row's Vault;
+  `settings.CheckAgencyVaults` is the notices refresher's health check.
+- `runref.RecordUses` writes `secret_uses` beside the injection audit;
+  `auditlog.WithActorRelation` carries the relation from `auth.withIdentity`.
+- New routes: `GET/PUT /settings/backup`, `GET /env-secrets/{id}/usage`,
+  `POST /env-secrets/{id}/lock-reveal`, `GET /agencies/{id}/secrets-report`,
+  `GET /agencies/{id}/held-by-global`, `GET/PUT/DELETE /agencies/{id}/vault`
+  with `…/vault/test` and `…/vault/preview`, `POST /settings/vault/test`.
+  `POST /agencies` takes `repository` optionally; `GET
+  /agencies/{id}/vault-prefixes` says `ownVault`. `PUT /secret-agencies`,
+  `PUT /ssh-credential-agencies` and `PUT /agencies/{id}/members` take
+  `confirmVaultChange` (409 `vault_changes`, schema `VaultChanges`); a key's
+  Usage carries `otherAgencyRecords`.
+- `settings.MoveOptions` confirms a membership write's Vault change, checked
+  in the writer's transaction over the owner moves it makes (a held row that
+  settles on its last member included). `secrets.VaultHealth` is the health
+  check's `sys/health`; `settings.NewAgencyVaultClient` builds an uncached
+  client for a proposed connection.
+- Migrations: 1600 `secret_uses` and `change_log.actor_relation`, 1610
+  (`notification_config.apprise_targets` emptied), 1620 `seal_format` and the
+  reveal lock on `secrets` and `ssh_credentials` (its down does not unbind),
+  1630 `agency_vaults`. Numbered in build order.
+- `filippo.io/age` v1.3.2.
+
+## [2.5.0] - 2026-10-19
+
+Confidential reads, and agencies that stand on their own: an agency's rows are
+read by its own people and by those whose access reaches every agency, and
+nobody else; its alerts, its recycle bin, the groups its grants may name and
+its concurrency are its own; a global administrator hands a job or workflow to
+an agency as one commit into its repository, and is told when the original
+changes. A copied runner identity file is detected. Not published: like 2.3.x
+and 2.4.x it is a step of the development line, and production goes from 2.2.3
+to 2.5.2 in one step, whose upgrade follows the steps below. Eight migrations
+in this release (1520 to 1590, schema v1590); runner protocol 14 is unchanged.
+
+### Upgrading from 2.2.3 (the steps 2.5.1 and 2.5.2 follow)
+
+Production and every published image go from 2.2.3 to 2.5.2 in one step (see
+2.5.2 and 2.5.1 above); these are its steps 1 to 7, with the 2.5.2 binary. What each
+release in between did is in its own entry below; what has to be done, in
+order, is here. An installation with no data has nothing to do but upgrade the
+agents with the server.
+
+1. **Before you stop the old server, let queued runs finish, or cancel them.**
+   A run still queued for the in-app SSH executor of 2.2.x is closed at the
+   upgrade as skipped, with the reason (migration 1590): nothing has claimed
+   such a run since 2.3.0, and the 2.3.0 pass that moved them to the local
+   runner is retired in this release (below). Run its job again afterwards.
+2. **Take a backup**, then run the report with the new binary against the
+   existing database: `cronomicon preflight` (read-only). It says what 2.3.0
+   changes, and in its last block what 2.4.0 and 2.5.0 stop or move at the
+   first start, for this installation: the Git jobs on an agency's scope that
+   stop running (step 6), the Git scopes that become an agency's own, the
+   hand-written host records an agency's runs stop finding, the global
+   calendars each agency gets a copy of, the queued runs step 1 closes, and
+   the run history that becomes Global's (below). Lines marked `!!` need
+   action before the upgrade; the Notices inbox lists each item after it.
+3. **Upgrade every agent with the server** (**Copy upgrade command** on a
+   runner's row). Protocol 14 is the floor. Drain the agents first or run the
+   command when nothing is running: the agents being replaced are older than
+   2.3.2 and end their runs when they are stopped. An installed agent's unit
+   needs `KillMode=mixed` (the upgrade command adds it; a unit you wrote needs
+   the line). Several agencies' agents on one machine: give each unit a limit
+   (2.3.1). **An agent that served several agencies before 2.3.0** (a legacy
+   placement, Global's) takes only Global's runs from 2.4.0: enrol an agent
+   for each other agency it served, or hand it over (Runners), before you
+   upgrade, or that agency's runs wait. **An agent in a container** takes the
+   new image tag, and `--stop-timeout 300` (Compose: `stop_grace_period: 5m`)
+   so that a stop drains it (2.3.2). From now on, stop or restart an agent
+   while the server is up: an agent of 2.5.0 keeps sending the end of a run
+   until the server takes it, so a stop while the server is down waits for
+   each such run, up to the unit's stop timeout (five minutes as installed);
+   a second signal gives up (`systemctl kill --kill-who=main <unit>`: a
+   second `systemctl stop` joins the stop under way and sends none), and the
+   run is closed as `runner_lost` when the agent starts again.
+
+Steps 1 to 3 come before, or with, the switch: stop the old server, start
+2.5.1 on the same database (it migrates at its first start), then steps 4 to 7.
+
+4. **Read the Notices inbox.** Every conversion that needs a person is listed
+   there, by agency: what was shared before 2.4.0 stays Global's and stops
+   where it reached another agency (`workflow_spans_agencies`,
+   `reaction_other_agency`, `global_job_on_agency_scope`, `global_script_job`,
+   `global_schedule_bound`, `global_credential_bound`, `global_host_record`,
+   `global_calendar_scope`, `local_runner_served`, `agency_no_repository`);
+   the pins 2.3.0 could not convert (banner on Scopes); and, new in 2.5.0,
+   `grant_group_unlisted` for every grant an agency's administrators made
+   (below).
+5. **List each agency's directory groups** (Scopes → Agencies, an agency's
+   panel, **Edit groups**). The lists start empty, so an agency's
+   administrators cannot grant access to any group until a global
+   administrator lists it; the grants already made keep working.
+6. **Give each agency its repository** if it has none (Settings →
+   Repositories): every agency syncs its own, and the single GitLab connection
+   of 2.2.x became Global's (its webhook is on unless it was configured off).
+   The connection's token must be able to push. **A Git job of 2.2.x whose
+   scope is an agency's stops running at the upgrade**: it is Global's
+   repository's, and a job of Global's repository runs on Global's scopes only,
+   so each of its runs is refused, with the reason (`global_job_on_agency_scope`).
+   Move its file to the agency's repository, or give it to the agency
+   (**Give to an agency…** on the job). The report of step 2 lists them.
+7. **Assign Vault path prefixes** (Scopes → Agencies) to each agency that holds
+   Vault-backed secrets or keys (2.3.0). Until it has one, an agency's
+   administrators cannot manage its Vault-backed secrets and keys; its runs
+   are not affected.
+
+**What reads differently after the upgrade.** People of one agency no longer
+see Global's rows (its jobs, runs, scopes, runners, notices and the rest),
+nor its activity; only a global administrator and a viewer of every agency do.
+A request that names an object the caller may not read is answered 404. **The
+run history of 2.2.x Git jobs is Global's**, with the activity of those runs:
+a run belongs to its job's agency (2.4.0), and every 2.2.x Git job is Global's
+repository's, so an agency's people no longer see their own history of those
+runs (a global administrator and a viewer of every agency do). The history of
+jobs built in the app stays their agency's. An existing alert rule is Global's,
+and so is every existing push target; each rule pushes where it pushed before. The audit export's rows and stream lines
+gain an `agency` column (last), after 2.4.4's `actingAgency`.
+
+### Added
+
+- **The installation freeze in the app**: an *Installation freeze* switch in
+  Settings → General (a reason is required; a global administrator's; at the
+  bottom of the page since 2.5.1),
+  and a banner above every page while it is on, with the reason, who set it and
+  when. Until now only `PUT /settings/freeze` set it, though 2.4.0 said
+  Settings, and nothing in the app said why every agency's schedules were
+  quiet.
+- **Settings → Alerts**, per agency: an agency's alert rules and push targets,
+  changed by its administrators. A rule matches only its own agency's runs (a
+  Global rule matches every agency's), names its own agency's job, and pushes
+  to the targets it names, picked on the rule; a push no longer goes to every
+  target. A target's URL is read only by its agency's administrators. The
+  relay's default recipients are added to Global rules' mail only.
+- **Each agency's group list**: a global administrator lists the directory
+  groups an agency's grants may name (matched exactly); an agency's
+  administrator of access grants only to those. A grant that names a group no
+  longer listed keeps working and is listed in Notices.
+- **A concurrency cap per agency** (Scopes → Agencies, an agency's panel),
+  Global's included, beside the installation's.
+- **Give to an agency…** on a Git job or workflow, for a global administrator:
+  one commit into the agency's repository carries the definition and what it
+  needs that the agency does not have (a job's script and schedules; a
+  workflow's jobs, their scripts, its sub-workflows), each copied job on a
+  scope of the agency's own, each YAML file stamped with `metadata.origin`.
+  What the agency already has by name is used. The answer lists the bindings
+  to make again and what the agency lacks; a calendar it lacks refuses the
+  assignment (calendars are not files until 2.6.0). Giving it again takes an
+  update, which replaces only what changed and never an agency's own change.
+- **`assignment_update_available`** in Notices, under the agency given a
+  copy, when the original changes.
+- **`runner_identity_shared`** in Notices: two agent processes on one identity
+  file (a cloned VM, a snapshot taken after enrolment, two containers on one
+  volume). While both poll, one copy's start no longer fails the other's
+  runs; a crashed agent's runs are closed about a minute after it is
+  restarted, once the old process is seen to be gone. A copy that was paused
+  still loses its runs.
+- **Audit Export** for an agency's administrators (Settings, Agency group):
+  the rows of the agencies they administer, without sign-in events.
+- An agency's panel on Scopes → Agencies shows its repository, the grants
+  that name it and its alerts, each with the way to the page that edits it.
+- **`ghcr.io/resetsmith/cronomicon-validate`**, published with every release:
+  `cronomicon validate` with a shell, for the CI template
+  (`deploy/ci-validate-template.yml` names it).
+
+### Changed
+
+- **The reading rule** (CF-1): an agency's rows are its own people's and those
+  whose access reaches every agency; Global's are the latter's only. Every
+  list, the Activity and change logs included, applies it; a single object
+  the caller may not read answers 404. Each activity and change-log row is
+  its object's agency's.
+- **The recycle bin and a definition's revisions** are compose on the
+  definition's agency: anyone who composes uses them for their agencies
+  (Settings → Recycle Bin, the History buttons).
+- **A waiting run holds up only its own agency** at the installation's cap;
+  running runs count against everyone. The cap is also asked when a run is
+  claimed, so an agent that comes back takes its backlog a slot at a time.
+- **Settings → Notifications is the relay alone.** Global's push targets are
+  shown there read-only and edited under Alerts working in Global, by id,
+  which keeps the rules that name them; `/settings/notifications` no longer
+  carries targets (a `targets` key sent is ignored).
+- A publish that fails before its push leaves the server's clone as it found
+  it (until now only a failed push was taken back).
+- **Terraform is no longer officially supported** (since 2026-10-09), and the
+  manuals and guides stop describing it. A `terraform` job still syncs and
+  runs as before, and the fat runner image still carries it.
+
+### Removed
+
+- `GET`/`PUT /settings/gitlab` and `POST /settings/gitlab/webhook-secret/rotate`
+  (Global's repository before a repository was a row): use
+  `/agencies/global/git-repo` and its `webhook-secret/rotate`.
+- The run request's `executor` field, ignored since 2.3.0; a body that still
+  sends it is accepted and the key is not read.
+- The 2.3.0 local-runner upgrade pass (see Upgrading, step 1).
+
+### Fixed
+
+- A missed-run alert carries its job's identity, so a rule pinned to one
+  agency's job of a name common to several sends for it.
+- A copy of a runner's identity file started beside the original no longer
+  closes the original's live runs as *runner lost*.
+- Waiting runs of one agency no longer stop every other agency's fires at the
+  installation's cap.
+- A publish that failed while staging or committing left its file in the
+  server's clone until the next sync.
+
+Found by the review of everything since 2.2.3, before this release:
+
+- **Confidential reads on writes.** The tag and annotation writes of a job,
+  a workflow and a script answered another agency's object, or Global's, with
+  the whole row, script body included, where its read answered 404. Pause,
+  resume, Kill, a workflow's pause, trigger and run cancel, and a pending run's
+  cancel now answer 404 on an object the caller may not read, before any other
+  check, so no refusal names another agency's scope. Kill still lets a person
+  stop a run bound to a scope of their own.
+- **The publish gate** checks the scope of the repository's agency, not any
+  scope of the name. **An assignment's origin stamp** no longer carries a user
+  or token that Global's repository URL holds.
+- **The object, not its name.** Kill stopped, and a job's detail, list, status
+  and file sightings showed, the newest run of ANY job of the name (also in
+  2.2.3); a workflow's last run likewise. A service-account token triggering by
+  name was refused when another agency held the name. The recycle-bin clean-up
+  never purged a name two agencies had binned (also in 2.2.3). A workflow built
+  in the app looked up its name-only steps and sub-workflows in every agency,
+  so another agency's commit refused them; it looks in its own (and Global's
+  in-app jobs, which record no owner, are found in Global's).
+- **The upgrade from 2.2.3**: queued runs for the SSH executor are closed
+  (1590, step 1) instead of blocking Global's cap and a Forbid job's key for
+  good; `cronomicon preflight` no longer says the upgrade "converts nothing",
+  and lists what stops at the first start (step 2).
+- **A run's end always arrives.** An agent sends a run's final upload again,
+  backing off to once a minute, until the server takes it; until now it gave up
+  after about 7.5 s (a server restart, an upgrade) and the run stayed *running*
+  for good (also in 2.2.3). A run given a secret whose output can no longer be
+  redacted is ended from its outcome, without that text
+  (`log_not_redactable`): at once when its secret is gone, after ten minutes of
+  a fault that may clear.
+- **One agency at a time, in the app.** Switching agency on a run's detail or
+  in an editor switched straight back; it shows the page's list. SSH Targets'
+  Add, Runners' Mint token, access grants and service accounts create in the
+  agency in use (the server refused another, or saved a grant that was never
+  listed). Jobs' and Workflows' Create, Edit and Delete are offered only where
+  the person composes.
+- **An assignment the target's sync would refuse** is refused, naming what:
+  a reaction whose upstream the agency would not have (`upstream_missing`), a
+  schedule keeping to a calendar the agency has as global
+  (`calendar_not_bindable`). It was committed, and the agency's prune stayed off.
+- **Words of the pre-2.4 model**: "No scope" in the composer (it said "All
+  agencies (global)", "visible to every agency"), the secret and variable owner
+  chip, the publish refusal, the sync's no-scope warning, the
+  `global_script_job` notice, the waiting reason of a Global Ansible run (it
+  offered the local runner, which runs shell types only), and the pause
+  refusal.
+
+Found by a second review, of what the first did not reach:
+
+- **A workflow run is judged by its own steps' jobs.** Its detail and its
+  cancel checked every agency's job of each step's name, so another agency
+  committing a job of the name hid an agency's own run (404) and refused its
+  cancel with a 403 naming the other agency's scope. The workflow list's
+  agencies and History's link to a run's job were found by name the same way
+  (also in 2.2.3, the link): a workflow showed another agency among its
+  agencies, and a run linked to another agency's job. So were the job and
+  workflow lists' schedule count and next run: a job showed another agency's
+  namesake's schedules and next fire, and that agency pausing its namesake hid
+  this one's next run. And an edit, delete or restore of a reusable schedule
+  rewrote the schedule shown on another agency's job or workflow of the same
+  name as one bound to it.
+- **A run's end that cannot be delivered ends anyway.** A run whose log
+  reached its cap (`CRONOMICON_MAX_RUN_LOG_BYTES`) had its last upload refused
+  with the rest, and stayed *running* for good (also in 2.2.3); it now ends
+  from its outcome, the text past the cap discarded. Deregistering a runner
+  ends its running runs as *runner lost* (they stayed *running*, also in
+  2.2.3). The agent no longer re-sends, every minute for as long as it lives,
+  an upload the server has refused for good (Cronomicon's own 401, 404 or 413);
+  a proxy's answer while the server restarts is still sent again.
+- **A log upload the server cannot check is refused, not taken.** When the
+  server could not read whether a run had been given a secret, it took the
+  chunk as one that had not, and could store a Vault-sourced value it printed
+  unmasked; when it could not read the run's log offset, it started the log
+  again from nothing (also in 2.2.3). Both answer 503 now, and the agent sends
+  the chunk again.
+- **An agency's push target names no generic webhook.** An agency's
+  administrator could aim a push target at Apprise's `json`, `xml` or `form`
+  webhooks, or its `apprise` relay, which the gateway sends to any address it
+  reaches (a cloud metadata service, Vault on the loopback), with headers of
+  their choosing; such a URL is refused (`target_scheme_not_allowed`) unless a
+  global administrator writes it. Global's targets are not limited. The
+  self-hosted services (ntfy, Gotify, Mattermost and the like) still take the
+  host an agency names (the security review, AL-4).
+- **The freeze says what it stops.** The banner, the Settings card and the
+  manuals said manual runs and runs by a token go on during the
+  installation-wide freeze; every way a run starts is stopped, as it was.
+- **A composer on every agency composes in each.** Jobs' and Workflows'
+  Create, Edit, Clone, History and Delete were hidden from a custom role with
+  compose on every agency and no configureApp.
+- **An upgraded agent's state directory is 0750.** The upgrade command adds
+  `StateDirectoryMode=0750` to a unit from an installer older than 2.3.0
+  (systemd reset the directory to 0755 at every start).
+- **Settings → Repositories** is named where the notices, `cronomicon
+  preflight` and the webhook's refusal said "Settings → Integrations", which
+  2.4.0 removed.
+
+### For developers
+
+- `api.routeClasses` classifies every GET route (`TestEveryGetRouteIsClassified`
+  fails on one it does not know); the write-route table every write. A list
+  adds `agencyReadFilter` to its own filter; an unreadable single object is
+  `notReadable` (404).
+- `auditlog.WriteChangeLog` and `settings.audit` take the object's agency;
+  `WriteActivity` works it out from the row's run, workflow run, job or
+  workflow.
+- `internal/runcap` is the one place the cap is decided (`AtProduction`,
+  `ClaimSQL`).
+- `gitlab.CommitFiles` (several new or replaced files in one commit),
+  `gitlab.ReadCommitTree`, `gitlab.Registry.Assign` and
+  `CheckAssignmentUpdates`; `notices.Refresher.Extra` runs checks of other
+  packages.
+- Poll parameter `process=` (a value per agent process), additive within
+  protocol 14.
+- New routes: `/alert-targets` (CRUD), `/agencies/{agencyId}/groups`,
+  `PUT /agencies/{agencyId}/concurrency`, `POST /agencies/{agencyId}/assign`.
+- Migrations: 1520 (audit rows' agency), 1530 `alert_config.owner_agency`,
+  1540 `alert_targets` and `alert_rule_targets`, 1550 `agency_groups`, 1560
+  `agencies.max_concurrent`, 1570 `runner_processes`, 1580 `assignments` and
+  `assignment_files`, 1590 (queued runs for the SSH executor closed as skipped;
+  its down is a no-op).
+
+## [2.4.4] - 2026-10-16
+
+The agency switcher and the Operations overview (the 2.5.0 plan's C9, brought
+forward and re-cut by the owner): a person works in one agency at a time, and
+those whose access reaches every agency have one read-only page across all of
+them. Four migrations (1480 to 1510, schema v1510); runner protocol 14 is
+unchanged.
+
+**Upgrading.** Nothing to do. Existing runs are given their owner from their
+job (1480); a run whose job is gone takes the one agency its scope named, else
+Global. Activity recorded before this release names no agency and shows under
+Global. A request that names no agency (scripts, service accounts, the CI
+template) is answered exactly as before. The audit export's CSV gains a last
+column, `actingAgency`; a reader that takes columns by position sees one more.
+
+### Added
+
+- **The agency switcher**, under the wordmark. Every list, the Dashboard and
+  the notices bell show the agency in use; the page title says which. A person
+  with one choice sees a label. Each agency in the menu shows its failed runs
+  in the last day and its open notices, so the agencies not in view are not out
+  of mind. The agency is in the address (`?agency=`), so a link keeps it; one
+  the person may not use gives way to their default with a notice that does
+  not say why. A link to another agency's run, job, workflow or schedule
+  switches to it and says so.
+- **Where a visit starts**: a person's own default (user menu, **Make … my
+  default**), else Global for a global administrator, else the overview for
+  anyone else whose access reaches every agency, else the first of their
+  agencies by name.
+- **The Operations overview** (`/overview`), for global administrators and
+  viewers of every agency: the Score across every agency (each run with its
+  agency), a row per agency (jobs, workflows, paused ones, runs in the last day
+  by outcome, the next run, the repository's last sync, open notices), what
+  needs attention across agencies (failed jobs and workflows, lost and overdue
+  runs, failed syncs), and a search for a job or workflow by name. Every line
+  opens its item in its own agency. Nothing on it changes anything.
+
+### Changed
+
+- **What is created is the agency in use's.** A create form says where (no
+  agency picker); naming another agency is refused (422
+  `agency_context_mismatch`). A person of several agencies no longer has to
+  name one. A global administrator creates for another agency by switching to
+  it, and their changes there are recorded in the change log as acting in it.
+- **Activity is the agency's**: its runs, its repository's syncs and pushes,
+  and the changes made while working in it. A change to the installation
+  (Settings → Installation) is Global's wherever it is made.
+- **The Score** (Dashboard and overview) reads its whole day, page after page
+  up to 1,000 runs, and says when the day held more; until now a busy day lost
+  its morning without a word. The table under it always shows (the latest runs
+  at rest) and keeps one size, ten jobs and a scroll.
+- The repository pickers go where there is one repository to choose.
+
+### Known, and left for 2.5.0
+
+The switcher hides other agencies' rows on screen; it is not the gate. Several
+lists still answer every agency's rows to anyone signed in when asked directly
+(scopes, runners, SSH keys, hosts and bastions, calendars, agency-wide secrets
+and variables by key, workflows and schedules built in the app, and a job or run
+with no scope). Reading them is the confidential reads of 2.5.0 (CF-2); the
+switcher's tests pin them as they are.
+
+### For developers
+
+- `X-Cronomicon-Agency` names the agency a request works in
+  (`internal/agencyctx`: `From`, `Narrow`, `In`, `Keep`). Each list adds its
+  clause to its read filter, never in its place; an agency the caller may not
+  read gives an empty list. Owners are read by `agencyid.Owner` (NULL, the
+  empty string and `global` are Global's) and the per-resource expressions
+  beside it.
+- New routes: `GET /me/context`, `PUT /me/preferences` (clsSelf),
+  `GET /me/agency-badges`, `GET /overview`, `GET /overview/search`. Runs carry
+  `ownerAgency`.
+- Migrations: 1480 `runs.owner_agency` (stamped by a trigger, indexed with
+  `started_at`), 1490 `change_log.acting_agency`, 1500 `user_preferences`,
+  1510 `activity.agency_id`.
+- The frontend: `agency.tsx` (the provider, `useAgency`, `useEnsureAgency`),
+  `AgencySwitcher`, `views/Overview.tsx`, and the Score's shared feed
+  (`score-feed.ts`, `score-runs.tsx`). The API client sends the agency on
+  every request; `allReadable` leaves it off one.
+
+## [2.4.3] - 2026-10-16
+
+A scope from Global's repository is Global's (the owner's answer to the
+review's question 58). One migration (1470, schema v1470); runner protocol 14 is
+unchanged.
+
+**Upgrading.** A scope of Global's repository that a repair gave to an agency
+before this release becomes that agency's own, built in the app, keeping its
+hosts, groups, variables, inventory and host records (the host records become
+the agency's too). The inventory file in Global's repository is then no
+scope's: its sync makes no second scope of the name for Global, and the
+repository's problems say so on the file until it is removed or renamed, or
+the agency deletes its scope. An installation without data has nothing to do.
+
+### Changed
+
+- **A scope from Global's repository cannot be repaired into an agency**: 409
+  `scope_agency_fixed`, as for a scope of an agency's repository since 2.4.0.
+  Another agency gets its hosts by **Clone to an agency**. Until now the repair
+  went through and the agency held a scope that Global's sync went on
+  writing, that it could not edit, and that it lost when the file left Global's
+  repository. A Git scope's row says `canRepair: false`, so the Scopes screen
+  offers no repair for it.
+
+### For developers
+
+- `scopes.released_from` names the repository a scope was released from
+  (1470); it goes with the row. `scope_agencies_repo_fixed` and
+  `settings.ScopeAgencyFixedTo` no longer make an exception of Global's
+  repository. 1470's down is lossy: a converted scope stays the agency's own.
+
+## [2.4.2] - 2026-10-16
+
+What the review of the 2.4 line found, put right before 2.5.0. Seventeen
+defects (the plan's present defects 52 to 68), eleven of the owner's answers
+to the review's questions, and the dead code and stale text the review listed.
+One migration (1460, schema v1460); runner protocol 14 is unchanged.
+
+**Upgrading.** Migration 1460 converts nothing: it adds triggers, and an owner
+an older binary left empty (none is expected) becomes Global's. **A custom
+concurrency key is now shared within its job's agency** (below): a run queued or
+running under the old key when you upgrade does not hold the gate against the
+next fire of the same job, once.
+
+### Fixed
+
+- **A workflow's agency changes only by a repair, whatever its jobs are now**
+  (52). Binning a workflow's jobs first let an administrator of two agencies
+  make it the other agency's with no repair and no audit row.
+- **A workflow step runs its own workflow's agency's job only** (57). When two
+  agencies each held a scope of one name, a workflow built in the app ran the
+  other agency's job by name, on that agency's runners, under its own schedule.
+  A step refused for this, or because its job is not found (61: it ran as a bash
+  job with no command), is the workflow's failure: filed under the workflow's
+  agency, with nothing of the other agency's job on it (58).
+- **Sync points a reaction at its own repository's upstream or none** (53), not
+  at Global's definition of the name.
+- **The check of a workflow that spans agencies resolves its steps as the
+  engine does** (59): a save could be refused, and the notice raised, because
+  another agency's job of the name was the older row.
+- **A reaction with no identity is compared with its upstream by their names**
+  (60): one written before identities fired on another agency's definition.
+  The notice `reaction_other_agency` lists a reaction by name too, and a Git
+  reaction whose upstream is only in Global's repository (it no longer fires).
+- **A deferred manual run is parked as its own job's** (56): with two agencies'
+  jobs of one name, the other agency's pause held it.
+- **An agency is deleted with its repository in one transaction** (63), and the
+  delete refuses what it would otherwise take silently, for every caller (62):
+  access grants, active service accounts, unspent registration tokens, and
+  runners it owns that serve nothing. A refused delete no longer leaves the
+  agency without its repository.
+- **No part of a repository's URL that could hold a credential reaches the sync
+  history** (64), the activity log or a sync's answer.
+- **Handing on a runner that does not exist is 404** (65), not a request for a
+  repair.
+- **A scheduled fire whose job cannot be read does not fire, and a run whose
+  agencies cannot be written is closed, failed, with the reason** (66). Read as
+  nothing, a fire lost its target host and fanned out over the whole scope.
+- **An owner column is never emptied** (67, migration 1460).
+- **The workflow editor keeps a sub-workflow step's pinned identity** (54) on an
+  open-and-save.
+- **A host record is offered its owner's keys only** (55): Global's were
+  offered, and the save refused.
+- **The Run dialog's calendar note judges a job's schedules by its own agency's
+  calendars** (68): it asked every agency's.
+
+### Changed
+
+- **A workflow with no jobs is its creator's agency's** (question 52), not
+  Global's: `ownerAgency` on a create, else the creator's one agency to compose
+  in (422 `ambiguous_owner` for a composer in several).
+- **Scopes → Re-sync works on one repository** (53), the caller's own:
+  `POST /scopes/resync?repo=`, gated as `POST /git/sync`.
+- **A repository's card points to where it is removed** (54), with its agency
+  under Scopes → Agencies, and sets its webhook's events again.
+- **The schedule, calendar and repository lists say what the caller may do**
+  (55): `canEdit`/`canDelete` on schedules and calendars, `canSync`/
+  `canPublish` on `/git-repo-names`; a Git scope says it is not edited here.
+  The screens read them.
+- **A job's custom concurrency key is shared within its agency** (56): two
+  agencies' `db` gates are two gates.
+- **A definition's reactions are written by compose on its agency** (61), no
+  longer only by an administrator of every agency.
+- **"Repository", not "GitLab"** (63), where any allowed host is meant.
+- An agency's delete names remedies its administrator can use (a copy, or a
+  global administrator's repair), and the screens no longer say Global's rows
+  are every agency's, or that the local runner serves the scope's agency.
+- The job detail carries `ownerAgency`.
+
+### Deprecated
+
+- `GET`/`PUT /settings/gitlab` and `POST /settings/gitlab/webhook-secret/rotate`
+  (Global's repository; use `/agencies/global/git-repo`) and the `executor`
+  field of a run request (ignored since 2.3.0) **go in 2.5.0** (question 60).
+
+### Not changed, and worth knowing
+
+- A job written with no owner by hand still takes the agency of the one scope
+  of its name (`jobs_born_owned`): taking that out broke 35 tests' fixtures,
+  and under per-agency names it is safe. Kept, by the owner's decision.
+- A scope repaired out of Global's repository into an agency still follows
+  Global's inventory file (question 58): waiting for the owner. (Done in 2.4.3.)
+- The workflow editor does not yet pick a sub-workflow by identity from a list,
+  nor offer an owner for a new empty workflow.
+- Routes other than the runner's owner still answer `validation_error`.
+
+### For developers
+
+- Dead code went (deadcode lists nothing in `api`, `gitlab`, `workflow`,
+  `scheduler`, `settings`); what only tests called moved into test files
+  (`NewHandlers`, `Registry.Global`, `ValidateRepo`, `DeleteAgency`, `IsPaused`,
+  `Engine.JobScopes` and its family). `Registry.Disconnect` is `RemoveWithAgency`,
+  a `settings.RepoTake` in two halves. `resolveEnqueueUID` names a job only when
+  one holds the name. `RunRow.NoDefinition`.
+- 1360's and 1380's downs remove their notices; 1420's and 1430's are tested
+  with rows.
+
+## [2.4.1] - 2026-10-15
+
+The screens' calendars, judged per agency (after 2.4.0's Phase R8). A global
+calendar's screens say it reaches its own agency's schedules; the active-global
+banner reads each calendar by its owner and name; the calendar picker and the
+Run dialog's note judge an entry by its own agency's calendars (the Run dialog
+passed no agency until 2.4.2). No server or schema change.
+
+## [2.4.0] - 2026-10-15
+
+A repository per agency, and agencies independent in every practical respect
+(the first step of the plan's §0a). Schema v1450 (migrations 1290 to 1450);
+runner protocol 14 is unchanged.
+
+**Upgrading.** What agencies shared before is not migrated (IN-14): it stays
+Global's, stops where it would reach another agency, and is listed in the
+Notices inbox for an administrator to copy into each agency that needs it:
+`workflow_spans_agencies`, `reaction_other_agency`, `global_job_on_agency_scope`,
+`global_script_job`, `global_schedule_bound`, `global_credential_bound`,
+`global_host_record`, `global_calendar_scope`, `local_runner_served`,
+`agency_no_repository`. Each agency had a copy made of Global's global
+calendars, and of each calendar its entries named of another agency's (1430).
+The single GitLab connection becomes Global's repository (1310); its webhook is
+on unless it was configured off. An installation without data has nothing to do.
+
+### Added
+
+- **Every agency has its own repository.** Settings → Repositories: an agency
+  is created together with its repository, whose token must be able to push
+  (the connection test says whether it can, and what its push check cannot
+  see: a protected branch). A repository is changed, never disconnected, and
+  goes when its agency is deleted, empty. Each has its own webhook URL and
+  secret, sync status, history and problems (file, kind, message, since when).
+  An agency's repository is held to a list of allowed hosts, http or https.
+- **Publish names a repository**, and is that repository's agency's publishers';
+  Global's takes a global publisher's only. A publish fetches first, is refused
+  when the branch has moved, never forces, and a push refused for a protected
+  branch is 409 `branch_protected`.
+- **A scope can be cloned to another agency**, which is how one agency gets
+  another's hosts.
+- **`cronomicon validate <dir> -agency`** reads a checkout as sync does and
+  checks a reaction's upstream and a workflow's steps; the CI template
+  validates the whole checkout.
+- An installation-wide freeze (Settings), a global administrator's, with a
+  reason.
+
+### Changed
+
+- **Agencies are independent** (IN-1 to IN-8). Global is an agency like the
+  others: its repository is its own, not a library; its secrets, variables,
+  keys, scopes, runners and calendars are its runs' only. A definition runs
+  only what its agency has: a workflow's jobs and sub-workflows, a reaction's
+  upstream, a job's script, schedule and calendars resolve within the agency,
+  and what was shared stops with the reason. The local runner serves Global
+  only. A runner takes its owner's work only.
+- **Names are unique within an agency** (IN-5): scopes, calendars, schedules,
+  and the routes by name take `?agencyId=` when two agencies hold one.
+- **Moves between agencies are a global administrator's repair** (IN-7), with
+  `repair: true` and a reason, audited; another agency gets an object by a copy.
+  A save that would change a workflow's agency is a repair too.
+- Calendars belong to an agency; a global calendar reaches its own agency's
+  schedules.
+- A script, a schedule and a run remember which definition they mean, by
+  identity; a checkout run is read at its pinned commit from its script's
+  repository.
+
+### Deprecated
+
+- `/settings/gitlab` (GET, PUT) and `/settings/gitlab/webhook-secret/rotate`:
+  they address Global's repository. Use `/agencies/{id}/git-repo`.
+
+### For developers
+
+- Migrations 1290 to 1450. 1290, 1300, 1420 and 1430 are table rebuilds (1420
+  stashes and restores eight tables that hang off `scopes`; 1430
+  `calendar_days`); 1310 drops `gitlab_config` and `git_sync_state` for
+  `git_repos`; 1290, 1300, 1310, 1320, 1420 and 1430 have lossy or refusing
+  downs, each saying so.
+
+## [2.3.2] - 2026-10-08
+
+What 2.3.0 left open, closed before the next band of work begins. The first
+real jobs were run on installed agents (RHEL 8.10, the installer's hardened
+unit), and they ran; stopping an agent under one of them did not go as the
+unit, the log line and the guides had all said. Schema (v1280) and runner
+protocol (14) are unchanged.
+
+**Upgrading.** Nothing is converted. Upgrade the agents with the server
+(**Copy upgrade command** on a runner's row). **This upgrade is the last one
+that cuts runs off:** the agents being replaced are older and end their runs
+the moment they are stopped, so drain them first, or run the command when
+nothing is running. Runs that an older agent left shown as *running* are closed
+as failed (*runner lost*) when the upgraded agent first reports in. An agent in
+a container needs a longer stop timeout to drain (below). **An installed
+agent's unit needs `KillMode=mixed`** for a stop to spare its Ansible and
+Terraform runs: the upgrade command adds it; a unit you wrote yourself, or one
+you upgrade by hand, needs the line added (below).
+
+### Added
+
+- **A runner's poll interval can be set from the app.** *Runners → the runner
+  → ⚙ Edit → Poll interval*, in seconds, from 30 to 90. It is how often the
+  agent starts asking for work: 60 seconds unless the agent's own
+  configuration says otherwise, and until now changing it meant editing a file
+  on the agent's machine and restarting it. The server holds each request for
+  up to 30 seconds and hands over a run the moment one arrives, so **the
+  longest a new run waits is the interval less 30**: nothing at 30, where the
+  agent is connected all the time; about 30 seconds at 60; a minute at 90.
+  Thirty is the lowest value offered because anything below it would behave
+  the same. The interval does not decide how soon a Stop reaches a job or how
+  fast a queue is taken: see the two fixes below. The value overrides
+  the agent's own, takes effect on the agent's next poll with no restart, and
+  reverts when cleared. The app cannot read the agent's own setting, so an
+  empty field reads *inherit*. A value outside the bounds is refused, in the
+  field before Save and by the server (400): a runner that has not polled for
+  two minutes is shown as degraded. An agent older than 2.3.2 ignores it.
+  `pollIntervalSeconds` in `PATCH /runners/{runnerId}/settings`.
+- **A notice when two runners of one agency share a name.** A runner's name is
+  what its agent declares, and nothing makes it unique. Two agents under one
+  name both run their jobs correctly, because everything that decides
+  anything goes by the runner's id. But History, Activity and the host-key
+  ledger show the name, so the two cannot be told apart there, and the offer
+  to restore a lost runner's scope bindings goes by name, so it would be made
+  to the other. The Notices inbox now reports two or more live agents of one
+  agency under one name (`runner_name_shared`), to that agency, with each
+  runner's id, and clears when one is renamed (`CRONOMICON_RUNNER_NAME`, then
+  a restart: the runner keeps its identity). An agent that enrolled again and
+  left its old row behind does not raise it, and neither does another agency's
+  runner of the same name.
+- **The install guide says what copying an identity file does.** A cloned VM,
+  a snapshot taken after enrolment or two containers on one volume are the
+  same runner twice, shown as one row. Each copy takes the other's messages,
+  and from this release each copy's start closes the runs the other is in the
+  middle of as *runner lost*. The guide's identity section has the signs, and
+  the steps to make the copy a runner of its own.
+
+### Fixed
+
+- **An agent took one run per poll interval.** It asked, started what it was
+  given, and waited for its next tick, a minute by default. The server has
+  always answered an assignment with "come back now" and the agent did not
+  read it. Five runs queued for an agent with five free slots therefore
+  started a minute apart, and a settings change made in the app was
+  acknowledged a minute late. An agent that is given a run and starts it now
+  asks for the next one at once, for as long as it has a free slot and there
+  is work; and it acknowledges new settings at once. An idle agent's cadence
+  is unchanged.
+- **A Stop could take half a minute to reach a running job.** A Stop is
+  delivered to an agent as the answer to its next poll, and the app records
+  the run as stopped at once: until the agent asks, the job goes on running on
+  its target behind a row that says it stopped. An agent between two polls
+  waited out the rest of its interval first, about 30 seconds at the default.
+  An agent with a run in flight now asks again at least every five seconds,
+  whatever its interval. (This matters more with the full-agent fix below: a
+  full agent's polls are no longer held by the server, so without it a Stop
+  on a full agent would have waited the whole interval.)
+- **Stopping an agent ended its runs and told the server nothing.** `systemctl
+  stop` and `restart` send `SIGTERM`. Every run's context was a child of the
+  signal's, so each run was killed at once and the upload of its log was
+  cancelled with it, while the agent logged *waiting for active runs to
+  finish*. The server never learned the outcome, and because a restarted agent
+  is back long before it counts as offline, nothing ever closed the run: it
+  stayed *running*. Seen on RHEL 8.10 with 2.3.1: a restart under a 40-second
+  job returned in one second, and the run was still shown as running minutes
+  later. The upgrade command restarts every agent on a machine, so every
+  upgrade did this to whatever was running. Now:
+  - **The first signal is a drain.** The agent claims no new work, keeps its
+    heartbeat, lets the runs in flight finish, uploads their logs and exits.
+    systemd waits for it as long as the unit's `TimeoutStopSec=300` allows.
+    A host-key scan or a `known_hosts` report that the server asks for in
+    that time is still carried out, and an agent stopped with nothing in
+    flight first finishes reporting a run it has just refused.
+  - **systemd signals the agent alone (`KillMode=mixed`).** An Ansible or
+    Terraform run is the agent's own child process, in the unit's control
+    group, and systemd's default sends `SIGTERM` to every process in the
+    group: the play would be cut off by systemd while the agent waited for it,
+    and end as an ordinary failure with nothing to say why. Shell runs were
+    never affected (they run on their targets, over SSH), which is how the
+    first checks on RHEL 8.10 missed it. The installer's unit and the
+    reference unit carry the line; **the upgrade command adds it** to every
+    agent unit that names no `KillMode`, as a drop-in
+    (`/etc/systemd/system/<unit>.d/20-killmode.conf`), before it restarts
+    anything, and leaves alone a unit that names one. A container agent needs
+    nothing: Docker signals only the agent.
+  - **A second signal, or any after it, cancels the runs.** Each still uploads
+    its log, which ends with *the runner agent was stopped before this run
+    finished*. A run handed over between the two signals is refused instead of
+    started, and a third signal is no longer swallowed.
+  - **A run's last log upload outlives the run's own cancellation**, so a
+    cancelled run is recorded as what it was instead of not at all. A run
+    cancelled before it had begun (its manifest still on the way) is ended
+    too, with *the runner agent was stopped before this run started*.
+- **A run whose agent died stayed *running* for good.** A crash, an
+  out-of-memory kill, a reboot or a stop that ran out of time leaves the run
+  with no owner. Only the offline sweep closed a runner's runs, and it acts on
+  a runner that has been quiet for five minutes, which an agent that systemd
+  starts again never is. The first poll of an agent process now says that it
+  has just started, and the server closes every run it still shows as running
+  on that runner as failed (*runner lost*), with the usual notification.
+- **An agent at its concurrency limit was handed more work, and that work was
+  lost.** The server's claim does not know how many runs an agent holds: it
+  counts them and compares the count with nothing. An agent polls while it is
+  busy, so one with every slot taken was given the next queued run, could not
+  start it, wrote a warning in its own journal and dropped it. The server went
+  on showing that run as *running* on that runner: never executed, never
+  ended, and counted in the runner's load. The default limit is 5, so any
+  agent with more than five runs' worth of work queued did this. Reproduced
+  with the real agent and server: limit one, one run in flight, a second
+  queued; the second was *running* within seconds and still *running* after
+  the first had finished. Now:
+  - **An agent with no free slot asks for nothing.** Its poll is a heartbeat
+    that claims no run (the `claim=0` a stopping agent sends), and it asks
+    again the moment a run ends.
+  - **A run that is assigned and cannot be started is ended, not dropped.**
+    The agent reports it as failed, with a line in its log saying that
+    nothing was executed and why (no free slot, stopping, a run type its
+    settings no longer allow). This is the fallback for what the first point
+    cannot rule out, such as a server older than the agent.
+  - An agent older than 2.3.2 still does the old thing, which is one more
+    reason to upgrade the agents with the server. Runs it stranded are closed
+    as *runner lost* when it comes back upgraded.
+- **An agent stopped while it was enrolling could never enrol again.** A
+  registration token is good for one use. An agent that was stopped after the
+  server had answered and before it had written its identity file had spent
+  the token and kept nothing: every later start asked again with the same
+  token, was refused (`token_used`) and exited, until somebody minted another.
+  Seen on RHEL 8.10 when a unit was restarted a second after the installer
+  started it. The exchange and the saving of its answer are now one step that
+  a stop signal does not interrupt (bounded at 30 seconds).
+- **An agent started from a desktop session raised a password dialog.** The
+  agent asks systemd for a scope when it starts, to learn whether it may put
+  its runs in one. Run by a user who may not, on a machine with a graphical
+  session, the request raised a polkit dialog that nobody answers, once per
+  start (and once per test that starts an agent). `systemd-run` is now called
+  with `--no-ask-password`: a refusal is an answer, at once.
+- **The upgrade notice about two host keys for one address never cleared.**
+  `host_key_conflict` stayed for as long as a record's old key differed from
+  the trusted one, so approving the host's current key, which is what the
+  notice told you to do, left it open. It now reports only a key that the
+  upgrade itself chose: once a person has approved a key for the address, the
+  notice resolves. Its text says what clears it in each case, dismissal
+  included (the server already holds the right key; two machines share the
+  address).
+
+### Changed
+
+- **An Ansible run with no scope says that it has no inventory.** A job with
+  no scope is sent none, so Ansible has only its implicit `localhost`: the
+  machine of the agent that took the run. A play for `localhost` runs there;
+  a play for `all` or any other host matches nothing, `ansible-playbook` exits
+  0, and the run is a success that did nothing. The run itself is unchanged.
+  Its log now carries the line `cronomicon: ansible: no inventory …`, and the
+  Ansible guide has the row.
+- **An unbound scope says who reviews which runner's host keys.** The host-key
+  coverage table needs a fixed set of runners, so a scope with none bound
+  showed nothing, and an agency's administrator whose runs failed
+  `host_key_unverified` on the local runner was not told that its keys are a
+  global administrator's to approve. The scope's row now says so, links to
+  Runners and Notices, and names the agency's own remedy: bind the scope to
+  its own agents.
+- **The generated `docker run` for an agent carries `--stop-timeout 300`.**
+  `docker stop` waits 10 seconds by default and then kills the container,
+  which would cut a drain short. In Compose the key is `stop_grace_period:
+  5m`. The install guide says so.
+- **The upgrade command says that it is waiting.** A restart now waits for
+  each agent's runs, up to five minutes, before the command reports.
+- The reference unit's comment on stopping, the manuals and the runner guides
+  describe the stop as it now is, and what an older agent does instead.
+
+### Not changed, and worth knowing
+
+- **A run still going when the stop times out is cut off.** systemd kills the
+  agent after `TimeoutStopSec` (five minutes as installed), and the run is
+  recorded as lost when the agent next starts. For longer work, **Drain** the
+  runner from the Runners view first: that deadline is an hour.
+- **No notice is raised for an installation that had the SSH executor off
+  when it upgraded to 2.3.0** (shell jobs that never ran can start on an agent
+  of their agency). `cronomicon preflight`, run before the upgrade, reports
+  it; nothing was added for it here.
+
+### For developers
+
+- Two poll query params, additive within protocol 14 and documented in
+  `openapi.yaml`: `started=1` (no poll of this process has been answered yet)
+  and `claim=0` (the heartbeat of an agent that can start nothing: stopping,
+  or full; no run is claimed and the request is not held).
+  `runnerproto.PollParamStarted`, `PollParamClaim`. **The claim still does not
+  compare `runners.load` with `max_concurrent`**: `claim=0` is the only thing
+  between a full agent and a run it cannot start, so a poll path that drops
+  the param reopens the bug (`TestRunnerAgentE2EFullAgentIsNotHandedWork`,
+  `TestPollOfAFullAgentClaimsNothing`).
+- `Agent.dispatch` no longer drops an assignment it cannot start: it calls
+  `Agent.refuse`, which uploads a one-line log and a failure envelope.
+- `Agent.pollOnce` reports whether to poll again at once: only when a run was
+  STARTED or the settings version moved. A refused assignment does not, so an
+  agent facing a server that hands it work it cannot take does not fail one
+  queued run after another. `PollSettingsValues.PollIntervalSeconds` is
+  additive; the bounds are `runnerproto.Min/MaxManagedPollIntervalSeconds`,
+  mirrored by `POLL_INTERVAL_MIN/MAX_SECONDS` in `Runners.tsx` and the
+  `ManagedRunnerSettings` schema: change all three or none.
+- `Agent.Run` returns when its context is cancelled **and** its runs have
+  ended; `Agent.Abort` cancels them. A test that cancels the context with a
+  run in flight must end the run or call `Abort`, or `Run` does not return.
+  `Abort` is sticky (`Agent.aborted`): `dispatch` refuses whatever arrives
+  after it.
+- Work that a poll starts and does not wait for (a host-key scan, a
+  `known_hosts` report) takes `Agent.outlivingPoll(ctx)`, never the poll's
+  own context: a stopping agent's heartbeat poll has a context that ends
+  when the poll is answered, and the server hands a host-key op over once.
+  `Agent.flushTerminal` is the one upload that ends a run on the server, for
+  a run that ran and for one that never got its manifest; do not upload a
+  sealed log on the run's context. `internal/agent/stop_edges_test.go` holds
+  all three.
+- `KillMode=mixed` is in three places that must agree: the installer's unit,
+  the reference unit (`runner-install-check.sh` compares the two and checks
+  the line in each) and `KILLMODE_DROPIN` in `runner-upgrade-cmd.ts`, which is
+  how a unit that already exists gets it. A run type that executes as a child
+  of the agent depends on it.
+- The runner package's E2E tests set `NoSandbox`: they run SSH jobs and must
+  not ask the host's systemd for anything.
+- `internal/runner/e2e_stop_test.go` holds the three behaviours against the
+  real agent and the real handlers; the drain test fails on the old run
+  context.
+- A 409 on a log upload that carries no `persistedOffset` means the server has
+  closed the run; the agent stops instead of re-sending the log from zero.
+- The dev stack (`cronomicon-dev`, outside this repository) gained a git
+  server for test definitions and `scripts/e2e-vm-jobs.sh`, which installs
+  three agents on a test VM and runs shell and Ansible jobs on them, stops an
+  agent under a shell run and under an Ansible play, and kills one. The play
+  is what shows `KillMode=mixed`: the restart waited 35 seconds and the play
+  finished, and a control pass with the unit set back to systemd's default
+  returned at once with the play cut off. It also runs the upgrade command
+  against a unit made to look like an older installer's, and checks that the
+  drop-in is written there and nowhere else. Run on RHEL 8.10 (kernel 4.18,
+  systemd 239, SELinux enforcing) against 2.3.1 and 2.3.2.
+
+## [2.3.1] - 2026-10-08
+
+Two things found by running 2.3.0's agents on a real RHEL 8 machine: a
+self-check that passed on the very unit it exists to catch, and a per-run
+sandbox that an installed agent has never had. The first is fixed. The second
+cannot be given to an agent that is not root, so this release says so
+everywhere it was promised, and adds the limit that does work: one on the
+agent's unit, set at install and changed afterwards with a command the Runners
+view builds. The server's API is untouched: the changes in the app are in the
+Runners view alone. Schema (v1280) and runner protocol (14) are unchanged.
+
+**Upgrading.** Nothing is converted and nothing has to be done first. Upgrade
+the agents with the server (**Copy upgrade command** on a runner's row): the
+fixed self-check and the clearer startup line are in the agent. **If one
+machine runs agents for several agencies, give each agent's unit a limit**
+(below). Until you do, nothing stops one agency's Ansible or Terraform run from
+taking the machine's memory or CPU from the others. That was true of every
+release before this one; 2.3.0 is the first to put several agencies' agents on
+one machine on purpose.
+
+### Added
+
+- **Resource limits for an agent, set at install.** `runner-install.sh` takes
+  `--memory-max <size>` (a whole number with `K`, `M`, `G` or `T`),
+  `--cpu-quota <percent>` (of one CPU: `200%` is two) and `--tasks-max <n>`,
+  and writes them into the agent's unit as `MemoryMax=`, `CPUQuota=` and
+  `TasksMax=`. They bound the agent and everything it runs, together. Any other
+  shape of value is refused before anything is installed, and without the flags
+  the unit is exactly the one the installer wrote before. With the one-click
+  form the flags follow the pipe: `… | sudo bash -s -- --memory-max 4G`.
+- **Add a Runner offers the limits.** *Resource limits* (memory, CPU, tasks)
+  sit beside *Instance name* in *Add a Runner* and in the advanced install
+  helper, and every form of the generated install command carries what was
+  typed. The fields take what the installer takes; while one does not, no
+  command is shown, so a command that silently lacked a limit cannot be copied.
+  The generated `runner.env` does not carry them: neither a unit nor a
+  container reads its limit from it.
+- **The same limits for an agent in a container.** A container has no unit, so
+  the installer's flags do not reach it. The advanced helper's container
+  command now carries the same three fields as the runtime's own limits:
+  `--memory` with `--memory-swap` equal to it, `--cpus` (a count: `150%` is
+  `1.5`) and `--pids-limit`. With the swap limit equal to the memory limit a
+  run that goes over is stopped by the kernel, where a unit limit on a host
+  with swap only slows it. The install guide has the table of equivalents, the
+  compose keys (`mem_limit`, `memswap_limit`, `cpus`, `pids_limit`) and
+  `docker update` for a running container; a runner's *Unit limits* section
+  says what to do when the runner is a container, since its command finds no
+  unit there. Nothing sets a container's limit for you: it is off until the
+  flags or the compose keys are there.
+- **A command to change an installed agent's limits, built in the app.** A
+  runner's **⚙ Edit** has a *Unit limits* section: type the new limits (or
+  `none` to remove one, or leave a field empty to keep what the unit has) and
+  copy the command. Run as root on the runner's machine, it finds that
+  runner's agent by its ID, so it needs no unit name and changes nothing on a
+  machine where the runner is not installed. It applies at once, with no
+  restart, and is kept across restarts. **The app prepares the command and
+  does not apply it**: the server has no way onto the machine, and an agent
+  that is not root can change its own unit no more than it can create a
+  sandbox. By hand it is `sudo systemctl set-property <unit> MemoryMax=4G
+  CPUQuota=200% TasksMax=1024`.
+- Checked on RHEL 8.10 (systemd 239, the older cgroup layout): the kernel
+  receives all three limits, a child of the service is held to them, and
+  `set-property` changes them on the running unit. **The memory limit bounds
+  RAM**: on a machine with swap a run that goes over it is pushed out to swap
+  and slows down, and is not killed. The app does not show a unit's present
+  limits; the command prints them when it has run.
+
+### Changed
+
+- **The agent says why it has no sandbox.** Its startup line read *no usable
+  systemd-run*, which sounds like a missing program. It now carries what
+  `systemd-run` answered (on an installed agent: *Interactive authentication
+  required*) and what to do instead, and `cronomicon-runner doctor` reports the
+  same in its `sandbox` check.
+- **The runner's settings drawer says when the sandbox caps do nothing.** On a
+  runner that reports no sandbox, the *Sandbox caps* fields carry a warning and
+  point at *Unit limits*, below them. The fields still save: a runner that
+  gains a sandbox applies them.
+- **The guides no longer promise a per-run sandbox on an installed agent.** The
+  runner security guide said *Run as non-root, sandboxed*; the install guide,
+  the manage guide, the administrator manual, the reference unit and the
+  example `runner.env` described the per-run caps as what an agent has. Each
+  now says who gets them (an agent that runs as root) and points an ordinary
+  install at the unit limits. The uninstall steps remove the directory
+  `set-property` writes.
+
+### Fixed
+
+- **The agent's self-check passed on a unit that hangs its lookups, when the
+  host had no Ansible.** `doctor`'s `path-lookup` check (2.3.0) looked for
+  `ansible-playbook`. On systemd 239 a unit that filters system calls without
+  `SystemCallErrorNumber=EPERM` kills only a lookup that *finds* a file, so on
+  a host without Ansible the check answered at once and passed, while the
+  agent's lookup of `systemd-run` in the same unit never returned. It now looks
+  for the agent's own binary, which is always there. Seen on RHEL 8.10 with the
+  2.3.0 build; with this one the check fails there and names the fix, and
+  passes once the line is set.
+
+### Not changed, and worth knowing
+
+- **An agent that is not root still has no per-run sandbox**, as in every
+  release: systemd grants a new scope to `root` only, the installer's unit runs
+  the agent as a user of its own, and the permission that would change that is
+  the one to manage units, which an agent should not hold. Such an agent shows
+  *Unsandboxed*, does not advertise `sandboxed`, and a job that requires
+  `sandboxed` waits. Its runs do inherit the unit's filesystem and system-call
+  hardening.
+
+### For developers
+
+- **`make verify` runs the installer's checks.** `deploy/runner-install-check.sh`
+  (flag validation, the layout and unit the installer derives, the reference
+  unit) is a step of the gate, and `make installer-check` runs it alone. It was
+  run by hand until now. It needs no root and creates nothing.
+- **`make images` builds the three published images locally**, from the
+  repository root with the build arguments the tag workflow passes, and runs
+  each once to say its version. Nothing built a Dockerfile before a tag. It
+  needs docker, so it is not part of `verify`: run it before tagging a release
+  that touches a Dockerfile, the agent or the frontend. `IMAGES=runner` builds
+  one; nothing is pushed.
+- `runner-install-cmd.test.ts` asks `runner-install.sh` itself about every limit
+  value in its table, so the helper's rule and the installer's cannot drift
+  apart unnoticed. It never runs as root: the installer validates before its
+  root gate, and the test is skipped where that gate is open.
+- The agent's startup line about having no sandbox is `logNoSandbox`, and a
+  test holds the flags its hint names to the ones the installer parses.
+
+## [2.3.0] - 2026-10-07
+
+Agencies own what is theirs, and the server is one more runner (LR band, with
+the machine side of the runner model, MA). An agency's administrators create
+and move their own scopes, keep their own host records and Vault references,
+and enrol and manage their own runner agents, without a global administrator.
+The in-app SSH executor becomes the **local runner**: the server, listed with
+the other runners, claiming runs by the same rule. Nothing chooses an executor
+any more. Schema v1280 (seven migrations; the downs of 1220, 1230, 1250, 1260 and 1270
+are lossy, so rolling back means restoring the backup).
+Runner protocol **14**, unchanged: a 2.2 agent keeps working, though agents and
+server should be kept on the same release.
+
+**Upgrading.** This release changes more on first start than any before it, and
+almost all of it is decided by what the installation holds. With two exceptions
+named in the list below (an agency already called Global is renamed, and some
+unowned secrets gain an owner), it converts nothing: what it finds keeps
+working and is listed in the new **Notices** inbox. Read the report first, and take a backup:
+
+```bash
+cronomicon preflight            # new binary, existing database; read-only
+```
+
+Take the backup immediately before the first start of 2.3.0: a `VACUUM INTO`
+snapshot or the S3 backup (`backend/deploy/backup-restore.md`). Rolling back is
+restoring it under the 2.2.x binary; runs made in between are lost. The report's new 2.3.0 section says, for this installation,
+everything in the list below.
+
+- **Everyone is signed out once.** From 2.3.0 a change to access grants takes
+  effect within seconds, not at the next sign-in, and the session cookie no
+  longer carries grants.
+- **"No agency" becomes the Global agency.** Every scope, secret, variable, SSH
+  key, host record, bastion and runner belongs to exactly one agency. What was
+  in none is Global's: every agency may use it, a global administrator changes
+  it. A row that was in several agencies stays as it is, works as it did, and
+  is listed by a notice until it is moved to one. An agency that is already
+  called Global, in any letter case, is renamed "<name> (renamed)" and a notice
+  says so. A secret, variable or SSH key with no owner that is in exactly one
+  agency becomes that agency's, except where that would change which row a run
+  resolves.
+- **A runner agent serves exactly the agency that owns it.** An agent in one
+  agency is now owned by it; an agent in none is Global's. An agent that served
+  several agencies becomes a *legacy placement*: it keeps working, is managed
+  by a global administrator only, and can be narrowed but never widened. The
+  notice gives the order that settles it without closing a bound scope.
+- **The SSH executor becomes the local runner.** If
+  `CRONOMICON_SSH_EXECUTOR_ENABLED` is true the first time 2.3.0 starts, the
+  local runner is turned on and made to serve the agencies whose shell jobs ran
+  from the server. After that the switch is **Settings → Local runner**; the
+  two `CRONOMICON_SSH_EXECUTOR_*` names are read once, as seeds. Set
+  `CRONOMICON_LOCAL_RUNNER=forbid` on a host that must never run jobs itself.
+- **A shell job may now be taken by an agent, or by the server.** A run is
+  taken by whichever eligible runner asks first. Where an agency has an agent
+  with a shell capability *and* the local runner serves it, a shell job on an
+  unbound scope can run on either, from the first poll after the upgrade. With
+  the SSH executor off, shell jobs that never ran can start running on an
+  agent. **To decide where a scope's jobs run, bind the scope to runners.** The
+  report names the scopes concerned in every case; three notices name them
+  afterwards only where the SSH executor was on at that first start.
+- **`executor` is ignored everywhere**: in a job's or script's YAML (a
+  warning from `cronomicon validate` and the sync log, and a notice listing the
+  jobs), in the Job Composer, and in a run request. Remove the line.
+- **`requires` is read for every shell job.** An agent always read it; the SSH
+  executor ignored it. A shell job that ran from the server and declares
+  `requires` now waits for an agent that advertises what it asks: the local
+  runner satisfies none.
+- **A job runs only against hosts of its own scope.** A job whose fixed
+  `target_host` is not a host of its scope (where the scope lists hosts) can no
+  longer be started by hand or by a token, and a scheduled run fails for that
+  host. The report lists them; fix the target, or add the host to the scope,
+  before upgrading.
+- **The server captures no host key on first connect.** The keys it already
+  holds are carried over as approved. A host or bastion with no stored key
+  fails with `host_key_unverified` until a key is approved under Runners →
+  Local runner → Trusted host keys. Where two records for one address held
+  different keys, one is trusted and a notice names the other.
+- **Assign Vault path prefixes** (Scopes → Agencies) to each agency that holds
+  Vault-backed secrets or keys, so its administrators can manage them.
+
+### Added
+
+- **The Global agency** (migration 1220). What had no agency has one, with an
+  id and a name, held in place by triggers: every new scope, runner, secret,
+  variable and key is born in Global unless it names another agency; Global is
+  never mixed with a named agency; an agency that still holds anything cannot
+  be deleted. A row found in no agency at all is damage and fails closed.
+- **One agency per row, and an owner that moves with it.** A scope, secret,
+  variable, SSH key, host record or bastion is created in one agency and moved
+  by an explicit move, which needs the permission on the agency it is in and
+  on the agency it goes to, and refuses a name the target already owns
+  (409 `owner_conflict`). Host records and bastions gain an owner (migration
+  1230), so an agency's administrators keep their own.
+- **Vault path prefixes per agency** (migration 1240;
+  `PUT /agencies/{agencyId}/vault-prefixes`). An agency's administrators create
+  and edit Vault-backed secrets and SSH keys inside the prefixes a global
+  administrator gives the agency. The rule is applied on write and on move
+  (422 `vault_path_not_allowed`), never at run time; a reference that already
+  falls outside keeps resolving and is listed by a notice.
+- **A runner has an owner** (migration 1250; `POST /runners/{runnerId}/owner`).
+  A registration token is minted *for* an agency, by that agency's
+  administrators or a global administrator, and the agent it enrols is owned by
+  that agency and serves it. The agent declares nothing. The Runners view shows
+  each runner's **Owner** and what it **Serves**; *Hand to an agency* settles a
+  Global-owned agent that serves one.
+- **The local runner** (migration 1260; `GET`/`PUT /local-runner`). The server
+  running shell jobs itself is a row in the runner list: Global's, never
+  reaped, never deregistered, and the one runner with a serve list. It runs
+  bash, perl, powershell and python, and never a run that binds an SSH key. It
+  is turned on and off, sized and placed under **Settings → Local runner** by a
+  global administrator, and can be bound to a scope like any runner.
+- **The local runner's host keys are reviewed** (migration 1270). The server
+  connects only to a host whose key an operator approved, through the same
+  review screen and ledger as an agent's: scan a scope or a list of hosts,
+  paste lines, or copy from a runner. An approval is in force at once. *Test
+  connection* answers `unverified` for a host with no approved key.
+- **Notices** (`GET /notices`, `POST /notices/dismiss`). An inbox of conditions
+  that hold now, each filed under the agency that can clear it: rows and
+  runners in several agencies, keys a record's owner cannot use, Vault paths
+  outside a prefix, a job's target outside its scope, what the upgrade changed
+  about where shell jobs run, hosts the local runner has no key for, leftover
+  `executor` and `runner_tag` keys. A notice clears itself when its condition
+  ends; a dismissal lasts until the condition goes away and comes back.
+- **Sign out everyone else** (`POST /auth/sessions/revoke`, global
+  administrators), in the account menu: the one deliberate way to end every
+  other session, for a change made at the identity provider that the server
+  cannot see.
+- **My access** (`GET /me/access`): which permissions the signed-in user holds
+  in which agencies. It also fills the owner pickers, which offer exactly the
+  agencies the user may create in.
+- **History names the runner** (migration 1280). A run keeps the name of the
+  runner that took it, so the Runner column still answers after that runner is
+  reaped or re-enrolled. `GET /runs` returns `runnerName` and sorts by
+  `runner`.
+- **Several agents on one machine.** `runner-install.sh --instance <name>`
+  installs a further agent beside a machine's first, with an OS user, a group,
+  a unit and state and config directories of its own, all named
+  `cronomicon-runner-<name>`; the binary is shared. The install helpers have an
+  optional **Instance name** field, and offer no command while the name is not
+  one the installer accepts. The upgrade command restarts every agent unit on
+  the machine that is enabled or running, and reports each. `runner-isolation-check.sh`,
+  served by the app, checks on the host that no agent's user can read or write
+  another's files.
+- **`cronomicon preflight`: the 2.3.0 section.** Rows and runners in several
+  agencies, where shell jobs ran and which runners may take them now, the
+  agencies the local runner will be placed in, shell jobs that declare
+  `requires`, records with no stored host key and addresses with two, leftover
+  `executor` keys, Vault-backed rows held by an agency, and jobs whose target
+  host is outside their scope.
+
+### Changed
+
+- **One claim.** An agent's poll and the local runner take runs through the
+  same statement, under the same rules: the runner serves the run's agency, is
+  bound to the scope if the scope names runners, can run the type and satisfies
+  `requires`, and may receive what the run carries. Every new run is written
+  for the runner executor; `runs.executor` is history.
+- **A run that binds an SSH key is an agent's.** The local runner never takes
+  one. A shell run that binds a key waits for an agent that serves its scope
+  and is refused when none is registered (422
+  `key_binding_requires_runner`, a skipped row for a scheduled fire, a failed
+  workflow step). A *connect as* key is not a binding and works on the local
+  runner.
+- **Grants are resolved per request** from a cached snapshot that every grant
+  write refreshes. No access change signs anyone out.
+- **What an agency administrator can do for their own agency** that 2.2.2 had
+  reserved to a global administrator: create scopes in it and move scopes into
+  it, write host records and bastions, create and edit Vault-backed secrets and
+  keys inside its prefixes, mint registration tokens and manage its agents, and
+  bind its scopes to runners that serve it.
+- **Settings is in two groups.** *Agency* (Users & Access, Service Accounts,
+  SSH Targets, Recycle Bin) and *Installation* (General, Notifications, GitLab
+  Connection, Vault, Observability, Log Storage, Audit & Compliance, Local
+  runner). The Installation group is shown to global administrators only, and
+  every section has an address (`/settings?tab=<key>`).
+- **The Run dialog states who takes the run.** Its Method section shows a
+  read-only **Runs on**: the scope's bound runners, an agent for Ansible,
+  Terraform and any run that binds an SSH key, any runner otherwise. The Jobs
+  detail and the Job Composer say the same; History and the Dashboard readout
+  show a Runner where they showed an executor.
+- **A waiting run says why, and stops saying it when it is claimed.** New
+  reasons name the local runner being off, a key binding with no agent online,
+  and a run queued for the retired SSH executor.
+- **Restore placement** re-points scope bindings on the accepting runner's own
+  agency's scopes and never changes what a runner serves.
+- Refusing Ansible-only run options on another run type answers 422
+  `ansible_only` (was `invalid_executor`).
+- A guest reviewing host keys on a runner that is not their agency's may add a
+  first key for a host in their own scope and never replace one; on the local
+  runner only a global administrator decides.
+
+- **An agent claims the shell types without looking at its own host.** With no
+  capabilities named, an agent claims `bash`, `perl`, `powershell` and `python`
+  whatever is installed where it runs: those jobs execute on the target, over
+  SSH, with the target's interpreter, and the local runner has always claimed
+  them this way. It probes its own host only for Ansible and Terraform, which
+  it runs itself. Before, it looked for `bash`, `perl`, `pwsh` and `python3` on
+  its own `$PATH`, so a Linux agent with no `pwsh` took no PowerShell run for a
+  Windows fleet until it was told to. **An agent that relied on that to stay
+  out of a type now claims it** after it is upgraded and restarted: name its
+  capabilities (`-c` / `CRONOMICON_RUNNER_CAPABILITIES`) to keep the type off
+  it. An agent that already names its capabilities is unchanged.
+- **An agent that cannot look for Ansible or Terraform says so.** A lookup on
+  its own `$PATH` that never returns (the RHEL 8 unit below, or a hung mount)
+  used to count as "not installed". Since the agent now starts regardless, it
+  would have come up looking healthy with those types quietly missing. It
+  reports the difference: the runner's row reads *could not check for ansible,
+  terraform*, the agent logs it at error level, and `cronomicon-runner doctor`
+  has a `path-lookup` check that fails with the fix, on every start too.
+- **The upgrade command watches each agent for 20 seconds.** A unit is reported
+  OK only when it is still running, as the same process, at the end of the
+  watch. One look at `is-active` passed an agent that was about to exit, and a
+  crash-looping one whenever the look landed while systemd had it up again.
+
+### Removed
+
+- **The executor choice.** `executor` on a job, a script, the compose request
+  and the job and script responses; the `defaultExecutor` setting; the Executor
+  picker in the Run dialog and the Job Composer; the executor resolver and its
+  refusals `invalid_executor` and `scope_requires_runner`. A run request's
+  `executor` is accepted and ignored for one more minor.
+- **Capture of a host key on first connect**, in a run and in *Test
+  connection*, with the stored key on host records and bastions, the *Clear
+  pin* action, `DELETE /ssh/hosts/{hostId}/host-key` and
+  `DELETE /ssh/bastions/{bastionId}/host-key`, and the
+  `unpinned_bastion_target` guard, whose condition can no longer arise.
+- **Shared agents and the general pool.** An agent cannot be placed in a
+  second agency, and a runner with no agency does not exist. The
+  runner-to-agency membership editor remains only as the local runner's serve
+  list, and to narrow a legacy placement.
+- `GET /runs?sort=executor` (400; use `sort=runner`).
+- `GET /agency-preflight`, superseded by the notices and `cronomicon
+  preflight`.
+
+### Fixed
+
+- **An agent's state directory was listable by every user on its host.** The
+  unit set `StateDirectory=` without a mode, and systemd resets such a
+  directory to 0755 at every start, undoing the installer's 0750. The agent's
+  own files stayed closed (identity 0600, keys 0700), but the directory and
+  anything a job left in it were not. The installer now writes
+  `StateDirectoryMode=0750`. **An agent installed before 2.3.0 keeps the old
+  unit**: run the installer again for it, or add a drop-in
+  (`systemctl edit cronomicon-runner`, `[Service]`, `StateDirectoryMode=0750`)
+  and restart it. `runner-isolation-check.sh` reports a host that needs it.
+- **An agent under the hardened unit could not see its own tools on RHEL 8.**
+  systemd 239 kills the thread that makes a system call its filter list does
+  not know, and the agent's lookup of a program on `$PATH` makes one. The
+  lookup never returned: the agent logged *PATH lookup timed out*, found no
+  capabilities and no sandbox, and with none configured refused to start. The
+  installer's own probe did not catch it. The unit now sets
+  `SystemCallErrorNumber=EPERM`. **An agent installed earlier gets the line
+  from the upgrade command** (Copy upgrade command on its row), which adds it
+  as a drop-in to every agent unit on the machine that filters system calls
+  without it, and says so. By hand: `systemctl edit <unit>`, `[Service]`,
+  `SystemCallErrorNumber=EPERM`, restart. Do not re-run the installer on an
+  enrolled agent for this: it needs a new registration token and writes
+  `runner.env` afresh.
+- **The slim runner image started with nothing it could do.** The image has no
+  shell and no interpreter, so an agent left to detect its capabilities found
+  none, refused to register and restarted for ever. An agent no longer looks
+  on its own host for the shell types (above), so the image claims the four of
+  them as it is, and no agent can start with nothing to claim. With an older
+  image, set `CRONOMICON_RUNNER_CAPABILITIES=bash,perl,powershell,python`.
+- Runner API keys are revoked by runner id; two runners that declared the same
+  name no longer share a revocation.
+- Output markers in an agent's log are parsed according to whether that run's
+  lines are host-prefixed, so text a job echoes after a bracket cannot set an
+  output.
+
+### Security
+
+- An agent's serve list cannot be widened by anyone, and cannot be declared by
+  the agent: it is the owner the registration token carried.
+- The server's host-key trust is reviewed and recorded like every runner's; a
+  bastion is verified under the address its record is dialled at, never under
+  a name.
+- A Vault path on an agency's row is judged against that agency's prefixes,
+  for a global administrator too. A Global row may name any path and is a
+  global administrator's alone.
+- A row in no agency fails closed everywhere it is read: no runner takes its
+  runs, no run resolves its secrets.
+
+### For developers
+
+- `runner.Claim` is the one statement that moves a run from queued to running;
+  the rule's shared pieces are in `execspec/claimrule.go`, and
+  `runner.TestClaimRuleMirrorsAgreeWithTheClaim` holds the two mirrors to it.
+- `settings.SetAgencyMembership` is the move and the only writer of
+  `owner_agency` on scopes, secrets, variables, keys, host records and
+  bastions (a runner's owner is `settings.SetRunnerOwner`); `settings.CheckRunnerPlacement` is the only gate on what a
+  runner serves. `internal/vaultpath` is the one rule for "inside a prefix".
+- `internal/notices`: a check enumerates what holds now and calls `Reconcile`.
+- `sshexec` verifies every hop through `hostTrust`/`bastionTrust`; the scan is
+  `internal/keyscan`, shared with the agent.
+- `auth.GrantsChanged()` must follow every write of a grant, a scope's agency,
+  a scope's name or an agency's name.
+- `gitlab.storableExecutor` is why a retired YAML value cannot fail an insert:
+  `jobs.executor` and `scripts.executor` keep their CHECK.
+- `db.MigrateTo` builds a database at an older schema for the tests that need
+  one.
+- `runner-install.sh` derives every installed name from `set_layout`;
+  `runner-install-check.sh` asserts the default layout and unit are unchanged.
+
 ## [2.2.3] - 2026-10-07
 
 Five ways an administrator or operator of one agency could still reach

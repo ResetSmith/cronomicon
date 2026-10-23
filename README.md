@@ -7,17 +7,17 @@
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.2.3-blue" alt="Version 2.2.3"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.5.2-blue" alt="Version 2.5.2"></a>
   <a href="https://cronomicon.io/docs/"><img src="https://img.shields.io/badge/docs-cronomicon.io-blue" alt="Documentation"></a>
   <a href="https://github.com/ResetSmith/cronomicon/pkgs/container/cronomicon"><img src="https://img.shields.io/badge/image-ghcr.io-blue" alt="Container image"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
 </p>
 
-Cronomicon is a self-hosted **script orchestrator**. It schedules and runs Bash, Ansible, Terraform, PowerShell, Perl and Python jobs across your servers from a single web console, and records every run: who or what started it, where it ran, what it printed and how it ended.
+Cronomicon is a self-hosted **script orchestrator**. It schedules and runs Bash, Ansible, PowerShell, Perl and Python jobs across your servers from a single web console, and records every run: who or what started it, where it ran, what it printed and how it ended.
 
 It is built for teams that have outgrown crontabs scattered across hosts. Several departments can share one installation, each running its own jobs on its own networks under its own credentials, without seeing each other's work.
 
-Cronomicon runs as **one Go binary with one SQLite database**. There is no message broker or separate database server to operate. Optional **runner agents** extend execution into isolated networks.
+Cronomicon runs as **one Go binary with one SQLite database**. There is no message broker or separate database server to operate. Jobs are executed by **runners**: the server itself can run shell jobs over SSH (the *local runner*), and **agents** you install extend execution into isolated networks and to local toolchains.
 
 **Highlights**
 
@@ -26,7 +26,7 @@ Cronomicon runs as **one Go binary with one SQLite database**. There is no messa
 - **Definitions in Git or in the app.** Keep jobs as reviewed YAML in a Git repository, or build them in the browser. Both run the same way.
 - **Departmental access control.** Access comes from your directory groups, scoped per department, with roles you can edit.
 - **Secrets by reference.** Jobs name the secrets they need; values are injected at run time from an encrypted store or HashiCorp Vault and masked in every log.
-- **Distributed runners.** Agents inside isolated networks pick up only the work meant for them, and install with one command.
+- **Distributed runners.** Agents inside isolated networks pick up only their own department's work, and install with one command.
 - **Operational visibility.** A live dashboard, searchable history with live log tailing, an audit trail, Prometheus metrics, and notifications by email or [Apprise](https://github.com/caronc/apprise).
 
 ## Contents
@@ -57,7 +57,7 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e CRONOMICON_DEV_AUTH=true \
   -e CRONOMICON_DEV_SEED=true \
   -e CRONOMICON_COOKIE_SECURE=false \
-  ghcr.io/resetsmith/cronomicon:2.2.3
+  ghcr.io/resetsmith/cronomicon:2.5.2
 ```
 
 Open <http://localhost:8080> and choose **Developer login**. The data disappears when the container stops.
@@ -89,15 +89,16 @@ In **trusted-header mode**, your proxy signs the user in (for example with Authe
 
 ### Option 1: Deploy the published image
 
-Every release publishes three images to the GitHub Container Registry. They are public, so no registry login is needed.
+Every release publishes four images to the GitHub Container Registry. They are public, so no registry login is needed.
 
 | Image | Purpose |
 |---|---|
 | `ghcr.io/resetsmith/cronomicon` | The server: API, scheduler and web interface |
 | `ghcr.io/resetsmith/cronomicon-runner` | Runner agent for Bash, Perl, PowerShell and Python over SSH |
-| `ghcr.io/resetsmith/cronomicon-runner-fat` | Runner agent with Ansible, Terraform and Git installed |
+| `ghcr.io/resetsmith/cronomicon-runner-fat` | Runner agent with Ansible and Git installed |
+| `ghcr.io/resetsmith/cronomicon-validate` | `cronomicon validate` for a CI pipeline that checks a definitions repository ([`backend/deploy/ci-validate-template.yml`](backend/deploy/ci-validate-template.yml)) |
 
-Each image is tagged with its full version (`2.2.3`), its minor version (`2.2`) and `latest`. **Pin the full version** in production so that upgrades happen only when you choose.
+Each image is tagged with its full version (`2.5.2`), its minor version (`2.5`) and `latest`. **Pin the full version** in production so that upgrades happen only when you choose.
 
 #### Step 1: Prepare the host
 
@@ -157,14 +158,14 @@ docker run -d --name cronomicon --restart unless-stopped \
   -v cronomicon-data:/var/lib/cronomicon \
   -v /etc/cronomicon/kek:/run/secrets/cronomicon_kek:ro \
   --env-file /etc/cronomicon/cronomicon.env \
-  ghcr.io/resetsmith/cronomicon:2.2.3
+  ghcr.io/resetsmith/cronomicon:2.5.2
 ```
 
 Database migrations run automatically at startup. Confirm the server is ready:
 
 ```bash
 curl -s http://localhost:8080/readyz     # 200 once the database is ready
-curl -s http://localhost:8080/version    # {"version":"2.2.3", ...}
+curl -s http://localhost:8080/version    # {"version":"2.5.2", ...}
 ```
 
 <details>
@@ -173,7 +174,7 @@ curl -s http://localhost:8080/version    # {"version":"2.2.3", ...}
 ```yaml
 services:
   cronomicon:
-    image: ghcr.io/resetsmith/cronomicon:2.2.3
+    image: ghcr.io/resetsmith/cronomicon:2.5.2
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -209,7 +210,7 @@ Cronomicon grants nothing by default, so the first step is to make someone an ad
 
 ```bash
 docker stop cronomicon
-docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.2.3 \
+docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.5.2 \
   grant-admin -db /var/lib/cronomicon/cronomicon.db cronomicon-admins
 docker start cronomicon
 ```
@@ -223,10 +224,11 @@ Group names are case-sensitive and must match your directory exactly.
 
 #### Step 6: Next steps
 
-- **Connect a Git repository** of job definitions under **Settings → GitLab**, or start composing jobs in the app. See [Defining jobs as code](#defining-jobs-as-code).
-- **Add your servers** as scopes on the **Scopes** page, and [add runners](#adding-runners) for networks the server cannot reach.
+- **Connect each agency's Git repository** of job definitions under **Settings → Repositories** (Global's first; every agency has one), or start composing jobs in the app. See [Defining jobs as code](#defining-jobs-as-code).
+- **Add your servers** as scopes on the **Scopes** page.
+- **Decide what runs your jobs.** On a new installation nothing does, and runs wait in the queue. Turn on the local runner so that the server runs shell jobs itself, enrol agents, or both: see [Adding runners](#adding-runners).
 - **Configure backups.** The server takes a nightly snapshot of its database to the volume, and uploads it to S3 when the `CRONOMICON_BACKUP_S3_*` settings are present. See [`backend/deploy/backup-restore.md`](backend/deploy/backup-restore.md).
-- **Set up notifications** under **Settings → Notifications**.
+- **Set up notifications**: the mail relay under **Settings → Notifications**, and each agency's alert rules and push targets under **Settings → Alerts**.
 
 ### Option 2: Build your own image
 
@@ -239,7 +241,7 @@ Check out the release you want to run:
 ```bash
 git clone https://github.com/ResetSmith/cronomicon.git
 cd cronomicon
-git checkout v2.2.3
+git checkout v2.5.2
 ```
 
 #### Step 2: Build the server image
@@ -248,10 +250,10 @@ Run the build from the repository root, since the Dockerfile uses both `frontend
 
 ```bash
 docker build -f backend/Dockerfile \
-  --build-arg VERSION=2.2.3 \
+  --build-arg VERSION=2.5.2 \
   --build-arg COMMIT=$(git rev-parse --short HEAD) \
   --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-  -t cronomicon:2.2.3 .
+  -t cronomicon:2.5.2 .
 ```
 
 The version arguments are optional. They appear in the interface and at `/version`.
@@ -261,31 +263,38 @@ The version arguments are optional. They appear in the interface and at `/versio
 These are only needed if you run runners as containers:
 
 ```bash
-docker build -f backend/Dockerfile.runner     --build-arg VERSION=2.2.3 -t cronomicon-runner:2.2.3 .
-docker build -f backend/Dockerfile.runner.fat --build-arg VERSION=2.2.3 -t cronomicon-runner-fat:2.2.3 .
+docker build -f backend/Dockerfile.runner     --build-arg VERSION=2.5.2 -t cronomicon-runner:2.5.2 .
+docker build -f backend/Dockerfile.runner.fat --build-arg VERSION=2.5.2 -t cronomicon-runner-fat:2.5.2 .
 ```
 
-The fat image's Ansible and Terraform versions are build arguments (`ANSIBLE_VERSION`, `TERRAFORM_VERSION`). To add Ansible collections or other tools, build a derived image from it.
+The fat image's Ansible version is a build argument (`ANSIBLE_VERSION`). To add Ansible collections or other tools, build a derived image from it.
 
 #### Step 4: Deploy
 
-Follow [Option 1](#option-1-deploy-the-published-image) from Step 1, replacing `ghcr.io/resetsmith/cronomicon:2.2.3` with `cronomicon:2.2.3`. To run the image on another host, push it to your own registry first.
+Follow [Option 1](#option-1-deploy-the-published-image) from Step 1, replacing `ghcr.io/resetsmith/cronomicon:2.5.2` with `cronomicon:2.5.2`. To run the image on another host, push it to your own registry first.
 
 ### Adding runners
 
-The server can run jobs over SSH on its own. **Runners** are small agents you install inside networks the server cannot reach, or where a job needs local tools such as Ansible or Terraform. A runner connects out to the server, so the runner's network needs no inbound firewall rules.
+Every run is queued, and a **runner** takes it. Nothing on a job chooses which: the first runner that is eligible takes the run. There are two kinds of runner.
 
-1. In Cronomicon, open **Runners** and choose **+ Add Runner**.
+**The local runner** is the server itself, running shell jobs (Bash, Perl, PowerShell, Python) over SSH. It is **off on a new installation**. A global administrator turns it on under **Settings → Local runner**, and chooses there how many runs it executes at once. It takes the **Global** agency's runs only: another agency's shell jobs need an agent of that agency. Turned on, the server holds SSH private keys in memory and opens SSH connections to your job targets, and logs a warning to say so. To make sure a server never runs jobs itself, start it with `CRONOMICON_LOCAL_RUNNER=forbid`.
+
+**Agents** are small programs you install inside networks the server cannot reach, or where a job needs local tools such as Ansible. An agent connects out to the server, so its network needs no inbound firewall rules. Each agent belongs to one agency and takes only that agency's runs.
+
+1. In Cronomicon, open **Runners** and choose **+ Add Runner**. Pick the agency the runner is for; an administrator of one agency enrols agents for that agency.
 2. Copy the generated command and run it on the target host. It carries a single-use registration token, downloads the agent from your server, verifies its checksum and installs it as a hardened systemd service.
-3. The runner appears in the registry within a minute. Assign it to a department on the same page.
-4. If only this runner can reach a group of hosts, bind their scope to it: open **Scopes**, expand the scope and choose **Bind runners…**. The scope's jobs then run on that runner and no other.
-5. A runner connects only to hosts whose SSH key it trusts. On the runner's row choose **Scan keys**, scan the scope, compare the fingerprints and approve them.
+3. The runner appears in the registry within a minute, owned by the agency you picked. That cannot be changed afterwards: to serve another agency, enrol another agent for it.
+4. To decide where a scope's jobs run, bind the scope to runners: open **Scopes**, expand the scope and choose **Bind runners…**. The scope's jobs then run on those runners and no other. Without a binding, any runner of the scope's agency may take them (the local runner too, for Global's scopes).
+5. A runner connects only to hosts whose SSH key an operator has approved for it, and nothing is trusted on first connect. Expand the runner's row, and under **Trusted host keys** choose **Scan keys…**, scan the scope, compare the fingerprints and approve them. The local runner's keys are approved the same way, on its own row.
 
-To run a runner as a container instead, the same page generates a `docker run` command for the image that matches your server's version. Always run runners at the same version as the server, because the server refuses agents that speak an older protocol. The [runner install guide](https://cronomicon.io/docs/runner-install.html) covers every option.
+To run an agent as a container instead, the same page generates a `docker run` command for the image that matches your server's version. Keep agents on the server's release: an agent that speaks an older protocol is refused. The [runner install guide](https://cronomicon.io/docs/runner-install.html) covers every option.
 
 ### Upgrading
 
-Migrations run automatically when a new version starts, and they cannot be rolled back. Take a snapshot before each upgrade:
+> [!CAUTION]
+> **An upgrade from a release before 2.5.1 is one-way: back up before you start it.** At its first start, 2.5.1 (and so 2.5.2) re-encrypts every stored secret, SSH key and sealed setting so that each value is bound to its own row. After that, **the release you came from cannot open them**: starting it again on the same data leaves every secret, key, repository token and Vault credential unreadable. The only way back to it is the snapshot you take in step 1 below, and anything changed since is lost.
+
+Migrations run automatically when a new version starts, and they cannot be rolled back. Read the [CHANGELOG](CHANGELOG.md)'s **Upgrading** section: from 2.2.3 (or any release before 2.5.1) to 2.5.2 it is one step of eight, some of them before you stop the old server; from 2.5.1 it is a change of image. 2.5.0 was never published; it is a step of the development line, like 2.3.x and 2.4.x. Then take a snapshot:
 
 1. **Snapshot the data.** Stop the container and archive the volume:
 
@@ -301,6 +310,9 @@ Migrations run automatically when a new version starts, and they cannot be rolle
 
 To roll back, restore the volume from the archive and start the previous version. The [CHANGELOG](CHANGELOG.md) lists what changes in each release.
 
+> [!NOTE]
+> **Upgrading from 2.2.3.** Before you stop the old server, run the report with the new image against the existing database: `docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.5.2 preflight -db /var/lib/cronomicon/cronomicon.db` (read-only). It lists, for this installation, what stops or moves at the first start: Git jobs on an agency's scope stop running until each agency has its own repository, and an agency's shell jobs need an agent of that agency. Lines marked `!!` need action first. After the upgrade, a global administrator reads the **Notices** page, which lists each item by agency.
+
 ## How Cronomicon works
 
 Cronomicon is built from a few pieces that combine:
@@ -313,14 +325,14 @@ Cronomicon is built from a few pieces that combine:
 
 | Concept | What it is |
 |---|---|
-| **Script** | The code to run: a Bash, Ansible, Terraform, PowerShell, Perl or Python body, kept in Git. |
+| **Script** | The code to run: a Bash, Ansible, PowerShell, Perl or Python body, kept in Git. |
 | **Schedule** | A reusable, named timetable: a cron expression, a fixed interval, or a single run, with optional start and end dates. |
 | **Env var / Secret** | A named value supplied to runs. Secrets are encrypted at rest or resolved from HashiCorp Vault, and masked in logs. |
 | **Scope** | Where a job runs: a named group of hosts, such as `Production`. |
 | **Job** | A script bound to a scope, one or more schedules and its settings: timeouts, retries, concurrency, notifications. |
 | **Workflow** | Jobs run in a defined order, with parallel groups, branches and values passed between steps. |
-| **Agency** | A department. Every definition, secret, SSH key and runner belongs to one, and access is granted per agency. |
-| **Runner** | An agent that executes jobs inside a network the server cannot reach directly. |
+| **Agency** | A department. Every scope, secret, variable, SSH key, host record and runner belongs to exactly one, and access is granted per agency. **Global** is the installation's own agency, kept by its global administrators. Since 2.4.0 agencies are independent: nothing in Global, or in any agency, is another agency's to use, and an agency's rows are read by its own people and by those whose access reaches every agency. |
+| **Runner** | What executes a run: an **agent** installed inside a network the server cannot reach directly, or the **local runner**, which is the server itself running shell jobs over SSH. |
 
 Jobs, workflows, schedules and scopes can be **defined in Git** and synchronized automatically, or **created in the app**. The two kinds live side by side, each labelled with its source, and run through the same scheduler. Scripts always come from Git.
 
@@ -343,19 +355,23 @@ Jobs, workflows, schedules and scopes can be **defined in Git** and synchronized
 
 ### Execution
 
-- **Two executors.** Direct SSH from the server (including bastion hosts), and runner agents for isolated networks and local toolchains.
-- **Runner isolation by department.** A job runs only on a runner in its own department.
-- **Runners bound to scopes.** A scope can name the runners that reach its hosts. Its jobs then run on those runners only, and wait, with a stated reason, if none is available. Tags on runners are labels and never route work.
-- **Reviewed host keys.** A runner's trusted SSH host keys are approved from the Runners page after a scan or a paste, fingerprint by fingerprint. Every approval, rejection and removal is recorded, and the page shows what the runner's own `known_hosts` file holds.
+- **One queue, two kinds of runner.** The local runner (the server itself, over SSH, including through bastion hosts) for the Global agency's shell jobs, and agents for isolated networks and local toolchains such as Ansible. A run goes to the first eligible runner; no job or run setting chooses one.
+- **Runner isolation by department.** A run is taken only by a runner that serves its scope's agency. An agent serves exactly the agency that owns it, and an agency's administrators enrol and manage their own agents.
+- **Runners bound to scopes.** A scope can name the runners that reach its hosts. Its jobs then run on those runners only, and wait, with a stated reason, if none is available. Binding is the one control over where a scope's jobs run. Tags on runners are labels and never route work.
+- **Reviewed host keys.** A runner connects only to hosts whose SSH key an operator has approved for it from the Runners page, after a scan or a paste, fingerprint by fingerprint. Nothing is trusted on first connect, by an agent or by the server. Every approval, rejection and removal is recorded, and the page shows what an agent's own `known_hosts` file holds.
 - **Ansible projects.** Runners can check out a playbook repository at a pinned commit, with roles, templates, collections and Ansible Vault.
 - **Run inputs.** A job can declare values that the operator provides when starting a run, and can require them.
 - **Live logs.** Follow a run's output in History while it runs.
 
 ### Security and access
 
-- **Directory-driven access.** Grants pair a directory group with a role and a department. Roles are editable, and a department can administer its own access.
+- **Directory-driven access.** Grants pair a directory group with a role and a department. Roles are editable, and a department can administer its own access. A change to a grant takes effect within seconds, with no need to sign in again, and **My access** shows each user which permissions they hold in which agency.
+- **Self-sufficient departments.** An agency's administrators manage its scopes, host records, bastions, Vault-backed secrets, agents, Git repository, alerts, recycle bin and the access grants of the directory groups listed for it. What belongs to the whole installation is kept apart in the Global agency and changed only by a global administrator, who can also hand a job or workflow to an agency as one commit into its repository.
 - **Same name, different departments.** Two departments can each own a job called `monthly-close` without conflict.
-- **Secrets by reference.** Jobs name the secrets they need; the values are injected at run time, masked in logs and audited.
+- **Secrets by reference.** Jobs name the secrets they need; the values are injected at run time, masked in logs and audited. With HashiCorp Vault, each agency may point only at the Vault paths assigned to it, or connect a Vault of its own.
+- **Secrets an agency can review.** Each secret and key shows which runs used it, what refers to it, and who changed or revealed it, marked when that was someone outside the agency. An agency can download a report of its secrets, be alerted when one is revealed or changed, and make a secret unrevealable for everyone, global administrators included.
+- **Sealed at rest, bound to their place.** Stored secrets, keys and credentials are encrypted with a key kept apart from the database, and each value is bound to its own row, so a copy moved elsewhere in the database does not open.
+- **Encrypted backups.** Optionally, nightly backups are encrypted to public keys whose private halves never reach the server.
 - **Key rotation.** Rotate the encryption key and re-encrypt every stored secret with `cronomicon rewrap-secrets`.
 - **Service accounts.** Machine identities with their own tokens and permissions, for triggering runs from CI or other tools.
 
@@ -363,6 +379,7 @@ Jobs, workflows, schedules and scopes can be **defined in Git** and synchronized
 
 - **Dashboard.** A summary of anything needing attention, a timeline of the past 24 hours and the next 12, upcoming runs and recent errors.
 - **History and activity.** Every run with its trace ID, timing, inputs and logs, plus a searchable feed of runs, configuration changes and sign-ins.
+- **Notices.** An inbox of conditions that need a person, such as a runner serving agencies it does not belong to or a host with no approved key. Each user sees the notices for the agencies they administer, and a notice clears itself when its condition no longer holds.
 - **Audit trail.** A compliance audit stream with configurable retention, masked with the same rules as run logs.
 - **Notifications.** Email and Apprise (Slack, Microsoft Teams, Discord, webhooks and more), naming the job's contact and whether it is critical.
 - **Metrics and archiving.** A Prometheus endpoint, and optional archiving of run logs to S3-compatible storage.
@@ -381,7 +398,7 @@ Keeping definitions in Git gives you review, history and repeatability. Cronomic
 └── inventory/    # Host inventories that become scopes
 ```
 
-**1. Add a script.** Commit the file itself, and its extension sets the type: `.sh` Bash, `.py` Python, `.pl` Perl, `.ps1` PowerShell, `.tf` Terraform, or a `.yml` Ansible playbook. A raw script keeps its extension in its name, so `scripts/db/backup.sh` registers as `db/backup.sh`. To set options or write the body inline, use a YAML wrapper instead:
+**1. Add a script.** Commit the file itself, and its extension sets the type: `.sh` Bash, `.py` Python, `.pl` Perl, `.ps1` PowerShell, or a `.yml` Ansible playbook. A raw script keeps its extension in its name, so `scripts/db/backup.sh` registers as `db/backup.sh`. To set options or write the body inline, use a YAML wrapper instead:
 
 ```yaml
 # scripts/backup-db.yaml, registers as "backup-db"
@@ -390,11 +407,12 @@ kind: Script
 metadata:
   name: backup-db
 spec:
-  run_type: bash       # bash, ansible, terraform, powershell, perl or python
-  executor: runner     # ssh or runner
+  run_type: bash       # bash, ansible, powershell, perl or python
   script: |
     pg_dump -h db-01 -U postgres app_db > /backups/app_db.sql
 ```
+
+A script or job file does not say which runner executes it. An `executor:` line left over from an earlier release is ignored, with a warning; where a job runs is decided by its scope (see [Adding runners](#adding-runners)).
 
 **2. Create a job** that runs the script somewhere, on a schedule:
 
@@ -445,10 +463,10 @@ The other step types are `branch` (choose a path from an earlier step's result),
 **4. Validate before you push.** The `cronomicon` binary checks syntax and cross-references with the same parser the server uses. You can run it from the image without installing anything:
 
 ```bash
-docker run --rm -v "$PWD":/repo:ro ghcr.io/resetsmith/cronomicon:2.2.3 validate /repo
+docker run --rm -v "$PWD":/repo:ro ghcr.io/resetsmith/cronomicon:2.5.2 validate /repo
 ```
 
-**5. Push.** A GitLab webhook triggers a sync automatically, or choose **Resync** under **Settings → GitLab**. Definitions from Git are read-only in the app; change them in Git.
+**5. Push.** A GitLab webhook triggers a sync automatically, or choose **Resync** on the repository under **Settings → Repositories**. Definitions from Git are read-only in the app; change them in Git.
 
 **Prefer the browser?** Users holding the *compose* permission can build jobs in **Compose**, workflows in the **Workflow Editor** and schedules in the **Schedule Builder**. These definitions take effect immediately, keep a revision history and can be restored from the recycle bin. The [user manual](https://cronomicon.io/docs/user-manual.html) covers both approaches in full.
 
@@ -497,13 +515,15 @@ The health endpoints need no authentication: `/healthz` (the process is up), `/r
 - **No native Windows remoting.** PowerShell runs over SSH or on a runner; WinRM is not supported.
 - **No built-in metrics dashboard.** Point Grafana or a similar tool at the Prometheus endpoint.
 - **Bounded queues.** The `Queue` concurrency policy holds at most three waiting runs per key; further runs are skipped with a recorded reason. Workflows do not queue.
-- **Some settings are administrator-only.** Reusable schedules, working calendars, reactions, revision history and the recycle bin apply across departments, so they cannot be delegated to one.
-- **SSH keys need a runner.** A job that uses a stored SSH key runs on a runner; the server's own SSH executor refuses it rather than run without the key.
+- **Scripts are bound by a global administrator.** Script reference bindings and script tags are a global administrator's, and an agency's own scripts cannot be tagged or bound yet.
+- **A bound SSH key needs an agent.** A job that binds a stored SSH key receives it as a key file on the machine that runs the job, which only an agent provides. The local runner never takes such a run; it waits for an agent, and is refused when no agent serves its scope. The key a run *connects with* is separate and works on the local runner.
+- **No shared agents.** An agent serves exactly one agency, so serving several agencies from inside one network means enrolling an agent for each.
+- **One host key per address on the local runner.** Two different machines that share an address behind different bastions cannot both be trusted by the local runner.
 - **Runners must match the server.** The server refuses agents that speak an older protocol version, so upgrade runners with the server.
 
 ## Building from source and contributing
 
-Building from source needs **Go 1.26** (with CGO enabled, since SQLite is compiled in) and **Node.js 20 or later**.
+Building from source needs **Go 1.26** (with CGO enabled, since SQLite is compiled in) and **Node.js 20.19 or later** (the images build with 24).
 
 ```bash
 # Build the web interface, then the server, which embeds it
@@ -526,7 +546,7 @@ cd frontend && npm run build && npm test
 
 | Path | Contents |
 |---|---|
-| [`backend/`](backend/) | The Go server: API, scheduler, executors and runner agent ([README](backend/README.md)) |
+| [`backend/`](backend/) | The Go server (API, scheduler and the local runner) and the runner agent ([README](backend/README.md)) |
 | [`frontend/`](frontend/) | The React and TypeScript interface ([README](frontend/README.md), including the design system) |
 | [`documentation/`](documentation/) | Sources for the manuals and guides |
 | [`openapi.yaml`](openapi.yaml) | The API contract |
@@ -542,11 +562,12 @@ cd frontend && npm run build && npm test
 | Sign-in loops or shows no permissions | Check that the proxy forwards `Remote-User` and `Remote-Groups`, that requests come from an address in `CRONOMICON_TRUSTED_PROXIES`, and that group names match your grants exactly, including case. If every administrator is locked out, stop the server and run `grant-admin` as in [Step 5](#step-5-sign-in-and-set-up-access). |
 | A runner cannot register | The proxy may be redirecting runner traffic to a sign-in page; see [Step 4](#step-4-put-it-behind-your-reverse-proxy). Registration tokens are single-use and expire after 24 hours. |
 | A runner shows as offline | It has not contacted the server recently. Check the agent's log with `journalctl -u cronomicon-runner` or `docker logs`. |
-| A job fails over SSH | Check the target's host key and any bastion settings under **Settings → SSH Targets**. |
-| A job on a runner fails with a host-key error | The runner does not trust that host yet. Expand the runner under **Runners**, choose **Scan keys** and approve the key. |
+| A run stays queued | History says why. The usual causes are that no online runner serves the scope's agency, or that the local runner would take the run and is turned off (**Settings → Local runner**). |
+| A job fails over SSH | Check the host record and any bastion under **Settings → SSH Targets**; **Test** reports whether the server can reach the host and authenticate. |
+| A job fails with `host_key_unverified`, or a host-key error | The runner has no approved key for that host, or for the bastion in front of it. Expand the runner under **Runners** (the local runner included), choose **Scan keys…** under **Trusted host keys** and approve the key. For a host behind a bastion, use **Paste keys…**. |
 | A run stays queued on a scope bound to runners | Its bound runners are offline or were removed; the run's reason names them. Bring one back, or change the binding under **Scopes**. |
 
-Run logs are grouped by job under the log directory configured in **Settings → Execution → Log Storage**. The [administrator manual](https://cronomicon.io/docs/administrator-manual.html) has a full troubleshooting chapter.
+Run logs are grouped by job under the log directory configured in **Settings → Log Storage**. The [administrator manual](https://cronomicon.io/docs/administrator-manual.html) has a full troubleshooting chapter.
 
 ## License
 

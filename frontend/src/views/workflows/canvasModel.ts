@@ -53,6 +53,7 @@ export interface DefStep {
   jobs?: DefStep[]; // parallel: the concurrent arms (leaf jobs or sequences, PS-1)
   steps?: DefStep[]; // sequence: the ordered serial chain (PS-1)
   workflow?: string; // workflow: the sub-workflow this step runs (SW)
+  workflowUid?: string; // R7 — the sub-workflow's pinned identity, when it has one (2.4.2: kept, present defect 54)
   pass?: DefBranch | null;
   fail?: DefBranch | null;
   condition?: DefCondition | null;
@@ -99,6 +100,7 @@ export interface CanvasNode {
   // workflow — the sub-workflow this step runs (SW). Distinct from `name`, which
   // is the step's position in the parent's results map.
   workflow?: string;
+  workflowUid?: string; // see DefStep.workflowUid
   // branch
   condition?: CanvasCondition;
   pass?: CanvasNode[]; // ordered sub-sequence (may nest)
@@ -131,6 +133,7 @@ function parseNode(s: DefStep, id: string): CanvasNode {
       kind,
       name: s.name ?? "",
       workflow: s.workflow ?? "",
+      workflowUid: s.workflowUid,
       label: s.label,
       inputs: Object.entries(s.inputs ?? {}).map(([envKey, ref]) => ({
         envKey,
@@ -203,6 +206,10 @@ function emit(n: CanvasNode): DefStep {
       type: "workflow",
       name: n.name ?? "",
       workflow: n.workflow ?? "",
+      // R7: the identity the step was saved with, when it has one, so that an
+      // open-and-save does not re-resolve the child by name (present defect 54:
+      // it was dropped, and a name two agencies hold was refused, or re-pinned).
+      ...(n.workflowUid ? { workflowUid: n.workflowUid } : {}),
       ...(n.label?.trim() ? { label: n.label.trim() } : {}),
       ...(Object.keys(wfInputs).length ? { inputs: wfInputs } : {}),
       ...(typeof n.retries === "number" ? { retries: n.retries } : {}),

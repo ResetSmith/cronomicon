@@ -81,6 +81,7 @@ func composeRBACServer(t *testing.T) (http.Handler, *sql.DB) {
 	// deliberately global one.
 	exec(`INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
 	      VALUES('backup-db','bash','pg_dump mydb','ssh','sha256:aaa','scripts/backup-db.yaml','t')`)
+	agenciesGetTheirOwnRepository(t, pool)
 	seedJob := func(name string, scope any) {
 		exec(`INSERT INTO jobs(name, source, run_type, command, scope, content_hash, created_at)
 		      VALUES(?,'cronomicon','bash','pg_dump mydb',?,'sha256:bbb','2026-01-01T00:00:00Z')`, name, scope)
@@ -185,8 +186,11 @@ func TestComposeIsBoundToTheActorsAgencies(t *testing.T) {
 		finID := composeJobID(t, pool, "fin-job")
 		rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+finID, "fin-composers",
 			`{"name":"fin-job","scriptRef":"backup-db","scope":"tax-prod"}`)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("FIN composer pushing its job into tax-prod = %d, want 403", rec.Code)
+		// Since I2 a job is its agency's and finds its scope there: TAX's scope is
+		// a name FIN has no scope of, refused as a rule for everyone (422
+		// scope_not_in_agency) before any grant is asked (until then 403).
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "scope_not_in_agency") {
+			t.Errorf("FIN composer pushing its job into tax-prod = %d %s, want 422 scope_not_in_agency", rec.Code, rec.Body)
 		}
 	})
 
@@ -287,32 +291,11 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 	})
 }
 
-// TestSharedAuthoringSurfacesStayAdminOnly — AF2-D1. The old admin gate covered six
-// surfaces; AF-2 widened only the two whose objects carry a scope. These four act on
-// objects with NO scope — a reusable schedule template, a global calendar, a
-// reaction that attaches to a definition by name, a bin spanning every definition —
-// so a departmental composer reaching them would be a cross-agency escalation, not
-// a delegation: retiming another department's schedule, attaching a reaction that
-// TRIGGERS their job, or purging their recycle bin.
-func TestSharedAuthoringSurfacesStayAdminOnly(t *testing.T) {
-	h, _ := composeRBACServer(t)
-
-	for _, tc := range []struct{ what, method, path, body string }{
-		{"schedule-def create", http.MethodPost, "/api/v1/schedule-defs", `{"name":"nightly","cron":"0 2 * * *"}`},
-		{"schedule-def update", http.MethodPut, "/api/v1/schedule-defs/nightly", `{"name":"nightly","cron":"0 3 * * *"}`},
-		{"schedule-def delete", http.MethodDelete, "/api/v1/schedule-defs/nightly", ""},
-		{"calendar create", http.MethodPost, "/api/v1/calendars", `{"name":"holidays"}`},
-		{"calendar delete", http.MethodDelete, "/api/v1/calendars/holidays", ""},
-		{"reactions replace", http.MethodPut, "/api/v1/reactions/job/fin-job", `{"reactions":[]}`},
-		{"recycle bin list", http.MethodGet, "/api/v1/recycle-bin", ""},
-	} {
-		// Even the UNRESTRICTED composer is refused: this is about the surface, not
-		// about reach. Only admin authors shared objects.
-		if rec := composeReq(t, h, tc.method, tc.path, "unrestricted-composers", tc.body); rec.Code != http.StatusForbidden {
-			t.Errorf("%s as a non-admin composer = %d, want 403 — AF-2 did not widen this surface", tc.what, rec.Code)
-		}
-	}
-}
+// The shared authoring surfaces AF-2 left a global administrator's are gone:
+// schedules and calendars have owners (§0a, question 32, SO-1), reactions are
+// their definition's agency's (question 61), and the recycle bin and revisions
+// are compose on the definition's agency since 2.5.0 C3 (SO-2;
+// TestC3_AnAgencyRestoresItsOwnBinnedJobAndSeesNoOther).
 
 // TestComposeCapabilityFlagsReflectTheGrant — the SPA gates its authoring
 // affordances on these, so they must track the permission rather than the old role

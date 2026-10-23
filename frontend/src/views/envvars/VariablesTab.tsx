@@ -3,9 +3,10 @@ import { api } from "../../api/client";
 import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
+import { MoveAgency } from "./MoveAgency";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
-import { DetailPanel, EmptyCell, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
+import { DetailCell, DetailPanel, EmptyCell, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
 import {
   Btn,
   Chevron,
@@ -38,7 +39,7 @@ import {
   useShadowWarnings,
   valueBoxStyle,
 } from "./ui";
-import { AgencyCell, useEntityAgencies } from "./ui";
+import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
 
 interface EnvVarRow {
   // UUIDv7 (K-3) — this said `number` on the strength of an openapi.yaml
@@ -50,7 +51,10 @@ interface EnvVarRow {
   scope?: string;
   description?: string;
   tags?: string[];
-  ownerAgency?: string; // RA-15 — the owning department's NAME; "" when shared.
+  ownerAgency?: string; // RA-15 — the owning agency's NAME; "Global" when shared (2.3.0).
+  canEdit?: boolean; // R8 — what the caller may do with this row, from the server
+  canDelete?: boolean;
+  canRepair?: boolean;
   createdBy?: string;
   lastModifiedAt?: string;
 }
@@ -183,10 +187,10 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
       cell: (v) => (
         // Flex-wrap, not inline: JSX strips the newline between the key and its
         // chips, so there is no break opportunity and two badges spill out of
-        // the fixed-width column onto Scope.
+        // the fixed-width column onto Scope. The owner is not repeated here:
+        // the Agencies column says it (the owner, 2026-10-21).
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, rowGap: 4 }}>
           <span>{v.key}</span>
-          <OwnerChip owner={v.ownerAgency} />
           <ShadowBadge shadow={shadows.shadowFor("var", v.key, v.scope)} />
           <AmbiguityBadge ambiguity={ambiguities.ambiguityFor("var", v.key, v.scope)} />
         </div>
@@ -204,7 +208,7 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
       ),
     },
     { key: "usedBy", label: "Used by", sortKey: "usedBy", width: COL_W.usedBy, cell: (v) => <UsageCell {...usage.usageFor("var", v.key)} /> },
-    { key: "agencies", label: "Agencies", width: COL_W.agencies, cell: (v) => <AgencyCell names={v.id ? entityAgencies[v.id] : undefined} /> },
+    { key: "agencies", label: "Agencies", width: COL_W.agencies, cell: (v) => <AgencyCell names={v.id ? entityAgencies[v.id] : undefined} owner={v.ownerAgency} /> },
     { key: "description", label: "Description", width: COL_W.description, tdStyle: { color: c.textSec, fontSize: c.fontSm }, cell: (v) => v.description || <EmptyCell /> },
     { key: "tags", label: "Tags", width: COL_W.tags, cell: (v) => <InlineTags tags={tagState.tagsFor(v)} max={2} /> },
     {
@@ -218,8 +222,19 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
         <span onClick={(e) => e.stopPropagation()}>
           {canEdit && (
             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              <Btn onClick={() => setEditing(v)}>Edit</Btn>
-              <Btn dangerQuiet onClick={() => setDeleting(v)}>
+              <Btn
+                onClick={() => setEditing(v)}
+                disabled={!!rowFlagWhy(v.canEdit, v.ownerAgency, "variable")}
+                title={rowFlagWhy(v.canEdit, v.ownerAgency, "variable") || undefined}
+              >
+                Edit
+              </Btn>
+              <Btn
+                dangerQuiet
+                onClick={() => setDeleting(v)}
+                disabled={!!rowFlagWhy(v.canDelete, v.ownerAgency, "variable")}
+                title={rowFlagWhy(v.canDelete, v.ownerAgency, "variable") || undefined}
+              >
                 Delete
               </Btn>
             </div>
@@ -299,78 +314,95 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
         </div>
       )}
       {filtered.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
-          <thead>
-            <TableHead
-              columns={cols.visible}
-              sort={sort}
-              cw={cw}
-              trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
-            />
-          </thead>
-          <tbody>
-            {sort.sorted.map((v) => {
-              const isExp = v.id != null && expanded === v.id;
-              const toggle = () => setExpanded(isExp ? null : (v.id ?? null));
-              const rowBg = isExp ? c.primaryBg : "transparent";
-              return (
-                <Fragment key={v.id ?? v.key}>
-                  <tr
-                    onClick={toggle}
-                    onMouseEnter={(e) => { if (!isExp) e.currentTarget.style.background = c.panelHover; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
-                    style={{ borderBottom: isExp ? "none" : `1px solid ${c.border}`, background: rowBg, cursor: "pointer", transition: "background 0.15s" }}
-                  >
-                    {renderCells(cols.visible, v, { rowStyle: { borderBottom: "none" } })}
-                  </tr>
-                  {isExp && (
-                    <tr style={{ background: rowBg, borderBottom: `1px solid ${c.border}` }}>
-                      <td style={{ borderBottom: "none" }} />
-                      <td colSpan={cols.visible.length - 1} style={{ padding: "2px 16px 16px", borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
-                        {/* EP-4 Shape B — this panel renders the LIST ROW, so
-                            "refresh this panel" means reload the list. Uses
-                            reloadList, not refetch: refetch also collapses the
-                            expansion, which would close the panel the button
-                            was asked to refresh. */}
-                        <DetailPanel also={reloadList}>
-                        <DetailGrid>
-                          <div>
-                            <DetailLabel>Value</DetailLabel>
-                            <div style={{ ...valueBoxStyle(), fontFamily: c.mono, fontSize: c.fontSm, color: v.value ? c.text : c.textMuted }}>
-                              {v.value || "—"}
-                            </div>
-                          </div>
-                          <div>
-                            <DetailLabel>Details</DetailLabel>
-                            <div style={detailBoxStyle()}>
-                              <DetailRow label="Scope" value={v.scope || "global (injects into every scope)"} />
-                              <DetailRow
-                                label="Used by"
-                                value={<UsageCell {...usage.usageFor("var", v.key)} />}
-                              />
-                              <DetailRow label="Description" value={v.description || "—"} />
-                              <DetailRow label="Last Modified" value={fmtDate(v.lastModifiedAt)} />
-                              <DetailRow label="Created By" value={v.createdBy || "—"} last />
-                            </div>
-                          </div>
-                        </DetailGrid>
-                        </DetailPanel>
-                        <ReferenceField reference={v.reference} semantics="Resolves to the variable's plaintext value at run time (log-safe)." />
-                        <div style={{ marginTop: 12 }}>
-                          <DetailLabel>Tags</DetailLabel>
-                          <TagEditor tags={tagState.tagsFor(v)} onChange={(next) => tagState.save(v, next)} disabled={!canEdit} />
-                          {tagState.errors[String(v.id)] && (
-                            <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(v.id)]}</div>
-                          )}
-                        </div>
-                      </td>
+        <div style={{ overflowX: "auto" }}>
+          {/* The table's own sideways scroll, which an open row's DetailCell holds itself to (2.5.2). */}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody, tableLayout: "fixed" }}>
+            <thead>
+              <TableHead
+                columns={cols.visible}
+                sort={sort}
+                cw={cw}
+                trStyle={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}
+              />
+            </thead>
+            <tbody>
+              {sort.sorted.map((v) => {
+                const isExp = v.id != null && expanded === v.id;
+                const toggle = () => setExpanded(isExp ? null : (v.id ?? null));
+                const rowBg = isExp ? c.primaryBg : "transparent";
+                return (
+                  <Fragment key={v.id ?? v.key}>
+                    <tr
+                      onClick={toggle}
+                      onMouseEnter={(e) => { if (!isExp) e.currentTarget.style.background = c.panelHover; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
+                      style={{ borderBottom: isExp ? "none" : `1px solid ${c.border}`, background: rowBg, cursor: "pointer", transition: "background 0.15s" }}
+                    >
+                      {renderCells(cols.visible, v, { rowStyle: { borderBottom: "none" } })}
                     </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                    {isExp && (
+                      <tr style={{ background: rowBg, borderBottom: `1px solid ${c.border}` }}>
+                        <td style={{ borderBottom: "none" }} />
+                        <DetailCell colSpan={cols.visible.length - 1} padding="2px 16px 16px" cellStyle={{ borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
+                          {/* EP-4 Shape B — this panel renders the LIST ROW, so
+                              "refresh this panel" means reload the list. Uses
+                              reloadList, not refetch: refetch also collapses the
+                              expansion, which would close the panel the button
+                              was asked to refresh. */}
+                          <DetailPanel also={reloadList}>
+                          <DetailGrid>
+                            <div>
+                              <DetailLabel>Value</DetailLabel>
+                              <div style={{ ...valueBoxStyle(), fontFamily: c.mono, fontSize: c.fontSm, color: v.value ? c.text : c.textMuted }}>
+                                {v.value || "—"}
+                              </div>
+                            </div>
+                            <div>
+                              <DetailLabel>Details</DetailLabel>
+                              <div style={detailBoxStyle()}>
+                                <DetailRow label="Scope" value={v.scope || "global (injects into every scope)"} />
+                                <DetailRow
+                                  label="Used by"
+                                  value={<UsageCell {...usage.usageFor("var", v.key)} />}
+                                />
+                                <DetailRow label="Description" value={v.description || "—"} />
+                                <DetailRow label="Last Modified" value={fmtDate(v.lastModifiedAt)} />
+                                <DetailRow label="Created By" value={v.createdBy || "—"} last />
+                                {canEdit && v.id && (
+                                  <MoveAgency
+                                    kind="env-var"
+                                    id={v.id}
+                                    name={v.key}
+                                    ownerName={v.ownerAgency}
+                                    canRepair={v.canRepair}
+                                    onMoved={(text) => {
+                                      setNotice({ kind: "info", text });
+                                      refetch();
+                                    }}
+                                    onError={(text) => setNotice({ kind: "error", text })}
+                                  />
+                                )}
+                              </div>
+                            </div>
+                          </DetailGrid>
+                          </DetailPanel>
+                          <ReferenceField reference={v.reference} semantics="Resolves to the variable's plaintext value at run time (log-safe)." />
+                          <div style={{ marginTop: 12 }}>
+                            <DetailLabel>Tags</DetailLabel>
+                            <TagEditor tags={tagState.tagsFor(v)} onChange={(next) => tagState.save(v, next)} disabled={!canEdit} />
+                            {tagState.errors[String(v.id)] && (
+                              <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(v.id)]}</div>
+                            )}
+                          </div>
+                        </DetailCell>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {(adding || editing) && (
@@ -493,14 +525,15 @@ function VarFormModal({
               Deliberately NOT appended at the bottom of the form — this modal's body
               is already at its height, so a block added there lands exactly at the
               fold and renders shaved behind the pinned footer. tsc and the unit tests
-              cannot see that; screenshotting the real dialog can. Read-only because
-              ownership is fixed at creation and there is no transfer action, so an
-              editable-looking control would promise what the API cannot do. */}
+              cannot see that; screenshotting the real dialog can. Read-only here: the
+              owner is chosen at creation and changed by MOVING the row (the expanded
+              row's "Move to another agency"), which is a decision of its own and not
+              a field of this form. */}
           {isEdit && initial?.ownerAgency && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 6, fontSize: c.fontXs, color: c.textMuted }}>
               <span>Owned by</span>
               <OwnerChip owner={initial.ownerAgency} />
-              <span>&middot; set at creation</span>
+              <span>&middot; set at creation; move it from the expanded row</span>
             </div>
           )}
             </>
@@ -553,13 +586,7 @@ function VarFormModal({
             the moment someone was reasoning about it. It is display-only on purpose:
             ownership is fixed at creation and there is no transfer action yet, so an
             editable-looking control would promise something the API cannot do. */}
-        <CreationAgencyPicker
-          label="variable"
-          required={agencyPick.required}
-          agencies={agencyPick.agencies}
-          selected={agencyPick.selected}
-          setSelected={agencyPick.setSelected}
-        />
+        <CreationAgencyPicker label="variable" pick={agencyPick} />
       </div>
     </Modal>
   );

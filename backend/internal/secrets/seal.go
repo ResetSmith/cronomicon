@@ -26,22 +26,48 @@ type Sealed struct {
 	Nonce      []byte
 	WrappedDEK []byte
 	KEKVersion int
+	// Format is what the row's seal_format column records (2.5.1): SealBound
+	// for everything sealed now.
+	Format int
 }
+
+// The seal_format of an envelope row (migration 1620).
+const (
+	SealUnbound = 1 // sealed before 2.5.1: bound to nothing
+	SealBound   = 2 // bound to its row (RowBinding)
+)
 
 // Seal envelope-encrypts plaintext under the current KEK and returns the four
 // column values to persist. Returns ErrNoKEK when no KEK is configured, so callers
 // can distinguish a missing KEK from a real crypto failure.
-func (s *Sealer) Seal(plaintext []byte) (Sealed, error) {
+func (s *Sealer) Seal(b Binding, plaintext []byte) (Sealed, error) {
 	kek, err := loadKEK(s.cfg)
 	if err != nil {
 		return Sealed{}, err
 	}
 	defer zero(kek) // SU-10: wipe the loaded KEK after the envelope op (best-effort)
+	ct, nonce, wrapped, err := envelopeEncryptAD(kek, plaintext, []byte(b))
+	if err != nil {
+		return Sealed{}, fmt.Errorf("seal: %w", err)
+	}
+	return Sealed{Ciphertext: ct, Nonce: nonce, WrappedDEK: wrapped, KEKVersion: s.cfg.SecretKEKVersion, Format: SealBound}, nil
+}
+
+// SealLegacy seals the way every value was sealed before 2.5.1, bound to
+// nothing (seal_format SealUnbound). It is for tests that hold a database as
+// an older release left it, and for nothing else: production code seals with
+// Seal and a Binding (bound_writers_test refuses any other caller).
+func (s *Sealer) SealLegacy(plaintext []byte) (Sealed, error) {
+	kek, err := loadKEK(s.cfg)
+	if err != nil {
+		return Sealed{}, err
+	}
+	defer zero(kek)
 	ct, nonce, wrapped, err := envelopeEncrypt(kek, plaintext)
 	if err != nil {
 		return Sealed{}, fmt.Errorf("seal: %w", err)
 	}
-	return Sealed{Ciphertext: ct, Nonce: nonce, WrappedDEK: wrapped, KEKVersion: s.cfg.SecretKEKVersion}, nil
+	return Sealed{Ciphertext: ct, Nonce: nonce, WrappedDEK: wrapped, KEKVersion: s.cfg.SecretKEKVersion, Format: SealUnbound}, nil
 }
 
 // Open reverses Seal, decrypting the persisted column values with the KEK named by
@@ -50,13 +76,24 @@ func (s *Sealer) Seal(plaintext []byte) (Sealed, error) {
 // the current key, which the loader maps to the active KEK. Callers reading a
 // nullable kek_version column should resolve NULL themselves (the secrets table
 // uses COALESCE(kek_version, 1)) before calling Open.
-func (s *Sealer) Open(ciphertext, nonce, wrappedDEK []byte, kekVersion int) ([]byte, error) {
+//
+// format is the row's seal_format: a bound value opens only under b (2.5.1
+// SG2.10); an unbound one opens with no binding until BindSeals has bound
+// every value, and is refused after (ErrSealUnbound).
+func (s *Sealer) Open(b Binding, format int, ciphertext, nonce, wrappedDEK []byte, kekVersion int) ([]byte, error) {
+	var ad []byte
+	switch {
+	case format == SealBound:
+		ad = []byte(b)
+	case UnboundSealsRefused():
+		return nil, ErrSealUnbound
+	}
 	kek, err := loadKEKForVersion(s.cfg, kekVersion)
 	if err != nil {
 		return nil, err
 	}
 	defer zero(kek) // SU-10: wipe the loaded KEK after the envelope op (best-effort)
-	plain, err := envelopeDecrypt(kek, ciphertext, nonce, wrappedDEK)
+	plain, err := envelopeDecryptAD(kek, ciphertext, nonce, wrappedDEK, ad)
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}

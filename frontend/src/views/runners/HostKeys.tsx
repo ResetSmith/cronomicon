@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { api, csrfHeader, errMsg } from "../../api/client";
+import { agenciesFor, useMyAccess } from "../../api/access";
 import { useGet, rows } from "../../hooks";
 import type { components } from "../../api/schema";
 import { c } from "../../theme";
@@ -53,6 +54,10 @@ type Coverage = components["schemas"]["ScopeHostKeyCoverage"];
 export interface KeyRunner {
   id: string;
   name: string;
+  /** The local runner: this server. Its trust store is the record itself — an
+   *  approved key is in force at once, and there is no known_hosts file to send
+   *  it to or to read back. */
+  local?: boolean;
 }
 
 interface ScopeLite {
@@ -67,6 +72,11 @@ interface RunnerLite {
   name: string;
   status?: string | null;
   agencies?: { id: string }[];
+  ownerAgency?: { id?: string; name?: string };
+  /** Per-row authority from the server: false means the caller does not own this runner. */
+  canManage?: boolean;
+  /** "server" for the local runner. */
+  kind?: string;
 }
 
 const isReachable = (status?: string | null) => status === "online" || status === "degraded";
@@ -195,19 +205,19 @@ function StatusCell({ r }: { r: ReviewRow }) {
     );
   }
   if (r.status === "changed") {
-    const whose = r.previousSource === "server" ? "the key the server pins for this host" : "the key this runner trusts now";
+    const whose = r.previousSource === "server" ? "the key approved for the server (the local runner) for this host" : "the key this runner trusts now";
     return (
       <div>
         <Chip tone="danger">Changed</Chip>
         <div style={{ marginTop: 3, fontSize: c.fontXs, color: c.textSec }}>
           Differs from {whose}:
           <div style={{ ...mono(), wordBreak: "break-all" }}>{r.previousFingerprint}</div>
-          {r.previousSource !== "server" && r.matchedServerPin && <div>It matches the server's pin.</div>}
+          {r.previousSource !== "server" && r.matchedServerPin && <div>It matches the key approved for the server.</div>}
         </div>
       </div>
     );
   }
-  if (r.status === "match") return <Chip tone="success" title="The same key the server itself has pinned for this host">Matches server</Chip>;
+  if (r.status === "match") return <Chip tone="success" title="The same key that is approved for the server itself (the local runner) for this host">Matches server</Chip>;
   if (r.status === "trusted") return <Chip tone="muted" title="This runner already trusts exactly this key">Already trusted</Chip>;
   return <Chip tone="info" title="Nothing is known about this host's key yet">New</Chip>;
 }
@@ -358,10 +368,18 @@ export function HostKeysDialog({
   initialCarryFrom,
   carryFromPrevious,
   startAt = "source",
+  guest: guestProp = false,
   onClose,
   onChanged,
 }: {
   runner: KeyRunner;
+  /**
+   * LR-63 — the caller does not own this runner; they administer an agency it
+   * serves. They may scan a scope of their own agency with it and decide the
+   * keys that scan finds: no typed hosts, no paste, no copy from another
+   * runner, and never a key that would replace one the runner trusts.
+   */
+  guest?: boolean;
   initialSource?: KeySource;
   initialScopeId?: string;
   initialCarryFrom?: string;
@@ -371,7 +389,7 @@ export function HostKeysDialog({
   onClose: () => void;
   onChanged?: () => void;
 }) {
-  const [source, setSource] = useState<KeySource>(initialSource);
+  const [pickedSource, setSource] = useState<KeySource>(initialSource);
   const [step, setStep] = useState<"source" | "review">(startAt);
   // What the review step is showing: keys the runner scanned (read live from
   // the pending list) or a fixed list the server parsed from a paste or a carry.
@@ -384,24 +402,40 @@ export function HostKeysDialog({
   const scopesQ = useGet<unknown>(() => api.GET("/scopes"), []);
   const runnersQ = useGet<unknown>(() => api.GET("/runners"), []);
   const me = useMemo(() => rows<RunnerLite>(runnersQ.data).find((r) => r.id === runner.id), [runnersQ.data, runner.id]);
+  // The local runner: this server. Known from the caller, or from the list
+  // when the dialog was opened somewhere that does not know (the Scopes page).
+  const local = !!runner.local || me?.kind === "server";
   // A scan needs the runner to answer. Unknown (the list has not loaded, or the
   // runner is not in it) is not treated as offline: the server has the last word.
-  const reachable = !me || isReachable(me.status);
+  // The local runner scans from this server whether it is turned on or not:
+  // scanning is not running a job.
+  const reachable = local || !me || isReachable(me.status);
+  // LR-63 — guest mode is the server's per-row answer about THIS runner, so it
+  // holds wherever the dialog is opened from (the Runners page says so up
+  // front; the Scopes page's coverage panel does not know, and need not).
+  const guest = guestProp || me?.canManage === false;
+  const source: KeySource = guest ? "scope" : pickedSource;
+  const access = useMyAccess();
   const scopes = useMemo(() => {
     const mine = (s: ScopeLite) => (s.boundRunners ?? []).some((b) => b.runnerId === runner.id);
-    // Only the scopes this runner may serve: a scope in an agency takes a member
-    // runner, a scope in none takes a general-pool runner. The server enforces
+    // Only the scopes this runner serves: a scope takes a runner that serves
+    // its agency (Global's takes one that serves Global). The server enforces
     // the same rule; offering the others would only offer a refusal.
     const mayServe = (s: ScopeLite) => {
       if (!me) return true;
       const mineAg = new Set((me.agencies ?? []).map((a) => a.id));
-      const theirs = s.agencies ?? [];
-      return theirs.length === 0 ? mineAg.size === 0 : theirs.some((a) => mineAg.has(a.id));
+      return (s.agencies ?? []).some((a) => mineAg.has(a.id));
     };
-    const all = rows<ScopeLite>(scopesQ.data).filter((s) => s.id && (mayServe(s) || s.id === initialScopeId));
+    // A guest may scan the scopes of an agency they ADMINISTER that the runner
+    // serves and does not own — the server's own list (hostKeyGuestScopes).
+    // Reading a scope is not enough.
+    const held = new Set(agenciesFor(access ?? null, "configureApp").map((a) => a.id));
+    const guestMay = (s: ScopeLite) =>
+      !guest || access == null || (s.agencies ?? []).some((a) => held.has(a.id) && a.id !== me?.ownerAgency?.id);
+    const all = rows<ScopeLite>(scopesQ.data).filter((s) => s.id && guestMay(s) && (mayServe(s) || s.id === initialScopeId));
     // Scopes bound to this runner first: they are the ones it must be able to reach.
     return [...all].sort((a, b) => Number(mine(b)) - Number(mine(a)) || a.scope.localeCompare(b.scope));
-  }, [scopesQ.data, runner.id, me, initialScopeId]);
+  }, [scopesQ.data, runner.id, me, initialScopeId, guest, access]);
   const boundHere = (s: ScopeLite) => (s.boundRunners ?? []).some((b) => b.runnerId === runner.id);
   const others = useMemo(() => {
     const live: RunnerLite[] = rows<RunnerLite>(runnersQ.data).filter((r) => r.id && r.id !== runner.id);
@@ -479,7 +513,11 @@ export function HostKeysDialog({
     if (res.approved) parts.push(`${plural(res.approved, "key")} trusted`);
     if (res.rejected) parts.push(`${plural(res.rejected, "key")} rejected`);
     if (res.unchanged) parts.push(`${res.unchanged} already trusted`);
-    const tail = res.approved ? ` ${runner.name} receives ${res.approved === 1 ? "it" : "them"} on its next poll.` : "";
+    const tail = !res.approved
+      ? ""
+      : local
+        ? ` ${res.approved === 1 ? "It is" : "They are"} in force now.`
+        : ` ${runner.name} receives ${res.approved === 1 ? "it" : "them"} on its next poll.`;
     return (parts.join(", ") || "Nothing changed") + "." + tail;
   };
 
@@ -623,7 +661,13 @@ export function HostKeysDialog({
             primary
             onClick={next}
             disabled={busy || offlineForScan}
-            title={offlineForScan ? `${runner.name} is not online, so it cannot scan. Paste keys instead: they are delivered when it returns.` : undefined}
+            title={
+              offlineForScan
+                ? guest
+                  ? `${runner.name} is not online, so it cannot scan. Try again when it is back, or ask its owner.`
+                  : `${runner.name} is not online, so it cannot scan. Paste keys instead: they are delivered when it returns.`
+                : undefined
+            }
           >
             {busy ? "Working…" : scanning ? "Queue scan" : "Review keys"}
           </Btn>
@@ -632,7 +676,19 @@ export function HostKeysDialog({
     ) : (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {err && <div role="alert" style={{ color: c.danger, fontSize: c.fontSm }}>{err}</div>}
-        {chosenChanged > 0 && (
+        {guest && local && (
+          <div role="alert" style={{ color: c.textSec, fontSize: c.fontSm }}>
+            These are waiting for a global administrator. The local runner is this server, and the keys it trusts are the same for
+            every agency it serves, so its keys are approved by a global administrator and not by one agency's.
+          </div>
+        )}
+        {guest && !local && chosenChanged > 0 && (
+          <div role="alert" style={{ color: c.danger, fontSize: c.fontSm }}>
+            {plural(chosenChanged, "selected key")} would replace a key {runner.name} already trusts. That is for the runner's owner
+            to decide; untick {chosenChanged === 1 ? "it" : "them"} to trust the rest.
+          </div>
+        )}
+        {!guest && chosenChanged > 0 && (
           <div style={{ color: c.danger, fontSize: c.fontSm }}>
             {plural(chosenChanged, "selected key")} {chosenChanged === 1 ? "differs" : "differ"} from a key already trusted. Accepting{" "}
             {chosenChanged === 1 ? "it" : "them"} replaces the old key on {runner.name}. Only do this if you know why the host's key changed.
@@ -662,7 +718,7 @@ export function HostKeysDialog({
           {nothingLeft ? (
             <Btn primary onClick={onClose}>Done</Btn>
           ) : (
-            <Btn primary onClick={accept} disabled={busy || chosen.length === 0 || (reviewing === "paste" && hasErrors)}>
+            <Btn primary onClick={accept} disabled={busy || chosen.length === 0 || (reviewing === "paste" && hasErrors) || (guest && chosenChanged > 0) || (guest && local)}>
               {busy ? "Working…" : `Trust ${plural(chosen.length, "key")} on ${runner.name}`}
             </Btn>
           )}
@@ -678,17 +734,26 @@ export function HostKeysDialog({
             {runner.name} only connects to hosts whose SSH key it has been told to trust. Choose where the keys come from. Nothing is
             trusted until you have reviewed every fingerprint on the next screen.
           </div>
-          <TabBar
-            tabs={SOURCES.map((s) => ({ label: s.label }))}
-            active={SOURCES.findIndex((s) => s.k === source)}
-            onChange={(i) => {
-              setSource(SOURCES[i].k);
-              setErr(null);
-            }}
-          />
+          {guest ? (
+            <AlertBanner type="info">
+              {runner.name} is not your agency's runner, but it serves your agency. You can scan one of your agency's scopes with it
+              and trust the keys it finds for hosts it does not know yet. Scanning typed hosts, pasting or copying keys, and replacing
+              a key the runner already trusts are for the runner's owner.
+            </AlertBanner>
+          ) : (
+            <TabBar
+              tabs={SOURCES.map((s) => ({ label: s.label }))}
+              active={SOURCES.findIndex((s) => s.k === source)}
+              onChange={(i) => {
+                setSource(SOURCES[i].k);
+                setErr(null);
+              }}
+            />
+          )}
           {offlineForScan && (
             <AlertBanner type="warning">
-              {runner.name} is not online, so it cannot scan. Pasted keys do not need it: they are delivered when it returns.
+              {runner.name} is not online, so it cannot scan.{" "}
+              {guest ? "Try again when it is back, or ask its owner." : "Pasted keys do not need it: they are delivered when it returns."}
             </AlertBanner>
           )}
           {source === "scope" && (
@@ -701,8 +766,8 @@ export function HostKeysDialog({
                 <InlineLoading what="scopes" />
               ) : scopes.length === 0 ? (
                 <div style={prose()}>
-                  There is no scope this runner may serve. A scope in an agency takes a runner that is a member of it; a scope in no
-                  agency takes a general-pool runner.
+                  There is no scope here that this runner serves. A scope takes a runner that serves its agency, and a scope that
+                  is Global's takes a runner that serves Global.
                 </div>
               ) : (
                 <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: c.fontSm, color: c.textSec }}>
@@ -943,7 +1008,8 @@ export function PendingKeysBanner({ refreshKey, onChanged }: { refreshKey: numbe
 
 const when = (iso?: string | null) => (iso ? fmtInAppZone(iso) : "");
 
-function FileState({ k }: { k: LedgerRow }) {
+function FileState({ k, local }: { k: LedgerRow; local?: boolean }) {
+  if (local) return <Chip tone="success" title="The local runner verifies against this record directly: an approved key is in force at once">In force</Chip>;
   if (!k.deliveredAt) return <Chip tone="info" title="The runner receives it on its next poll">Not yet sent</Chip>;
   if (k.presentInFile === true) return <Chip tone="success">In the file</Chip>;
   if (k.presentInFile === false) {
@@ -1009,7 +1075,7 @@ export function TrustedHostKeys({
     return <div style={{ fontSize: c.fontSm, color: c.textSec }}>{q.error ? `Host keys could not be loaded: ${q.error}` : "No host-key record."}</div>;
   }
   const { inForce, history, knownHosts, pending } = q.data;
-  const missing = inForce.filter((k) => k.deliveredAt && k.presentInFile === false);
+  const missing = runner.local ? [] : inForce.filter((k) => k.deliveredAt && k.presentInFile === false);
   const subtle = (): CSSProperties => ({ fontSize: c.fontXs, color: c.textSec });
 
   return (
@@ -1047,8 +1113,18 @@ export function TrustedHostKeys({
       <div>
         <SectionLabel>Approved in Cronomicon ({inForce.length})</SectionLabel>
         <div style={{ ...subtle(), marginBottom: 8 }}>
-          Keys an operator approved for this runner. This is the record of who trusted what, and it is kept for as long as a key is
-          trusted.
+          {runner.local ? (
+            <>
+              Keys approved for the local runner — this server. It connects only to a host that has one here, verifies against
+              this record directly, and captures nothing on first connect. Keys the server had already captured before 2.3.0 were
+              carried over by the upgrade and are listed as <em>carried</em>.
+            </>
+          ) : (
+            <>
+              Keys an operator approved for this runner. This is the record of who trusted what, and it is kept for as long as a key
+              is trusted.
+            </>
+          )}
         </div>
         {inForce.length === 0 ? (
           <div style={{ fontSize: c.fontSm, color: c.textMuted }}>No keys have been approved for this runner.</div>
@@ -1078,9 +1154,9 @@ export function TrustedHostKeys({
                     </td>
                     <td style={dense()}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                        <FileState k={k} />
+                        <FileState k={k} local={runner.local} />
                         <span style={{ flex: 1 }} />
-                        {k.deliveredAt && k.presentInFile === false && (
+                        {!runner.local && k.deliveredAt && k.presentInFile === false && (
                           <Btn
                             small
                             disabled={busy}
@@ -1159,7 +1235,8 @@ export function TrustedHostKeys({
         )}
       </div>
 
-      {/* ── What the runner's own file holds ── */}
+      {/* ── What the runner's own file holds ── (an agent's; the local runner has none) */}
+      {!runner.local && (
       <div>
         <SectionLabel
           action={
@@ -1235,6 +1312,7 @@ export function TrustedHostKeys({
           </div>
         )}
       </div>
+      )}
 
       {removing && (
         <ConfirmDialog
@@ -1243,8 +1321,9 @@ export function TrustedHostKeys({
           busy={busy}
           message={
             <>
-              {runner.name} stops trusting <strong>{removing.hostName ?? removing.host}</strong> ({removing.keyType}) on its next poll, and
-              its runs on that host fail until a key is approved again. The removal is recorded.
+              {runner.name} stops trusting <strong>{removing.hostName ?? removing.host}</strong> ({removing.keyType}){" "}
+              {runner.local ? "at once" : "on its next poll"}, and its runs on that host fail until a key is approved again. The removal
+              is recorded.
             </>
           }
           onCancel={() => setRemoving(null)}
@@ -1252,7 +1331,7 @@ export function TrustedHostKeys({
             const k = removing;
             await act(
               () => api.POST("/runners/{runnerId}/host-keys/{ledgerId}/remove", path(k.id)),
-              `Removed. ${runner.name} drops the key on its next poll.`,
+              runner.local ? `Removed. ${runner.name} no longer trusts the key.` : `Removed. ${runner.name} drops the key on its next poll.`,
             );
             setRemoving(null);
           }}
@@ -1285,8 +1364,9 @@ export function TrustedHostKeys({
 /**
  * ScopeKeyCoverage shows, for a scope with bound runners, which of its hosts
  * each runner trusts — and offers the scan that fills the gaps. It renders
- * nothing for a scope with no bound runner: its jobs run from the server, whose
- * host keys are managed with its SSH targets.
+ * nothing for a scope with no bound runner: any runner of its agency may take
+ * its runs, each with its own trusted keys, and there is no fixed set to show
+ * (the inbox reports hosts the local runner has no key for).
  */
 export function ScopeKeyCoverage({ scopeId, bound, canConfig }: { scopeId: string; bound: number; canConfig: boolean }) {
   const q = useGet<Coverage>(

@@ -357,16 +357,9 @@ func TestApprovingATrustedKeyIsUnchanged(t *testing.T) {
 func TestClassifiesAgainstTheServerPin(t *testing.T) {
 	f := newHKFixture(t, "pin")
 	pinned, other := testHostKey(t), testHostKey(t)
-	for _, h := range []struct {
-		name string
-		key  ssh.PublicKey
-	}{{"10.0.0.5", pinned}, {"10.0.0.6", pinned}} {
-		if _, err := f.svc.db.Exec(`
-			INSERT INTO ssh_hosts(id, hostname, address, port, username, host_key, created_at)
-			VALUES (?, ?, ?, 22, 'deploy', ?, ?)`,
-			db.NewID(), "h-"+h.name, h.name, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(h.key))), now()); err != nil {
-			t.Fatalf("seed host: %v", err)
-		}
+	// What the server trusts is what is in force for the local runner (2.3.0).
+	for _, host := range []string{"10.0.0.5", "10.0.0.6"} {
+		serverTrusts(t, f.svc, host, pinned, "", "root@example.com")
 	}
 	f.scan("10.0.0.5", pinned) // what the server pinned
 	f.scan("10.0.0.6", other)  // differs from the server's pin
@@ -742,7 +735,7 @@ func TestScopeCoverage(t *testing.T) {
 	}
 	missing := func() int {
 		t.Helper()
-		n, total, err := hostkeys.Missing(context.Background(), f.svc.db, "dmz", f.id)
+		n, total, err := hostkeys.Missing(context.Background(), f.svc.db, scopeOwnerForTest(t, f.svc.db, "dmz"), "dmz", f.id)
 		if err != nil || total != 3 {
 			t.Fatalf("Missing: %d of %d (%v)", n, total, err)
 		}
@@ -776,6 +769,33 @@ func TestScopeCoverage(t *testing.T) {
 	if len(cov.Hosts) != 3 || len(cov.Runners) != 2 {
 		t.Fatalf("coverage = %d hosts × %d runners; want 3 × 2", len(cov.Hosts), len(cov.Runners))
 	}
+	// The local runner bound to the same scope is in this table like an agent
+	// (2.3.0, Phase C): what it trusts is what is in force in its ledger —
+	// there is no file to compare with, so approved means trusted.
+	serverTrusts(t, f.svc, "10.1.0.5", directKey, "", "root@example.com") // not this host's pattern: it listens on 2222
+	serverTrusts(t, f.svc, "[10.1.0.5]:2222", directKey, "", "root@example.com")
+	var localID string
+	_ = f.svc.db.QueryRow(`SELECT id FROM runners WHERE kind = 'server'`).Scan(&localID)
+	if _, err := f.svc.db.Exec(`INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_by, bound_at) VALUES (?, ?, 'Local runner', 'test', 't')`, scopeID, localID); err != nil {
+		t.Fatal(err)
+	}
+	var withLocal scopeCoverage
+	_ = json.Unmarshal(f.do(f.svc.HandleScopeHostKeyCoverage, http.MethodGet, "/x", "", "scopeId", scopeID).Body.Bytes(), &withLocal)
+	if len(withLocal.Runners) != 3 {
+		t.Fatalf("coverage with the local runner bound lists %d runners, want 3", len(withLocal.Runners))
+	}
+	for _, r := range withLocal.Runners {
+		if r.RunnerID != localID {
+			continue
+		}
+		states := map[string]string{}
+		for i, h := range withLocal.Hosts {
+			states[h.Host] = r.States[i]
+		}
+		if states["direct"] != hostkeys.StateApproved || r.Missing != 2 {
+			t.Errorf("the local runner's coverage = %v missing %d; want the host it has an approved key for, and 2 missing", states, r.Missing)
+		}
+	}
 	for _, r := range cov.Runners {
 		states := map[string]string{}
 		for i, h := range cov.Hosts {
@@ -792,7 +812,7 @@ func TestScopeCoverage(t *testing.T) {
 			}
 		}
 	}
-	if missing, total, err := hostkeys.Missing(context.Background(), f.svc.db, "dmz", f.id); err != nil || missing != 1 || total != 3 {
+	if missing, total, err := hostkeys.Missing(context.Background(), f.svc.db, scopeOwnerForTest(t, f.svc.db, "dmz"), "dmz", f.id); err != nil || missing != 1 || total != 3 {
 		t.Fatalf("Missing = %d of %d (%v); want 1 of 3", missing, total, err)
 	}
 }
@@ -1150,5 +1170,104 @@ func TestApprovalIsDeliveredDuringALongPoll(t *testing.T) {
 		}
 	case <-time.After(8 * time.Second):
 		t.Fatalf("the approval was not delivered during the in-flight poll")
+	}
+}
+
+// serverTrusts puts a key in force for the local runner, creating its row if
+// the test has not: what the server trusts for a host since 2.3.0. scopeID is
+// the scope the decision was made for ("" for none) and actor who made it.
+func serverTrusts(t *testing.T, svc *Service, pattern string, key ssh.PublicKey, scopeID, actor string) {
+	t.Helper()
+	var localID string
+	_ = svc.db.QueryRow(`SELECT id FROM runners WHERE kind = 'server'`).Scan(&localID)
+	if localID == "" {
+		localID = "local-runner"
+		if _, err := svc.db.Exec(`INSERT INTO runners (id, name, kind, status, registered_at, created_at)
+		                          VALUES (?, 'Local runner', 'server', 'online', ?, ?)`, localID, now(), now()); err != nil {
+			t.Fatalf("the local runner's row: %v", err)
+		}
+	}
+	if _, err := svc.db.Exec(`
+		INSERT INTO host_key_ledger (batch_id, runner_id, runner_name, scope_id, host, key_type, fingerprint, known_hosts_line,
+		                             decision, source, actor, decided_at, delivered_at, confirmed_at)
+		VALUES ('test', ?, 'Local runner', NULLIF(?, ''), ?, ?, ?, ?, 'approved', 'pasted', ?, ?, ?, ?)`,
+		localID, scopeID, pattern, key.Type(), ssh.FingerprintSHA256(key), renderKnownHostsLine(pattern, key),
+		actor, now(), now(), now()); err != nil {
+		t.Fatalf("server trust for %s: %v", pattern, err)
+	}
+}
+
+// The server's key for a host is a second opinion on the review screen: it can
+// reassure a reviewer ("matches the key the server trusts") and it can mark a
+// key "changed", which a guest may not approve. So it must be an opinion the
+// reviewing runner's own side could have formed (LR-69). The local runner
+// serves several agencies, an administrator of any of them may approve a first
+// key on it for a host of their own scope (LR-63), and two agencies can list
+// the same address — so a decision made for ANOTHER agency's scope, or carried
+// by the upgrade from a record another agency had written, is not shown.
+func TestServerPinIsADecisionTheReviewersSideCouldHaveMade(t *testing.T) {
+	f := newHKFixture(t, "pinowner")
+	ctx := context.Background()
+	exec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := f.svc.db.Exec(q, a...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	realKey, planted := testHostKey(t), testHostKey(t)
+	fp := func(k ssh.PublicKey) string { return ssh.FingerprintSHA256(k) }
+	const pattern = "10.0.0.9"
+
+	exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', ?), ('ag-tax', 'Tax', ?)`, now(), now())
+	for _, sc := range [][2]string{{"sc-fin", "ag-fin"}, {"sc-tax", "ag-tax"}} {
+		exec(`INSERT INTO scopes (id, name, source, created_at) VALUES (?, ?, 'cronomicon', ?)`, sc[0], sc[0], now())
+		exec(`DELETE FROM scope_agencies WHERE scope_id = ?`, sc[0])
+		exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES (?, ?)`, sc[0], sc[1])
+	}
+	// The runner under review is Finance's.
+	exec(`DELETE FROM runner_agencies WHERE runner_id = ?`, f.id)
+	exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES (?, 'ag-fin')`, f.id)
+	pin := func() string { return serverPin(ctx, f.svc.db, f.id, pattern, realKey.Type()) }
+	reset := func() { exec(`DELETE FROM host_key_ledger`) }
+
+	// A key approved on the local runner for TAX's scope: not Finance's opinion.
+	serverTrusts(t, f.svc, pattern, planted, "sc-tax", "tax-admin@example.com")
+	if got := pin(); got != "" {
+		t.Errorf("a Finance runner was shown a key approved for Tax's scope as the server's: %s", got)
+	}
+	if c := classifyKey(ctx, f.svc.db, f.id, pattern, "db01", "sc-fin", planted.Type(), fp(planted)); c.Status == keyStatusMatch || c.MatchedServerPin {
+		t.Errorf("a key trusted only for ANOTHER agency's scope classifies %q (matched=%v)", c.Status, c.MatchedServerPin)
+	}
+	// One approved for Finance's own scope is.
+	reset()
+	serverTrusts(t, f.svc, pattern, realKey, "sc-fin", "fin-admin@example.com")
+	if got := pin(); got != fp(realKey) {
+		t.Errorf("the server's key for a host of Finance's scope = %q, want %s", got, fp(realKey))
+	}
+	if c := classifyKey(ctx, f.svc.db, f.id, pattern, "db01", "sc-fin", realKey.Type(), fp(realKey)); c.Status != keyStatusMatch {
+		t.Errorf("the key the server trusts classifies %q, want a match", c.Status)
+	}
+	if c := classifyKey(ctx, f.svc.db, f.id, pattern, "db01", "sc-fin", planted.Type(), fp(planted)); c.Status != keyStatusChanged || c.PreviousSource != "server" {
+		t.Errorf("a key that differs from the server's classifies %q (%s), want changed against the server's", c.Status, c.PreviousSource)
+	}
+	// One approved for no scope at all (typed or pasted: the local runner's
+	// owner, a global administrator) answers for everyone.
+	reset()
+	serverTrusts(t, f.svc, pattern, realKey, "", "root@example.com")
+	if got := pin(); got != fp(realKey) {
+		t.Errorf("a global administrator's approval was not read as the server's key: %q", got)
+	}
+	// A key the upgrade carried from a record TAX had written by hand is Tax's
+	// opinion; from one Finance had written, or Global's, it counts.
+	for actor, want := range map[string]string{
+		carriedByUpgradeFor("ag-tax"): "",
+		carriedByUpgradeFor("ag-fin"): fp(realKey),
+		carriedByUpgradeFor("global"): fp(realKey),
+	} {
+		reset()
+		serverTrusts(t, f.svc, pattern, realKey, "", actor)
+		if got := pin(); got != want {
+			t.Errorf("a key carried as %q is read as the server's key %q, want %q", actor, got, want)
+		}
 	}
 }

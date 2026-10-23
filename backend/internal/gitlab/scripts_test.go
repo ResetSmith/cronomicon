@@ -388,7 +388,7 @@ func TestSync_GitOpsPruning(t *testing.T) {
 	_, err := pool.Exec(`
 		CREATE TABLE IF NOT EXISTS scopes (
 			id TEXT PRIMARY KEY,
-			name TEXT UNIQUE,
+			name TEXT,
 			source TEXT,
 			source_path TEXT,
 			git_meta_json TEXT,
@@ -397,7 +397,11 @@ func TestSync_GitOpsPruning(t *testing.T) {
 			created_by TEXT,
 			created_at TEXT,
 			raw_inventory TEXT,
-			inventory_format TEXT
+			inventory_format TEXT,
+			repo_id TEXT,
+			owner_agency TEXT NOT NULL DEFAULT 'global',
+			released_from TEXT, -- 1470
+			UNIQUE (owner_agency, name)
 		);
 		CREATE TABLE IF NOT EXISTS scope_hosts (
 			scope_id TEXT,
@@ -527,7 +531,7 @@ func TestSync_GitOpsPruning(t *testing.T) {
 		SourcePath: "scopes/new-scope.yaml",
 		Hosts:      []string{"host1"},
 	}
-	if err := svc.upsertScopes(ctx, tx2, []inventoryScope{newScope}, newTimeStr, "sha2"); err != nil {
+	if _, err := svc.upsertScopes(ctx, tx2, []inventoryScope{newScope}, newTimeStr, "sha2"); err != nil {
 		t.Fatalf("upsertScopes: %v", err)
 	}
 

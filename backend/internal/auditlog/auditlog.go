@@ -11,7 +11,8 @@
 // CHECK constraint forbids ” and the numeric columns have no empty form, so a
 // uniform empty-string rule is not possible there.
 //
-// It is a leaf package (takes an Execer, imports nothing from internal) so the
+// It is a leaf package (takes an Execer, imports nothing from internal but the
+// leaf agencyid) so the
 // settings, workflow and api packages can all depend on it without a cycle.
 package auditlog
 
@@ -20,6 +21,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 )
 
 // Execer is the subset of *sql.DB / *sql.Tx these writers need.
@@ -82,17 +85,78 @@ type ActivityParams struct {
 	Repository   string
 	Branch       string
 	ScheduleFile string
+	// AgencyID is the agency the event is of: its OBJECT's, never the agency
+	// the request was viewing (2.5.0 C1; the owner's answer to question 74).
+	// Empty: the agency of the run, the workflow run, the job or the workflow
+	// the row names (TraceID, JobUID, WorkflowUID, as the INSERT resolves
+	// them), else none, which reads as Global's. A row with none of those keys
+	// names its agency here; writer_conformance_test holds every literal to it.
+	// An installation-wide change is Global's (agencyid.Global), read by those
+	// whose grant reaches every agency (the owner's answer to question 76).
+	AgencyID string
+}
+
+// actingKey carries the agency a global administrator works in (2.4.4).
+type actingKey struct{}
+
+// WithActingAgency marks ctx as a global administrator's request made while
+// working in agencyID (the agency switcher, 2.4.4 S3; the 2.5.0 plan's IN-9):
+// each change_log row written under it records both, "actor, acting in
+// agencyID". auth marks it when it attaches the identity; this package stays a
+// leaf.
+func WithActingAgency(ctx context.Context, agencyID string) context.Context {
+	return context.WithValue(ctx, actingKey{}, agencyID)
+}
+
+// ActingAgency is the agency WithActingAgency marked ctx with, or "".
+func ActingAgency(ctx context.Context) string {
+	a, _ := ctx.Value(actingKey{}).(string)
+	return a
+}
+
+// relationKey carries the request's judge of who the actor is to an agency.
+type relationKey struct{}
+
+// Actor relations recorded on change_log rows (2.5.1 SG-11).
+const (
+	RelationMember      = "member"       // holds a grant on the row's agency (for Global: reaches every agency)
+	RelationGlobalAdmin = "global_admin" // a global administrator with no grant on that agency
+	RelationOutside     = "outside"      // anyone else
+	RelationSystem      = "system"       // no request identity: a background writer
+)
+
+// WithActorRelation gives ctx the request's judge: for an agency id it says
+// how the actor stands to that agency (one of the Relation constants). auth
+// sets it when it attaches the identity, beside WithActingAgency; this package
+// stays a leaf. Each change_log row records the answer for ITS agency, when it
+// is written, because nothing afterwards can say who the actor was then.
+func WithActorRelation(ctx context.Context, judge func(agencyID string) string) context.Context {
+	return context.WithValue(ctx, relationKey{}, judge)
+}
+
+// ActorRelation is the judge's answer for agencyID, or RelationSystem when ctx
+// carries no judge.
+func ActorRelation(ctx context.Context, agencyID string) string {
+	if judge, ok := ctx.Value(relationKey{}).(func(string) string); ok && judge != nil {
+		return judge(agencyID)
+	}
+	return RelationSystem
 }
 
 // WriteChangeLog inserts one change_log row (S6). Optional columns (target,
 // details) are stored verbatim — empty string, never NULL (CC-D2).
-func WriteChangeLog(ctx context.Context, db Execer, actor, category, action, target, details string) error {
-	return WriteChangeLogAt(ctx, db, "", actor, category, action, target, details)
+//
+// agency is the agency of the object changed (2.5.0 C1, CF-3; question 74):
+// never the agency the request was viewing. An installation-wide change is
+// Global's. Empty stores none, which reads as Global's and is a writer's
+// defect: every caller states one.
+func WriteChangeLog(ctx context.Context, db Execer, agency, actor, category, action, target, details string) error {
+	return WriteChangeLogAt(ctx, db, "", agency, actor, category, action, target, details)
 }
 
 // WriteChangeLogAt is WriteChangeLog with an explicit event time (RFC3339 UTC);
 // empty means now. Only the seeder needs it, to backdate demo history.
-func WriteChangeLogAt(ctx context.Context, db Execer, at, actor, category, action, target, details string) error {
+func WriteChangeLogAt(ctx context.Context, db Execer, at, agency, actor, category, action, target, details string) error {
 	now := stampOr(at)
 	// Mask and bound BEFORE the INSERT, not just on the way to the stream.
 	// Masking only the emitted event would scrub a secret out of audit.log while
@@ -106,10 +170,12 @@ func WriteChangeLogAt(ctx context.Context, db Execer, at, actor, category, actio
 	// several sites (env-var names, hosts, the denied scope).
 	target = TrimForAudit(mask(target))
 	details = TrimForAudit(mask(details))
+	acting := ActingAgency(ctx)
+	relation := ActorRelation(ctx, agency)
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO change_log (at, actor, category, action, target, details, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		now, actor, category, action, target, details, now)
+		`INSERT INTO change_log (at, actor, category, action, target, details, created_at, acting_agency, agency_id, actor_relation)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		now, actor, category, action, target, details, now, nullStr(acting), nullStr(agency), relation)
 	if err != nil {
 		return fmt.Errorf("write change_log: %w", err)
 	}
@@ -117,7 +183,7 @@ func WriteChangeLogAt(ctx context.Context, db Execer, at, actor, category, actio
 	// file is an export of it (see Sink).
 	emit(Event{
 		At: now, Source: "change_log",
-		Actor: actor, Category: category, Action: action,
+		Actor: actor, ActingAgency: acting, Agency: agency, Category: category, Action: action,
 		Target: target, Details: details,
 	})
 	return nil
@@ -138,7 +204,7 @@ func WriteActivity(ctx context.Context, db Execer, p ActivityParams) error {
 	p.Target = TrimForAudit(mask(p.Target))
 	p.Details = TrimForAudit(mask(p.Details))
 	p.Summary = TrimForAudit(mask(p.Summary))
-	_, err := db.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		INSERT INTO activity
 			(kind, outcome, actor, job_name, job_id, workflow_name, workflow_id,
 			 job_uid, workflow_uid,
@@ -174,11 +240,41 @@ func WriteActivity(ctx context.Context, db Execer, p ActivityParams) error {
 	if err != nil {
 		return err
 	}
+	// The agency the event is of (2.5.0 C1): the one the writer named, else
+	// the row's own object's, read from the keys the INSERT just resolved, in
+	// migration 1520's order. Never the agency the request was viewing.
+	if id, ierr := res.LastInsertId(); ierr == nil {
+		if _, err := db.ExecContext(ctx, `UPDATE activity SET agency_id = `+activityAgencySQL+` WHERE id = ?`,
+			nullStr(p.AgencyID), id); err != nil {
+			return err
+		}
+		// The stream line says whose too; read back what the row worked out.
+		if q, ok := db.(rowQuerier); ok && p.AgencyID == "" {
+			var a sql.NullString
+			if q.QueryRowContext(ctx, `SELECT agency_id FROM activity WHERE id = ?`, id).Scan(&a) == nil {
+				p.AgencyID = a.String
+			}
+		}
+	}
 	if ev, ok := activityEvent(now, p); ok {
 		emit(ev)
 	}
 	return nil
 }
+
+// rowQuerier is the read half of a *sql.DB or *sql.Tx, when the Execer has it.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// activityAgencySQL is an activity row's agency, over the row itself: the
+// writer's (?), else its run's owner, its workflow run's agency, its job's,
+// its workflow's. NULL when none resolves: the row reads as Global's.
+var activityAgencySQL = `COALESCE(?,
+	NULLIF((SELECT ru.owner_agency FROM runs ru WHERE ru.id = activity.trace_id), ''),
+	NULLIF((SELECT wr.agency_id FROM workflow_runs wr WHERE wr.id = activity.trace_id), ''),
+	NULLIF((SELECT ` + agencyid.JobSQL("aj") + ` FROM jobs aj WHERE aj.uid = activity.job_uid), ''),
+	NULLIF((SELECT ` + agencyid.WorkflowSQL + ` FROM workflows w WHERE w.uid = activity.workflow_uid), ''))`
 
 // stampOr returns at when set, else the current UTC time in RFC3339.
 func stampOr(at string) string {

@@ -1,13 +1,13 @@
 import { Fragment, useEffect, useState, type ComponentType } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
-import { COMPOSE_ADMIN_ONLY, globalOnly } from "../api/globalAdmin";
+import { GLOBAL_AGENCY, agenciesFor, useMyAccess } from "../api/access";
 import { useGet, rows, useClientPager, useInlineTags, useTableSort, useColumnWidths } from "../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns, type TableColumn } from "../components/table";
 import { c } from "../theme";
 import { useNameDisambiguator } from "../utils/disambiguate";
 import type { components } from "../api/schema";
-import { Btn, DetailPanel, ExpandChevron, Field, HoverTr, InlineTags, Pager, SearchBar, SectionLabel, SkeletonRows, SourceBadge, TagEditor, TagFilterSelect, matchesTags } from "../components/ui";
+import { Btn, DetailCell, DetailPanel, ExpandChevron, Field, HoverTr, InlineTags, Pager, SearchBar, SectionLabel, SkeletonRows, SourceBadge, TagEditor, TagFilterSelect, matchesTags } from "../components/ui";
 import { type SortColumn } from "../utils/sort";
 import { FolderBrowser } from "../components/FolderBrowser";
 import { InventoryTab } from "./scheduling/InventoryTab";
@@ -17,6 +17,7 @@ import { CalendarsTab } from "./scheduling/CalendarsTab";
 import { GlobalCalendarBanner } from "./scheduling/GlobalCalendarBanner";
 import { fmtInAppZone } from "../utils/datetime";
 import { RefreshScope } from "../components/RefreshScope";
+import { globalAgencyName } from "../globalName";
 
 type Schedule = components["schemas"]["Schedule"];
 // CO-4 — the table row: the schedule plus its per-render-mode display name.
@@ -155,26 +156,41 @@ function CatalogTab() {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
-  // GC (v2.2.2) — two facts, not one. `canCompose` ("may author SOMEWHERE")
-  // still decides whether the authoring controls are relevant at all. A reusable
-  // schedule has no owning agency — it retimes everyone who references it — so
-  // WRITING one needs `composeAdmin`: compose and configureApp on one
-  // all-agencies grant. A departmental composer keeps the controls, disabled
-  // with the reason, instead of walking into the builder to be refused.
+  // 2.4.0 (I2; R8) — an in-app schedule is one agency's (`ownerAgency`), and
+  // writing it takes Compose on that agency; Global's takes a global composer
+  // (`composeAdmin`). `canCompose` ("may author SOMEWHERE") decides whether the
+  // authoring controls are relevant at all; `whyFor` says, per schedule, why
+  // its Edit and Delete are off. Until 2.4.0 a schedule belonged to no agency
+  // and every write was a global composer's (GC, 2.2.2).
   const [canCompose, setCanCompose] = useState(false);
   const [composeAdmin, setComposeAdmin] = useState(false);
-  const authorWhy = globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY);
+  const access = useMyAccess();
+  const composesOn = new Set(agenciesFor(access ?? null, "compose").map((a) => a.id));
+  const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
+  const agencyName = (id?: string | null) =>
+    !id || id === GLOBAL_AGENCY ? globalAgencyName() : (rows<{ id: string; name: string }>(catalogQ.data).find((a) => a.id === id)?.name ?? id);
+  const whyFor = (sched: Schedule): string => {
+    const owner = sched.ownerAgency || GLOBAL_AGENCY;
+    // 2.4.2 (question 55): the row says what the caller may do; what follows is
+    // for a server that does not say it.
+    const flagged = sched.canEdit;
+    if (flagged === true || (flagged === undefined && (composeAdmin || access == null || composesOn.has(owner)))) return "";
+    if (sched.source !== "cronomicon") return "";
+    return owner === GLOBAL_AGENCY
+      ? "This schedule is Global's — only a global composer (Compose on every agency) can change it."
+      : `This schedule belongs to ${agencyName(owner)} — only that agency's composers can change it.`;
+  };
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [tagMatch, setTagMatch] = useState<"any" | "all">("any");
   // Optimistic per-schedule tag edits keyed by source:name (a name can recur across
   // the git and cronomicon sources). Reset on refresh — the refetch is authoritative.
   const inlineTags = useInlineTags<Schedule>(
     refresh,
-    (s) => `${s.source}:${s.name ?? ""}`,
+    (s) => `${s.source}:${s.ownerAgency ?? ""}:${s.name ?? ""}`,
     (s) => s.tags,
     (s, next) =>
       api.PUT("/schedule-tags/{name}", {
-        params: { path: { name: s.name ?? "" }, query: { source: s.source }, header: csrfHeader },
+        params: { path: { name: s.name ?? "" }, query: { source: s.source, ...(s.ownerAgency ? { agencyId: s.ownerAgency } : {}) }, header: csrfHeader },
         body: { tags: next },
       }),
   );
@@ -250,7 +266,7 @@ function CatalogTab() {
       ),
     },
     { key: "cron", label: "Cron", width: SCHEDULE_COL_W.cron, tdStyle: { fontFamily: c.mono, color: c.textSec, whiteSpace: "nowrap" }, cell: ({ sched: s }) => s.cron },
-    { key: "source", label: "Source", sortKey: "source", width: SCHEDULE_COL_W.source, fixed: true, cell: ({ sched: s }) => <SourceBadge source={s.source} /> },
+    { key: "source", label: "Source", sortKey: "source", width: SCHEDULE_COL_W.source, fixed: true, cell: ({ sched: s }) => <SourceBadge source={s.source} owner={agencyName(s.ownerAgency)} /> },
     {
       key: "usedBy",
       label: "Used by",
@@ -320,7 +336,8 @@ function CatalogTab() {
   // same-named schedules expand together.
   const renderScheduleRow = (s: Schedule, displayName: string) => {
     const name = s.name ?? "";
-    const key = `${s.source}:${name}`;
+    // 2.4.0 — two agencies may each have a schedule of the name.
+    const key = `${s.source}:${s.ownerAgency ?? ""}:${name}`;
     const isExp = expanded === key;
     // Override-aware tag set (keyed source:name) so an optimistic edit shows at once.
     const tags = inlineTags.tagsFor(s);
@@ -336,19 +353,20 @@ function CatalogTab() {
         </HoverTr>
         {isExp && (
           <tr style={{ borderBottom: `1px solid ${c.border}` }}>
-            <td colSpan={cols.visible.length} style={{ padding: "16px 18px", background: c.primaryBg }}>
+            <DetailCell colSpan={cols.visible.length} padding="16px 18px" background={c.primaryBg}>
               <RefreshScope>
               <ScheduleDetail
                 listRow={s}
                 canCompose={canCompose}
-                authorWhy={authorWhy}
+                authorWhy={whyFor(s)}
+                ownerName={agencyName(s.ownerAgency)}
                 onChanged={() => setRefresh((n) => n + 1)}
                 tags={tags}
                 onSaveTags={(next) => inlineTags.save(s, next)}
                 tagErr={inlineTags.errors[key]}
               />
               </RefreshScope>
-            </td>
+            </DetailCell>
           </tr>
         )}
       </Fragment>
@@ -363,14 +381,11 @@ function CatalogTab() {
         <ColumnsMenu cols={cols} cw={cw} />
         {/* A disabled button inside a live <Link> would still navigate, so the
             link is only rendered when the click can succeed. */}
-        {canCompose &&
-          (authorWhy ? (
-            <Btn primary disabled title={authorWhy} style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ New schedule</Btn>
-          ) : (
-            <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
-              <Btn primary style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ New schedule</Btn>
-            </Link>
-          ))}
+        {canCompose && (
+          <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
+            <Btn primary style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ New schedule</Btn>
+          </Link>
+        )}
       </div>
 
       {loading && <div style={{ padding: 16 }}><SkeletonRows rows={5} /></div>}
@@ -384,13 +399,9 @@ function CatalogTab() {
           <div>No schedules yet. Schedules are synced from the schedules/ directory of the definitions repo, or authored in the Schedule Builder.</div>
           {canCompose && (
             <div style={{ marginTop: 12 }}>
-              {authorWhy ? (
-                <Btn small disabled title={authorWhy}>New schedule</Btn>
-              ) : (
-                <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
-                  <Btn small>New schedule</Btn>
-                </Link>
-              )}
+              <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
+                <Btn small>New schedule</Btn>
+              </Link>
             </div>
           )}
         </div>
@@ -409,10 +420,13 @@ function CatalogTab() {
           // Search mode: flat results across all folders, full path shown, paged
           // client-side (parity with Jobs/Scripts).
           <>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm }}>
-              <thead>{tableHeader()}</thead>
-              <tbody>{pageItems.map((s) => renderScheduleRow(s, scheduleDisplayPath(s)))}</tbody>
-            </table>
+            <div style={{ overflowX: "auto" }}>
+              {/* The table's own sideways scroll, which an open row's DetailCell holds itself to (2.5.2). */}
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm }}>
+                <thead>{tableHeader()}</thead>
+                <tbody>{pageItems.map((s) => renderScheduleRow(s, scheduleDisplayPath(s)))}</tbody>
+              </table>
+            </div>
             <Pager pager={pager} page={page} total={total} noun="schedules" />
           </>
         ) : (
@@ -446,11 +460,13 @@ function CatalogTab() {
 // compose administrator: Edit and Delete then render disabled with it as their
 // tooltip, and the sentence is repeated beside them, since a tooltip on a
 // disabled control is the one explanation a keyboard or touch user never meets.
-function ScheduleDetail({ listRow, canCompose, authorWhy, onChanged, tags, onSaveTags, tagErr }: { listRow: Schedule; canCompose: boolean; authorWhy: string; onChanged: () => void; tags: string[]; onSaveTags: (tags: string[]) => void; tagErr?: string }) {
+function ScheduleDetail({ listRow, canCompose, authorWhy, ownerName, onChanged, tags, onSaveTags, tagErr }: { listRow: Schedule; canCompose: boolean; authorWhy: string; ownerName: string; onChanged: () => void; tags: string[]; onSaveTags: (tags: string[]) => void; tagErr?: string }) {
   const name = listRow.name ?? "";
+  // 2.4.0 — two agencies may each have a schedule of the name: the row's own.
+  const agencyId = listRow.ownerAgency ?? undefined;
   const { data } = useGet<Schedule>(
-    () => api.GET("/schedule-defs/{name}", { params: { path: { name }, query: { source: listRow.source } } }),
-    [name, listRow.source],
+    () => api.GET("/schedule-defs/{name}", { params: { path: { name }, query: { source: listRow.source, ...(agencyId ? { agencyId } : {}) } } }),
+    [name, listRow.source, agencyId],
   );
   const s = data ?? listRow;
   const usedBy = s.usedBy ?? [];
@@ -471,7 +487,7 @@ function ScheduleDetail({ listRow, canCompose, authorWhy, onChanged, tags, onSav
     setDelErr(null);
     setDeleting(true);
     const { response, error } = await api.DELETE("/schedule-defs/{name}", {
-      params: { path: { name }, query: force ? { force: true } : {} },
+      params: { path: { name }, query: { ...(force ? { force: true } : {}), ...(agencyId ? { agencyId } : {}) } },
     });
     setDeleting(false);
     if (response.status === 409 && !force) {
@@ -494,6 +510,7 @@ function ScheduleDetail({ listRow, canCompose, authorWhy, onChanged, tags, onSav
       <div style={{ display: "flex", gap: 28, flexWrap: "wrap", fontSize: c.fontSm }}>
         <Field label="Cron" value={s.cron ?? "—"} mono />
         <Field label="Source" value={s.source ?? "—"} />
+        <Field label="Owner" value={ownerName} />
         <Field label="Source file" value={s.sourcePath ?? "—"} mono />
         <Field label="Content hash" value={shortHash(s.contentHash)} mono title={s.contentHash ?? undefined} />
         <Field label="Synced" value={fmtWhen(s.syncedAt)} />
@@ -553,7 +570,7 @@ function ScheduleDetail({ listRow, canCompose, authorWhy, onChanged, tags, onSav
             </>
           ) : canCompose ? (
             <>
-              <Link to={`/schedule-builder?name=${encodeURIComponent(name)}`} style={{ textDecoration: "none" }}>
+              <Link to={`/schedule-builder?name=${encodeURIComponent(name)}${agencyId ? `&agencyId=${encodeURIComponent(agencyId)}` : ""}`} style={{ textDecoration: "none" }}>
                 <Btn small>Edit</Btn>
               </Link>
               {pendingForce ? (
@@ -576,7 +593,7 @@ function ScheduleDetail({ listRow, canCompose, authorWhy, onChanged, tags, onSav
           )
         ) : (
           <span style={{ fontSize: c.fontSm, color: c.textMuted }}>
-            Authored in Git{s.sourcePath ? <> (<span style={{ fontFamily: c.mono }}>{s.sourcePath}</span>)</> : null} — read-only here; edit via the GitLab publish flow.
+            Authored in Git{s.sourcePath ? <> (<span style={{ fontFamily: c.mono }}>{s.sourcePath}</span>)</> : null} — read-only here; edit via the publish flow.
           </span>
         )}
         {delErr && <span style={{ fontSize: c.fontSm, color: pendingForce ? c.warning : c.danger }}>{delErr}</span>}

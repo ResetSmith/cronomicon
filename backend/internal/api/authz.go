@@ -4,10 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 	"net/http"
+	"slices"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
@@ -74,6 +80,16 @@ func (s *Server) denyScope(w http.ResponseWriter, r *http.Request, scope, messag
 	httpx.Fail(w, http.StatusForbidden, "forbidden", message)
 }
 
+// notReadable refuses a read of one object the caller may not read (2.5.0 C2,
+// the owner's answer to question 72): audited as denyScope does, but answered
+// 404, as for an object that is not there, so the route confirms nothing.
+func (s *Server) notReadable(w http.ResponseWriter, r *http.Request, scope, what string) {
+	if s.auth != nil {
+		s.auth.AuditDenied(r, auditActor(r), "insufficient_scope", scope, auditDetails(r, what+" not readable"))
+	}
+	httpx.Fail(w, http.StatusNotFound, "not_found", what+" not found")
+}
+
 // requireCan is the in-handler counterpart to requirePerm for SCOPED permissions
 // (RB-1/RB-5, the rbac-update plan).
 //
@@ -132,7 +148,9 @@ func (s *Server) requireReadableJob(w http.ResponseWriter, r *http.Request, jobI
 		if jr.Scope != nil {
 			scope = *jr.Scope
 		}
-		if !auth.ScopeReadable(id, scope) {
+		// Whose it is first (2.5.0 C2, CF-1): a no-scope job of another agency,
+		// or of Global's, passed the scope check, script body and env and all.
+		if !id.ReadsAgency(agencyOrGlobal(jr.OwnerAgency)) || !auth.ScopeReadableIn(id, jr.OwnerAgency, scope) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 			return nil, false
 		}
@@ -140,8 +158,15 @@ func (s *Server) requireReadableJob(w http.ResponseWriter, r *http.Request, jobI
 	return jr, true
 }
 
-func (s *Server) requireCan(w http.ResponseWriter, r *http.Request, id auth.Identity, perm, scope string) bool {
-	if id.Can(perm, scope) {
+// agency is whose scope it is (I2: a scope's name is unique within an agency
+// only, and a grant of an agency covers that agency's scopes). It is not read
+// for the AllScopes sentinel, nor for the empty scope.
+func (s *Server) requireCan(w http.ResponseWriter, r *http.Request, id auth.Identity, perm, agency, scope string) bool {
+	if scope == auth.AllScopes || scope == "" {
+		if id.Can(perm, scope) {
+			return true
+		}
+	} else if id.CanIn(perm, agency, scope) {
 		return true
 	}
 	where := scope
@@ -184,7 +209,7 @@ func (s *Server) denyUnrestricted(w http.ResponseWriter, r *http.Request, messag
 // requireGlobal gates an act on the INSTALLATION rather than on any one agency's
 // objects (GC-1): install-wide settings, the audit export, the agency catalog,
 // and every shared object that has no owner yet. It requires an UNRESTRICTED
-// grant that itself CARRIES perm — CanAgency(perm, ""), the predicate
+// grant that itself CARRIES perm — id.GlobalAdmin(perm), the predicate
 // requireFleetWide has always used for runner tokens.
 //
 // The two weaker checks it replaces are the reason it exists. requirePerm asks
@@ -215,11 +240,15 @@ func (s *Server) globalOnly(perm, message string, next http.Handler) http.Handle
 			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 			return
 		}
-		if !id.CanAgency(perm, "") {
+		if !id.GlobalAdmin(perm) {
 			s.denyEntityAgency(w, r, id, perm, auth.AllScopes, message)
 			return
 		}
-		next.ServeHTTP(w, r)
+		// 2.4.4: a change to the installation is Global's, whichever agency
+		// the administrator is viewing: its change log entry names no
+		// "acting in". (Its rows name their agency themselves, 2.5.0 C1.)
+		ctx := auditlog.WithActingAgency(r.Context(), "")
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -227,7 +256,7 @@ func (s *Server) globalOnly(perm, message string, next http.Handler) http.Handle
 // handlers that shape a response on it rather than refuse (GC-14).
 func isGlobal(r *http.Request, perm string) bool {
 	id, ok := auth.IdentityFrom(r.Context())
-	return ok && id.CanAgency(perm, "")
+	return ok && id.GlobalAdmin(perm)
 }
 
 // requireScopeAgency wraps a scope route with the departmental gate (GC-6): the
@@ -258,10 +287,11 @@ func (s *Server) requireScopeAgency(pathVar string, next http.Handler) http.Hand
 	})
 }
 
-// requireHostOwner wraps a write on ONE ssh host record (GC-7). A record that
-// was imported for a scope follows that scope's gate. A manually authored
-// record has no owner and applies to every scope — it wins over an imported
-// one — so until host records carry an owner it is a global administrator's.
+// requireHostOwner wraps a write on ONE ssh host record (GC-7, LR-69). A record
+// that was imported for a scope follows that scope's gate. A record written by
+// hand belongs to its owner_agency: that agency's administrators change it, and
+// a global administrator changes Global's. (Until 2.3.0 a hand-written record
+// had no owner, applied to every scope, and was a global administrator's alone.)
 //
 // A host id that matches no row falls through to the handler's own 404.
 func (s *Server) requireHostOwner(pathVar string, next http.Handler) http.Handler {
@@ -272,8 +302,9 @@ func (s *Server) requireHostOwner(pathVar string, next http.Handler) http.Handle
 			return
 		}
 		var scopeID sql.NullString
+		var owner string
 		err := s.db.QueryRowContext(r.Context(),
-			`SELECT scope_id FROM ssh_hosts WHERE id = ?`, r.PathValue(pathVar)).Scan(&scopeID)
+			`SELECT scope_id, owner_agency FROM ssh_hosts WHERE id = ?`, r.PathValue(pathVar)).Scan(&scopeID, &owner)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			next.ServeHTTP(w, r)
@@ -290,14 +321,55 @@ func (s *Server) requireHostOwner(pathVar string, next http.Handler) http.Handle
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !id.CanAgency(auth.PermConfigureApp, "") {
-			s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
-				"a manually authored host record applies to every scope, so only an "+
-					"administrator of every agency may change it")
+		if !s.requireRecordOwner(w, r, id, owner, "host record") {
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireBastionOwner wraps a write on ONE bastion (LR-69): its owner agency's
+// administrators, and a global administrator for Global's. An id that matches
+// no row falls through to the handler's own 404.
+func (s *Server) requireBastionOwner(pathVar string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := auth.IdentityFrom(r.Context())
+		if !ok {
+			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		var owner string
+		err := s.db.QueryRowContext(r.Context(),
+			`SELECT owner_agency FROM bastions WHERE id = ?`, r.PathValue(pathVar)).Scan(&owner)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			next.ServeHTTP(w, r)
+			return
+		case err != nil:
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if !s.requireRecordOwner(w, r, id, owner, "bastion") {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireRecordOwner is the owner check both wrappers share: configureApp on the
+// owning agency, which for Global is the global-administrator check.
+func (s *Server) requireRecordOwner(w http.ResponseWriter, r *http.Request, id auth.Identity, owner, label string) bool {
+	if id.CanAgency(auth.PermConfigureApp, owner) {
+		return true
+	}
+	if owner == agencyid.Global {
+		s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
+			"this "+label+" is Global's, so it applies to every agency; only a global administrator may change it")
+		return false
+	}
+	s.denyEntityAgency(w, r, id, auth.PermConfigureApp, owner,
+		"you do not have "+auth.PermConfigureApp+" on the agency that owns this "+label)
+	return false
 }
 
 // requireJobVisible is the read gate for the routes any signed-in user may
@@ -325,11 +397,98 @@ func (s *Server) requireJobVisible(w http.ResponseWriter, r *http.Request, jobID
 	if jr.Scope != nil {
 		scope = *jr.Scope
 	}
-	if !id.Unrestricted() && !auth.ScopeReadable(id, scope) {
+	// Whose it is first (2.5.0 C11, defect 71): C2 put CF-1 on the GETs only,
+	// and a no-scope job of another agency, or of Global's, passed the scope
+	// check here — and the tags and annotation writes answer with the row,
+	// script body and all.
+	if !id.Unrestricted() && (!readsAgency(r, jr.OwnerAgency) || !auth.ScopeReadableIn(id, jr.OwnerAgency, scope)) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return false
 	}
 	return true
+}
+
+// jobAgencyFor is whose a job is (agencyid.JobSQL), found by uid, or by source
+// and name for a caller with none: the agency its scope is looked for in and
+// whose grant is asked of it (I2). Global's when it cannot be told.
+func (s *Server) jobAgencyFor(ctx context.Context, uid, source, name string) string {
+	if source == "" {
+		source = "git"
+	}
+	var a sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT `+agencyid.JobSQL("j")+` FROM jobs j
+		WHERE CASE WHEN ?1 <> '' THEN j.uid = ?1 ELSE j.name = ?2 AND j.source = ?3 END
+		ORDER BY j.rowid LIMIT 1`, uid, name, source).Scan(&a)
+	if err != nil || !a.Valid {
+		return agencyid.Global
+	}
+	return a.String
+}
+
+// definitionAgencyFor is whose a definition is, by kind: a job's (jobAgencyFor),
+// a workflow's owner by uid, or by source and name for a row with none.
+func (s *Server) definitionAgencyFor(ctx context.Context, kind, uid, source, name string) string {
+	if kind != "workflow" {
+		return s.jobAgencyFor(ctx, uid, source, name)
+	}
+	if source == "" {
+		source = "git"
+	}
+	var a sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT `+agencyid.WorkflowSQL+` FROM workflows w
+		WHERE CASE WHEN ?1 <> '' THEN w.uid = ?1 ELSE w.name = ?2 AND w.source = ?3 END
+		ORDER BY w.rowid LIMIT 1`, uid, name, source).Scan(&a)
+	if err != nil || !a.Valid {
+		return agencyid.Global
+	}
+	return a.String
+}
+
+// pinAgency is the agency a retired runner pin's scope is in: its job's, or,
+// for a pin whose job is gone, the agency of the one scope of that name.
+func (s *Server) pinAgency(ctx context.Context, jobUID, jobSource, jobName, scope string) string {
+	var n int
+	if jobSource == "" {
+		jobSource = "git"
+	}
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs j
+		WHERE CASE WHEN ?1 <> '' THEN j.uid = ?1 ELSE j.name = ?2 AND j.source = ?3 END`, jobUID, jobName, jobSource).Scan(&n)
+	if n > 0 {
+		return s.jobAgencyFor(ctx, jobUID, jobSource, jobName)
+	}
+	a, err := execspec.ScopeOwnerByName(ctx, s.db, scope)
+	if err != nil {
+		return agencyid.Global
+	}
+	return a
+}
+
+// scopeOwnerByID is the agency a scope (by id) belongs to (owner_agency, 1410).
+// Global's for a scope that is gone.
+func (s *Server) scopeOwnerByID(ctx context.Context, scopeID string) string {
+	var owner string
+	if err := s.db.QueryRowContext(ctx, `SELECT owner_agency FROM scopes WHERE id = ?`, scopeID).Scan(&owner); err != nil {
+		return agencyid.Global
+	}
+	return owner
+}
+
+// agencyIDsByName maps every agency's name to its id, for a reader that has
+// rows that name their owner (I2: a grant is asked of a scope in an agency).
+func (s *Server) agencyIDsByName(ctx context.Context) map[string]string {
+	out := map[string]string{}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM agencies`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if rows.Scan(&id, &name) == nil {
+			out[name] = id
+		}
+	}
+	return out
 }
 
 // requireWorkflowVisible is requireJobVisible for a workflow, which has no scope
@@ -350,13 +509,22 @@ func (s *Server) requireWorkflowVisible(w http.ResponseWriter, r *http.Request, 
 	if id.Unrestricted() {
 		return true
 	}
-	scopes, err := workflow.New(s.db, s.log).JobScopes(r.Context(), wr.Steps, wr.Source)
+	// Whose it is first (2.5.0 C11, defect 71): a workflow none of whose jobs
+	// resolve passed below, whatever its agency.
+	if !s.workflowReadable(r, wr) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
+		return false
+	}
+	// With the workflow's home (GR-16): the jobs the engine would run for THIS
+	// workflow, which for a Git workflow are its own repository's.
+	eng := workflow.New(s.db, s.log)
+	scopes, err := eng.JobAgencyScopesAt(r.Context(), wr.Steps, wr.Source, eng.Home(r.Context(), wr.ID))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
 	}
 	for _, sc := range scopes {
-		if !auth.ScopeReadable(id, sc) {
+		if !auth.ScopeReadableIn(id, sc.Agency, sc.Scope) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
 			return false
 		}
@@ -397,8 +565,8 @@ func (s *Server) requireEntityAgency(w http.ResponseWriter, r *http.Request, id 
 	}
 	if deniedAgency == "" {
 		s.denyEntityAgency(w, r, id, perm, auth.AllScopes,
-			label+" belongs to no agency, so it is shared by every department; only an "+
-				"unrestricted operator may change or reveal it")
+			label+" belongs to Global, so it is shared by every agency; only a global "+
+				"administrator may change or reveal it")
 		return false
 	}
 	s.denyEntityAgency(w, r, id, perm, deniedAgency,
@@ -409,9 +577,21 @@ func (s *Server) requireEntityAgency(w http.ResponseWriter, r *http.Request, id 
 // entityAgencyPermitted is the transport-free core of requireEntityAgency, for
 // call sites that are not a whole route — the per-run reference/credential
 // checks inside runJob and the compose path (RF-4), where the denial response is
-// shaped by the caller. deniedAgency is "" for the empty-membership (RB-Q14)
-// case and the first owning agency otherwise; it is meaningful only when
-// permitted is false.
+// shaped by the caller. deniedAgency is "" when the entity is Global's (RB-Q14's
+// shared tier: a global administrator's to change) and the first owning agency
+// otherwise; it is meaningful only when permitted is false.
+//
+// Three outcomes when the entity has NO membership rows (migration 1220):
+//
+//   - the entity does not exist: there is nothing to own. A global administrator
+//     proceeds to the handler's own 404 or 422; anyone else is refused. (An id
+//     nothing matches has always read this way, and two callers rely on it: a
+//     scope id that names no row, and the ledger of a deregistered runner, whose
+//     membership went with it.)
+//   - the entity exists: that is an ERROR. Every scope, runner, secret, variable
+//     and key is born with a Global row and no route leaves one with none, so
+//     the row was deleted around the application. It is never read as "global".
+//   - (and with rows, the ordinary case: any one of its agencies suffices.)
 func (s *Server) entityAgencyPermitted(ctx context.Context, id auth.Identity,
 	perm, joinTable, joinCol, entityID string) (permitted bool, deniedAgency string, err error) {
 
@@ -440,16 +620,69 @@ func (s *Server) entityAgencyPermitted(ctx context.Context, id auth.Identity,
 	rows.Close()
 
 	if len(agencies) == 0 {
-		// The global-infrastructure case (RB-Q14). CanAgency("") already demands an
-		// unrestricted grant, so this is one call rather than a special case.
-		return id.CanAgency(perm, ""), "", nil
+		catalog, known := membershipCatalog[joinTable]
+		if !known {
+			return false, "", fmt.Errorf("entityAgencyPermitted: unknown membership table %q", joinTable)
+		}
+		var exists bool
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT EXISTS (SELECT 1 FROM `+catalog+` WHERE id = ?)`, entityID).Scan(&exists); err != nil {
+			return false, "", err
+		}
+		if exists {
+			return false, "", fmt.Errorf("%w: %s %s — every row has at least Global's "+
+				"(migration 1220), so this one was changed outside the application", errInNoAgency, catalog, entityID)
+		}
+		return id.GlobalAdmin(perm), "", nil
 	}
+	onlyGlobal := true
 	for _, a := range agencies {
+		if a != agencyid.Global {
+			onlyGlobal = false
+		}
 		if id.CanAgency(perm, a) {
 			return true, "", nil
 		}
 	}
+	if onlyGlobal {
+		return false, "", nil
+	}
 	return false, agencies[0], nil
+}
+
+// errInNoAgency is entityAgencyPermitted's answer for a row that exists and has
+// no membership rows. Every route but one turns it into a 500: nobody can be
+// shown to own the row, so nobody is let through. The one is the route that
+// GIVES a row its agencies (requireEntityAgencyOrRepair) — without it the row
+// could never be put right from inside the application.
+var errInNoAgency = errors.New("belongs to no agency")
+
+// requireEntityAgencyOrRepair is requireEntityAgency for the membership setters
+// alone. A row in no agency is damage, and assigning it an agency is the repair:
+// a GLOBAL administrator may do that (the row is nobody's, and what nobody owns
+// is theirs to place), and it is logged. Anyone else gets the 500 every other
+// route gives — a department's administrator claiming an orphan would be taking
+// a row they cannot be shown to own.
+func (s *Server) requireEntityAgencyOrRepair(w http.ResponseWriter, r *http.Request, id auth.Identity,
+	perm, joinTable, joinCol, entityID, label string) bool {
+
+	_, _, err := s.entityAgencyPermitted(r.Context(), id, perm, joinTable, joinCol, entityID)
+	if errors.Is(err, errInNoAgency) && id.GlobalAdmin(perm) {
+		s.log.Warn("agency membership: repairing a row that was in no agency",
+			"kind", label, "id", entityID, "actor", id.Email)
+		return true
+	}
+	return s.requireEntityAgency(w, r, id, perm, joinTable, joinCol, entityID, label)
+}
+
+// membershipCatalog maps a membership join table to the table its entity lives
+// in. Compile-time constants, never input.
+var membershipCatalog = map[string]string{
+	"scope_agencies":          "scopes",
+	"runner_agencies":         "runners",
+	"secret_agencies":         "secrets",
+	"env_var_agencies":        "env_vars",
+	"ssh_credential_agencies": "ssh_credentials",
 }
 
 // requireCreationAgencies enforces the RF-Q2(a) creation rule
@@ -477,7 +710,23 @@ func (s *Server) entityAgencyPermitted(ctx context.Context, id auth.Identity,
 func (s *Server) requireCreationAgencies(w http.ResponseWriter, r *http.Request, id auth.Identity,
 	perm string, agencyIDs []string, label string) ([]string, bool) {
 
-	// ⚠️ The predicate is CanAgency(perm, ""), not Unrestricted(). Unrestricted() is
+	// 2.4.4 S3: in an agency context, a create that names no agency is that
+	// agency's, and one that names another is refused. (Several named is the
+	// one_agency refusal below.)
+	if len(agencyIDs) <= 1 {
+		given := ""
+		if len(agencyIDs) == 1 {
+			given = agencyIDs[0]
+		}
+		owner, ok := s.ownerInContext(w, r, given, label)
+		if !ok {
+			return nil, false
+		}
+		if owner != "" {
+			agencyIDs = []string{owner}
+		}
+	}
+	// ⚠️ The predicate is GlobalAdmin(perm), not Unrestricted(). Unrestricted() is
 	// permission-BLIND — it asks only whether some grant reaches every scope, and
 	// UnionGrantScopes collapses to ["*"] if ANY grant does. A user who is an
 	// unrestricted VIEWER and a Tax ADMIN reads as unrestricted, would be waved
@@ -486,25 +735,47 @@ func (s *Server) requireCreationAgencies(w http.ResponseWriter, r *http.Request,
 	// unrestricted grant CARRYING THE PERMISSION, which their viewer grant does not.
 	// That is precisely the lockout this rule exists to prevent, so the two must ask
 	// the same question.
-	if !id.CanAgency(perm, "") && len(agencyIDs) == 0 {
+	if !id.GlobalAdmin(perm) && len(agencyIDs) == 0 {
 		// RA-9: inherit, when "their department" has exactly one answer. The inherited
 		// id still goes through the existence + entitlement loop below, so inheritance
 		// can never place a row somewhere an explicit request could not.
 		if held := id.AgenciesFor(perm); len(held) == 1 {
 			agencyIDs = held
 		} else {
-			msg := "your access is department-scoped: assign this " + label +
-				" to at least one of your agencies (agencyIds) so your department keeps ownership of it"
+			// The body field differs by route (agencyIds for a scope, secret,
+			// variable or key; ownerAgency for a host record or bastion), so the
+			// sentence names the thing to do, not the field.
+			msg := "your access is department-scoped: name the agency that owns this " + label +
+				", one of yours, so your department keeps ownership of it"
 			if len(held) > 1 {
 				// Naming the departments makes this actionable — the actor holds the
 				// permission on all of them, so this reveals nothing they cannot list.
 				msg = "you hold " + perm + " on more than one department, so this " + label +
-					" cannot inherit one: name the owning agency explicitly in agencyIds (" +
+					" cannot inherit one: name the owning agency explicitly (" +
 					strings.Join(held, ", ") + ")"
 			}
 			httpx.Fail(w, http.StatusUnprocessableEntity, "agency_required", msg)
 			return nil, false
 		}
+	}
+	// A global administrator who names nothing creates in Global (LR-22). It used
+	// to be "in no agency"; Global is where that row has always belonged, and it
+	// is said as a membership now, so nothing downstream has to read an empty set.
+	if len(agencyIDs) == 0 {
+		agencyIDs = []string{agencyid.Global}
+	}
+	// One agency, or Global (LR-7, LR-54). Repeats of one id are one id.
+	agencyIDs = slices.Compact(slices.Sorted(slices.Values(agencyIDs)))
+	if err := settings.ValidateAgencySet(agencyIDs); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "global_mixed",
+			"a new "+label+" is Global's or an agency's, never both: name Global alone, or the agency")
+		return nil, false
+	}
+	if len(agencyIDs) > 1 {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "one_agency",
+			"a new "+label+" belongs to exactly one agency: name the one that owns it. "+
+				"What several agencies need is a copy in each")
+		return nil, false
 	}
 	for _, a := range agencyIDs {
 		var n int
@@ -612,7 +883,7 @@ func (s *Server) refEntityPermitted(ctx context.Context, id auth.Identity,
 		return true, nil
 	}
 	if deniedAgency == "" {
-		// ⚠️ The UNMEMBERED entity is allowed here, unlike on the settings routes,
+		// ⚠️ A GLOBAL entity is allowed here, unlike on the settings routes,
 		// and the asymmetry is deliberate. RB-Q14 makes shared infrastructure
 		// unrestricted-only for "writes and reveal" and says in the same breath that
 		// "reads and RUN-TIME CONSUMPTION are unchanged" — and attaching a reference
@@ -638,25 +909,98 @@ func (s *Server) denyEntityAgency(w http.ResponseWriter, r *http.Request, id aut
 	httpx.Fail(w, http.StatusForbidden, "forbidden", message)
 }
 
+// ownedRowMembership names, for each table requireRowOwner gates, its
+// membership table and column (heldByGlobalFor reads them). Compile-time
+// constants, never input.
+var ownedRowMembership = map[string]struct{ table, col string }{
+	"secrets":         {"secret_agencies", "secret_id"},
+	"ssh_credentials": {"ssh_credential_agencies", "credential_id"},
+}
+
+// requireRowOwner is the gate for a secret's or an SSH key's reveal, its
+// lock-reveal and every write to it (2.5.1 SG-42, SG-19): perm on the agency
+// that OWNS the row, so a Global-owned row is a global administrator's. The
+// membership gate it replaces (requireEntityAgency) let any agency the row
+// lists through, and a row several agencies shared before 2.3.0 is Global's
+// and lists them all: each could reveal it, lock it for good, or delete a key
+// Global's runs use (the 2.5.1 review's A1, A2).
+//
+// It answers 404 first to a caller who cannot read the row, before any verb is
+// judged, so no 403 says whose a row is (question 72; C11's decision 109,
+// applied to these routes by question 140). A member agency reads a row Global
+// holds for it (heldByGlobalFor, SG-16), so it gets the 403: read only.
+//
+// The call site is `if !s.requireRowOwner(...) { return }`; the response is
+// written on refusal.
+func (s *Server) requireRowOwner(w http.ResponseWriter, r *http.Request, id auth.Identity,
+	perm, table, rowID, label string) bool {
+
+	m, known := ownedRowMembership[table]
+	if !known {
+		httpx.Fail500(w, s.log, "db_error", fmt.Errorf("requireRowOwner: unknown table %q", table))
+		return false
+	}
+	var owner string
+	err := s.db.QueryRowContext(r.Context(), `SELECT owner_agency FROM `+table+` WHERE id = ?`, rowID).Scan(&owner) //nolint:gosec // fixed identifiers
+	if errors.Is(err, sql.ErrNoRows) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", label+" not found")
+		return false
+	}
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if !readsAgency(r, owner) && !s.heldByGlobalFor(r, table, m.table, m.col, rowID) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", label+" not found")
+		return false
+	}
+	// A row with no membership rows is damage (LR-22), whoever owns it: the
+	// 500 every membership gate gives, so it is not changed as if it were whole.
+	var members int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM `+m.table+` WHERE `+m.col+` = ?`, rowID).Scan(&members); err != nil { //nolint:gosec // fixed identifiers
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if members == 0 {
+		httpx.Fail500(w, s.log, "db_error", fmt.Errorf("%w: %s %s — every row has at least Global's "+
+			"(migration 1220), so this one was changed outside the application", errInNoAgency, table, rowID))
+		return false
+	}
+	if id.CanAgency(perm, owner) {
+		return true
+	}
+	if owner == agencyid.Global {
+		s.denyEntityAgency(w, r, id, perm, auth.AllScopes,
+			label+" belongs to Global; only a global administrator may change or reveal it")
+		return false
+	}
+	s.denyEntityAgency(w, r, id, perm, owner, "you do not have "+perm+" on the agency that owns this "+label)
+	return false
+}
+
 // ownerAgencyFor picks the OWNER for a newly created secret / variable / SSH key
 // from the effective agency set requireCreationAgencies returned (RA-15, Phase E).
 //
 // Ownership is deliberately SINGLE-VALUED — that is what lets uniqueness stay a
 // plain DB fact rather than a property of a many-to-many join (§2.6). So:
 //
-//	exactly one agency  ⇒ that agency owns the row (the departmental case)
-//	none                ⇒ unowned: shared infrastructure, an unrestricted admin's
-//	                      deliberate statement, and every pre-Phase-E row
-//	several             ⇒ unowned, but VISIBLE to all of them via membership
+//	exactly one agency  ⇒ that agency owns the row (the departmental case, and —
+//	                      when the one agency is Global — shared infrastructure,
+//	                      a global administrator's deliberate statement)
+//	several             ⇒ Global owns it, VISIBLE only to those agencies via
+//	                      membership
 //
 // The last case is the interesting one. A creator who names several departments is
-// saying "these departments share this", which is exactly what an unowned row with
-// multi-department membership means — whereas picking one of them as owner would
+// saying "these departments share this", which is exactly what a Global-owned row
+// with a narrowed member list means — whereas picking one of them as owner would
 // invent an ownership claim they never made, and silently give that department's
 // runs precedence over the others'. Membership still narrows who can reach it.
+// (LR-54 retires the several case: one agency per secret, variable and key.)
+//
+// Never empty since migration 1220: "unowned" is "Global's", with an id.
 func ownerAgencyFor(agencyIDs []string) string {
 	if len(agencyIDs) == 1 {
 		return agencyIDs[0]
 	}
-	return ""
+	return agencyid.Global
 }

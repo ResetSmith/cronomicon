@@ -5,6 +5,8 @@ package auth
 
 import (
 	"context"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"slices"
 	"time"
 )
@@ -185,6 +187,32 @@ func (i Identity) Can(perm, scope string) bool {
 	return false
 }
 
+// CanIn is Can for a scope of a named agency: the same grant carries the
+// permission and covers the scope, and a grant of an agency covers that
+// agency's scopes only. A scope's name is unique within an agency only (I2,
+// IN-5), so Can's "this name" cannot tell Finance's `web` from Tax's; every
+// caller that knows whose the object is asks this. An unrestricted grant
+// covers every agency, as for Can.
+func (i Identity) CanIn(perm, agency, scope string) bool {
+	for _, g := range i.RoleGrants() {
+		if !PermsForRoles([]string{g.Role}).Has(perm) {
+			continue
+		}
+		if g.Unrestricted() {
+			return true
+		}
+		if scope == AllScopes {
+			continue
+		}
+		// A grant that names no agency, or a row that names no owner, covers by
+		// name alone (scopes.go, grantCoversIn says why).
+		if (agency == "" || g.Agency == "" || g.Agency == agency) && g.Covers(scope) {
+			return true
+		}
+	}
+	return false
+}
+
 // CanAnywhere reports whether ANY of the actor's grants carries perm, ignoring
 // scope entirely — "may this actor do this somewhere".
 //
@@ -215,12 +243,24 @@ func (i Identity) CanAnywhere(perm string) bool {
 // Unused in v0.56.0. RB-2/RB-26 call it in v0.56.4; it ships now so that release
 // is a substitution rather than a new mechanism arriving alongside a behavioral
 // shock.
-func (i Identity) CanUnbound(perm string) bool {
+func (i Identity) CanUnbound(perm string) bool { return i.GlobalAdmin(perm) }
+
+// GlobalAdmin reports whether the actor is a global administrator for perm: one
+// of their grants reaches EVERY agency and itself carries the permission.
+//
+// It is the one predicate behind "this changes the installation, or something no
+// single agency owns". It was written three ways before v2.3.0 — CanUnbound(perm),
+// CanAgency(perm, "") with an empty agency standing for "no agency", and (the bug
+// the GC band closed) a bare Unrestricted() — and the middle one stops making
+// sense once Global is a real agency with an id of its own (LR-8, LR-21): an
+// empty string is then no agency at all, and must not be something a caller can
+// pass to mean "everywhere". Ask this instead.
+//
+// A viewer on every agency is NOT a global administrator for configureApp: the
+// grant that reaches everywhere has to be the grant that carries the verb.
+func (i Identity) GlobalAdmin(perm string) bool {
 	for _, g := range i.RoleGrants() {
-		if !PermsForRoles([]string{g.Role}).Has(perm) {
-			continue
-		}
-		if g.Unrestricted() {
+		if g.Unrestricted() && PermsForRoles([]string{g.Role}).Has(perm) {
 			return true
 		}
 	}
@@ -242,7 +282,19 @@ func (i Identity) CanUnbound(perm string) bool {
 // true only for unrestricted actors holding the permission. It is wired to real
 // membership by RB-16/RB-32 in Phase 2; it exists now so the seam is complete and
 // testable, not because anything calls it yet.
+//
+// Global (migration 1220) is the one agency no grant may name (LR-9): it
+// belongs to the global administrators, so authority on it IS GlobalAdmin, and
+// that is decided here explicitly — a grant row that named Global, should one
+// ever get in, must not pass for it. An EMPTY agency id is no agency at all and
+// passes for nobody; "everywhere" is spelled GlobalAdmin(perm).
 func (i Identity) CanAgency(perm, agencyID string) bool {
+	if agencyID == agencyid.Global {
+		return i.GlobalAdmin(perm)
+	}
+	if agencyID == "" {
+		return false
+	}
 	for _, g := range i.RoleGrants() {
 		if !PermsForRoles([]string{g.Role}).Has(perm) {
 			continue
@@ -257,10 +309,54 @@ func (i Identity) CanAgency(perm, agencyID string) bool {
 	return false
 }
 
+// ReadsAgency reports whether the actor may READ what belongs to an agency
+// (2.4.0, GR-26; CF-1): an agency's are its own people's, anyone who holds a
+// grant on that agency, whatever the role, and theirs whose grant reaches every
+// agency (a global administrator, and a viewer of everything, the operations
+// team). Global is an agency like the others (IN-3): since 2.5.0 C2 its rows
+// are only the latter's, no longer every session's (the owner's answer to
+// question 77; GR-26 said otherwise). An empty agency id is no agency, and
+// nobody reads it.
+func (i Identity) ReadsAgency(agencyID string) bool {
+	if agencyID == agencyid.Global {
+		everywhere, _ := i.AgenciesRead()
+		return everywhere
+	}
+	if agencyID == "" {
+		return false
+	}
+	for _, g := range i.RoleGrants() {
+		if g.Unrestricted() || g.Agency == agencyID {
+			return true
+		}
+	}
+	return false
+}
+
+// AgenciesRead is ReadsAgency as a list, for a query that filters rows:
+// everywhere is true when one of the actor's grants reaches every agency, and
+// then the list is not needed; otherwise agencies is the ids of the agencies
+// the actor holds a grant on, sorted. Global is never in the list: its rows
+// are only theirs whose grant reaches every agency (2.5.0 C2, question 77).
+func (i Identity) AgenciesRead() (everywhere bool, agencies []string) {
+	seen := map[string]bool{}
+	for _, g := range i.RoleGrants() {
+		if g.Unrestricted() {
+			return true, nil
+		}
+		if g.Agency != "" && !seen[g.Agency] {
+			seen[g.Agency] = true
+			agencies = append(agencies, g.Agency)
+		}
+	}
+	slices.Sort(agencies)
+	return false, agencies
+}
+
 // AgenciesFor lists the agency IDs this actor holds perm on through a DEPARTMENTAL
 // grant, sorted and de-duplicated. Unrestricted grants contribute nothing — they
 // reach every agency without naming one, so there is no id to return, and a caller
-// that needs "does this actor reach everywhere?" must ask CanAgency(perm, "").
+// that needs "does this actor reach everywhere?" must ask GlobalAdmin(perm).
 //
 // RA-9: this is what lets a new secret/variable/SSH key INHERIT its creator's
 // department instead of being refused for not naming one. Exactly one entry is the
@@ -292,9 +388,39 @@ const (
 	runnerIDKey
 )
 
-// withIdentity returns a context carrying the authenticated operator.
+// withIdentity returns a context carrying the authenticated operator, and the
+// judge each change_log row asks how that operator stands to the row's agency
+// (2.5.1 SG-11). Every way an identity is attached comes through here, so no
+// request's change is recorded as a system one.
 func withIdentity(ctx context.Context, id Identity) context.Context {
-	return context.WithValue(ctx, identityKey, id)
+	ctx = context.WithValue(ctx, identityKey, id)
+	return auditlog.WithActorRelation(ctx, id.RelationTo)
+}
+
+// RelationTo is how the actor stands to an agency, as a change_log row records
+// it (2.5.1 SG-11): a member (a grant names the agency; for Global, whose rows
+// are the global administrators', a grant that reaches every agency), a global
+// administrator who holds no grant on it, or someone outside it. An empty id is
+// Global's (an owner that names no agency reads as Global's).
+func (i Identity) RelationTo(agencyID string) string {
+	everywhere := false
+	for _, g := range i.RoleGrants() {
+		if g.Unrestricted() {
+			everywhere = true
+			continue
+		}
+		if agencyID != "" && agencyID != agencyid.Global && g.Agency == agencyID {
+			return auditlog.RelationMember
+		}
+	}
+	switch {
+	case (agencyID == "" || agencyID == agencyid.Global) && everywhere:
+		return auditlog.RelationMember
+	case everywhere && i.GlobalAdmin(PermConfigureApp):
+		return auditlog.RelationGlobalAdmin
+	default:
+		return auditlog.RelationOutside
+	}
 }
 
 // WithIdentity returns a context carrying id, exactly as the auth middleware does

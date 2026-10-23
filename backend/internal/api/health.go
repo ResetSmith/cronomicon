@@ -42,7 +42,13 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	ok := true
 	for _, c := range s.readyChecks {
 		if err := c.Check(ctx); err != nil {
-			results[c.Name] = "error: " + err.Error()
+			// The route is unauthenticated: it says which check failed, and the
+			// log says why (2.5.0 C2, question 73: the error's text, a path or
+			// an address among them, was answered to anyone).
+			if s.log != nil {
+				s.log.Warn("readiness check failed", "check", c.Name, "error", err)
+			}
+			results[c.Name] = "error"
 			ok = false
 			continue
 		}

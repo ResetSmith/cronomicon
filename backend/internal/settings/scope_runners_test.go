@@ -201,6 +201,17 @@ func TestPreviewScopeRunners(t *testing.T) {
 	// restart binds a secret, so it needs an injection-flagged runner once it moves.
 	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
 	      VALUES('job','cronomicon','restart','u-shell','secret','DB_PASSWORD','t')`)
+	// pinned's SCRIPT binds a variable, so pinned needs one too. deploy names a
+	// script of the SAME NAME that is not the one with the binding (another
+	// repository's), so it does not. The preview finds a job's script by
+	// jobs.script_uid (migration 1290), never by the name: by name it would
+	// count deploy as well.
+	exec(`INSERT INTO scripts(uid, repo_id, name, run_type, command, content_hash, synced_at)
+	      VALUES('uid-lib','global','lib.sh','bash','x','h','t'), ('uid-lib-other','repo-b','lib.sh','bash','x','h','t')`)
+	exec(`UPDATE jobs SET script_ref='lib.sh', script_uid='uid-lib' WHERE uid='u-runner'`)
+	exec(`UPDATE jobs SET script_ref='lib.sh', script_uid='uid-lib-other' WHERE uid='u-play'`)
+	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
+	      VALUES('script','','lib.sh','uid-lib','var','REGION','t')`)
 	exec(`INSERT INTO runs(id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
 	      VALUES('run-ssh','restart','bash','dmz-web','queued','seed','manual','ssh','t')`)
 	// Parked runs frozen onto ssh count too — they are promoted onto it later.
@@ -231,6 +242,8 @@ func TestPreviewScopeRunners(t *testing.T) {
 	exec(`INSERT INTO runners(id, name, status, capabilities, managed_settings, registered_at, created_at)
 	      VALUES('r-junk','runner-junk','online','["bash"]','not json','t','t')`)
 	exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES('r-junk','ag-fin')`)
+	// Finance's agents are Finance's (since §0a a runner takes its owner's work only).
+	exec(`UPDATE runners SET owner_agency = 'ag-fin' WHERE id IN ('r-full', 'r-thin', 'r-junk')`)
 
 	names := func(js []PreviewJob) string {
 		out := ""
@@ -240,33 +253,54 @@ func TestPreviewScopeRunners(t *testing.T) {
 		return out
 	}
 
-	// Binding an open scope.
-	p, err := PreviewScopeRunners(ctx, pool, "s-dmz", []string{"r-full", "r-thin", "r-out", "r-nope", "r-junk"})
+	// The local runner, which serves Global only (§0a; until then it served Finance
+	// too, and lost and gained the scope below with the agents), and legacy binds an SSH key.
+	exec(`INSERT INTO runners(id, name, kind, status, capabilities, allow_secret_injection, registered_at, created_at)
+	      VALUES('r-local','Local runner','server','online','["bash","perl","powershell","python"]',1,'t','t')`)
+	exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES('r-local','ag-fin')`)
+	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
+	      VALUES('job','cronomicon','legacy','u-ssh','key','deploy_key','t')`)
+	who := func(rs []PreviewRunnerRef) string {
+		out := ""
+		for _, r := range rs {
+			out += r.Name + " "
+		}
+		return out
+	}
+
+	// Binding an open scope to two of the four runners that serve Finance: the
+	// other two — the local runner among them — stop taking its runs.
+	p, err := PreviewScopeRunners(ctx, pool, "s-dmz", []string{"r-full", "r-thin", "r-out", "r-nope"})
 	if err != nil {
 		t.Fatalf("preview: %v", err)
 	}
 	if p.CurrentlyBound || !p.WillBeBound {
 		t.Errorf("bound state = %v → %v, want false → true", p.CurrentlyBound, p.WillBeBound)
 	}
-	if got := names(p.JobsMovingToRunner); got != "restart " {
-		t.Errorf("moving to runner = %q, want only restart", got)
+	if got := who(p.RunnersLosing); got != "runner-junk " {
+		t.Errorf("runners losing the scope = %q, want runner-junk", got)
 	}
-	if got := names(p.JobsRefused); got != "legacy " {
-		t.Errorf("refused = %q, want only legacy", got)
+	if len(p.RunnersGaining) != 0 {
+		t.Errorf("runners gaining the scope = %q, want none when binding an open scope", who(p.RunnersGaining))
 	}
-	if len(p.JobsMovingToSSH) != 0 {
-		t.Errorf("moving to ssh = %q, want none when binding", names(p.JobsMovingToSSH))
+	for _, r := range p.RunnersLosing {
+		if r.Local != (r.RunnerID == "r-local") {
+			t.Errorf("%s: local = %v", r.Name, r.Local)
+		}
 	}
-	if p.QueuedSSHRuns != 2 {
-		t.Errorf("queued ssh runs = %d, want 2 (one queued, one parked)", p.QueuedSSHRuns)
+	// An agent is among the runners bound, so the key-bound job has someone to
+	// deliver its key.
+	if len(p.JobsNeedingAgent) != 0 {
+		t.Errorf("jobs needing an agent = %q, want none with agents bound", names(p.JobsNeedingAgent))
 	}
-	// legacy is refused, so it sets no requirement: bash (restart), python
-	// (pinned) and ansible (deploy) are what the runners must cover.
+	// Every job of the scope sets a requirement: there is one executor, and the
+	// job's own `executor` is not read.
 	if got := strings.Join(p.RunTypes, ","); got != "ansible,bash,python" {
 		t.Errorf("run types = %q, want ansible,bash,python", got)
 	}
-	if p.JobsNeedingInjection != 1 {
-		t.Errorf("jobs needing injection = %d, want 1", p.JobsNeedingInjection)
+	if p.JobsNeedingInjection != 3 {
+		t.Errorf("jobs needing injection = %d, want 3 (restart's secret, legacy's key, pinned's script's variable; "+
+			"not deploy, whose script only shares that script's name)", p.JobsNeedingInjection)
 	}
 	byID := map[string]PreviewRunner{}
 	for _, r := range p.Runners {
@@ -281,9 +315,6 @@ func TestPreviewScopeRunners(t *testing.T) {
 	if r := byID["r-out"]; !r.Registered || r.Eligible {
 		t.Errorf("r-out = %+v, want registered but not eligible", r)
 	}
-	if r := byID["r-junk"]; !r.Registered || strings.Join(r.Capabilities, ",") != "bash" {
-		t.Errorf("r-junk = %+v, want registered with its declared capabilities", r)
-	}
 	if r := byID["r-nope"]; r.Registered || r.Eligible {
 		t.Errorf("r-nope = %+v, want unregistered", r)
 	}
@@ -292,8 +323,36 @@ func TestPreviewScopeRunners(t *testing.T) {
 		t.Errorf("binding rows after a preview = %d (err %v), want 0 — a preview writes nothing", rows, err)
 	}
 
-	// Clearing a bound scope: what the binding was holding on the runners goes
-	// back to the server, including the job that was being refused.
+	// A runner whose managed settings are not JSON is still previewed, with its
+	// declared capabilities.
+	p, err = PreviewScopeRunners(ctx, pool, "s-dmz", []string{"r-junk"})
+	if err != nil {
+		t.Fatalf("preview junk: %v", err)
+	}
+	if r := p.Runners[0]; !r.Registered || strings.Join(r.Capabilities, ",") != "bash" {
+		t.Errorf("r-junk = %+v, want registered with its declared capabilities", r)
+	}
+
+	// Binding the scope to the local runner ALONE: no agent serves it any more,
+	// and the job that binds an SSH key would be refused (LR-47).
+	p, err = PreviewScopeRunners(ctx, pool, "s-dmz", []string{"r-local"})
+	if err != nil {
+		t.Fatalf("preview local: %v", err)
+	}
+	if got := names(p.JobsNeedingAgent); got != "legacy " {
+		t.Errorf("jobs needing an agent with only the local runner bound = %q, want legacy", got)
+	}
+	if got := who(p.RunnersLosing); got != "runner-full runner-junk runner-thin " {
+		t.Errorf("runners losing the scope = %q, want the three agents", got)
+	}
+	// It has no known_hosts of its own to be missing a key from (until its keys
+	// move to the ledger, it verifies against the keys kept with the SSH targets).
+	if r := p.Runners[0]; !r.Local || r.HostsWithoutKey != 0 {
+		t.Errorf("the local runner in the preview = %+v, want local and no missing host keys", r)
+	}
+
+	// Clearing a bound scope: every runner that serves Finance takes its runs
+	// again.
 	exec(`INSERT INTO scope_runners(scope_id, runner_id, runner_name, bound_at) VALUES('s-dmz','r-full','runner-full','t')`)
 	p, err = PreviewScopeRunners(ctx, pool, "s-dmz", []string{})
 	if err != nil {
@@ -302,21 +361,21 @@ func TestPreviewScopeRunners(t *testing.T) {
 	if !p.CurrentlyBound || p.WillBeBound {
 		t.Errorf("bound state = %v → %v, want true → false", p.CurrentlyBound, p.WillBeBound)
 	}
-	if got := names(p.JobsMovingToSSH); got != "legacy restart " {
-		t.Errorf("moving to ssh on clear = %q, want legacy and restart", got)
+	if got := who(p.RunnersGaining); got != "runner-junk runner-thin " {
+		t.Errorf("runners gaining the scope on clear = %q, want everyone in Finance but the one already bound", got)
 	}
-	if len(p.JobsMovingToRunner) != 0 || len(p.JobsRefused) != 0 {
-		t.Errorf("on clear: to runner %q, refused %q; want neither", names(p.JobsMovingToRunner), names(p.JobsRefused))
+	if len(p.RunnersLosing) != 0 || len(p.JobsNeedingAgent) != 0 {
+		t.Errorf("on clear: losing %q, needing an agent %q; want neither", who(p.RunnersLosing), names(p.JobsNeedingAgent))
 	}
 
-	// Swapping one runner for another on a bound scope moves nothing.
+	// Swapping one runner for another on a bound scope: one out, one in.
 	p, err = PreviewScopeRunners(ctx, pool, "s-dmz", []string{"r-thin"})
 	if err != nil {
 		t.Fatalf("preview swap: %v", err)
 	}
-	if len(p.JobsMovingToRunner) != 0 || len(p.JobsMovingToSSH) != 0 || names(p.JobsRefused) != "legacy " {
-		t.Errorf("on swap: to runner %q, to ssh %q, refused %q; want none, none, legacy",
-			names(p.JobsMovingToRunner), names(p.JobsMovingToSSH), names(p.JobsRefused))
+	if who(p.RunnersLosing) != "runner-full " || who(p.RunnersGaining) != "runner-thin " {
+		t.Errorf("on swap: losing %q, gaining %q; want runner-full out and runner-thin in",
+			who(p.RunnersLosing), who(p.RunnersGaining))
 	}
 
 	if p, err := PreviewScopeRunners(ctx, pool, "no-such-scope", nil); err != nil || p != nil {

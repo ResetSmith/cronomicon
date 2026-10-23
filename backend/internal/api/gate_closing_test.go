@@ -56,7 +56,11 @@ func TestGC_UnrestrictedViewerWhoAdministersOneAgencyIsNotAGlobalAdmin(t *testin
 	if n := count(t, pool, `SELECT COUNT(*) FROM access_grants WHERE ad_group='mine'`); n != 0 {
 		t.Errorf("an all-scopes grant was written by a non-global actor")
 	}
-	// The delegate half still works: the same actor grants inside FIN.
+	// The delegate half still works: the same actor grants inside FIN, to a
+	// group on FIN's list (2.5.0 C5, GA-1).
+	if _, err := pool.Exec(`INSERT INTO agency_groups (agency_id, ad_group, created_at) VALUES ('ag:FIN','fin-ops','t')`); err != nil {
+		t.Fatal(err)
+	}
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/access-grants", gMixed,
 		`{"adGroup":"fin-ops","role":"operator","agencyId":"ag:FIN","allScopes":false}`)
 	if rec.Code != http.StatusCreated {
@@ -74,9 +78,12 @@ func TestGC_SharedAuthoringNeedsComposeAndConfigureOnEveryAgency(t *testing.T) {
 		deny bool
 		why  string
 	}{
-		{gFinAdmin, true, "the built-in admin role on ONE agency passed RequireRole(\"admin\")"},
-		{gAllComposer, true, "compose on every agency, without configureApp, is not an installation administrator"},
-		{gMixed, true, "compose and configureApp must come from the SAME unrestricted grant"},
+		// Since §0a (2.4.0) a calendar is its agency's, and this one is
+		// Global's: creating it takes compose on Global. Until then it took an
+		// installation administrator (compose and configureApp on every agency).
+		{gFinAdmin, true, "the built-in admin role on ONE agency holds no compose on Global"},
+		{gAllComposer, false, "compose on every agency includes Global"},
+		{gMixed, true, "an all-scopes viewer who administers FIN holds no compose on Global"},
 		{gAllFull, false, "a custom role holding both on every agency is; the gate names no role"},
 		{gRoot, false, "the built-in admin on every agency"},
 	} {
@@ -182,20 +189,107 @@ func TestGC_ScopesAreAdministeredByTheirOwnAgency(t *testing.T) {
 		t.Errorf("fin admin editing its own scope = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
 
-	// Moving a scope between agencies is a global administrator's, on every setter.
-	for _, c := range []struct{ path, body string }{
-		{"/api/v1/scopes/sc:tax/agency", `{"agencyIds":["ag:FIN"]}`},
-		{"/api/v1/scope-agencies", `[{"id":"sc:tax","agencyIds":["ag:FIN"]}]`},
-		{"/api/v1/agencies/ag:FIN/members", `{"members":[{"kind":"scope","id":"sc:fin"},{"kind":"scope","id":"sc:tax"}]}`},
-		// ...and so is pushing its own scope OUT of its agency.
-		{"/api/v1/agencies/ag:FIN/members", `{"members":[]}`},
+	// Moving a scope takes authority on BOTH sides (LR-7; a global administrator
+	// only until 2.3.0): FIN's administrator may neither pull TAX's scope in nor
+	// push its own out — not to TAX, not to Global — on any of the setters.
+	for _, c := range []struct {
+		path, body string
+		want       int
+	}{
+		{"/api/v1/scopes/sc:tax/agency", `{"agencyId":"ag:FIN"}`, http.StatusForbidden},
+		{"/api/v1/scope-agencies", `[{"id":"sc:tax","agencyIds":["ag:FIN"]}]`, http.StatusForbidden},
+		{"/api/v1/agencies/ag:FIN/members", `{"members":[{"kind":"scope","id":"sc:fin"},{"kind":"scope","id":"sc:tax"}]}`, http.StatusForbidden},
+		{"/api/v1/scopes/sc:fin/agency", `{"agencyId":"ag:TAX"}`, http.StatusForbidden},
+		{"/api/v1/scope-agencies", `[{"id":"sc:fin","agencyIds":["ag:TAX"]}]`, http.StatusForbidden},
+		{"/api/v1/scopes/sc:fin/agency", `{"agencyId":null}`, http.StatusForbidden},
+		{"/api/v1/scope-agencies", `[{"id":"sc:fin","agencyIds":["global"]}]`, http.StatusForbidden},
+		// Taking a scope that is Global's is a move out of Global.
+		{"/api/v1/scopes/sc:shared/agency", `{"agencyId":"ag:FIN"}`, http.StatusForbidden},
+		{"/api/v1/agencies/ag:FIN/members", `{"members":[{"kind":"scope","id":"sc:fin"},{"kind":"scope","id":"sc:shared"}]}`, http.StatusForbidden},
+		// Dropping its own scope from its agency changes the scope's agency:
+		// a global administrator's repair since I4 (IN-7). (It was 422: it
+		// would leave the scope in none, which a repair is refused for too.)
+		{"/api/v1/agencies/ag:FIN/members", `{"members":[]}`, http.StatusForbidden},
 	} {
-		if rec := gateReq(t, h, http.MethodPut, c.path, gFinAdmin, c.body); rec.Code != http.StatusForbidden {
-			t.Errorf("fin admin PUT %s = %d, want 403 (%s)", c.path, rec.Code, rec.Body)
+		if rec := gateReq(t, h, http.MethodPut, c.path, gFinAdmin, c.body); rec.Code != c.want {
+			t.Errorf("fin admin PUT %s %s = %d, want %d (%s)", c.path, c.body, rec.Code, c.want, rec.Body)
 		}
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id='sc:tax' AND agency_id='ag:TAX'`); n != 1 {
-		t.Error("a scope changed agency under a departmental administrator")
+	for scope, agency := range map[string]string{"sc:tax": "ag:TAX", "sc:fin": "ag:FIN", "sc:shared": "global"} {
+		if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id=? AND agency_id=?`, scope, agency); n != 1 {
+			t.Errorf("%s changed agency under a departmental administrator", scope)
+		}
+		if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id=?`, scope); n != 1 {
+			t.Errorf("%s is in %d agencies, want exactly one", scope, n)
+		}
+	}
+
+	// Somebody with no authority over the scope is told what they were always
+	// told (whose it is), and not the rule for moving one.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:tax/agency", gFinAdmin, `{"agencyId":"ag:FIN"}`); rec.Code != http.StatusForbidden ||
+		!strings.Contains(rec.Body.String(), "on the agency that has this scope") {
+		t.Errorf("FIN's administrator pulling TAX's scope in = %d %s, want 403 saying they hold nothing on the agency that has it", rec.Code, rec.Body)
+	}
+	// Somebody who administers BOTH agencies does not move a scope between
+	// them either: a scope is moved by a global administrator only (the
+	// owner's decision of 2026-10-13; it was the two-sided rule from 2.3.0,
+	// LR-7). On each of the three setters, and nothing moves. A request that
+	// names where the scope already is moves nothing, and is theirs.
+	both := gFinAdmin + "," + gTaxAdmin
+	for _, c := range []struct{ path, body string }{
+		{"/api/v1/scopes/sc:fin/agency", `{"agencyId":"ag:TAX"}`},
+		{"/api/v1/scope-agencies", `[{"id":"sc:fin","agencyIds":["ag:TAX"]}]`},
+		{"/api/v1/scope-agencies", `[{"id":"sc:fin","agencyIds":["ag:FIN","ag:TAX"]}]`},
+		{"/api/v1/agencies/ag:TAX/members", `{"members":[{"kind":"scope","id":"sc:tax"},{"kind":"scope","id":"sc:fin"}]}`},
+	} {
+		// Since I4 (IN-7) a move of anything is a global administrator's
+		// repair, and asking for one as an administrator of both changes nothing.
+		rec := gateReq(t, h, http.MethodPut, c.path, both, asRepair(c.body))
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "global administrator's repair") {
+			t.Errorf("an administrator of both agencies moving a scope: PUT %s %s = %d, want 403 naming a global administrator (%s)", c.path, c.body, rec.Code, rec.Body)
+		}
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id='sc:fin' AND agency_id='ag:FIN'`); n != 1 {
+		t.Fatal("the scope moved under an administrator of both agencies")
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", both, `{"agencyId":"ag:FIN"}`); rec.Code != http.StatusOK {
+		t.Errorf("naming the agency the scope is in already = %d, want 200: nothing moves (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", gFinAdmin, `{"agencyId":"ag:FIN"}`); rec.Code != http.StatusOK {
+		t.Errorf("FIN's administrator naming the agency its scope is in already = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	// A global administrator moves it, and it is in exactly one agency
+	// afterwards. A scope never has two (LR-7).
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scope-agencies", gRoot, asRepair(`[{"id":"sc:fin","agencyIds":["ag:FIN","ag:TAX"]}]`)); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "one_agency" {
+		t.Errorf("putting a scope in two agencies = %d %s, want 422 one_agency (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
+	}
+	// Without saying it is a repair, it is refused, and told so (I4).
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", gRoot, `{"agencyId":"ag:TAX"}`); rec.Code != http.StatusConflict || errCode(rec.Body.Bytes()) != "repair_required" {
+		t.Errorf("a global administrator moving a scope without a repair = %d %s, want 409 repair_required", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", gRoot, asRepair(`{"agencyId":"ag:TAX"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("a global administrator moving a scope = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id='sc:fin' AND agency_id='ag:TAX'`); n != 1 {
+		t.Error("the scope did not move")
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id='sc:fin'`); n != 1 {
+		t.Errorf("after the move the scope is in %d agencies, want one", n)
+	}
+	// They are not Global's administrator, so not into Global.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", both, `{"agencyId":null}`); rec.Code != http.StatusForbidden {
+		t.Errorf("an administrator of two agencies moving a scope into Global = %d, want 403 (%s)", rec.Code, rec.Body)
+	}
+	// The agency editor adds only what is Global's; a scope that is another
+	// agency's is moved on the scope itself.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/members", gRoot, asRepair(`{"members":[{"kind":"scope","id":"sc:fin"}]}`)); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "one_agency" {
+		t.Errorf("adding TAX's scope to FIN through the agency editor = %d %s, want 422 one_agency (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/members", gRoot, asRepair(`{"members":[{"kind":"scope","id":"sc:shared"}]}`)); rec.Code != http.StatusOK {
+		t.Errorf("a global administrator adding a Global scope to FIN = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id='sc:shared'`); n != 1 {
+		t.Errorf("a scope added from Global is in %d agencies, want FIN alone", n)
 	}
 }
 
@@ -220,13 +314,24 @@ func TestGC_ANewScopeLandsInItsCreatorsAgency(t *testing.T) {
 	if n := count(t, pool, `SELECT COUNT(*) FROM scopes WHERE name='fin-sneak'`); n != 0 {
 		t.Error("a refused scope was created anyway")
 	}
-	// A global administrator may still create one that no agency owns.
+	// A global administrator who names no agency creates it in Global — where a
+	// scope "no agency owns" has belonged since migration 1220 — and nowhere else.
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/scopes", gRoot, `{"scope":"everyones"}`)
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("root creating an unowned scope = %d (%s)", rec.Code, rec.Body)
+		t.Fatalf("root creating a Global scope = %d (%s)", rec.Code, rec.Body)
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies sa JOIN scopes s ON s.id=sa.scope_id WHERE s.name='everyones'`); n != 0 {
-		t.Error("a global administrator's scope was placed without being asked")
+	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies sa JOIN scopes s ON s.id=sa.scope_id
+	                         WHERE s.name='everyones' AND sa.agency_id <> 'global'`); n != 0 {
+		t.Error("a global administrator's scope was placed in an agency without being asked")
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies sa JOIN scopes s ON s.id=sa.scope_id
+	                         WHERE s.name='everyones' AND sa.agency_id = 'global'`); n != 1 {
+		t.Error("a global administrator's scope is not Global's")
+	}
+	// An agency administrator may not create one there.
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/scopes", gFinAdmin, `{"scope":"fin-global","agencyIds":["global"]}`)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("fin admin creating a scope in Global = %d, want 403 (%s)", rec.Code, rec.Body)
 	}
 }
 
@@ -248,27 +353,46 @@ func TestGC_ReplacingARunnerNeedsEveryBoundScope(t *testing.T) {
 	}
 }
 
-// GC-7 — a manual host record and every bastion apply to all scopes; a record
-// imported for a scope follows that scope.
+// GC-7, LR-69 — a host record imported for a scope follows that scope; one
+// written by hand, and every bastion, belongs to an agency. Until 2.3.0 the
+// hand-written kind belonged to nobody, applied to every scope, and was a
+// global administrator's alone: an agency could not describe its own jump host.
 func TestGC_HostAndBastionRecords(t *testing.T) {
 	h, pool := gateServer(t)
 	exec := mustExec(t, pool)
-	exec(`INSERT INTO ssh_hosts (id, hostname, port, source, scope_id, created_at) VALUES ('h-manual','db01',22,'cronomicon',NULL,'2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO ssh_hosts (id, hostname, port, source, scope_id, created_at) VALUES ('h-fin','fin01',22,'cronomicon','sc:fin','2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO ssh_hosts (id, hostname, port, source, scope_id, created_at) VALUES ('h-tax','tax01',22,'cronomicon','sc:tax','2026-01-01T00:00:00Z')`)
+	// What an upgraded installation holds: hand-written records and bastions
+	// with no owner named, which are Global's.
+	for _, r := range [][3]any{{"h-manual", "db01", nil}, {"h-fin", "fin01", "sc:fin"}, {"h-tax", "tax01", "sc:tax"}} {
+		exec(`INSERT INTO ssh_hosts (id, hostname, port, source, scope_id, created_by, created_at, last_modified_by, last_modified_at)
+		      VALUES (?,?,22,'cronomicon',?,'seed','2026-01-01T00:00:00Z','seed','2026-01-01T00:00:00Z')`, r[0], r[1], r[2])
+	}
+	exec(`INSERT INTO bastions (id, name, hostname, address, port, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('b-old','jump-old','jump-old','10.0.0.9',22,'seed','2026-01-01T00:00:00Z','seed','2026-01-01T00:00:00Z')`)
+	if n := count(t, pool, `SELECT (SELECT COUNT(*) FROM ssh_hosts WHERE id='h-manual' AND owner_agency='global') + (SELECT COUNT(*) FROM bastions WHERE id='b-old' AND owner_agency='global')`); n != 2 {
+		t.Fatal("fixture: a record with no owner named is not Global's")
+	}
 	const hostBody = `{"hostname":"x01","port":22}`
+	const bastionBody = `{"name":"b","address":"10.0.0.1","port":22}`
 
 	for _, c := range []struct {
 		method, path, body string
 		forbidden          bool
 	}{
-		{http.MethodPost, "/api/v1/ssh/hosts", hostBody, true},
+		// Global's and another agency's are not FIN's to touch.
 		{http.MethodPut, "/api/v1/ssh/hosts/h-manual", hostBody, true},
 		{http.MethodDelete, "/api/v1/ssh/hosts/h-manual", "", true},
-		{http.MethodDelete, "/api/v1/ssh/hosts/h-manual/host-key", "", true},
+		{http.MethodPost, "/api/v1/ssh/hosts/h-manual/test", "", true},
 		{http.MethodPut, "/api/v1/ssh/hosts/h-tax", hostBody, true},
 		{http.MethodDelete, "/api/v1/ssh/hosts/h-tax", "", true},
-		{http.MethodPost, "/api/v1/ssh/bastions", `{"name":"b","address":"10.0.0.1","port":22}`, true},
+		{http.MethodPut, "/api/v1/ssh/bastions/b-old", bastionBody, true},
+		{http.MethodDelete, "/api/v1/ssh/bastions/b-old", "", true},
+		{http.MethodPost, "/api/v1/ssh/bastions/b-old/test", "", true},
+		// Nor may it create one in Global, or in TAX.
+		{http.MethodPost, "/api/v1/ssh/hosts", `{"hostname":"x02","port":22,"ownerAgency":"global"}`, true},
+		{http.MethodPost, "/api/v1/ssh/hosts", `{"hostname":"x03","port":22,"ownerAgency":"ag:TAX"}`, true},
+		{http.MethodPost, "/api/v1/ssh/bastions", `{"name":"b2","address":"10.0.0.2","port":22,"ownerAgency":"global"}`, true},
+		{http.MethodPost, "/api/v1/ssh/bastions", `{"name":"b3","address":"10.0.0.3","port":22,"ownerAgency":"ag:TAX"}`, true},
+		// Its own scope's imported record is its own, as since 2.2.2.
 		{http.MethodPut, "/api/v1/ssh/hosts/h-fin", `{"hostname":"fin01","port":2222}`, false},
 	} {
 		rec := gateReq(t, h, c.method, c.path, gFinAdmin, c.body)
@@ -276,23 +400,189 @@ func TestGC_HostAndBastionRecords(t *testing.T) {
 			t.Errorf("fin admin %s %s = %d, want forbidden=%v (%s)", c.method, c.path, rec.Code, c.forbidden, rec.Body)
 		}
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_hosts WHERE id IN ('h-manual','h-tax')`); n != 2 {
-		t.Error("a host record outside the caller's agency was deleted")
+	if n := count(t, pool, `SELECT (SELECT COUNT(*) FROM ssh_hosts WHERE id IN ('h-manual','h-tax')) + (SELECT COUNT(*) FROM bastions WHERE id='b-old')`); n != 3 {
+		t.Error("a record outside the caller's agency was deleted")
 	}
-	if rec := gateReq(t, h, http.MethodPost, "/api/v1/ssh/hosts", gRoot, hostBody); rec.Code != http.StatusCreated {
-		t.Errorf("root creating a manual host = %d, want 201 (%s)", rec.Code, rec.Body)
+	if n := count(t, pool, `SELECT (SELECT COUNT(*) FROM ssh_hosts WHERE hostname IN ('x02','x03')) + (SELECT COUNT(*) FROM bastions WHERE name IN ('b2','b3'))`); n != 0 {
+		t.Error("a refused record was created")
+	}
+
+	// What it writes by hand is born its own: with no owner named, in its one agency.
+	var made struct {
+		ID          string `json:"id"`
+		OwnerAgency string `json:"ownerAgency"`
+	}
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/ssh/hosts", gFinAdmin, hostBody)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("fin admin creating a host record = %d, want 201 (%s)", rec.Code, rec.Body)
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &made)
+	if made.OwnerAgency != "ag:FIN" {
+		t.Errorf("fin admin's host record is owned by %q, want ag:FIN", made.OwnerAgency)
+	}
+	finHost := made.ID
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/ssh/bastions", gFinAdmin, bastionBody)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("fin admin creating a bastion = %d, want 201 (%s)", rec.Code, rec.Body)
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &made)
+	if made.OwnerAgency != "ag:FIN" {
+		t.Errorf("fin admin's bastion is owned by %q, want ag:FIN", made.OwnerAgency)
+	}
+	finBastion := made.ID
+
+	// TAX's administrator cannot change either; FIN's and a global administrator can.
+	for _, c := range []struct{ method, path, body string }{
+		{http.MethodPut, "/api/v1/ssh/hosts/" + finHost, hostBody},
+		{http.MethodDelete, "/api/v1/ssh/hosts/" + finHost, ""},
+		{http.MethodPut, "/api/v1/ssh/bastions/" + finBastion, bastionBody},
+		{http.MethodDelete, "/api/v1/ssh/bastions/" + finBastion, ""},
+	} {
+		if rec := gateReq(t, h, c.method, c.path, gTaxAdmin, c.body); rec.Code != http.StatusForbidden {
+			t.Errorf("tax admin %s %s = %d, want 403 (%s)", c.method, c.path, rec.Code, rec.Body)
+		}
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/"+finHost, gFinAdmin, `{"hostname":"x01","port":2200}`); rec.Code != http.StatusOK {
+		t.Errorf("fin admin editing its own host record = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/bastions/"+finBastion, gRoot, bastionBody); rec.Code != http.StatusOK {
+		t.Errorf("root editing FIN's bastion = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+
+	// Giving a record to another agency is a move: authority on both sides.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/"+finHost, gFinAdmin, `{"hostname":"x01","port":22,"ownerAgency":"ag:TAX"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("fin admin giving its host record to TAX = %d, want 403 (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/bastions/"+finBastion, gFinAdmin, `{"name":"b","address":"10.0.0.1","port":22,"ownerAgency":"global"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("fin admin making its bastion Global's = %d, want 403 (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/"+finHost, gRoot, `{"hostname":"x01","port":22,"ownerAgency":"no-such-agency"}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("giving a host record to an agency that does not exist = %d, want 422 (%s)", rec.Code, rec.Body)
+	}
+	// An administrator of both agencies does not move a host record (I4;
+	// IN-7; question 42: until then they could), even asking for a repair;
+	// a global administrator's repair does, and is audited with its reason.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/"+finHost, gFinAdmin+","+gTaxAdmin, asRepair(`{"hostname":"x01","port":22,"ownerAgency":"ag:TAX"}`)); rec.Code != http.StatusForbidden {
+		t.Errorf("an administrator of both agencies moving a host record = %d, want 403 (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/"+finHost, gRoot, `{"hostname":"x01","port":22,"ownerAgency":"ag:TAX"}`); rec.Code != http.StatusConflict || errCode(rec.Body.Bytes()) != "repair_required" {
+		t.Errorf("a global administrator moving a host record without saying it is a repair = %d, want 409 repair_required (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_hosts WHERE id=? AND owner_agency='ag:FIN'`, finHost); n != 1 {
+		t.Fatal("a refused move changed the host record's owner")
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/"+finHost, gRoot, `{"repair":true,"reason":"given to the wrong agency at the upgrade","hostname":"x01","port":22,"ownerAgency":"ag:TAX"}`); rec.Code != http.StatusOK {
+		t.Errorf("a global administrator's repair of a host record = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_hosts WHERE id=? AND owner_agency='ag:TAX'`, finHost); n != 1 {
+		t.Error("the host record did not change owner")
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM change_log WHERE action = 'Repaired' AND target = ? AND details LIKE '%given to the wrong agency at the upgrade%'`, "host record "+finHost); n != 1 {
+		t.Errorf("the repair's audit row with its reason: %d, want 1", n)
+	}
+	// An imported record's owner is its scope's: naming one changes nothing.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/h-fin", gRoot, `{"hostname":"fin01","port":22,"ownerAgency":"ag:TAX"}`); rec.Code != http.StatusOK {
+		t.Errorf("root editing an imported record = %d (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_hosts WHERE id='h-fin' AND owner_agency='global'`); n != 1 {
+		t.Error("an imported record was given an owner of its own")
+	}
+
+	// A global administrator who names no agency writes Global's, as before.
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/ssh/hosts", gRoot, `{"hostname":"everyones","port":22}`)
+	_ = json.Unmarshal(rec.Body.Bytes(), &made)
+	if rec.Code != http.StatusCreated || made.OwnerAgency != "global" {
+		t.Errorf("root creating a host record = %d owned by %q, want 201 and global (%s)", rec.Code, made.OwnerAgency, rec.Body)
+	}
+	// An agency that owns a record or a bastion cannot be deleted from under it.
+	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag:OPS','OPS','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO bastions (id, name, hostname, address, port, created_at, owner_agency) VALUES ('b-ops','jump-ops','jump-ops','10.0.0.8',22,'2026-01-01T00:00:00Z','ag:OPS')`)
+	if rec := gateReq(t, h, http.MethodDelete, "/api/v1/agencies/ag:OPS", gRoot, ""); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "bastion") {
+		t.Errorf("deleting an agency that owns a bastion = %d (%s), want 409 naming the bastion", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM agencies WHERE id='ag:OPS'`); n != 1 {
+		t.Error("the agency was deleted from under its bastion")
 	}
 }
 
-// GC-8 — a Vault path is named on the installation's one Vault connection.
+// LR-72 — a hand-written host record and a bastion name only a key their owner
+// may use: the owner's own, or Global's. Credential ids are listed to every
+// session, so the rule is what stops a record being pointed at another
+// agency's key. It binds a global administrator too.
+func TestGC_ARecordNamesOnlyAKeyItsOwnerMayUse(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	for id, agency := range map[string]string{"k-tax": "ag:TAX", "k-fin": "ag:FIN", "k-shared": "global"} {
+		exec(`INSERT INTO ssh_credentials (id,label,source,owner_agency,created_by,created_at,last_modified_by,last_modified_at)
+		      VALUES (?,?,'stored',?,'seed','2026-01-01T00:00:00Z','seed','2026-01-01T00:00:00Z')`, id, id, agency)
+		if agency != "global" {
+			exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES (?,?)`, id, agency)
+		}
+	}
+	host := func(who, cred, owner string) int {
+		return gateReq(t, h, http.MethodPost, "/api/v1/ssh/hosts", who,
+			`{"hostname":"h-`+cred+`-`+owner+`","port":22,"authCredentialId":"`+cred+`","ownerAgency":"`+owner+`"}`).Code
+	}
+	bastion := func(who, cred, owner string) int {
+		return gateReq(t, h, http.MethodPost, "/api/v1/ssh/bastions", who,
+			`{"name":"b-`+cred+`-`+owner+`","address":"10.0.0.1","port":22,"authCredentialId":"`+cred+`","ownerAgency":"`+owner+`"}`).Code
+	}
+	for _, create := range []func(who, cred, owner string) int{host, bastion} {
+		for _, c := range []struct {
+			who, cred, owner string
+			want             int
+		}{
+			{gFinAdmin, "k-fin", "ag:FIN", http.StatusCreated},
+			{gFinAdmin, "k-shared", "ag:FIN", http.StatusUnprocessableEntity}, // §0a (IN-6): Global's key is not FIN's
+			{gFinAdmin, "k-tax", "ag:FIN", http.StatusUnprocessableEntity},
+			{gFinAdmin, "k-nope", "ag:FIN", http.StatusUnprocessableEntity},
+			{gRoot, "k-tax", "ag:FIN", http.StatusUnprocessableEntity},
+			{gRoot, "k-fin", "global", http.StatusUnprocessableEntity}, // a Global record names a Global key
+			{gRoot, "k-shared", "global", http.StatusCreated},
+		} {
+			if got := create(c.who, c.cred, c.owner); got != c.want {
+				t.Errorf("%s creating a record of %s with key %s = %d, want %d", c.who, c.owner, c.cred, got, c.want)
+			}
+		}
+	}
+	// On an update the rule is asked when the key or the owner changes. A record
+	// from before 2.3.0 may name a key its owner could not be given today; an
+	// unrelated edit of it is not refused over that (the connect is).
+	exec(`INSERT INTO ssh_hosts (id, hostname, port, source, auth_credential_id, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('h-legacy','legacy01',22,'cronomicon','k-fin','seed','2026-01-01T00:00:00Z','seed','2026-01-01T00:00:00Z')`)
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/h-legacy", gRoot, `{"hostname":"legacy01","port":2222,"authCredentialId":"k-fin"}`); rec.Code != http.StatusOK {
+		t.Errorf("editing a legacy record's port without touching its key = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/h-legacy", gRoot, `{"hostname":"legacy01","port":22,"authCredentialId":"k-tax"}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("changing a Global record's key to TAX's = %d, want 422 (%s)", rec.Code, rec.Body)
+	}
+	// Moving it to the agency whose key it names makes it whole.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/h-legacy", gRoot, asRepair(`{"hostname":"legacy01","port":22,"authCredentialId":"k-fin","ownerAgency":"ag:FIN"}`)); rec.Code != http.StatusOK {
+		t.Errorf("giving the record to FIN, whose key it names = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	// And moving a record away from the agency whose key it names is refused.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/ssh/hosts/h-legacy", gRoot, asRepair(`{"hostname":"legacy01","port":22,"authCredentialId":"k-fin","ownerAgency":"ag:TAX"}`)); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("giving FIN's record, with FIN's key, to TAX = %d, want 422 (%s)", rec.Code, rec.Body)
+	}
+}
+
+// GC-8 — a Vault path is named on the installation's one Vault connection, so
+// an agency may not name one it was not given. In 2.2.2 that meant no agency
+// could name any (403: a global administrator's). Since 2.3.0 an agency names
+// paths inside the prefixes assigned to it (LR-80, vault_prefix_test.go); with
+// none assigned the answer is still no, as a 422 that says what is missing.
 func TestGC_VaultPathsAreAGlobalAdministrators(t *testing.T) {
 	h, pool := gateServer(t)
+	notAllowed := func(what string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "vault_path_not_allowed" {
+			t.Errorf("%s = %d %s, want 422 vault_path_not_allowed (%s)", what, rec.Code, errCode(rec.Body.Bytes()), rec.Body)
+		}
+	}
 
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gFinAdmin,
 		`{"key":"FIN_VAULT","source":"vault","scope":"fin-hosts","vaultPath":"secret/data/tax/db#password"}`)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("fin admin binding a Vault path = %d, want 403 (%s)", rec.Code, rec.Body)
-	}
+	notAllowed("fin admin binding a Vault path with no prefix assigned", rec)
 	if n := count(t, pool, `SELECT COUNT(*) FROM secrets WHERE key='FIN_VAULT'`); n != 0 {
 		t.Error("a vault-source secret was written by a departmental administrator")
 	}
@@ -309,13 +599,18 @@ func TestGC_VaultPathsAreAGlobalAdministrators(t *testing.T) {
 	// ...but may not be turned into a vault-source one, by edit or by migration.
 	rec = gateReq(t, h, http.MethodPut, "/api/v1/env-secrets/"+sec.ID, gFinAdmin,
 		`{"key":"FIN_STORED","source":"vault","scope":"fin-hosts","vaultPath":"secret/data/tax/db#password"}`)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("fin admin re-sourcing a secret to Vault = %d, want 403 (%s)", rec.Code, rec.Body)
-	}
+	notAllowed("fin admin re-sourcing a secret to Vault", rec)
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/env-secrets/"+sec.ID+"/migrate-to-vault", gFinAdmin,
 		`{"vaultPath":"secret/data/tax/db#password"}`)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("fin admin migrating a secret to a Vault path = %d, want 403 (%s)", rec.Code, rec.Body)
+	notAllowed("fin admin migrating a secret to a Vault path", rec)
+	if n := count(t, pool, `SELECT COUNT(*) FROM secrets WHERE source <> 'stored' OR vault_ref IS NOT NULL`); n != 0 {
+		t.Errorf("%d secret(s) now name a Vault path", n)
+	}
+	// A secret that is Global's is still a global administrator's, any path.
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gRoot,
+		`{"key":"SHARED_VAULT","source":"vault","vaultPath":"secret/data/anything/at/all#k"}`)
+	if rec.Code != http.StatusCreated {
+		t.Errorf("a global administrator creating a Global Vault-backed secret = %d, want 201 (%s)", rec.Code, rec.Body)
 	}
 }
 
@@ -332,8 +627,14 @@ func publishBody(path, content string) string {
 	return string(b)
 }
 
-// GC-9 — publish is checked per file. The route itself only asks whether the
-// caller may publish somewhere.
+// GC-9, then GR-24 — a publish is checked past the route, which only asks
+// whether the caller may publish somewhere.
+//
+// This server has one repository, Global's, and Global's takes publishes from
+// a global publisher only (2.4.0; the owner's decision of 2026-10-13). From
+// v2.2.2 to 2.3.x an agency's approver could publish there a job file of their
+// own scope (GC-9), checked per file; that check is now of an agency's own
+// repository (TestAPublishNamesARepositoryAndIsGatedByItsAgency).
 func TestGC_PublishIsCheckedPerFile(t *testing.T) {
 	clone := t.TempDir()
 	t.Setenv("CRONOMICON_GIT_CACHE_DIR", clone)
@@ -367,14 +668,22 @@ func TestGC_PublishIsCheckedPerFile(t *testing.T) {
 			t.Errorf("fin approver publishing %s = %d, want 403", c.name, code)
 		}
 	}
-	// Its own job in its own scope passes the gate. (What happens next depends on
-	// a real repository, which this test does not have — anything but 403.)
-	if code := publish(gFinApprover, "jobs/fin-new.yaml", jobYAML("fin-new", "fin-hosts")); code == http.StatusForbidden {
-		t.Errorf("fin approver publishing its own job = 403, want the gate to pass")
+	// Its own job in its own scope too: Global's repository is not an
+	// agency's to publish to. And an administrator of an agency, the same.
+	for who, name := range map[string]string{gFinApprover: "FIN's approver", gFinAdmin: "FIN's administrator"} {
+		if code := publish(who, "jobs/fin-new.yaml", jobYAML("fin-new", "fin-hosts")); code != http.StatusForbidden {
+			t.Errorf("%s publishing its own job to Global's repository = %d, want 403", name, code)
+		}
 	}
-	// A global publisher is not narrowed.
-	if code := publish(gRoot, "schedules/nightly.yaml", "apiVersion: cronomicon.io/v1\nkind: Schedule\n"); code == http.StatusForbidden {
-		t.Errorf("root publishing a schedule file = 403, want the gate to pass")
+	// A global publisher is not narrowed: any file. (What happens next depends
+	// on a real repository, which this test does not have — anything but 403.)
+	for path, content := range map[string]string{
+		"schedules/nightly.yaml": "apiVersion: cronomicon.io/v1\nkind: Schedule\n",
+		"jobs/fin-new.yaml":      jobYAML("fin-new", "fin-hosts"),
+	} {
+		if code := publish(gRoot, path, content); code == http.StatusForbidden {
+			t.Errorf("root publishing %s = 403, want the gate to pass", path)
+		}
 	}
 }
 
@@ -385,8 +694,12 @@ func seedWorkflowPair(t *testing.T, pool *sql.DB) (parentRowID string) {
 	exec := mustExec(t, pool)
 	exec(`INSERT INTO jobs (name,source,run_type,scope,enabled,created_at)
 	      VALUES ('tax-job','cronomicon','bash','tax-hosts',1,'2026-01-01T00:00:00Z')`)
+	exec(`UPDATE jobs SET uid = 'u-' || name WHERE uid IS NULL`) // these fixtures' jobs record none
+	// The steps pin their jobs by uid, as the editor saves them (R2F-2): since
+	// 2.5.0 C11 a name-only step of a workflow built in the app is looked up in
+	// its own agency only (defect 79), and these jobs are another agency's.
 	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
-	      VALUES ('tax-child','cronomicon','[{"type":"job","name":"tax-job"}]',1,'2026-01-01T00:00:00Z')`)
+	      VALUES ('tax-child','cronomicon',json_array(json_object('type','job','name','tax-job','jobUid',(SELECT uid FROM jobs WHERE name = 'tax-job'))),1,'2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
 	      VALUES ('parent','cronomicon','[{"type":"workflow","name":"go","workflow":"tax-child"}]',1,'2026-01-01T00:00:00Z')`)
 	return rowID(t, pool, `SELECT rowid FROM workflows WHERE name='parent'`)
@@ -501,24 +814,29 @@ func TestGC_TagsAndNotesNeedAReadableRow(t *testing.T) {
 	}
 }
 
-// GC-14 — an Apprise target's URL is its credential.
+// GC-14 — an Apprise target's URL is its credential. Since 2.5.0 C7 (question
+// 99) the relay's settings carry no target at all, for anyone: they are
+// /alert-targets', read there by their own rule (question 81). The gateway's
+// address is still a global administrator's alone.
 func TestGC_NotificationTargetURLsAreMasked(t *testing.T) {
 	h, pool := gateServer(t)
-	mustExec(t, pool)(`INSERT INTO notification_config (id, apprise_enabled, apprise_url, apprise_targets)
-	      VALUES (1, 1, 'http://apprise.internal:8000',
-	              '[{"label":"ops","service":"slack","url":"slack://TOKENA/TOKENB/TOKENC","enabled":true}]')
+	mustExec(t, pool)(`INSERT INTO notification_config (id, apprise_enabled, apprise_url)
+	      VALUES (1, 1, 'http://apprise.internal:8000')
 	      ON CONFLICT(id) DO UPDATE SET apprise_enabled=excluded.apprise_enabled,
-	              apprise_url=excluded.apprise_url, apprise_targets=excluded.apprise_targets`)
-	if body := gateReq(t, h, http.MethodGet, "/api/v1/settings/notifications", gRoot, "").Body.String(); !strings.Contains(body, "TOKENA") {
-		t.Fatalf("precondition: a global admin reads the target URL back, got %s", body)
+	              apprise_url=excluded.apprise_url`)
+	mustExec(t, pool)(`INSERT INTO alert_targets (id, owner_agency, label, service, url, enabled, created_at)
+	      VALUES ('t-ops', 'global', 'ops', 'slack', 'slack://TOKENA/TOKENB/TOKENC', 1, 't')`)
+	root := gateReq(t, h, http.MethodGet, "/api/v1/settings/notifications", gRoot, "").Body.String()
+	if !strings.Contains(root, "apprise.internal") {
+		t.Fatalf("precondition: a global admin reads the gateway's address, got %s", root)
 	}
-	for _, who := range []string{gFinAdmin, gFinViewer, gMixed} {
+	for _, who := range []string{gRoot, gFinAdmin, gFinViewer, gMixed} {
 		body := gateReq(t, h, http.MethodGet, "/api/v1/settings/notifications", who, "").Body.String()
-		if strings.Contains(body, "TOKENA") || strings.Contains(body, "apprise.internal") {
-			t.Errorf("%s read a notification target's URL: %s", who, body)
+		if strings.Contains(body, "TOKENA") || strings.Contains(body, `"ops"`) || strings.Contains(body, "targets") {
+			t.Errorf("%s read a push target from the relay's settings: %s", who, body)
 		}
-		if !strings.Contains(body, `"ops"`) {
-			t.Errorf("%s should still see the target's label, got %s", who, body)
+		if who != gRoot && strings.Contains(body, "apprise.internal") {
+			t.Errorf("%s read the gateway's address: %s", who, body)
 		}
 	}
 }
@@ -592,8 +910,8 @@ func TestGC_VaultGateCannotBeSidesteppedBySourceSpelling(t *testing.T) {
 		{"POST with a stored source carrying a vaultPath", http.MethodPost, "/api/v1/env-secrets",
 			`{"key":"FIN_SNEAK2","source":"stored","scope":"fin-hosts","value":"v","vaultPath":"secret/data/tax/db#password"}`},
 	} {
-		if rec := gateReq(t, h, c.method, c.path, gFinAdmin, c.body); rec.Code != http.StatusForbidden {
-			t.Errorf("%s = %d, want 403 (%s)", c.name, rec.Code, rec.Body)
+		if rec := gateReq(t, h, c.method, c.path, gFinAdmin, c.body); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "vault_path_not_allowed" {
+			t.Errorf("%s = %d %s, want 422 vault_path_not_allowed (%s)", c.name, rec.Code, errCode(rec.Body.Bytes()), rec.Body)
 		}
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM secrets WHERE source='vault' OR vault_ref IS NOT NULL`); n != 0 {
@@ -652,12 +970,14 @@ func TestGC_AnotherAgencysSameNamedWorkflowIsNotAVeto(t *testing.T) {
 	      VALUES ('fin-job','cronomicon','bash','fin-hosts',1,'2026-01-01T00:00:00Z'),
 	             ('tax-job','cronomicon','bash','tax-hosts',1,'2026-01-01T00:00:00Z')`)
 	// FIN's "cleanup" exists first; TAX then creates its own of the same name.
-	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
-	      VALUES ('cleanup','cronomicon','[{"type":"job","name":"fin-job"}]',1,'2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
-	      VALUES ('fin-parent','cronomicon','[{"type":"workflow","name":"go","workflow":"cleanup"}]',1,'2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
-	      VALUES ('cleanup','cronomicon','[{"type":"job","name":"tax-job"}]',1,'2026-02-01T00:00:00Z')`)
+	// Each workflow is its agency's (1360; C11: a write answers 404 on another
+	// agency's, and this fixture's rows used to default to Global's).
+	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at, owner_agency)
+	      VALUES ('cleanup','cronomicon','[{"type":"job","name":"fin-job"}]',1,'2026-01-01T00:00:00Z','ag:FIN')`)
+	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at, owner_agency)
+	      VALUES ('fin-parent','cronomicon','[{"type":"workflow","name":"go","workflow":"cleanup"}]',1,'2026-01-01T00:00:00Z','ag:FIN')`)
+	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at, owner_agency)
+	      VALUES ('cleanup','cronomicon','[{"type":"job","name":"tax-job"}]',1,'2026-02-01T00:00:00Z','ag:TAX')`)
 	parent := rowID(t, pool, `SELECT rowid FROM workflows WHERE name='fin-parent'`)
 
 	if rec := gateReq(t, h, http.MethodPatch, "/api/v1/workflows/"+parent, gFinOperator, `{"disabled":true}`); rec.Code/100 != 2 {
@@ -681,17 +1001,21 @@ func TestGC_AVaultBackedSSHKeyIsAGlobalAdministrators(t *testing.T) {
 	h, pool := gateServer(t)
 	const vaultKey = `{"label":"not_really_a_key","source":"vault","vaultRef":"secret/data/tax/db#password"}`
 
-	rec := gateReq(t, h, http.MethodPost, "/api/v1/ssh/credentials", gFinAdmin, vaultKey)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("fin admin creating a Vault-backed SSH key = %d, want 403 (%s)", rec.Code, rec.Body)
+	// 403 in 2.2.3 (a global administrator's). Since 2.3.0 the answer depends on
+	// the agency's Vault paths (LR-80); with none assigned it is still no.
+	notAllowed := func(what string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "vault_path_not_allowed" {
+			t.Errorf("%s = %d %s, want 422 vault_path_not_allowed (%s)", what, rec.Code, errCode(rec.Body.Bytes()), rec.Body)
+		}
 	}
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/ssh/credentials", gFinAdmin, vaultKey)
+	notAllowed("fin admin creating a Vault-backed SSH key", rec)
 	// The store reads only source=="vault" as Vault; a stray vaultRef on a
 	// "stored" write is refused all the same rather than argued about.
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/ssh/credentials", gFinAdmin,
 		`{"label":"sneaky","source":"stored","material":"x","vaultRef":"secret/data/tax/db#password"}`)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("fin admin sending a vaultRef on a stored key = %d, want 403 (%s)", rec.Code, rec.Body)
-	}
+	notAllowed("fin admin sending a vaultRef on a stored key", rec)
 	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_credentials`); n != 0 {
 		t.Fatalf("a refused Vault-backed key was written (%d rows)", n)
 	}
@@ -702,9 +1026,7 @@ func TestGC_AVaultBackedSSHKeyIsAGlobalAdministrators(t *testing.T) {
 	mustExec(t, pool)(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES ('k-fin','ag:FIN')`)
 	rec = gateReq(t, h, http.MethodPut, "/api/v1/ssh/credentials/k-fin", gFinAdmin,
 		`{"label":"fin_deploy","source":"vault","vaultRef":"secret/data/tax/db#password"}`)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("fin admin re-sourcing its key to Vault = %d, want 403 (%s)", rec.Code, rec.Body)
-	}
+	notAllowed("fin admin re-sourcing its key to Vault", rec)
 	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_credentials WHERE id='k-fin' AND source='stored' AND vault_ref IS NULL`); n != 1 {
 		t.Error("the refused re-source changed the key")
 	}
@@ -757,56 +1079,108 @@ func TestGC_AHostRecordMayNotNameAnotherAgencysKey(t *testing.T) {
 	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_hosts WHERE id='h-fin' AND auth_credential_id IS NOT NULL`); n != 0 {
 		t.Fatal("a refused write changed the host record's key")
 	}
-	for _, cred := range []string{"k-fin", "k-shared"} {
-		if rec := put(gFinAdmin, cred); rec.Code != http.StatusOK {
-			t.Errorf("fin admin naming %s = %d, want 200 (%s)", cred, rec.Code, rec.Body)
-		}
+	if rec := put(gFinAdmin, "k-fin"); rec.Code != http.StatusOK {
+		t.Errorf("fin admin naming k-fin = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
-	// A global administrator is not bound by it, and gets a 422 (not a 500) for
-	// an id that matches nothing.
-	if rec := put(gRoot, "k-tax"); rec.Code != http.StatusOK {
-		t.Errorf("root naming TAX's key = %d, want 200 (%s)", rec.Code, rec.Body)
+	// Global's key is not FIN's record's (§0a, IN-6; until then it was).
+	if rec := put(gFinAdmin, "k-shared"); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("fin admin naming Global's key k-shared = %d, want 422 (%s)", rec.Code, rec.Body)
+	}
+	// A global administrator is bound by it too since 2.3.0 (LR-72): the record
+	// is FIN's scope's, and TAX's key is not FIN's to use whoever names it. An
+	// id that matches nothing is a 422, not a 500.
+	if rec := put(gRoot, "k-tax"); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("root pointing FIN's host at TAX's key = %d, want 422 (%s)", rec.Code, rec.Body)
+	}
+	if rec := put(gRoot, "k-fin"); rec.Code != http.StatusOK {
+		t.Errorf("root naming FIN's key for FIN's host = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
 	if rec := put(gRoot, "k-nope"); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("root naming a missing key = %d, want 422 (%s)", rec.Code, rec.Body)
 	}
 }
 
-// The per-run targetHost override is held to the scope's host list, as
-// targetHosts[] is.
-func TestGC_ThePerRunTargetHostMustBeInTheScope(t *testing.T) {
+// LR-71 — a run's single target host is one of its scope's hosts: the per-run
+// override, the host the job itself declares, for every caller. v2.2.3 held
+// only a restricted actor's override to it; the job's own target_host was
+// checked nowhere, and a global administrator was exempt.
+func TestGC_ARunsTargetHostMustBeInTheScope(t *testing.T) {
 	h, pool := gateServer(t)
 	exec := mustExec(t, pool)
 	exec(`INSERT INTO scope_hosts (scope_id, host) VALUES ('sc:fin','fin01'), ('sc:fin','fin02')`)
-	exec(`INSERT INTO jobs (name,source,run_type,scope,command,target_host,enabled,created_at)
-	      VALUES ('fin-job','cronomicon','bash','fin-hosts','true','legacy-host',1,'2026-01-01T00:00:00Z')`)
-	job := rowID(t, pool, `SELECT rowid FROM jobs WHERE name='fin-job'`)
-	run := func(groups, body string) *httptest.ResponseRecorder {
-		return gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+job+"/run", groups, body)
+	exec(`INSERT INTO jobs (name,source,run_type,scope,command,target_host,enabled,created_at) VALUES
+	      ('fin-job','cronomicon','bash','fin-hosts','true','legacy-host',1,'2026-01-01T00:00:00Z'),
+	      ('fin-pinned','cronomicon','bash','fin-hosts','true','fin01',1,'2026-01-01T00:00:00Z'),
+	      ('platform-job','cronomicon','bash',NULL,'true','anywhere',1,'2026-01-01T00:00:00Z')`)
+	id := func(name string) string { return rowID(t, pool, `SELECT rowid FROM jobs WHERE name=?`, name) }
+	run := func(job, groups, body string) *httptest.ResponseRecorder {
+		return gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id(job)+"/run", groups, body)
+	}
+	refused := func(what string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "scope_membership") {
+			t.Errorf("%s = %d, want 422 scope_membership (%s)", what, rec.Code, rec.Body)
+		}
 	}
 
-	rec := run(gFinOperator, `{"targetHost":"tax01"}`)
-	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "scope_membership") {
-		t.Fatalf("a targetHost outside the scope = %d, want 422 scope_membership (%s)", rec.Code, rec.Body)
-	}
+	refused("an override outside the scope", run("fin-pinned", gFinOperator, `{"targetHost":"tax01"}`))
+	// The host the job itself declares is held to the same rule: a job in FIN's
+	// scope could be authored against any host record at all.
+	refused("the job's own declared host, outside its scope", run("fin-job", gFinOperator, `{}`))
+	refused("the same host repeated as the override", run("fin-job", gFinOperator, `{"targetHost":"legacy-host"}`))
+	// And it holds for a global administrator: the rule is the scope's, not the caller's.
+	refused("a global administrator's override outside the scope", run("fin-pinned", gRoot, `{"targetHost":"tax01"}`))
 	if n := count(t, pool, `SELECT COUNT(*) FROM runs`); n != 0 {
-		t.Fatal("a refused run was enqueued")
+		t.Fatalf("%d refused runs were enqueued", n)
 	}
-	// A member of the scope is accepted.
-	if rec := run(gFinOperator, `{"targetHost":"fin02"}`); rec.Code/100 != 2 {
-		t.Errorf("a targetHost inside the scope = %d, want 2xx (%s)", rec.Code, rec.Body)
+
+	// A member of the scope is accepted: the job's own, and an override.
+	if rec := run("fin-pinned", gFinOperator, `{}`); rec.Code/100 != 2 {
+		t.Errorf("running a job on its own in-scope host = %d, want 2xx (%s)", rec.Code, rec.Body)
 	}
-	// The host the job itself declares is not an override, and is left to the
-	// author: this release does not start refusing jobs that already run.
-	if rec := run(gFinOperator, `{}`); rec.Code/100 != 2 {
-		t.Errorf("running the job on its own declared host = %d, want 2xx (%s)", rec.Code, rec.Body)
+	if rec := run("fin-pinned", gFinOperator, `{"targetHost":"fin02"}`); rec.Code/100 != 2 {
+		t.Errorf("an override inside the scope = %d, want 2xx (%s)", rec.Code, rec.Body)
 	}
-	if rec := run(gFinOperator, `{"targetHost":"legacy-host"}`); rec.Code/100 != 2 {
-		t.Errorf("repeating the job's own host as the override = %d, want 2xx (%s)", rec.Code, rec.Body)
+	// An out-of-scope job is put right by overriding to a host of the scope.
+	if rec := run("fin-job", gFinOperator, `{"targetHost":"fin01"}`); rec.Code/100 != 2 {
+		t.Errorf("overriding an out-of-scope job to a host of its scope = %d, want 2xx (%s)", rec.Code, rec.Body)
 	}
-	// A global administrator already reaches every host.
-	if rec := run(gRoot, `{"targetHost":"tax01"}`); rec.Code/100 != 2 {
-		t.Errorf("root overriding to a host outside the scope = %d, want 2xx (%s)", rec.Code, rec.Body)
+	// A run that names a host SUBSET does not use the job's single host at all,
+	// so the job's out-of-scope pin is not what it is judged on.
+	if rec := run("fin-job", gFinOperator, `{"targetHosts":["fin01","fin02"]}`); rec.Code/100 != 2 {
+		t.Errorf("an out-of-scope job run against a subset of its scope = %d, want 2xx (%s)", rec.Code, rec.Body)
+	}
+	// A scope that lists no hosts (they live in a runner's own inventory) has no
+	// membership to be outside of.
+	exec(`INSERT INTO scopes (id,name,source,created_at) VALUES ('sc:runner-side','runner-side','cronomicon','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc:runner-side','ag:FIN')`)
+	exec(`INSERT INTO jobs (name,source,run_type,scope,command,target_host,enabled,created_at)
+	      VALUES ('fin-local','cronomicon','bash','runner-side','true','known-to-the-runner',1,'2026-01-01T00:00:00Z')`)
+	if rec := run("fin-local", gFinOperator, `{}`); rec.Code == http.StatusUnprocessableEntity {
+		t.Errorf("a job in a scope with no host list was refused over membership (%s)", rec.Body)
+	}
+	// A job with no scope has no membership to ask about: it is Global's, and
+	// its target resolves against Global's host records.
+	if rec := run("platform-job", gRoot, `{}`); rec.Code == http.StatusUnprocessableEntity {
+		t.Errorf("a job with no scope was refused over scope membership (%s)", rec.Body)
+	}
+
+	// The composer refuses to author one, and accepts a host of the scope.
+	exec(`INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
+	      VALUES ('say-hi','bash','true','ssh','h1','scripts/say-hi.yaml','2026-01-01T00:00:00Z')`)
+	agenciesGetTheirOwnRepository(t, pool)
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs", gFinAdmin,
+		`{"name":"fin-new","scriptRef":"say-hi","scope":"fin-hosts","targetHost":"tax01"}`)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "scope_membership") {
+		t.Errorf("composing a job aimed outside its scope = %d, want 422 scope_membership (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM jobs WHERE name='fin-new'`); n != 0 {
+		t.Error("a refused job was saved")
+	}
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/jobs", gFinAdmin,
+		`{"name":"fin-new","scriptRef":"say-hi","scope":"fin-hosts","targetHost":"fin02"}`)
+	if rec.Code/100 != 2 {
+		t.Errorf("composing a job aimed at a host of its scope = %d, want 2xx (%s)", rec.Code, rec.Body)
 	}
 }
 
@@ -874,10 +1248,12 @@ func TestGC_PausingAJobWithNoScopeNeedsTheVerbUnbound(t *testing.T) {
 	}
 
 	// An operator of FIN, an administrator of FIN, and an all-agencies viewer who
-	// also administers FIN: none holds killJobs unbound.
-	for _, who := range []string{gFinOperator, gFinAdmin, gMixed} {
-		if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/pause", who, `{}`); rec.Code != http.StatusForbidden {
-			t.Errorf("%s pausing a job with no scope = %d, want 403 (%s)", who, rec.Code, rec.Body)
+	// also administers FIN: none holds killJobs unbound. The job is Global's, so
+	// to FIN's people it is absent (2.5.0 C11, question 109); the viewer of every
+	// agency reads it and is refused the verb.
+	for who, want := range map[string]int{gFinOperator: http.StatusNotFound, gFinAdmin: http.StatusNotFound, gMixed: http.StatusForbidden} {
+		if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/pause", who, `{}`); rec.Code != want {
+			t.Errorf("%s pausing a job with no scope = %d, want %d (%s)", who, rec.Code, want, rec.Body)
 		}
 	}
 	if paused("platform-job") != 0 {
@@ -887,9 +1263,9 @@ func TestGC_PausingAJobWithNoScopeNeedsTheVerbUnbound(t *testing.T) {
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/pause", gRoot, `{}`); rec.Code != http.StatusOK {
 		t.Fatalf("root pausing it = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
-	for _, who := range []string{gFinOperator, gFinAdmin, gMixed} {
-		if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/resume", who, `{}`); rec.Code != http.StatusForbidden {
-			t.Errorf("%s resuming a job with no scope = %d, want 403 (%s)", who, rec.Code, rec.Body)
+	for who, want := range map[string]int{gFinOperator: http.StatusNotFound, gFinAdmin: http.StatusNotFound, gMixed: http.StatusForbidden} {
+		if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/resume", who, `{}`); rec.Code != want {
+			t.Errorf("%s resuming a job with no scope = %d, want %d (%s)", who, rec.Code, want, rec.Body)
 		}
 	}
 	if paused("platform-job") != 1 {

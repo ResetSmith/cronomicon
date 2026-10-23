@@ -73,6 +73,7 @@ func newTestServerWithLogDir(t *testing.T, logDir string) (*httptest.Server, *sq
 		DB:          pool,
 		ReadyChecks: []api.ReadyCheck{{Name: "database", Check: db.ReadyCheck(pool)}},
 		WebFS:       web.DistFS(),
+		RepoTest:    fakeRepoTest,
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -301,13 +302,13 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 
 	// 1. GitLab Settings GET / PUT
 	var gitlabCfg settings.GitlabConfig
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/settings/gitlab", nil)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/agencies/global/git-repo", nil)
 	r, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.StatusCode != http.StatusOK {
-		t.Fatalf("GET /settings/gitlab = %d", r.StatusCode)
+		t.Fatalf("GET /agencies/global/git-repo = %d", r.StatusCode)
 	}
 	json.NewDecoder(r.Body).Decode(&gitlabCfg)
 	r.Body.Close()
@@ -315,7 +316,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	gitlabCfg.BotName = "custom-bot-name"
 	gitlabCfg.Pat = "new-pat-token"
 	b, _ := json.Marshal(gitlabCfg)
-	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings/gitlab", bytes.NewReader(b))
+	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/agencies/global/git-repo", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrfToken)
 	r, err = client.Do(req)
@@ -324,7 +325,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	}
 	if r.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(r.Body)
-		t.Fatalf("PUT /settings/gitlab = %d, body = %s", r.StatusCode, body)
+		t.Fatalf("PUT /agencies/global/git-repo = %d, body = %s", r.StatusCode, body)
 	}
 	r.Body.Close()
 
@@ -480,7 +481,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 		"overlapMinutes": 10,
 	}
 	b, _ = json.Marshal(rotInput)
-	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/v1/settings/gitlab/webhook-secret/rotate", bytes.NewReader(b))
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/v1/agencies/global/git-repo/webhook-secret/rotate", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrfToken)
 	r, err = client.Do(req)
@@ -489,7 +490,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	}
 	if r.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(r.Body)
-		t.Fatalf("POST /settings/gitlab/webhook-secret/rotate = %d, body = %s", r.StatusCode, body)
+		t.Fatalf("POST /agencies/global/git-repo/webhook-secret/rotate = %d, body = %s", r.StatusCode, body)
 	}
 	var rotResult map[string]any
 	json.NewDecoder(r.Body).Decode(&rotResult)
@@ -836,124 +837,94 @@ func triggerRun(t *testing.T, client *http.Client, csrf, baseURL string, rowid i
 		t.Fatalf("POST /run: %v", err)
 	}
 	defer r.Body.Close()
+	// The run on a 202; the {code, message} of the refusal otherwise.
 	var out map[string]any
-	if r.StatusCode == http.StatusAccepted {
-		json.NewDecoder(r.Body).Decode(&out)
-	}
+	_ = json.NewDecoder(r.Body).Decode(&out) // an empty body leaves out nil
 	return r.StatusCode, out
 }
 
-// TestRunTriggerExecutorRouting covers R4.3 (ansible/terraform route to the
-// runner executor and sit queued instead of 422) and the bash ssh default.
-func TestRunTriggerExecutorRouting(t *testing.T) {
+// TestRunTriggerWritesEveryRunForTheRunnerExecutor: since 2.3.0 there is one
+// executor (LR-42). A shell run is written for the runner executor like an
+// ansible or terraform one, and waits, queued, for whichever eligible runner
+// asks first — an agent, or the server as the local runner. With no capable
+// runner registered an ansible or terraform run is still 202, not 422 (R4.3).
+func TestRunTriggerWritesEveryRunForTheRunnerExecutor(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
 
-	// bash → ssh (capability default).
-	bashID := seedJob(t, pool, "bash-job", "bash", "")
-	code, run := triggerRun(t, client, csrf, ts.URL, bashID, nil)
-	if code != http.StatusAccepted {
-		t.Fatalf("bash trigger = %d, want 202", code)
-	}
-	if run["executor"] != "ssh" {
-		t.Errorf("bash executor = %v, want ssh", run["executor"])
-	}
-
-	// ansible → runner, queued (NOT 422), with no capable runner registered.
-	ansID := seedJob(t, pool, "ansible-job", "ansible", "")
-	code, run = triggerRun(t, client, csrf, ts.URL, ansID, nil)
-	if code != http.StatusAccepted {
-		t.Fatalf("ansible trigger = %d, want 202 (queued for runner, not 422)", code)
-	}
-	if run["executor"] != "runner" {
-		t.Errorf("ansible executor = %v, want runner", run["executor"])
-	}
-	if run["status"] != "queued" {
-		t.Errorf("ansible status = %v, want queued", run["status"])
-	}
-
-	// terraform → runner, queued.
-	tfID := seedJob(t, pool, "tf-job", "terraform", "")
-	code, run = triggerRun(t, client, csrf, ts.URL, tfID, nil)
-	if code != http.StatusAccepted {
-		t.Fatalf("terraform trigger = %d, want 202", code)
-	}
-	if run["executor"] != "runner" {
-		t.Errorf("terraform executor = %v, want runner", run["executor"])
-	}
-	if run["status"] != "queued" {
-		t.Errorf("terraform status = %v, want queued", run["status"])
-	}
-
-	// Confirm the ansible run row is frozen executor='runner', status='queued'.
-	var ex, st string
-	if err := pool.QueryRow(`SELECT executor, status FROM runs WHERE job_name='ansible-job'`).Scan(&ex, &st); err != nil {
-		t.Fatalf("read ansible run row: %v", err)
-	}
-	if ex != "runner" || st != "queued" {
-		t.Errorf("ansible run row executor/status = %q/%q, want runner/queued", ex, st)
+	for _, tc := range []struct{ name, runType string }{
+		{"bash-job", "bash"}, {"ansible-job", "ansible"}, {"tf-job", "terraform"},
+	} {
+		id := seedJob(t, pool, tc.name, tc.runType, "")
+		code, run := triggerRun(t, client, csrf, ts.URL, id, nil)
+		if code != http.StatusAccepted {
+			t.Fatalf("%s trigger = %d, want 202", tc.runType, code)
+		}
+		if run["executor"] != "runner" || run["status"] != "queued" {
+			t.Errorf("%s: executor/status = %v/%v, want runner/queued", tc.runType, run["executor"], run["status"])
+		}
+		var ex, st string
+		if err := pool.QueryRow(`SELECT executor, status FROM runs WHERE job_name=?`, tc.name).Scan(&ex, &st); err != nil {
+			t.Fatalf("read %s run row: %v", tc.runType, err)
+		}
+		if ex != "runner" || st != "queued" {
+			t.Errorf("%s run row executor/status = %q/%q, want runner/queued", tc.runType, ex, st)
+		}
 	}
 }
 
-// TestRunTriggerExecutorPrecedence proves the R5.1 precedence chain:
-// per-trigger override > job spec.executor > global default > capability.
-func TestRunTriggerExecutorPrecedence(t *testing.T) {
+// TestRunTriggerIgnoresEveryExecutorChoice: the three places an executor used
+// to be chosen — the per-run override, the job's own `executor`, the global
+// default (R5.1's precedence chain) — are no longer read. `executor` on the
+// request body is accepted for one more minor (LR-50) and changes nothing,
+// including the combinations that used to be refused (ssh on a toolchain run
+// type, R5.2) and values the field never had.
+func TestRunTriggerIgnoresEveryExecutorChoice(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
 	ctx := context.Background()
 
-	// Global default = runner. A bash job whose capability default is ssh should
-	// pick up the global runner default (global beats capability).
-	if _, err := settings.UpdateGlobalSettings(ctx, pool,
-		settings.GlobalSettings{DefaultExecutor: "runner"}, "tester"); err != nil {
-		t.Fatalf("set global default: %v", err)
+	want := func(what string, code int, run map[string]any) {
+		t.Helper()
+		if code != http.StatusAccepted || run["executor"] != "runner" {
+			t.Errorf("%s: %d, executor %v; want 202 and runner", what, code, run["executor"])
+		}
+		// Each run stays queued (nothing claims here); keep them from adding
+		// up to the fleet cap, which would answer 409 for a reason of its own.
+		if _, err := pool.Exec(`DELETE FROM runs`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The job's own executor.
+	sID := seedJob(t, pool, "spec-ssh", "bash", "ssh")
+	code, run := triggerRun(t, client, csrf, ts.URL, sID, nil)
+	want("a job whose executor says ssh", code, run)
+	// The global default.
+	if _, err := pool.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES ('defaultExecutor', 'ssh')
+	                                     ON CONFLICT(key) DO UPDATE SET value = excluded.value`); err != nil {
+		t.Fatalf("set the old global default: %v", err)
 	}
 	gID := seedJob(t, pool, "global-bash", "bash", "")
-	_, run := triggerRun(t, client, csrf, ts.URL, gID, nil)
-	if run["executor"] != "runner" {
-		t.Errorf("global default: executor = %v, want runner (global beats capability)", run["executor"])
+	code, run = triggerRun(t, client, csrf, ts.URL, gID, nil)
+	want("a global default of ssh", code, run)
+	// The per-run override, both values.
+	for _, v := range []string{"ssh", "runner"} {
+		code, run = triggerRun(t, client, csrf, ts.URL, gID, map[string]any{"executor": v})
+		want("a per-run executor of "+v, code, run)
 	}
-
-	// Job spec.executor = ssh beats the global runner default.
-	sID := seedJob(t, pool, "spec-ssh", "bash", "ssh")
-	_, run = triggerRun(t, client, csrf, ts.URL, sID, nil)
-	if run["executor"] != "ssh" {
-		t.Errorf("spec.executor: executor = %v, want ssh (spec beats global)", run["executor"])
-	}
-
-	// Per-trigger override = runner beats job spec.executor = ssh.
-	_, run = triggerRun(t, client, csrf, ts.URL, sID, map[string]any{"executor": "runner"})
-	if run["executor"] != "runner" {
-		t.Errorf("override: executor = %v, want runner (override beats spec)", run["executor"])
-	}
-}
-
-// TestRunTriggerInvalidExecutorCombo proves the R5.2 capability matrix: ssh +
-// ansible/terraform is rejected with a clear 422.
-func TestRunTriggerInvalidExecutorCombo(t *testing.T) {
-	ts, pool := newTestServer(t)
-	client, csrf := devLoginWithCSRF(t, ts)
-
-	// Per-trigger override ssh on an ansible job → 422.
+	// What used to be an invalid combination.
 	ansID := seedJob(t, pool, "ansible-job", "ansible", "")
-	code, _ := triggerRun(t, client, csrf, ts.URL, ansID, map[string]any{"executor": "ssh"})
-	if code != http.StatusUnprocessableEntity {
-		t.Errorf("ssh+ansible = %d, want 422", code)
-	}
-
-	// Job spec.executor=ssh on a terraform job → 422.
+	code, run = triggerRun(t, client, csrf, ts.URL, ansID, map[string]any{"executor": "ssh"})
+	want("ssh asked of an ansible job", code, run)
 	tfID := seedJob(t, pool, "tf-job", "terraform", "ssh")
-	code, _ = triggerRun(t, client, csrf, ts.URL, tfID, nil)
-	if code != http.StatusUnprocessableEntity {
-		t.Errorf("spec ssh+terraform = %d, want 422", code)
-	}
+	code, run = triggerRun(t, client, csrf, ts.URL, tfID, nil)
+	want("a terraform job whose executor says ssh", code, run)
 
-	// An unknown executor value → 422.
-	bashID := seedJob(t, pool, "bash-job", "bash", "")
-	code, _ = triggerRun(t, client, csrf, ts.URL, bashID, map[string]any{"executor": "bogus"})
-	if code != http.StatusUnprocessableEntity {
-		t.Errorf("bogus executor = %d, want 422", code)
-	}
+	// Ignored means ignored: not even a value the field never had is refused.
+	// Since 2.5.0 (question 60) the field is not in the contract at all; a
+	// client that still sends it is accepted, as these calls show.
+	code, run = triggerRun(t, client, csrf, ts.URL, gID, map[string]any{"executor": "bogus"})
+	want("an executor the field never had", code, run)
 }
 
 // TestResyncScopes verifies the POST /api/v1/scopes/resync endpoint's basic
@@ -1034,7 +1005,7 @@ func TestRequestBodySizeLimit(t *testing.T) {
 	}
 
 	put := func(body []byte) int {
-		req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings/gitlab", bytes.NewReader(body))
+		req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/agencies/global/git-repo", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-CSRF-Token", csrfToken)
 		r, err := client.Do(req)

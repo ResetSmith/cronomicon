@@ -25,8 +25,9 @@ func TestAgencyM4Visibility(t *testing.T) {
 	exec(`INSERT INTO agencies(id,name,created_at) VALUES('a2','beta','t')`)
 	// r1 advertises the bash capability — the requirements-aware stuck-run probe
 	// (Phase 4) checks run_type ∈ caps, so an eligible runner must claim the type.
-	exec(`INSERT INTO runners(id,name,status,capabilities,registered_at,created_at) VALUES('r1','m','online','["bash"]','t','t')`)
-	exec(`INSERT INTO runner_agencies(runner_id,agency_id) VALUES('r1','a1')`) // alpha has one online runner
+	// alpha's own (§0a: a runner takes its owner's work only).
+	exec(`INSERT INTO runners(id,name,status,capabilities,registered_at,created_at,owner_agency) VALUES('r1','m','online','["bash"]','t','t','a1')`)
+	exec(`INSERT OR IGNORE INTO runner_agencies(runner_id,agency_id) VALUES('r1','a1')`) // alpha has one online runner
 
 	// ── Coverage counts on GET /agencies ─────────────────────────────────────────
 	resp, err := client.Get(ts.URL + "/api/v1/agencies")

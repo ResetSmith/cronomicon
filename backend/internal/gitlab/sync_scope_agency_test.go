@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -51,7 +52,7 @@ func TestSyncPreservesScopeAgencies(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := svc.upsertScopes(context.Background(), tx, scopes, "now", "sha"); err != nil {
+		if _, err := svc.upsertScopes(context.Background(), tx, scopes, "now", "sha"); err != nil {
 			t.Fatalf("upsertScopes: %v", err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -64,13 +65,23 @@ func TestSyncPreservesScopeAgencies(t *testing.T) {
 	if err := pool.QueryRow(`SELECT id FROM scopes WHERE name='prod'`).Scan(&scopeID); err != nil {
 		t.Fatal(err)
 	}
-	for _, a := range []struct{ id, name string }{{"ag-dss", "DSS"}, {"ag-nwd", "NWD"}} {
-		if _, err := pool.Exec(`INSERT INTO agencies(id, name, created_at) VALUES(?,?,'t')`, a.id, a.name); err != nil {
-			t.Fatalf("seed agency %s: %v", a.name, err)
-		}
-		if _, err := pool.Exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES(?,?)`, scopeID, a.id); err != nil {
-			t.Fatalf("assign %s: %v", a.name, err)
-		}
+	// LR-31: a scope that arrives from Git is Global's until a global
+	// administrator assigns it. (It had no agency row at all before 2.3.0, and
+	// the upsert still writes none: the row is the database's, at birth.)
+	var born string
+	if err := pool.QueryRow(`SELECT group_concat(agency_id, ',') FROM scope_agencies WHERE scope_id=?`, scopeID).Scan(&born); err != nil || born != "global" {
+		t.Fatalf("a newly synced scope is in %q (%v), want global alone", born, err)
+	}
+	// Since 2.4.3 (question 58) a scope of Global's repository is held to
+	// Global, as one of an agency's repository is to that agency: an
+	// assignment to another agency is refused. (Until then this test assigned
+	// it to DSS and NWD, and checked a re-sync kept both.) The rule below still
+	// holds for the membership it has.
+	if _, err := pool.Exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-dss','DSS','t')`); err != nil {
+		t.Fatalf("seed agency DSS: %v", err)
+	}
+	if _, err := pool.Exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES(?, 'ag-dss')`, scopeID); err == nil || !strings.Contains(err.Error(), "scope_agency_fixed") {
+		t.Fatalf("assigning Global's repository's scope to DSS: %v, want scope_agency_fixed", err)
 	}
 
 	read := func() []string {
@@ -106,7 +117,7 @@ func TestSyncPreservesScopeAgencies(t *testing.T) {
 			t.Fatalf("scope_agencies changed across re-sync: %v → %v", before, after)
 		}
 	}
-	if len(after) != 2 {
-		t.Fatalf("expected the scope to keep BOTH agencies, got %v", after)
+	if len(after) != 1 || after[0] != "global" {
+		t.Fatalf("expected the scope to stay Global's alone, got %v", after)
 	}
 }

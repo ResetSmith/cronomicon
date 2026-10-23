@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -78,11 +81,38 @@ type runnerResponse struct {
 	LastHeartbeatAt     *string `json:"lastHeartbeatAt"`
 	DrainDeadlineAt     *string `json:"drainDeadlineAt,omitempty"`
 	RegistrationTokenID *int64  `json:"registrationTokenId,omitempty"`
-	// Agencies is the runner's network-isolation membership (agency-support.md M2),
-	// operator-assigned (never self-declared). Populated by the list serializer.
+	// Kind is `agent` for a runner that registered with a token, `server` for
+	// the local runner: this server running shell jobs itself (LR-38). There is
+	// at most one, and it is never deregistered.
+	Kind string `json:"kind"`
+	// OwnerAgency is the agency that OWNS the runner (LR-58): the one whose
+	// administrators manage it. Set by the registration token, never by the
+	// agent. Populated by the list serializer.
+	OwnerAgency *agencyRef `json:"ownerAgency,omitempty"`
+	// Agencies is what the runner SERVES: the agencies whose runs it claims. For
+	// an agent that is exactly its owner. More than that, or anything else, is a
+	// legacy placement (LegacyPlacement). Populated by the list serializer.
 	Agencies []agencyRef `json:"agencies,omitempty"`
-	// DR-7: present only on an UNBOUND runner for which a prior placement was
-	// captured. Absent means "no offer", never "no placement".
+	// LegacyPlacement is true when the serve list is not exactly the owner
+	// (MA-9): a runner that served several agencies before 2.3.0. It keeps
+	// working, can be narrowed and never widened.
+	LegacyPlacement bool `json:"legacyPlacement"`
+	// CanManage is the per-row authority flag (RB-24) for this runner: the caller
+	// holds configureApp on the agency that OWNS it (LR-59). Every operator write
+	// on the row is gated on exactly this, so the view reads it instead of the
+	// flat configureApp flag, which only says "somewhere".
+	//
+	// Both flags are absent, not false, when the server could not work them out
+	// (the owner read failed): "unknown" must not read as "not yours" to a
+	// client that would then disable every control for a global administrator.
+	CanManage *bool `json:"canManage,omitempty"`
+	// CanReviewHostKeys is true when the caller may review this runner's host
+	// keys: its owner, or (LR-63) an administrator of an agency it serves and
+	// does not own, who may scan and decide keys for their own agency's scopes.
+	CanReviewHostKeys *bool `json:"canReviewHostKeys,omitempty"`
+	// DR-7 / MA-32: present only on a runner for which a previous enrolment under
+	// the same name left scope bindings of its own agency behind. Absent means
+	// "no offer", never "no previous enrolment".
 	PlacementSuggestion *placementSuggestion `json:"placementSuggestion,omitempty"`
 	// Toolchains is the detected-toolchain display detail (RX.7): ansible-core
 	// version, installed collections + versions, checkout/vault flags. Raw JSON
@@ -230,7 +260,7 @@ func (s *Service) HandleSetSecretInjection(w http.ResponseWriter, r *http.Reques
 		if req.Allow {
 			detail = "secret injection enabled"
 		}
-		_ = settings.WriteChangeLog(r.Context(), s.db, idn.Email, "Runners", "updated", name, detail)
+		_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "runners", "owner_agency", runnerID), idn.Email, "Runners", "updated", name, detail)
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"id": runnerID, "allowSecretInjection": req.Allow})
 }
@@ -295,23 +325,86 @@ func (s *Service) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 		}
 		arows.Close()
 	}
+	// The owner, the same way: one grouped read, attached by id.
+	owners := map[string]agencyRef{}
+	kinds := map[string]string{}
+	if orows, oerr := s.db.QueryContext(r.Context(), `
+		SELECT rn.id, rn.owner_agency, COALESCE(a.name, ''), rn.kind
+		  FROM runners rn LEFT JOIN agencies a ON a.id = rn.owner_agency`); oerr == nil {
+		for orows.Next() {
+			var rid, kind string
+			var ar agencyRef
+			if err := orows.Scan(&rid, &ar.ID, &ar.Name, &kind); err == nil {
+				owners[rid] = ar
+				kinds[rid] = kind
+			}
+		}
+		orows.Close()
+	} else {
+		s.log.Error("list runners: owners", "error", oerr)
+	}
+	caller, hasCaller := auth.IdentityFrom(r.Context())
 	for i := range out {
 		out[i].Agencies = byRunner[out[i].ID]
-	}
-
-	// DR-7 (c): offer a prior placement to every UNBOUND runner. Unbound is not
-	// "idle" — the claim predicate's general-pool branch admits a runner with no
-	// agencies to every UNTAGGED run (poll.go, AG-Q3a) — so a runner that lost its
-	// placement has silently moved from its department's pool into the shared one.
-	// That is an isolation change, which is why it is surfaced rather than left to
-	// be noticed.
-	unbound := map[string]string{}
-	for i := range out {
-		if len(out[i].Agencies) == 0 {
-			unbound[out[i].ID] = out[i].Name
+		out[i].Kind = kinds[out[i].ID]
+		if out[i].Kind == "" {
+			out[i].Kind = settings.RunnerKindAgent
+		}
+		if o, ok := owners[out[i].ID]; ok {
+			out[i].OwnerAgency = &o
+			serves := make([]string, 0, len(out[i].Agencies))
+			for _, a := range out[i].Agencies {
+				serves = append(serves, a.ID)
+			}
+			// The local runner has a serve list by design (MA-14); only an
+			// agent's can be a legacy placement.
+			out[i].LegacyPlacement = out[i].Kind != settings.RunnerKindServer && settings.IsLegacyPlacement(o.ID, serves)
+			// The same two questions the routes ask (api.requireRunnerOwner and
+			// requireRunnerOwnerOrHostKeyGuest), answered per row. A flag here
+			// only shapes the view; the routes decide.
+			if hasCaller {
+				manage := caller.CanAgency(auth.PermConfigureApp, o.ID)
+				review := manage
+				for _, a := range serves {
+					if a != o.ID && caller.CanAgency(auth.PermConfigureApp, a) {
+						review = true
+					}
+				}
+				out[i].CanManage, out[i].CanReviewHostKeys = &manage, &review
+			}
 		}
 	}
-	if sugg, serr := suggestionsFor(r.Context(), s.db, unbound); serr != nil {
+
+	// Whose each runner is (2.5.0 C2, CF-1: every agency's runners, inventory
+	// and toolchains, were listed to everyone), then the agency the request
+	// works in (2.4.4). A runner is its owner's (LR-58); one with no owner row
+	// is Global's.
+	ownerOf := func(rr runnerResponse) string {
+		if rr.OwnerAgency == nil || rr.OwnerAgency.ID == "" {
+			return agencyid.Global
+		}
+		return rr.OwnerAgency.ID
+	}
+	// Listed to a reader of its owner, or of an agency it serves (a legacy
+	// placement serves several, and its host keys are each one's to review,
+	// LR-63).
+	reader, _ := auth.IdentityFrom(r.Context())
+	readable := out[:0]
+	for _, rr := range out {
+		ok := reader.ReadsAgency(ownerOf(rr))
+		for _, a := range rr.Agencies {
+			ok = ok || reader.ReadsAgency(a.ID)
+		}
+		if ok {
+			readable = append(readable, rr)
+		}
+	}
+	out = agencyctx.Keep(r, readable, ownerOf)
+
+	// DR-7 (c), re-keyed by MA-32: offer to re-point the scope bindings a
+	// previous enrolment under the same name still holds, for the scopes of each
+	// runner's own agency. Those scopes are closed until someone does.
+	if sugg, serr := suggestionsFor(r.Context(), s.db); serr != nil {
 		// Best-effort: a suggestion is an aid, and losing it must not cost an
 		// operator the runner list itself.
 		s.log.Error("resolve placement suggestions", "error", serr)
@@ -473,14 +566,26 @@ func (s *Service) HandleRegisterRunner(w http.ResponseWriter, r *http.Request) {
 	configDigest := runnerproto.ConfigDigest(req.Name, req.OS, req.Capabilities,
 		req.MaxConcurrent, req.Inventory, req.Version, req.ProtocolVersion)
 
+	// LR-61: the token names the OWNER, and that is the whole of an agent's
+	// placement. The owner is written here and the one serve row with it, by the
+	// trigger that reads it (runners_born_serving_owner), in this transaction —
+	// so an agent an agency enrols never serves Global, even for an instant, and
+	// an owner that names no agency fails the insert on the serve row's foreign
+	// key rather than landing somewhere else (LR-33). The agent declared none of
+	// it.
+	owner := chk.AgencyID
+	if owner == "" {
+		owner = agencyid.Global
+	}
+
 	// Insert runners row.
 	if _, err := tx.ExecContext(r.Context(), `
 		INSERT INTO runners(id, name, status, os, capabilities, load,
 		                    max_concurrent, version, inventory, toolchains, protocol_version, config_digest,
-		                    registered_at, created_at, registration_token_id, last_client_ip)
-		VALUES (?, ?, 'online', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                    registered_at, created_at, registration_token_id, owner_agency, last_client_ip)
+		VALUES (?, ?, 'online', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		runnerID, req.Name, req.OS, string(capsJSON),
-		req.MaxConcurrent, req.Version, req.Inventory, toolchainsVal, req.ProtocolVersion, configDigest, ts, ts, regTokID,
+		req.MaxConcurrent, req.Version, req.Inventory, toolchainsVal, req.ProtocolVersion, configDigest, ts, ts, regTokID, owner,
 		// DR-Q7: the one signal a re-registering agent cannot freely assert.
 		// Resolved through the trusted-proxy allowlist — NEVER r.RemoteAddr,
 		// which behind a reverse proxy is the proxy for every runner.
@@ -556,6 +661,17 @@ func (s *Service) HandleRegisterRunner(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// revokeRunnerKeys revokes every live API key of ONE runner, by runner id.
+// Both deregistration paths call it, in the transaction that deletes the row: a
+// failure aborts the deregistration, because a runner that is gone from the
+// table and still holds a working key is the outcome to avoid.
+func revokeRunnerKeys(ctx context.Context, tx *sql.Tx, runnerID, ts string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE runner_tokens SET revoked_at = ?
+		 WHERE runner_id = ? AND revoked_at IS NULL`, ts, runnerID)
+	return err
+}
+
 // HandleDeregisterRunner revokes a runner's registration (operator, CSRF required).
 // DELETE /api/v1/runners/{id}
 func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request) {
@@ -577,15 +693,41 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Revoke all runner_tokens associated with this runner by name pattern.
-	// This approach is defensive: we revoke tokens whose created_by matches
-	// the runner name pattern set at registration.
+	// Revoke this runner's API keys, by its ID (runner_tokens.runner_id, set at
+	// registration). They were revoked by NAME until 2.3.0, and a name is
+	// self-declared and not unique: deregistering one of two same-named runners
+	// cut off the other, and a runner renamed by a re-declare kept a live key
+	// after its row was gone. With agencies enrolling their own agents, the
+	// first of those is one agency disabling another's runner.
 	ts := now()
-	if _, err := tx.ExecContext(r.Context(), `
-		UPDATE runner_tokens SET revoked_at = ?
-		WHERE created_by = ? AND revoked_at IS NULL`,
-		ts, "runner:"+name); err != nil {
-		s.log.Error("revoke runner tokens", "error", err)
+	if err := revokeRunnerKeys(r.Context(), tx, runnerID, ts); err != nil {
+		s.log.Error("revoke runner tokens", "runner_id", runnerID, "error", err)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
+		return
+	}
+	// Its running runs end as runner_lost (2.5.0 C12, present defect 92): the
+	// delete below sets their runner_id to NULL, and nothing closed them after
+	// that (the reaper walks runner rows; the agent, its key revoked, is
+	// refused). They are read HERE, after the keys' revocation took the write
+	// lock, so no claim lands between this read and the delete, and closed HERE,
+	// with their run-end activity, by the reaper's own write (endLostRuns): they
+	// commit or roll back with the delete, so a deregistration that fails closes
+	// nothing, and one that commits leaves no run running with no runner. The
+	// alerts and the metric go after the commit (announceLostRuns). C12.1 closed
+	// them before the transaction, C12.4 ended the stragglers with a bare UPDATE,
+	// and C12.5 closed them after the commit, where a failed write stranded them
+	// (C12.5's review).
+	lost, err := runningRunsOf(r.Context(), tx, runnerID)
+	if err != nil {
+		s.log.Error("read a deregistered runner's runs", "runner_id", runnerID, "error", err)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
+		return
+	}
+	ended, err := s.endLostRuns(r.Context(), tx, name, lost)
+	if err != nil {
+		s.log.Error("end a deregistered runner's runs", "runner_id", runnerID, "error", err)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
+		return
 	}
 
 	// DR-7: snapshot the operator-owned placement BEFORE the delete — the
@@ -602,6 +744,7 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 	// AA-4 rule drain/keyscan/resync already follow. In the transaction, so a
 	// deregistration without its audit row cannot exist.
 	if err := auditlog.WriteActivity(r.Context(), tx, auditlog.ActivityParams{
+		AgencyID:   runnerAgency(r.Context(), tx, runnerID), // read before the DELETE below
 		At:         ts,
 		Kind:       "config",
 		Actor:      sessionActor(r),
@@ -626,6 +769,10 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db commit error")
 		return
 	}
+	s.announceLostRuns(ended)
+	// Its processes went with the row (C6a): nothing is left to share the
+	// identity, and nothing would ever poll to resolve the notice.
+	s.clearIdentityShared(r.Context(), runnerID)
 
 	// Drop the drift flap-guard entry — ids are never reused, so keeping it
 	// would only leak an entry per deregistered runner for the process lifetime.
@@ -707,7 +854,7 @@ func (s *Service) HandleTestRunner(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_ = settings.WriteChangeLog(r.Context(), s.db, idn.Email, "Runners", "tested", name, resultStatus)
+	_ = settings.WriteChangeLog(r.Context(), s.db, settings.RowAgency(r.Context(), s.db, "runners", "owner_agency", runnerID), idn.Email, "Runners", "tested", name, resultStatus)
 
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"status":    resultStatus,

@@ -39,7 +39,12 @@ func guardFixture(t *testing.T) (svc *Service, ids, pubs map[string]string) {
 		signer, pem := newKey(t)
 		// The store's uniqueness is (label, owner_agency): give the owner first.
 		id := createCred(t, svc, k.label+"_"+strings.ReplaceAll(k.name, "-", "_"), pem)
-		if _, err := pool.Exec(`UPDATE ssh_credentials SET label = ?, owner_agency = ? WHERE id = ?`, k.label, k.agency, id); err != nil {
+		// A shared key is Global's (migration 1220); an owner is never empty.
+		owner := k.agency
+		if owner == "" {
+			owner = "global"
+		}
+		if _, err := pool.Exec(`UPDATE ssh_credentials SET label = ?, owner_agency = ? WHERE id = ?`, k.label, owner, id); err != nil {
 			t.Fatal(err)
 		}
 		if k.agency != "" {
@@ -71,12 +76,15 @@ func TestKeyGuardChecksAKeyNamedByID(t *testing.T) {
 	if _, err := load(fin, "no-such-credential"); !errors.Is(err, errKeyNotUsable) {
 		t.Errorf("a finance run loading a missing id: err = %v, want errKeyNotUsable", err)
 	}
-	for _, own := range []string{"fin", "shared"} {
-		if got, err := load(fin, ids[own]); err != nil || got != pubs[own] {
-			t.Errorf("a finance run loading the %s key: err = %v", own, err)
-		}
+	if got, err := load(fin, ids["fin"]); err != nil || got != pubs["fin"] {
+		t.Errorf("a finance run loading its own key: err = %v", err)
 	}
-	// A run with no agency (a scope nobody owns, or no scope) may use shared keys only.
+	// Global's key is Global's runs' only (§0a, IN-6; until then every agency's).
+	if _, err := load(fin, ids["shared"]); !errors.Is(err, errKeyNotUsable) {
+		t.Errorf("a finance run loading Global's key: err = %v, want errKeyNotUsable", err)
+	}
+	// A snapshot with no agency at all (a finished pre-2.3.0 row, never a new
+	// run) may use Global's keys only.
 	none := keyGuard{checked: true}
 	if _, err := load(none, ids["fin"]); !errors.Is(err, errKeyNotUsable) {
 		t.Errorf("a run with no agency loading FIN's key: err = %v, want errKeyNotUsable", err)
@@ -110,21 +118,26 @@ func TestKeyGuardChecksAKeyNamedByName(t *testing.T) {
 	if got, err := load(fin, "CRONOMICON_KEY_finkey"); err != nil || got != pubs["fin"] {
 		t.Errorf("a finance run naming its own key: err = %v", err)
 	}
-	// One label, FIN's and a shared one: FIN's run gets FIN's; TAX's run gets the
-	// shared one. `LIMIT 1` gave whichever row came first to both.
+	// One label, FIN's and Global's: FIN's run gets FIN's; TAX's run gets
+	// neither (§0a, IN-6; until then Global's). `LIMIT 1` once gave whichever
+	// row came first to both.
 	if got, err := load(fin, "CRONOMICON_KEY_deploy"); err != nil || got != pubs["fin-dup"] {
 		t.Errorf("a finance run naming `deploy` did not get FIN's own (err = %v)", err)
 	}
 	tax := keyGuard{checked: true, scope: "tax-prod", agencies: []string{"tax"}}
-	if got, err := load(tax, "CRONOMICON_KEY_deploy"); err != nil || got != pubs["shared-dup"] {
-		t.Errorf("a tax run naming `deploy` did not get the shared key (err = %v)", err)
+	if _, err := load(tax, "CRONOMICON_KEY_deploy"); !errors.Is(err, errKeyNotUsable) {
+		t.Errorf("a tax run naming `deploy` got Global's key (err = %v), want errKeyNotUsable", err)
 	}
 
 	// A private key kept as a variable is scoped: another scope's is not this run's.
+	// Each variable is its agency's, as the write path makes it.
 	_, pem := newKey(t)
 	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := svc.db.Exec(`INSERT INTO env_vars (id, key, scope, value, created_at) VALUES ('v-tax','TAX_PEM','tax-prod',?,?), ('v-fin','FIN_PEM','fin-prod',?,?)`,
+	if _, err := svc.db.Exec(`INSERT INTO env_vars (id, key, scope, value, created_at, owner_agency) VALUES ('v-tax','TAX_PEM','tax-prod',?,?,'ag:tax'), ('v-fin','FIN_PEM','fin-prod',?,?,'ag:fin')`,
 		pem, now, pem, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.Exec(`INSERT INTO env_var_agencies (env_var_id, agency_id) VALUES ('v-tax','ag:tax'), ('v-fin','ag:fin')`); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"TAX_PEM", "CRONOMICON_VAR_TAX_PEM"} {
@@ -155,15 +168,25 @@ func TestHostKeyGuardFollowsTheRecordsScope(t *testing.T) {
 	if err != nil || !g.checked || g.scope != "fin-prod" || len(g.agencies) != 1 || g.agencies[0] != "finance" {
 		t.Errorf("guard for FIN's host = %+v, %v", g, err)
 	}
-	// A scope no agency owns: checked, with no agencies — shared keys only.
-	if g, err := hostKeyGuard(ctx, svc.db, "h-lone"); err != nil || !g.checked || len(g.agencies) != 0 {
-		t.Errorf("guard for an unowned scope's host = %+v, %v", g, err)
+	// A scope nobody assigned is Global's (migration 1220): checked, as Global —
+	// which may use Global's (shared) keys and no department's.
+	if g, err := hostKeyGuard(ctx, svc.db, "h-lone"); err != nil || !g.checked || len(g.agencies) != 1 || g.agencies[0] != "Global" {
+		t.Errorf("guard for a Global scope's host = %+v, %v", g, err)
 	}
-	if g, err := hostKeyGuard(ctx, svc.db, "h-manual"); err != nil || g.checked {
-		t.Errorf("guard for a manual record = %+v, %v; want unchecked", g, err)
+	// A record written by hand has an owner since 2.3.0 (LR-69) — Global, for one
+	// that predates it — and its key is checked against that owner (LR-72). It was
+	// unchecked while such a record belonged to nobody.
+	if g, err := hostKeyGuard(ctx, svc.db, "h-manual"); err != nil || !g.checked || g.scope != "" || len(g.agencies) != 1 || g.agencies[0] != "Global" {
+		t.Errorf("guard for a Global hand-written record = %+v, %v; want checked as Global", g, err)
+	}
+	if _, err := svc.db.Exec(`INSERT INTO ssh_hosts (id, hostname, port, source, created_at, owner_agency) VALUES ('h-fin-manual','jump01',22,'cronomicon',?,'ag:fin')`, now); err != nil {
+		t.Fatal(err)
+	}
+	if g, err := hostKeyGuard(ctx, svc.db, "h-fin-manual"); err != nil || !g.checked || len(g.agencies) != 1 || g.agencies[0] != "finance" {
+		t.Errorf("guard for FIN's hand-written record = %+v, %v; want checked as finance", g, err)
 	}
 }
-
+// End to end: a run whose host record names another agency's key (TAX's) does not connect.
 // End to end: a finance run whose host record names TAX's key does not connect.
 // The run fails for that host, with the reason in its log.
 func TestARunDoesNotConnectWithAnotherAgencysKey(t *testing.T) {
@@ -174,16 +197,21 @@ func TestARunDoesNotConnectWithAnotherAgencysKey(t *testing.T) {
 		// A manually authored record that names TAX's key, reachable from every scope.
 		`INSERT INTO ssh_hosts (id, hostname, address, port, username, auth_credential_id, source, created_at)
 		 VALUES ('h-db01','db01','192.0.2.50',22,'deploy','` + ids["tax"] + `','cronomicon','` + now + `')`,
+		// db01 is one of the scope's hosts (LR-71: a fixed target is a member).
+		`INSERT INTO scope_hosts (scope_id, host) VALUES ('sc:lone','db01')`,
 		`INSERT INTO jobs (name, run_type, command, concurrency_policy, synced_at) VALUES ('ledger','bash','true','Allow','` + now + `')`,
 		`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, agencies_json, created_at)
-		 VALUES ('run-fin','ledger','bash','fin-prod','db01','queued','tester','manual','ssh','["finance"]','` + now + `')`,
-		`INSERT INTO run_agencies (run_id, agency) VALUES ('run-fin','finance')`,
+		 VALUES ('run-fin','ledger','bash','unowned','db01','queued','tester','manual','runner','["Global"]','` + now + `')`,
+		`INSERT INTO run_agencies (run_id, agency) VALUES ('run-fin','Global')`,
 	} {
 		if _, err := pool.Exec(q); err != nil {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	claimed, err := svc.claim(context.Background())
+	// The run is Global's, which the local runner serves (since §0a it serves
+	// Global only; until then this was finance's run, once finance was on its
+	// list). Its record names TAX's key.
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: %v, %v", claimed, err)
 	}
@@ -195,7 +223,7 @@ func TestARunDoesNotConnectWithAnotherAgencysKey(t *testing.T) {
 		t.Errorf("run status = %q, want failure (it must not have connected with TAX's key)", status)
 	}
 	logBytes, _ := os.ReadFile(filepath.Join(*svc.logDir.Load(), "run-fin.log"))
-	if !strings.Contains(string(logBytes), "not one this run's agency may use") {
+	if !strings.Contains(string(logBytes), "not one its agency may use") {
 		t.Errorf("the run log does not say why:\n%s", logBytes)
 	}
 }

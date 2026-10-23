@@ -289,7 +289,7 @@ func (r *sshRunner) runTarget(ctx context.Context, t runnerproto.ManifestTarget,
 		if isHostKeyError(err) {
 			scan := dialAddr(t.Address, t.Name, t.Port)
 			// A parseable marker + a per-host reason the run's envelope carries.
-			emit(t.Name, "cronomicon: host_key_unverified: "+scan+" — approve this host's key in the Runners view (Scan & approve), then retry")
+			emit(t.Name, "cronomicon: host_key_unverified: "+scan+" — approve this host's key in the Runners view (Trusted host keys → Scan keys), then retry")
 			return hostResult{host: t.Name, exitCode: -1, err: err, hostKeyUnverified: true, scanTarget: scan}
 		}
 		emit(t.Name, "cronomicon: connect: "+err.Error())

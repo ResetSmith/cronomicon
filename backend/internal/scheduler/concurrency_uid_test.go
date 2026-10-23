@@ -86,8 +86,8 @@ func TestScheduleJoinSurvivesNullOwnerUID(t *testing.T) {
 	}
 
 	s := New(pool, quietLog(), nil)
-	if err := s.reloadJobs(ctx); err != nil {
-		t.Fatalf("reloadJobs: %v", err)
+	if err := s.Reload(ctx); err != nil {
+		t.Fatalf("reload: %v", err)
 	}
 	if n := len(s.cr.Entries()); n == 0 {
 		t.Error("a schedule entry with a NULL owner_uid registered no cron entry — " +

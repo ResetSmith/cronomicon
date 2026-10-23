@@ -172,6 +172,36 @@ func TestMissedDetectorFirstPassAnchorsSilently(t *testing.T) {
 // With the cursor already behind, a per-minute schedule that produced no runs
 // is reported — once per expected fire, with a durable row stamped at the time
 // the fire was expected rather than at detection.
+// Present defect 69 (C0; question 65): a missed-run alert names its job by uid.
+// It named the job by name only, and the dispatcher resolves a name to a uid
+// only when one job anywhere holds it, so with two agencies' jobs of one name
+// a rule pinned to one of them by uid stayed silent for its missed runs.
+func TestMissedRunAlertCarriesTheJobsUID(t *testing.T) {
+	pool := mustPool(t)
+	s := New(pool, quietLog(), nil)
+	alerts := &captureAlerts{}
+	s.SetNotifier(alerts)
+	seedJobRow(t, pool, "nightly", 1)
+	seedSchedule(t, pool, "job", "nightly", "default", "* * * * *", 0)
+	var uid string
+	if err := pool.QueryRow(`SELECT uid FROM jobs WHERE name = 'nightly'`).Scan(&uid); err != nil || uid == "" {
+		t.Fatalf("the job's uid: %q %v", uid, err)
+	}
+	back := time.Now().UTC().Add(-20 * time.Minute).Format(time.RFC3339)
+	if _, err := pool.Exec(`INSERT INTO settings(key,value) VALUES(?,?)`, settingsKeyMissedCursor, back); err != nil {
+		t.Fatalf("seed cursor: %v", err)
+	}
+	s.ScanMissedRuns(context.Background())
+	if len(alerts.events) == 0 {
+		t.Fatal("no missed run was raised")
+	}
+	for _, ev := range alerts.events {
+		if ev.JobUID != uid {
+			t.Errorf("a missed-run alert names its job by uid %q, want %q", ev.JobUID, uid)
+		}
+	}
+}
+
 func TestMissedDetectorReportsSilentMisses(t *testing.T) {
 	pool := mustPool(t)
 	s := New(pool, quietLog(), nil)
@@ -646,5 +676,80 @@ func TestMissedDetectorWatchesWorkflowSchedules(t *testing.T) {
 				t.Errorf("durable workflow markers = %d, want %d", markers, tc.want)
 			}
 		})
+	}
+}
+
+// TestALateRunIsJudgedAgainstItsOwnJobsDeadline (read while grounding 2.4.0
+// Phase R5; in the released code): the late-run check joined a run to jobs by
+// name and source although the run records its job's uid. Two agencies may each
+// own an in-app job of one name, so a run of the job with no deadline was
+// warned for the other job's. A run is judged against its own job. One that
+// records no uid is its name's job when one job holds the name, and is not
+// judged when two do.
+func TestALateRunIsJudgedAgainstItsOwnJobsDeadline(t *testing.T) {
+	pool := mustPool(t)
+	s := New(pool, quietLog(), nil)
+	alerts := &captureAlerts{}
+	s.SetNotifier(alerts)
+	ctx := context.Background()
+
+	// Two jobs called "nightly": A must be done in a minute, B has no deadline.
+	for _, j := range []struct {
+		uid  string
+		warn any
+	}{{"uid-nightly-a", 60}, {"uid-nightly-b", nil}} {
+		if _, err := pool.ExecContext(ctx,
+			`INSERT INTO jobs (uid, name, source, run_type, scope, concurrency_policy, enabled, synced_at, warn_after_seconds)
+			 VALUES (?, 'nightly', 'cronomicon', 'bash', 'prod', 'Allow', 1, 't', ?)`, j.uid, j.warn); err != nil {
+			t.Fatalf("seed job %s: %v", j.uid, err)
+		}
+	}
+	started := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
+	for _, r := range []struct {
+		id  string
+		uid any
+	}{{"run-of-a", "uid-nightly-a"}, {"run-of-b", "uid-nightly-b"}, {"run-of-neither", nil}} {
+		if _, err := pool.ExecContext(ctx,
+			`INSERT INTO runs (id, job_name, job_source, job_uid, run_type, scope, status, triggered_by, trigger_kind, started_at, created_at)
+			 VALUES (?, 'nightly', 'cronomicon', ?, 'bash', 'prod', 'running', 'scheduler', 'scheduled', ?, ?)`,
+			r.id, r.uid, started, started); err != nil {
+			t.Fatalf("seed run %s: %v", r.id, err)
+		}
+	}
+
+	s.ScanSLA(ctx)
+
+	if len(alerts.events) != 1 || alerts.events[0].TraceID != "run-of-a" {
+		t.Fatalf("alerts = %+v, want one, for the run of the job that has the deadline", alerts.events)
+	}
+	warned := func(id string) bool {
+		t.Helper()
+		var w sql.NullString
+		if err := pool.QueryRow(`SELECT sla_warned_at FROM runs WHERE id = ?`, id).Scan(&w); err != nil {
+			t.Fatal(err)
+		}
+		return w.Valid
+	}
+	if !warned("run-of-a") {
+		t.Error("the run of the job with a deadline was not stamped as warned")
+	}
+	if warned("run-of-b") {
+		t.Error("the run of the job with NO deadline was warned for the other job's: it was judged by its name")
+	}
+	if warned("run-of-neither") {
+		t.Error("a run that records no job, of a name two jobs hold, was warned: one of the two was picked for it")
+	}
+
+	// A uid that no job has is not replaced by the name.
+	if _, err := pool.ExecContext(ctx, `DELETE FROM jobs WHERE uid = 'uid-nightly-b'`); err != nil {
+		t.Fatal(err)
+	}
+	s.ScanSLA(ctx)
+	if warned("run-of-b") {
+		t.Error("a run whose job has gone was judged against the job that now holds its name")
+	}
+	// With one job left holding the name, the run that records none is that job's.
+	if !warned("run-of-neither") {
+		t.Error("a run that records no job was not judged against the one job that holds its name")
 	}
 }

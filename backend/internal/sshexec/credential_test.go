@@ -32,11 +32,12 @@ func insertHostCred(t *testing.T, pool *sql.DB, id, addr string, port int, user,
 	t.Helper()
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := pool.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_credential_id, host_key, via, created_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, "host-"+id, addr, port, user, credID, nullable(hostKey), nullable(via), now); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_credential_id, via, created_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, "host-"+id, addr, port, user, credID, nullable(via), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKeyLine(t, pool, addr, port, hostKey)
 }
 
 // TestProbeHost_Verified_Credential (SK.12) proves the credential path: a host

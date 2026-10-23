@@ -92,7 +92,7 @@ func TestWriteChangeLogAtStoresTheCallersAt(t *testing.T) {
 	pool := openTestPool(t)
 	const at = "2025-12-25T10:00:00Z"
 
-	if err := WriteChangeLogAt(context.Background(), pool, at,
+	if err := WriteChangeLogAt(context.Background(), pool, at, "global",
 		"alice@corp.example", "Settings", "updated", "general", "maxConcurrent 5 → 8"); err != nil {
 		t.Fatalf("WriteChangeLogAt: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestWriteChangeLogDefaultsAtToNow(t *testing.T) {
 	pool := openTestPool(t)
 	before := time.Now().UTC().Add(-time.Second)
 
-	if err := WriteChangeLog(context.Background(), pool,
+	if err := WriteChangeLog(context.Background(), pool, "global",
 		"bob@corp.example", "Jobs", "Paused", "vault-token-rotate", ""); err != nil {
 		t.Fatalf("WriteChangeLog: %v", err)
 	}

@@ -251,9 +251,9 @@ func (s *Server) updateJobAnnotation(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Jobs", "Updated", jr.Name, "Job annotation updated")
+	_ = workflow.InsertChangeLog(r.Context(), s.db, s.jobAgency(r.Context(), jr.UID), actor, "Jobs", "Updated", jr.Name, "Job annotation updated")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Jobs", Action: "Updated", Target: jr.Name,
+		Kind: "config", Actor: actor, Category: "Jobs", Action: "Updated", Target: jr.Name, JobUID: jr.UID,
 	})
 	httpx.JSON(w, http.StatusOK, jr)
 }
@@ -278,9 +278,9 @@ func (s *Server) updateWorkflowAnnotation(w http.ResponseWriter, r *http.Request
 		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
 		return
 	}
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Workflows", "Updated", wr.Name, "Workflow annotation updated")
+	_ = workflow.InsertChangeLog(r.Context(), s.db, s.workflowAgency(r.Context(), wr.UID), actor, "Workflows", "Updated", wr.Name, "Workflow annotation updated")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Workflows", Action: "Updated", Target: wr.Name,
+		Kind: "config", Actor: actor, Category: "Workflows", Action: "Updated", Target: wr.Name, WorkflowUID: wr.UID,
 	})
 	httpx.JSON(w, http.StatusOK, wr)
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -245,21 +246,50 @@ func (c *Client) Redeclare(ctx context.Context, id Identity, cfg Config, caps []
 	}
 }
 
+// pollState is what a poll tells the server about this process, beyond being
+// alive.
+type pollState struct {
+	// started: no poll of this process has been answered yet, so it holds no
+	// run. The server closes any run it still shows as running here: they were
+	// this runner's before it stopped, and nothing will ever report on them.
+	started bool
+	// noClaim: the agent can start no run now. It was told to stop and is
+	// finishing its runs, or every concurrency slot is taken. The poll is a
+	// heartbeat and a way to receive a kill; it must not be handed new work,
+	// because a run the agent is handed and cannot start has no owner: the
+	// server shows it as running, and nothing here will ever report on it.
+	noClaim bool
+	// process: this process's own value (runnerproto.PollParamProcess), the
+	// same on every poll it makes. Empty sends nothing.
+	process string
+}
+
 // Poll performs GET /api/v1/runners/{id}/poll. The server holds the request
 // ~30s. configDigest, when non-empty, rides as a query param so the server
 // can detect declared-config drift and request a re-register (Phase 5).
 // settingsVersion is the managed-settings version the agent has APPLIED; it
 // ALWAYS rides (even 0), which is how the server knows the agent is
 // settings-capable (Phase 4) and can safely send it settings.
+// st says where this process is in its life, and which process it is
+// (pollState); each field is a query param that an older server ignores.
 // Returns:
 //   - (resp, nil)         on 200 with a body (may carry an assignment/control)
 //   - (nil, errNoWork)    on 204 No Content
 //   - (nil, errReaped)    on 404 (runner reaped/deregistered — re-register)
 //   - (nil, errProtocolTooOld) on 426 (this binary is below the server's floor)
-func (c *Client) Poll(ctx context.Context, id Identity, configDigest string, settingsVersion int) (*runnerproto.PollResponse, error) {
+func (c *Client) Poll(ctx context.Context, id Identity, configDigest string, settingsVersion int, st pollState) (*runnerproto.PollResponse, error) {
 	q := url.Values{}
 	if configDigest != "" {
 		q.Set("configDigest", configDigest)
+	}
+	if st.started {
+		q.Set(runnerproto.PollParamStarted, "1")
+	}
+	if st.noClaim {
+		q.Set(runnerproto.PollParamClaim, "0")
+	}
+	if st.process != "" {
+		q.Set(runnerproto.PollParamProcess, st.process)
 	}
 	// Always present (even "0") so the server can tell a Phase-4 agent from an
 	// older one and only then include managed settings in the response.
@@ -359,6 +389,9 @@ type postLogResult struct {
 	// that differs from the offset we sent; persistedOffset carries the truth.
 	resumeMismatch  bool
 	persistedOffset int64
+	// runClosed is true when the server replied 409 because the run is already
+	// terminal there: it takes no more of this run's log, at any offset.
+	runClosed bool
 }
 
 // postLog streams a chunk to POST /api/v1/runs/{traceId}/log starting at
@@ -398,14 +431,61 @@ func (c *Client) postLog(ctx context.Context, id Identity, traceID string,
 		// Resume-offset mismatch: parse persistedOffset and let the caller
 		// re-slice from there.
 		var c409 struct {
-			PersistedOffset int64 `json:"persistedOffset"`
+			PersistedOffset *int64 `json:"persistedOffset"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&c409)
-		return postLogResult{resumeMismatch: true, persistedOffset: c409.PersistedOffset}, nil
+		if c409.PersistedOffset == nil {
+			// The other 409 this route answers: the run is no longer running
+			// (an operator stopped it, or it was closed as lost), so there is
+			// no offset to resume from and nothing more will be accepted.
+			return postLogResult{runClosed: true}, nil
+		}
+		return postLogResult{resumeMismatch: true, persistedOffset: *c409.PersistedOffset}, nil
 	default:
-		return postLogResult{}, fmt.Errorf("log post: server returned %s: %s",
-			resp.Status, readSnippet(resp.Body))
+		snippet := readSnippet(resp.Body)
+		return postLogResult{}, &logStatusError{code: resp.StatusCode, refusal: isServerRefusal(snippet),
+			msg: fmt.Sprintf("log post: server returned %s: %s", resp.Status, snippet)}
 	}
+}
+
+// logStatusError is a log upload the server answered with a status the agent
+// does not take as an answer (anything but 200, 204 and 409). The status, and
+// whether the answer is Cronomicon's own, are kept so a run's final upload knows
+// whether sending it again can ever succeed (finalUploadRetryable; 2.5.0 C12).
+type logStatusError struct {
+	code    int
+	refusal bool // the body is the server's JSON refusal ({"code": …})
+	msg     string
+}
+
+func (e *logStatusError) Error() string { return e.msg }
+
+// isServerRefusal says whether an error body is Cronomicon's own refusal: a
+// JSON object with a non-empty "code", as every refusal of the server is
+// written (httpx.Fail). A proxy in front of the server writes its own body
+// (Traefik's "404 page not found" while the server's container is stopped).
+func isServerRefusal(body string) bool {
+	var e struct {
+		Code string `json:"code"`
+	}
+	return json.Unmarshal([]byte(strings.TrimSpace(body)), &e) == nil && e.Code != ""
+}
+
+// finalUploadRetryable says whether a run's final upload that failed with err is
+// worth sending again. Only Cronomicon's own refusal with a 4xx other than 429
+// is its answer for good: 413 (the run's log reached its cap; since C12 the
+// server takes a final chunk there, so only an older server says it), 401 (the
+// runner's key was revoked by a deregister) and 404 (no such run for this
+// runner) were re-sent every minute for as long as the agent lived, holding the
+// run's slot (present defect 92). A transport error, a 5xx (a server
+// restarting, Vault away: 503 redactor_unavailable), 429, and any status a proxy
+// answered in the server's place (a 404 or 502 while it restarts) may clear.
+func finalUploadRetryable(err error) bool {
+	var se *logStatusError
+	if errors.As(err, &se) {
+		return !se.refusal || se.code >= 500 || se.code == http.StatusTooManyRequests
+	}
+	return true
 }
 
 // readSnippet reads a bounded prefix of an error body for diagnostics.

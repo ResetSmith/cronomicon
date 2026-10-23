@@ -1,0 +1,156 @@
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { api, csrfHeader, errMsg } from "../api/client";
+import { useGet } from "../hooks";
+import { AlertBanner, Btn, InlineLoading } from "../components/ui";
+import { fmtInAppZone } from "../utils/datetime";
+import { c } from "../theme";
+import type { components } from "../api/schema";
+
+// Notices — one inbox for standing conditions (LR-85, v2.3.0).
+//
+// A notice is something the installation can be in and the application does not
+// create: what an upgrade left for a person to decide, or damage. Each belongs
+// to an agency and is shown to whoever administers that agency (Global's to a
+// global administrator, who therefore sees them all).
+//
+// A notice RESOLVES ITSELF when its cause is gone; the checks run when this
+// page is opened. Dismissing only hides one and records who did: it is for a
+// condition that has been read and is being left as it is.
+
+type Notice = components["schemas"]["Notice"];
+
+/** What a kind is called, and where its remedy is made. Unknown kinds show their detail under a neutral title. */
+const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = {
+  agency_renamed: { title: "An agency was renamed by the upgrade", to: "/scopes?tab=agencies", toLabel: "Agencies" },
+  shared_ownership: { title: "Shared by several agencies", to: "/scopes?tab=agencies", toLabel: "Agencies" },
+  orphaned: { title: "In no agency", to: "/scopes?tab=agencies", toLabel: "Agencies" },
+  retired_runner_pin: { title: "A runner-tag pin that could not be converted", to: "/scopes", toLabel: "Scopes" },
+  scope_several_agencies: { title: "A scope in several agencies", to: "/scopes", toLabel: "Scopes" },
+  target_host_outside_scope: { title: "A job's target host is not in its scope", to: "/jobs", toLabel: "Jobs" },
+  record_key_outside_owner: { title: "A host record or bastion names a key its owner cannot use", to: "/settings?tab=targets", toLabel: "SSH Targets" },
+  vault_path_outside_prefix: { title: "A Vault path outside its agency's prefixes", to: "/scopes?tab=agencies", toLabel: "Agencies" },
+  legacy_placement: { title: "A runner that serves agencies it is not owned by", to: "/runners", toLabel: "Runners" },
+  // 2.5.0 C10.3: a global administrator takes the update by assigning again;
+  // the detail names the files and those the agency changed in its copy.
+  assignment_update_available: { title: "An assigned definition has changed in its origin", to: "/jobs", toLabel: "Jobs" },
+  // 2.5.0 C6a: the remedy (stop the copy, delete its identity file, enrol it
+  // afresh) is done on the copy's host; the detail says how.
+  runner_identity_shared: { title: "Two agent processes share one runner's identity", to: "/runners", toLabel: "Runners" },
+  runner_name_shared: { title: "Two runners of one agency share a name", to: "/runners", toLabel: "Runners" },
+  schedule_binding_ambiguous: { title: "A schedule entry is tied to no schedule", to: "/schedules", toLabel: "Schedules" },
+  git_sync_problems: { title: "A repository's last sync reported errors", to: "/settings?tab=repositories", toLabel: "Repositories" },
+  schedule_gone: { title: "A schedule in use was removed from Git", to: "/schedules", toLabel: "Schedules" },
+  workflow_spans_agencies: { title: "A workflow runs jobs of more than one agency", to: "/workflows", toLabel: "Workflows" },
+  reaction_other_agency: { title: "A reaction watches another agency's definition", to: "/schedules?tab=reactions", toLabel: "Reactions" },
+  global_job_on_agency_scope: { title: "A job of Global's repository names an agency's scope", to: "/jobs", toLabel: "Jobs" },
+  global_credential_bound: { title: "A job binds a secret, variable or key only Global has", to: "/env-vars", toLabel: "Env Vars" },
+  global_host_record: { title: "A host only Global has a record for", to: "/settings?tab=targets", toLabel: "SSH Targets" },
+  // 2.5.1 SG-40: an agency may be created without one; its administrator connects it.
+  agency_no_repository: { title: "An agency has no repository connected", to: "/settings?tab=repositories", toLabel: "Repositories" },
+  // 2.5.0 C5 (GA-2): its delegates delete it in Users & Access; a global
+  // administrator lists the group on Scopes → Agencies.
+  grant_group_unlisted: { title: "A grant names a group its agency does not list", to: "/settings?tab=users", toLabel: "Users & Access" },
+  // 2.5.1 SG-28: the agency's own Vault did not answer.
+  agency_vault_unreachable: { title: "An agency's own Vault cannot be reached", to: "/settings?tab=agencyvault", toLabel: "Agency Vault" },
+  local_runner_served: { title: "The local runner no longer serves this agency", to: "/runners", toLabel: "Runners" },
+  global_script_job: { title: "A job is built on a script of Global's repository", to: "/jobs", toLabel: "Jobs" },
+  global_schedule_bound: { title: "A job or workflow is bound to a schedule of Global's", to: "/schedules", toLabel: "Schedules" },
+  global_calendar_scope: { title: "A global calendar of Global's freezes Global only", to: "/schedules", toLabel: "Schedules" },
+  schedule_entry_no_owner: { title: "A schedule entry with no owner no longer fires", to: "/schedules", toLabel: "Schedules" },
+  may_run_on_agent: { title: "Shell jobs that ran from the server may now run on an agent", to: "/scopes", toLabel: "Scopes" },
+  mixed_scope: { title: "Shell jobs that ran in two places may now run in either", to: "/scopes", toLabel: "Scopes" },
+  may_run_on_server: { title: "Shell jobs that ran on agents may now run from the server", to: "/scopes", toLabel: "Scopes" },
+  agency_placed: { title: "The upgrade made the local runner serve an agency", to: "/settings?tab=localrunner", toLabel: "Local runner" },
+  shell_job_requires: { title: "A shell job requires what no agent has", to: "/jobs", toLabel: "Jobs" },
+  no_runner_for_shell_jobs: { title: "An agency's shell jobs have no runner", to: "/runners", toLabel: "Runners" },
+  local_runner_host_keys: { title: "The local runner has no approved key for some hosts", to: "/runners", toLabel: "Runners" },
+  host_key_conflict: { title: "Two records for one address had different host keys", to: "/settings?tab=targets", toLabel: "SSH Targets" },
+  leftover_executor_key: { title: "Jobs in Git still declare an executor, which is ignored", to: "/scopes", toLabel: "Scopes" },
+  project_job_no_checkout_agent: { title: "A job on a project has no agent that allows checkout", to: "/runners", toLabel: "Runners" },
+  job_script_gone: { title: "A job's script was removed from Git", to: "/jobs", toLabel: "Jobs" },
+};
+
+export function Notices() {
+  const [dep, setDep] = useState(0);
+  const q = useGet<Notice[]>(() => api.GET("/notices"), [dep]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const list = Array.isArray(q.data) ? q.data : [];
+
+  const dismiss = async (n: Notice) => {
+    setBusy(n.id);
+    setErr(null);
+    const { error } = await api.POST("/notices/dismiss", { params: { header: csrfHeader }, body: { ids: [n.id] } });
+    setBusy(null);
+    if (error) setErr(errMsg(error));
+    else setDep((d) => d + 1);
+  };
+
+  // Grouped by agency, Global first: its notices are about the installation.
+  const groups = new Map<string, { name: string; items: Notice[] }>();
+  for (const n of list) {
+    const g = groups.get(n.agencyId) ?? { name: n.agencyName || n.agencyId, items: [] };
+    g.items.push(n);
+    groups.set(n.agencyId, g);
+  }
+  const ordered = [...groups].sort(([a, ga], [b, gb]) => (a === "global" ? -1 : b === "global" ? 1 : ga.name.localeCompare(gb.name)));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 980 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <p style={{ margin: 0, flex: 1, fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
+          Conditions that need a person: what an upgrade left to decide, and anything found in a state the application does not
+          create. A notice goes away by itself when its cause is put right. Dismissing hides one that has been read and is
+          being left as it is, and records who dismissed it.
+        </p>
+        <Btn small onClick={() => setDep((d) => d + 1)} disabled={q.loading}>
+          Refresh
+        </Btn>
+      </div>
+      {err && <AlertBanner type="danger">{err}</AlertBanner>}
+      {q.loading && <InlineLoading what="notices" />}
+      {q.error && <AlertBanner type="danger">Could not load notices: {q.error}</AlertBanner>}
+      {!q.loading && !q.error && list.length === 0 && (
+        <div style={{ background: c.panel, border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, padding: 20, color: c.textSec, fontSize: c.fontSm }}>
+          Nothing needs attention. Notices appear here for the agencies you administer.
+        </div>
+      )}
+      {ordered.map(([agencyId, g]) => (
+        <section key={agencyId} aria-label={`Notices for ${g.name}`} style={{ background: c.panel, border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, overflow: "hidden" }}>
+          <div style={{ padding: "10px 16px", borderBottom: `1px solid ${c.border}`, fontFamily: c.sansCond, textTransform: "uppercase", letterSpacing: 0.6, fontSize: c.fontXs, color: c.textSec }}>
+            {g.name} · {g.items.length}
+          </div>
+          {g.items.map((n, i) => {
+            const k = KINDS[n.kind];
+            return (
+              <div key={n.id} style={{ padding: "12px 16px", borderTop: i === 0 ? "none" : `1px solid ${c.borderLight}`, display: "flex", gap: 14, alignItems: "flex-start" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: c.fontBody, fontWeight: 600, color: c.text }}>{k?.title ?? "Notice"}</div>
+                  <div style={{ fontSize: c.fontSm, color: c.text, lineHeight: 1.6, marginTop: 4, overflowWrap: "anywhere" }}>{n.detail}</div>
+                  <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <span>First seen {n.firstSeenAt ? fmtInAppZone(n.firstSeenAt) : "—"}</span>
+                    {k?.to && (
+                      <Link to={k.to} style={{ color: c.primary }}>
+                        Open {k.toLabel}
+                      </Link>
+                    )}
+                  </div>
+                </div>
+                <Btn
+                  small
+                  onClick={() => dismiss(n)}
+                  disabled={busy != null}
+                  ariaLabel={`Dismiss: ${k?.title ?? "notice"}, ${g.name}`}
+                  title="Hide this notice and record that you did. It does not fix the condition, and it comes back if the condition does."
+                >
+                  {busy === n.id ? "Dismissing…" : "Dismiss"}
+                </Btn>
+              </div>
+            );
+          })}
+        </section>
+      ))}
+    </div>
+  );
+}

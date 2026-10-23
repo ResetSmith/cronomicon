@@ -28,22 +28,6 @@ func resolveSigner(ctx context.Context, database *sql.DB, sealer *secrets.Sealer
 	return parseSigner(material)
 }
 
-// IDByLabel resolves an ssh_credentials LABEL to its row id — the dispatch-time
-// half of the CA rule that authored surfaces carry labels (CA-Q2) while the
-// executor's signer path keys on id. found is false (nil error) when no
-// credential carries that label.
-func IDByLabel(ctx context.Context, database *sql.DB, label string) (id string, found bool, err error) {
-	scanErr := database.QueryRowContext(ctx,
-		`SELECT id FROM ssh_credentials WHERE label = ? LIMIT 1`, label).Scan(&id)
-	if errors.Is(scanErr, sql.ErrNoRows) {
-		return "", false, nil
-	}
-	if scanErr != nil {
-		return "", false, fmt.Errorf("lookup ssh credential %q: %w", label, scanErr)
-	}
-	return id, true, nil
-}
-
 // ResolveMaterialByName returns the decrypted private-key PEM for the SSH
 // credential whose label matches name — the raw material behind an
 // CRONOMICON_KEY_<label> reference, for callers that must write a key FILE for remote
@@ -100,13 +84,13 @@ func ResolveMaterialByID(ctx context.Context, database *sql.DB, cfg *config.Conf
 // key material by NAME across the secrets/env_vars fallback chain.)
 func decryptCredential(ctx context.Context, database *sql.DB, sealer *secrets.Sealer, vault secrets.VaultClient, id string) (string, error) {
 	row := database.QueryRowContext(ctx,
-		`SELECT source, ciphertext, nonce, wrapped_dek, COALESCE(kek_version, 1), vault_ref
+		`SELECT source, ciphertext, nonce, wrapped_dek, COALESCE(kek_version, 1), vault_ref, seal_format, COALESCE(owner_agency, '')
 		 FROM ssh_credentials WHERE id = ?`, id)
-	var source string
+	var source, owner string
 	var ciphertext, nonce, wrappedDEK []byte
-	var kekVer int
+	var kekVer, format int
 	var vaultRef sql.NullString
-	if err := row.Scan(&source, &ciphertext, &nonce, &wrappedDEK, &kekVer, &vaultRef); err != nil {
+	if err := row.Scan(&source, &ciphertext, &nonce, &wrappedDEK, &kekVer, &vaultRef, &format, &owner); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("ssh credential %q not found", id)
 		}
@@ -122,13 +106,13 @@ func decryptCredential(ctx context.Context, database *sql.DB, sealer *secrets.Se
 		if !vaultRef.Valid || vaultRef.String == "" {
 			return "", fmt.Errorf("vault-source SSH credential %q has no vault_ref", id)
 		}
-		material, err := vault.Fetch(vaultRef.String)
+		material, err := secrets.VaultForOwner(vault, owner).Fetch(vaultRef.String) // 2.5.1 SG-21: the owner's Vault
 		if err != nil {
 			return "", fmt.Errorf("fetch vault SSH credential %q: %w", id, err)
 		}
 		return material, nil
 	}
-	plain, err := sealer.Open(ciphertext, nonce, wrappedDEK, kekVer)
+	plain, err := sealer.Open(secrets.RowBinding("ssh_credentials", id), format, ciphertext, nonce, wrappedDEK, kekVer)
 	if err != nil {
 		return "", fmt.Errorf("decrypt ssh credential: %w", err)
 	}

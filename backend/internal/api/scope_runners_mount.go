@@ -25,13 +25,17 @@ import (
 //	GET  /api/v1/scope-binding-notices             (ConfigureApp)
 //	POST /api/v1/scope-binding-notices/dismiss     (ConfigureApp + CSRF)
 //
-// Authority. The routes carry the same coarse ConfigureApp gate as every other
-// scope overlay (scopes are exempt from the departmental axis — their membership
-// DEFINES the grant expansion). On top of it, NAMING a runner needs the RF-2
-// runner gate for that runner: configureApp on an agency it belongs to, and
-// unrestricted for a general-pool runner. Binding decides which work a runner
-// receives, which is the same act as placing it. Removing a binding names no
-// runner and needs nothing more than the route gate.
+// Authority (LR-62). Binding needs authority over the SCOPE (requireScopeAgency)
+// and a runner that already serves the scope's agency (the writer's eligibility
+// check, 422 runner_not_eligible). It does not need authority over the runner.
+//
+// Until 2.3.0 naming a runner needed the runner's own gate, because binding
+// decided which work a runner received and so counted as placing it. A runner's
+// placement is now made once, by whoever owns it: an agent serves its owner, and
+// the local runner serves the agencies a global administrator listed. A binding
+// only narrows which of the runners already serving the agency the scope uses.
+// Without this an agency could not bind its own scope to a runner that serves
+// it and belongs to Global.
 func (s *Server) mountScopeRunners(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/scopes/{scopeId}/runners", s.requirePerm("configureApp", permConfigureApp)(s.requireScopeAgency("scopeId", http.HandlerFunc(s.handleSetScopeRunners))))
 	mux.Handle("POST /api/v1/scopes/{scopeId}/runners/preview", s.requirePerm("configureApp", permConfigureApp)(s.requireScopeAgency("scopeId", http.HandlerFunc(s.handlePreviewScopeRunners))))
@@ -51,8 +55,8 @@ func (s *Server) failScopeRunners(w http.ResponseWriter, err error) bool {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_runner", "the referenced runner is not registered")
 	case errors.As(err, &notEligible):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "runner_not_eligible",
-			notEligible.Error()+" — a scope in an agency takes a runner that is a member of it, and a "+
-				"scope in no agency takes a general-pool runner; fix the runner's agency membership first")
+			notEligible.Error()+" — a scope takes a runner that serves its agency, and a scope that is "+
+				"Global's takes a runner that serves Global; fix the runner's agency membership first")
 	case errors.Is(err, settings.ErrBindingsChanged):
 		httpx.Fail(w, http.StatusConflict, "bindings_changed",
 			"this scope's bound runners changed while you were editing; reload and try again")
@@ -65,8 +69,8 @@ func (s *Server) failScopeRunners(w http.ResponseWriter, err error) bool {
 }
 
 // handleSetScopeRunners replaces a scope's bound-runner set. An empty list
-// clears the binding. Each runner being ADDED is authorized individually before
-// the write, so a denial names the runner.
+// clears the binding. A runner being ADDED must serve the scope's agency; the
+// writer checks that in its own transaction and names the runner if not.
 func (s *Server) handleSetScopeRunners(w http.ResponseWriter, r *http.Request) {
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {
@@ -89,25 +93,7 @@ func (s *Server) handleSetScopeRunners(w http.ResponseWriter, r *http.Request) {
 			"runnerIds is required; send [] to clear the binding")
 		return
 	}
-	added, _, err := settings.ScopeRunnersDelta(r.Context(), s.db, sid, *inp.RunnerIDs)
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return
-	}
-	authorized := make(map[string]bool, len(added))
-	for _, rid := range added {
-		if !s.requireEntityAgency(w, r, id, auth.PermConfigureApp, "runner_agencies", "runner_id", rid, "runner") {
-			return
-		}
-		authorized[rid] = true
-	}
-	// The writer re-derives the additions inside its own transaction and is handed
-	// the set that was just authorized: if another operator unbound a runner in
-	// between, that runner would now count as an addition nobody gated, and the
-	// write is refused instead (409) rather than letting the race stand in for
-	// the check.
-	sc, err := settings.SetScopeRunners(r.Context(), s.db, sid, *inp.RunnerIDs, id.Email,
-		func(runnerID string) bool { return authorized[runnerID] })
+	sc, err := settings.SetScopeRunners(r.Context(), s.db, sid, *inp.RunnerIDs, id.Email, nil)
 	if s.failScopeRunners(w, err) {
 		return
 	}
@@ -119,8 +105,9 @@ func (s *Server) handleSetScopeRunners(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleReplaceScopeRunner swaps one runner for another on every scope the first
-// is bound to. The runner being replaced is usually deregistered, so only the
-// REPLACEMENT is gated — it is the one being given work.
+// is bound to. The caller needs authority over each of those scopes, and the
+// replacement must serve each one's agency (the writer's check): all or nothing.
+// No authority over either runner is asked for (LR-62).
 func (s *Server) handleReplaceScopeRunner(w http.ResponseWriter, r *http.Request) {
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {
@@ -140,12 +127,9 @@ func (s *Server) handleReplaceScopeRunner(w http.ResponseWriter, r *http.Request
 			"fromRunnerId and toRunnerId are required and must differ")
 		return
 	}
-	if !s.requireEntityAgency(w, r, id, auth.PermConfigureApp, "runner_agencies", "runner_id", inp.ToRunnerID, "runner") {
-		return
-	}
 	// GC-6: the swap rewrites the binding of EVERY scope the old runner serves,
-	// so the caller needs authority over each of those scopes, not only over the
-	// replacement. Without this an administrator of one agency could re-point
+	// so the caller needs authority over each of those scopes. Without this an
+	// administrator of one agency could re-point
 	// another agency's confined scope at a runner of their own.
 	boundScopes, err := s.scopesBoundTo(r.Context(), inp.FromRunnerID)
 	if err != nil {
@@ -184,11 +168,28 @@ func (s *Server) scopesBoundTo(ctx context.Context, runnerID string) ([]string, 
 
 // handleListScopeBindingNotices returns the runner-tag pins that could not be
 // turned into a scope binding and still need an operator.
+//
+// The list is filtered by the same rule as the inbox and the dismissal
+// (pinVisible): configureApp on the pin's scope, a global administrator for a
+// job with no scope. It was every pin for every configureApp holder, so the
+// Scopes banner counted jobs of other agencies that its own "Review in Notices"
+// link then did not show, and named their jobs and scopes on the way.
 func (s *Server) handleListScopeBindingNotices(w http.ResponseWriter, r *http.Request) {
-	list, err := settings.ListRetiredPins(r.Context(), s.db)
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	all, err := settings.ListRetiredPins(r.Context(), s.db)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
+	}
+	list := all[:0]
+	for _, p := range all {
+		if pinVisible(id, s.pinAgency(r.Context(), p.JobUID, p.JobSource, p.JobName, p.Scope), p.Scope) {
+			list = append(list, p)
+		}
 	}
 	httpx.JSON(w, http.StatusOK, list)
 }
@@ -213,8 +214,9 @@ func (s *Server) handleDismissScopeBindingNotices(w http.ResponseWriter, r *http
 	// administrator's. A notice id that matches nothing is skipped by the writer.
 	for _, nid := range inp.IDs {
 		var scope sql.NullString
+		var jobUID, jobSource, jobName string
 		err := s.db.QueryRowContext(r.Context(),
-			`SELECT scope FROM retired_runner_pins WHERE id = ?`, nid).Scan(&scope)
+			`SELECT scope, COALESCE(job_uid, ''), job_source, job_name FROM retired_runner_pins WHERE id = ?`, nid).Scan(&scope, &jobUID, &jobSource, &jobName)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -223,14 +225,14 @@ func (s *Server) handleDismissScopeBindingNotices(w http.ResponseWriter, r *http
 			return
 		}
 		if scope.String == "" {
-			if !id.CanAgency(auth.PermConfigureApp, "") {
+			if !id.GlobalAdmin(auth.PermConfigureApp) {
 				s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
 					"this notice is about a job with no scope; only an administrator of every agency may dismiss it")
 				return
 			}
 			continue
 		}
-		if !s.requireCan(w, r, id, auth.PermConfigureApp, scope.String) {
+		if !s.requireCan(w, r, id, auth.PermConfigureApp, s.pinAgency(r.Context(), jobUID, jobSource, jobName, scope.String), scope.String) {
 			return
 		}
 	}
@@ -280,7 +282,7 @@ func (s *Server) handlePreviewScopeRunners(w http.ResponseWriter, r *http.Reques
 		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
 		return
 	}
-	if !auth.ScopeReadable(id, preview.Scope) {
+	if !auth.ScopeReadableIn(id, s.scopeOwnerByID(r.Context(), r.PathValue("scopeId")), preview.Scope) {
 		httpx.Fail(w, http.StatusForbidden, "forbidden",
 			"you cannot read this scope's jobs, so its binding cannot be previewed for you")
 		return

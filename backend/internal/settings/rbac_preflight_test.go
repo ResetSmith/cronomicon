@@ -11,8 +11,8 @@ import (
 
 // rbacFixture builds a database with a deliberately awkward access configuration:
 // a group nobody granted, a group granted in the WRONG CASE, an unscoped job with
-// a schedule and a parked run, and an unmembered secret. Every surviving RB-4
-// section has something to find.
+// a schedule and a parked run. Every surviving RB-4 section has something to
+// find.
 //
 // v0.57.8 (RB-19): the fixture no longer writes ad_group_mappings or
 // scope_restrictions — both tables are dropped. Access comes from access_grants,
@@ -66,12 +66,6 @@ func rbacFixture(t *testing.T) *sql.DB {
 	exec(`INSERT INTO pending_runs (id,kind,name,source,scope,run_at,scheduled_by,created_at,status)
 		VALUES ('p1','job','restart-service','git',NULL,'2026-09-01T17:00:00Z','carol@example.com','2026-08-02T10:00:00Z','pending')`)
 
-	// A secret with no agency membership (RB-Q14) and one with membership.
-	exec(`INSERT INTO secrets (id,key,scope,source,created_at,last_modified_by) VALUES
-		('sec-1','GLOBAL_TOKEN',NULL,'stored','2026-01-01T00:00:00Z','admin@example.com'),
-		('sec-2','TAX_TOKEN','tax','stored','2026-01-01T00:00:00Z','admin@example.com')`)
-	exec(`INSERT INTO secret_agencies (secret_id,agency_id) VALUES ('sec-2','a-tax')`)
-
 	return database
 }
 
@@ -123,15 +117,6 @@ func TestRbacPreflightFindsEverySection(t *testing.T) {
 		if g == "sg-ops" || g == "sg-viewers" {
 			t.Errorf("UngrantedGroups included the granted group %q", g)
 		}
-	}
-
-	// ── RB-Q14: the unmembered secret, and only that one ──
-	if len(rep.EmptyMembershipEntities) != 1 {
-		t.Fatalf("EmptyMembershipEntities = %+v, want exactly the unmembered secret", rep.EmptyMembershipEntities)
-	}
-	if rep.EmptyMembershipEntities[0].Key != "GLOBAL_TOKEN" {
-		t.Errorf("EmptyMembershipEntities[0].Key = %q, want GLOBAL_TOKEN",
-			rep.EmptyMembershipEntities[0].Key)
 	}
 
 	// ── RB-26: the unscoped job, its share, its schedule, its parked run ──
@@ -210,7 +195,7 @@ func TestRbacPreflightEmptyOnFreshDatabase(t *testing.T) {
 	}
 	// Every slice must be non-nil so the JSON is [] rather than null.
 	if rep.UngrantedGroups == nil || rep.UnscopedJobs == nil || rep.UnscopedSchedules == nil ||
-		rep.PendingUnbound == nil || rep.PendingRevoked == nil || rep.EmptyMembershipEntities == nil {
+		rep.PendingUnbound == nil || rep.PendingRevoked == nil {
 		t.Error("a report slice was nil; it must serialize as [] so the SPA can map over it")
 	}
 }

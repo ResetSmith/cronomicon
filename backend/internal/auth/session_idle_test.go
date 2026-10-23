@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
@@ -275,6 +276,13 @@ func TestAPolicyReadErrorDoesNotMintAFreshGrace(t *testing.T) {
 	// Baseline: the cap is live and the abandoned session is revoked.
 	if _, ok := s.readSession(nil, stale()); ok {
 		t.Fatal("baseline: a 90-minute-idle session survived a 30-minute cap")
+	}
+
+	// LR-78: a session's grants come from the snapshot, which keeps its last good
+	// copy through a read failure. Build it once, as any earlier request would
+	// have, so this test still isolates the POLICY read.
+	if _, err := s.grantsFor(context.Background(), nil); err != nil {
+		t.Fatalf("warm the grant snapshot: %v", err)
 	}
 
 	// Simulate an unreadable settings row (a busy/locked DB) by pointing the

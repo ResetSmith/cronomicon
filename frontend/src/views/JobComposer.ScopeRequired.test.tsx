@@ -103,13 +103,15 @@ describe("JobComposer — scope is a required choice (AF-1)", () => {
     const q = renderComposer("/compose?script=tools%2Fbackup.sh");
     await waitFor(() => expect(q.getAllByText("tools/backup.sh").length).toBeGreaterThan(0));
     fireEvent.change(q.getByPlaceholderText("nightly-backup"), { target: { value: "global-job" } });
-    pickScope(q, /All agencies \(global\)/);
+    pickScope(q, /^No scope/);
     fireEvent.click(q.getByRole("button", { name: "Create job" }));
 
     await waitFor(() => expect(posts.filter((p) => p.path === "/jobs")).toHaveLength(1));
     expect(posts[0].body).toMatchObject({ name: "global-job", scope: "" });
-    // The consequence is stated, so "All" is never chosen blind.
-    expect(q.getByText(/Visible to every agency/)).toBeTruthy();
+    // The consequence is stated, so "No scope" is never chosen blind; and it is
+    // the agency's, not every agency's (2.5.0 C11, defect 90).
+    expect(q.getAllByText(/No scope: the job is Global.s, and runs on Global.s hosts/).length).toBeGreaterThan(0);
+    expect(q.queryByText(/Visible to every agency/)).toBeNull();
   });
 
   it("sends a named scope unchanged", async () => {
@@ -129,7 +131,7 @@ describe("JobComposer — scope is a required choice (AF-1)", () => {
     fireEvent.change(q.getByPlaceholderText("nightly-backup"), { target: { value: "orphan-job" } });
     pickScope(q, /^Orphan/);
 
-    await waitFor(() => expect(q.getByText(/not mapped to any agency/)).toBeTruthy());
+    await waitFor(() => expect(q.getByText(/is in no agency, so only global administrators will\s+see this job/)).toBeTruthy());
     // Advisory only — the save still goes through.
     fireEvent.click(q.getByRole("button", { name: "Create job" }));
     await waitFor(() => expect(posts.filter((p) => p.path === "/jobs")).toHaveLength(1));
@@ -140,7 +142,7 @@ describe("JobComposer — scope is a required choice (AF-1)", () => {
     const q = renderComposer("/compose?id=8");
     // The picker states the existing choice rather than sitting empty: the value
     // was decided (a legacy default counts), so re-asking would be noise.
-    await waitFor(() => expect(q.getAllByDisplayValue("All agencies (global)").length).toBeGreaterThan(0));
+    await waitFor(() => expect(q.getAllByDisplayValue("No scope").length).toBeGreaterThan(0));
   });
 });
 
@@ -170,7 +172,7 @@ describe("JobComposer — All is withheld without composeUnbound (AF-2)", () => 
     fireEvent.click(q.getByRole("combobox", { name: "Scope" }));
     // The named scopes are still offered; only the global option is absent.
     await waitFor(() => expect(q.getByRole("option", { name: /^Prod/ })).toBeTruthy());
-    expect(q.queryByRole("option", { name: /All agencies \(global\)/ })).toBeNull();
+    expect(q.queryByRole("option", { name: /^No scope/ })).toBeNull();
     expect(q.getByText(/Pick one of the scopes your role is granted/)).toBeTruthy();
   });
 });
@@ -182,20 +184,20 @@ describe("JobComposer — All is withheld without composeUnbound (AF-2)", () => 
 // job and its inline schedules; the Reactions section is read-only for them and
 // says why (FX-7), rather than accepting input the second save would refuse
 // with "the job was saved, but its reactions were not".
-describe("JobComposer — reactions need a compose administrator (GC)", () => {
-  const WHY = /only a global administrator \(a role on every agency\) can change them\./;
+// Reactions needed a compose administrator from GC (v2.2.2) until 2.4.2; since
+// question 61 they are the definition's agency's, like the definition.
+describe("JobComposer — reactions are the job's agency's (question 61)", () => {
   const BASE = {
     vault: false, apprise: false, compose: true, composeUnbound: true, manageRoles: false,
     configureApp: false, manageEnvVars: true, publishSchedule: false, triggerJobs: false,
     killJobs: false, unrestricted: false,
   };
 
-  it("disables Add reaction with the reason for a departmental composer", async () => {
+  it("enables Add reaction for a departmental composer", async () => {
     const q = renderComposer("/compose?id=8");
     const add = (await waitFor(() => q.getByRole("button", { name: "+ Add reaction" }))) as HTMLButtonElement;
-    await waitFor(() => expect(add.disabled).toBe(true));
-    expect(add.title).toMatch(WHY);
-    expect(q.getByRole("note").textContent).toMatch(WHY);
+    await waitFor(() => expect(add.disabled).toBe(false));
+    expect(add.title).toBe("");
   });
 
   it("enables it for a compose administrator", async () => {

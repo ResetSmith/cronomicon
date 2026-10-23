@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import type { components } from "../../api/schema";
 
 // SB — the scope↔runner binding UI.
@@ -51,7 +52,7 @@ vi.mock("../../api/client", async (importOriginal) => {
   };
 });
 
-import { BindingNotices, BoundRunnersCell, ReplaceRunnerDialog, RunsOn, ScopeRunnersField, type BindableScope } from "./ScopeRunners";
+import { BindingNotices, BoundRunnersCell, ReplaceRunnerDialog, RunsOn, ScopeRunnersField, UnboundHostKeysNote, type BindableScope } from "./ScopeRunners";
 
 const br = (over: Partial<BoundRunner> & { name: string }): BoundRunner => ({
   runnerId: `id-${over.name}`,
@@ -64,10 +65,9 @@ const emptyPreview = (ids: string[], over: Partial<Preview> = {}): Preview => ({
   scope: "dmz-web",
   currentlyBound: false,
   willBeBound: ids.length > 0,
-  jobsMovingToRunner: [],
-  jobsMovingToSsh: [],
-  jobsRefused: [],
-  queuedSshRuns: 0,
+  runnersLosing: [],
+  runnersGaining: [],
+  jobsNeedingAgent: [],
   runTypes: [],
   jobsNeedingInjection: 0,
   scopeHosts: 0,
@@ -115,13 +115,14 @@ describe("BoundRunnersCell — the catalog column", () => {
 describe("ScopeRunnersField — the expanded row", () => {
   it("names the pool an unbound scope draws from, and offers to bind", () => {
     const { container } = render(<ScopeRunnersField scope={scope()} canEdit onSaved={vi.fn()} />);
-    expect(container.textContent).toMatch(/Not bound — any runner in Finance may run this scope's jobs/);
+    // The local runner serves Global only (§0a, IN-3).
+    expect(container.textContent).toMatch(/Not bound — any runner that serves Finance may take this scope's runs: its agents, and, for a\s+scope of Global's, the local runner/);
     expect(within(container).getByRole("button", { name: "Bind runners…" })).toBeTruthy();
   });
 
-  it("says general pool for a scope in no agency", () => {
+  it("says Global for a scope that lists no other agency", () => {
     const { container } = render(<ScopeRunnersField scope={{ ...scope(), agencies: [] }} canEdit onSaved={vi.fn()} />);
-    expect(container.textContent).toMatch(/any runner in the general pool/);
+    expect(container.textContent).toMatch(/any runner that serves Global/);
   });
 
   it("keeps a deregistered runner on screen, says why nothing runs, and offers to replace it", () => {
@@ -187,11 +188,23 @@ describe("ScopeRunnersDialog — choose, preview, save", () => {
     expect(box("runner-tax-01").disabled).toBe(true);
     expect(box("runner-pool-01").disabled).toBe(true);
     // Both are refused for the same reason on an agency scope, and each row says it.
-    expect(dialog.getAllByText("not in Finance")).toHaveLength(2);
+    expect(dialog.getAllByText("does not serve Finance")).toHaveLength(2);
     // The ghost is ticked (it is bound) and can be unticked.
     expect(box("runner-old").checked).toBe(true);
     expect(box("runner-old").disabled).toBe(false);
     expect(dialog.getByText("deregistered — untick to remove")).toBeTruthy();
+  });
+
+  // The local runner is a runner like the others here (LR-62): a scope it
+  // serves may be bound to it.
+  it("offers the local runner as a binding target when it serves the scope's agency", async () => {
+    fleet = [
+      { id: "id-fin-1", name: "runner-fin-01", status: "online", agencies: [FIN] },
+      { id: "id-local", name: "Local runner", kind: "server", status: "online", agencies: [FIN] },
+    ];
+    const { box } = await open();
+    expect(box("runner-fin-01").disabled).toBe(false);
+    expect(box("Local runner").disabled).toBe(false);
   });
 
   it("keeps Save disabled until something changed AND its preview has arrived, then sends the whole set", async () => {
@@ -216,14 +229,18 @@ describe("ScopeRunnersDialog — choose, preview, save", () => {
     fleet = [{ id: "id-fin-1", name: "runner-fin-01", status: "online", agencies: [FIN] }];
     preview = (ids) =>
       emptyPreview(ids, {
-        jobsMovingToRunner: ids.length ? [{ uid: "u1", name: "restart", source: "git", runType: "bash" }] : [],
-        jobsRefused: ids.length ? [{ uid: "u2", name: "legacy", source: "git", runType: "bash" }] : [],
-        queuedSshRuns: ids.length ? 2 : 0,
+        runnersLosing: ids.length
+          ? [
+              { runnerId: "id-local", name: "Local runner", local: true, status: "online" },
+              { runnerId: "id-fin-2", name: "runner-fin-02", local: false, status: "offline" },
+            ]
+          : [],
         jobsNeedingInjection: ids.length ? 1 : 0,
         scopeHosts: 12,
         runners: ids.map((id) => ({
           runnerId: id,
           name: "runner-fin-01",
+          local: false,
           registered: true,
           eligible: true,
           capabilities: ["bash"],
@@ -236,31 +253,45 @@ describe("ScopeRunnersDialog — choose, preview, save", () => {
     fireEvent.click(box("runner-fin-01"));
     await waitFor(() => expect(save().disabled).toBe(false));
     const text = document.body.textContent ?? "";
-    expect(text).toMatch(/1 job will move from SSH on the server to the bound runners/);
-    expect(text).toContain("restart");
-    expect(text).toMatch(/1 job asks for the SSH executor and will be refused/);
-    expect(text).toContain("legacy");
-    expect(text).toMatch(/2 runs already queued or scheduled for SSH will still run from the server/);
+    // Unbound, every runner of the agency took the scope's runs — the server
+    // among them. Bound, the ones not named stop.
+    expect(text).toMatch(/2 runners will stop taking this scope's runs: Local runner \(this server\), runner-fin-02\./);
     expect(text).toMatch(/runner-fin-01 cannot run ansible jobs/);
     expect(text).toMatch(/runner-fin-01 may not receive secrets, and 1 job on this scope binds one/);
-    // Host-key trust moves with the executor: the runner's own file, not the server's pins.
+    // Whose host-key trust applies is decided by which runner takes the run.
     expect(text).toMatch(/runner-fin-01 does not yet trust 3 of this scope's 12 hosts/);
     // One runner is a single point of failure, and the dialog says so.
     expect(dialog.getByText(/One runner serves this scope/)).toBeTruthy();
   });
 
-  it("warns that clearing a binding sends jobs back to the server, and labels the button for what it does", async () => {
+  it("says who starts taking the scope's runs when a binding is cleared, and labels the button for what it does", async () => {
     fleet = [{ id: "id-runner-dmz-01", name: "runner-dmz-01", status: "online", agencies: [FIN] }];
     preview = (ids) =>
       emptyPreview(ids, {
         currentlyBound: true,
-        jobsMovingToSsh: ids.length === 0 ? [{ uid: "u1", name: "restart", source: "git", runType: "bash" }] : [],
+        runnersGaining: ids.length === 0 ? [{ runnerId: "id-local", name: "Local runner", local: true, status: "offline" }] : [],
       });
     const { box, save } = await open([br({ name: "runner-dmz-01" })]);
     fireEvent.click(box("runner-dmz-01"));
     await waitFor(() => expect(save().disabled).toBe(false));
     expect(save().textContent).toBe("Remove binding");
-    expect(document.body.textContent).toMatch(/1 job will go back to running over SSH from the\s+server/);
+    expect(document.body.textContent).toMatch(/1 runner will start taking this scope's runs:\s+Local runner \(this server\)/);
+  });
+
+  // Only an agent can deliver a key file (LR-47). Binding a scope to the local
+  // runner alone leaves its key-bound jobs with nobody, and the dialog says so
+  // before the save does it.
+  it("warns when no agent would serve a scope that has key-bound jobs", async () => {
+    fleet = [{ id: "id-local", name: "Local runner", kind: "server", status: "online", agencies: [FIN] }];
+    preview = (ids) =>
+      emptyPreview(ids, {
+        jobsNeedingAgent: ids.length ? [{ uid: "u1", name: "deploy", source: "git", runType: "bash" }] : [],
+      });
+    const { box, save } = await open();
+    fireEvent.click(box("Local runner"));
+    await waitFor(() => expect(save().disabled).toBe(false));
+    const text = document.body.textContent ?? "";
+    expect(text).toMatch(/1 job binds an\s+SSH key, and no agent will serve this scope\. Only an agent can deliver a key file, so\s+its runs will be refused: deploy/);
   });
 
   it("shows the server's refusal and stays open", async () => {
@@ -322,39 +353,74 @@ describe("BindingNotices — pins that could not become a binding", () => {
     recordedAt: "2026-10-05T00:00:00Z",
   });
 
+  const show = () =>
+    render(
+      <MemoryRouter>
+        <BindingNotices dep={0} />
+      </MemoryRouter>,
+    );
+
   it("renders nothing when there is nothing to resolve", async () => {
-    const { container } = render(<BindingNotices dep={0} onChanged={vi.fn()} />);
+    const { container } = show();
     await waitFor(() => expect(container.textContent).toBe(""));
   });
 
-  it("says how many jobs lost their confinement, groups them by scope with the reason, and dismisses a group", async () => {
+  // LR-85 — the list, the reason for each pin and the dismissal are in the
+  // Notices inbox now. What stays here is the count, the scopes concerned and
+  // where to act, because the remedy (binding the scope) is made on this page.
+  it("says how many jobs lost their confinement and on which scopes, and points at Notices", async () => {
     notices = [pin(1, "deploy", "mixed", "mixed_pins"), pin(2, "restart", "mixed", "mixed_pins"), pin(3, "sweep", "", "no_scope")];
-    const onChanged = vi.fn();
-    const { container } = render(<BindingNotices dep={0} onChanged={onChanged} />);
+    const { container } = show();
     const q = within(container);
     await waitFor(() => expect(container.textContent).toMatch(/3 jobs used to be confined to particular runners/));
-    fireEvent.click(q.getByRole("button", { name: /Show/ }));
-    expect(container.textContent).toContain("deploy → vlan-dmz, restart → vlan-dmz — its jobs were pinned to different tags");
-    expect(container.textContent).toContain("(no scope)");
-    expect(container.textContent).toContain("the job has no scope, so there is nothing to bind");
-
-    // Groups sort by scope name, so "(no scope)" — the empty name — is first.
-    const dismiss = q.getAllByRole("button", { name: "Dismiss" });
-    expect(dismiss).toHaveLength(2);
-    fireEvent.click(dismiss[1]);
-    await waitFor(() => expect(onChanged).toHaveBeenCalled());
-    expect(calls.find((c) => c.path === "/scope-binding-notices/dismiss")!.body).toEqual({ ids: [1, 2] });
+    expect(container.textContent).toMatch(/\(scope mixed\)/);
+    expect(container.textContent).toMatch(/Bind the scope's runners below to confine them again\./);
+    expect((q.getByRole("link", { name: "Review in Notices" }) as HTMLAnchorElement).getAttribute("href")).toBe("/notices");
+    // It holds no list of its own and decides nothing here.
+    expect(q.queryByRole("button")).toBeNull();
+    expect(calls.find((c) => c.path === "/scope-binding-notices/dismiss")).toBeUndefined();
   });
 });
 
 describe("RunsOn — the job detail's answer", () => {
-  it("says any eligible runner when the scope is not bound", () => {
-    const { container } = render(<RunsOn bound={[]} scope="dmz-web" />);
-    expect(container.textContent).toBe("Any eligible runner");
+  // LR-50 — the row states the claim rule, by run type: there is no executor
+  // beside it to say that a shell job may also be taken by the server.
+  it("states the rule when the scope is not bound: any runner for a shell job, an agent for a toolchain one", () => {
+    const shell = render(<RunsOn bound={[]} scope="dmz-web" runType="bash" />);
+    expect(shell.container.textContent).toBe("Any runner that serves its scope");
+    // The finer print — the server may be that runner; a key binding makes it
+    // an agent's only — is the tooltip's, since it is not true of every job.
+    expect(shell.container.querySelector("span")?.title).toMatch(/local runner \(this server\).*binds an SSH key is taken by an agent only/);
+    cleanup();
+    const ansible = render(<RunsOn bound={[]} scope="dmz-web" runType="ansible" />);
+    expect(ansible.container.textContent).toBe("Any agent that serves its scope");
+    cleanup();
+    // A job with no scope is the Global agency's.
+    const unscoped = render(<RunsOn bound={[]} scope="" runType="bash" />);
+    expect(unscoped.container.textContent).toBe("Any runner that serves the Global agency");
   });
 
   it("names the bound runners, why one is not serving, and the scope that binds them", () => {
     const { container } = render(<RunsOn bound={[br({ name: "a" }), br({ name: "b", status: "offline" })]} scope="dmz-web" />);
     expect(container.textContent).toBe("ab· offlinebound to scope dmz-web");
+  });
+});
+
+describe("UnboundHostKeysNote — who reviews which runner's host keys", () => {
+  // An agency's administrator can do nothing about the local runner's keys
+  // (it is Global's), and until 2.3.2 the scope's row did not say so: the
+  // coverage table renders nothing for a scope with no bound runner.
+  it("says that the local runner's keys are a global administrator's, where to look, and the agency's own remedy", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <UnboundHostKeysNote />
+      </MemoryRouter>,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toMatch(/only a global administrator approves its host keys/);
+    expect(text).toMatch(/approved for that runner/);
+    expect(text).toMatch(/Binding this scope to the agency's own agents keeps its jobs off the local runner/);
+    const links = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(links).toEqual(["/runners", "/notices"]);
   });
 });

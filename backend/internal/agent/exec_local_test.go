@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,49 @@ func TestLocalCommandAnsible(t *testing.T) {
 	}
 	if stdin != m.Body {
 		t.Errorf("ansible should feed body on stdin")
+	}
+}
+
+// An Ansible run that was sent no inventory (a job with no scope) is run with
+// no -i, on Ansible's implicit localhost — this runner's own machine — where a
+// play for any other host matches nothing and still exits 0. The log has to
+// say so (2.3.2). A run WITH an inventory, and a local-inventory runner (whose
+// own Ansible configuration supplies one), say nothing of the kind.
+func TestLocalCommandAnsibleSaysWhenItHasNoInventory(t *testing.T) {
+	has := func(lines []string) bool {
+		for _, l := range lines {
+			if strings.Contains(l, "no inventory") {
+				return true
+			}
+		}
+		return false
+	}
+	body := "- hosts: all\n  tasks: []\n"
+
+	_, _, prov, err := localCommand(&runnerproto.ManifestResponse{RunType: "ansible", Body: body}, Config{Inventory: "cronomicon"}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has(prov) {
+		t.Errorf("a run with no inventory must say so in its log; provenance = %q", prov)
+	}
+
+	withInv := &runnerproto.ManifestResponse{RunType: "ansible", Body: body,
+		Inventory: &runnerproto.ManifestInventory{Raw: "[web]\nweb1 ansible_host=10.0.0.1\n", Format: "ini"}}
+	argv, _, prov, err := localCommand(withInv, Config{Inventory: "cronomicon"}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has(prov) || !slices.Contains(argv, "-i") {
+		t.Errorf("a run with an inventory: argv = %v, provenance = %q", argv, prov)
+	}
+
+	_, _, prov, err = localCommand(&runnerproto.ManifestResponse{RunType: "ansible", Body: body}, Config{Inventory: "local"}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has(prov) {
+		t.Errorf("a local-inventory runner supplies its own inventory; provenance = %q", prov)
 	}
 }
 

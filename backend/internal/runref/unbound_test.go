@@ -84,7 +84,7 @@ func TestUnboundProbeCoversScriptBindings(t *testing.T) {
 	f.ownedSecret(t, "s-owned", "DEPT_PASSWORD", "", "ag-a", "owned")
 
 	job := Owner{Kind: "job", Source: "git", Name: "plain-job"}
-	script := Owner{Kind: "script", Name: "play"}
+	script := Owner{Kind: "script", Name: "play", UID: "uid-script-play"}
 	bind(t, f, script, Binding{Kind: KindSecret, Name: "DEPT_PASSWORD"})
 
 	// Job alone: nothing declared, nothing blocked.
@@ -97,13 +97,18 @@ func TestUnboundProbeCoversScriptBindings(t *testing.T) {
 	}
 
 	// The owner set RunOwners builds for a run whose job references that script.
-	owners := RunOwners("git", "plain-job", "", "play")
+	owners := RunOwners("git", "plain-job", "", "play", "uid-script-play")
 	if len(owners) != 2 {
 		t.Fatalf("RunOwners = %v, want job + script", owners)
 	}
-	// R2F-1: the script owner never carries a uid, whatever the job's identity is.
-	if uid := RunOwners("git", "plain-job", "uid-plain-job", "play")[1].UIDKey(); uid != "" {
-		t.Errorf("script owner UIDKey = %q, want empty", uid)
+	// 1290: the script owner is keyed by the SCRIPT's uid, never the job's.
+	if uid := RunOwners("git", "plain-job", "uid-plain-job", "play", "uid-script-play")[1].UIDKey(); uid != "uid-script-play" {
+		t.Errorf("script owner UIDKey = %q, want the script's uid", uid)
+	}
+	// And a name with no uid is not an owner at all: the script has gone, or the
+	// caller did not resolve it, and a name alone may be several scripts.
+	if o := RunOwners("git", "plain-job", "uid-plain-job", "play", ""); len(o) != 1 {
+		t.Errorf("RunOwners with a script name and no uid = %v, want the job alone", o)
 	}
 	blocked, err = UnboundRunBlocked(context.Background(), f.pool, owners, "", nil)
 	if err != nil {

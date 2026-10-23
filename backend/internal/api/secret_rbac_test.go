@@ -82,6 +82,9 @@ func secretRBACServer(t *testing.T, restrict map[string]string) (http.Handler, *
 			t.Fatalf("seed secret %s: %v", s.key, err)
 		}
 	}
+	// A scoped secret is the agency's whose scope it is in (I2: a scope's name
+	// is unique within an agency, and a row in `prod` is in its owner's `prod`).
+	exec(`UPDATE secrets SET owner_agency = COALESCE((SELECT owner_agency FROM scopes WHERE name = secrets.scope), 'global') WHERE scope IS NOT NULL`)
 	authSvc := auth.NewService(context.Background(), cfg, pool, log)
 	h := api.New(api.Options{Config: cfg, Logger: log, Auth: authSvc, DB: pool}).Handler()
 	return h, pool
@@ -134,8 +137,10 @@ func TestEnvSecretsListSessionReadableAndFiltered(t *testing.T) {
 	for _, s := range got {
 		seen[s.Key] = true
 	}
-	if !seen["SEC_GLOBAL"] || !seen["SEC_PROD"] || seen["SEC_STAGING"] {
-		t.Errorf("scope-restricted viewer list = %v, want SEC_GLOBAL+SEC_PROD only", seen)
+	// Global's agency-wide secret is only theirs who reach every agency
+	// (2.5.0 C2, question 77; it was every session's).
+	if seen["SEC_GLOBAL"] || !seen["SEC_PROD"] || seen["SEC_STAGING"] {
+		t.Errorf("scope-restricted viewer list = %v, want SEC_PROD only", seen)
 	}
 }
 
@@ -162,8 +167,10 @@ func TestEnvSecretsListScopeFiltered(t *testing.T) {
 	for _, s := range got {
 		seen[s.Key] = true
 	}
-	if !seen["SEC_GLOBAL"] || !seen["SEC_PROD"] || seen["SEC_STAGING"] {
-		t.Errorf("scope-restricted list = %v, want SEC_GLOBAL+SEC_PROD only", seen)
+	// Global's agency-wide secret is only theirs who reach every agency
+	// (2.5.0 C2, question 77; it was every session's).
+	if seen["SEC_GLOBAL"] || !seen["SEC_PROD"] || seen["SEC_STAGING"] {
+		t.Errorf("scope-restricted list = %v, want SEC_PROD only", seen)
 	}
 }
 
@@ -190,10 +197,12 @@ func TestEnvSecretRevealScopeEnforced(t *testing.T) {
 	// 🔴 RB-Q14: the GLOBAL secret has no agency, which means "no restriction" —
 	// every department's jobs consume it. A restricted manager may no longer reveal
 	// it, because reading what everyone depends on is not a departmental act.
-	// Before v0.56.6 this was 200.
-	if rec := reqAs(t, h, http.MethodPost, "/api/v1/env-secrets/"+globalID+"/reveal", "sec-admins", ""); rec.Code != http.StatusForbidden {
-		t.Errorf("restricted reveal of an UNMEMBERED (global) secret = %d, want 403 — "+
-			"RB-Q14 makes shared infrastructure unrestricted-only", rec.Code)
+	// Before v0.56.6 this was 200. Since 2.5.0 C2 Global's rows are the
+	// everywhere-readers' (the list above leaves it out), and since 2.5.1
+	// question 140 a row the caller cannot read is a 404, not a 403.
+	if rec := reqAs(t, h, http.MethodPost, "/api/v1/env-secrets/"+globalID+"/reveal", "sec-admins", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("restricted reveal of an UNMEMBERED (global) secret = %d, want 404 — "+
+			"RB-Q14 makes shared infrastructure unrestricted-only, and the restricted manager does not read it", rec.Code)
 	}
 	if rec := reqAs(t, h, http.MethodPost, "/api/v1/env-secrets/"+stagingID+"/reveal", "sec-admins", ""); rec.Code != http.StatusNotFound {
 		t.Errorf("reveal out-of-scope (staging) = %d, want 404 (no existence oracle)", rec.Code)
@@ -266,33 +275,34 @@ func TestEnvSecretWriteScopeEnforced(t *testing.T) {
 }
 
 // TestEnvSecretGlobalWriteBlockedForRestricted is the H3 regression: a
-// scope-restricted manager can READ a GLOBAL secret's metadata (P1.7) but must not
-// DELETE, re-scope (capture), migrate, or label it — a global secret injects into
-// every scope, so mutating it is beyond a restricted actor's reach. Unlike the
-// out-of-scope cases (404, no existence oracle), the global case returns 403:
-// global existence is not scope-secret.
+// scope-restricted manager must not DELETE, re-scope (capture), migrate, or
+// label a GLOBAL secret — a global secret injects into every scope, so mutating
+// it is beyond a restricted actor's reach. This was a 403 while P1.7 let a
+// restricted manager read a global secret's metadata; since 2.5.0 C2 Global's
+// rows are the everywhere-readers' (the list leaves it out), so since 2.5.1
+// question 140 the refusal is the 404 any row the caller cannot read gets.
 func TestEnvSecretGlobalWriteBlockedForRestricted(t *testing.T) {
 	h, pool := secretRBACServer(t, map[string]string{"admin": "prod"})
 	globalID := secretID(t, pool, "SEC_GLOBAL")
 
-	// Delete a global secret → 403 (would fail-closed every scope's runs that bind it).
-	if rec := reqAs(t, h, http.MethodDelete, "/api/v1/env-secrets/"+globalID, "sec-admins", ""); rec.Code != http.StatusForbidden {
-		t.Errorf("delete global by restricted manager = %d, want 403; body: %s", rec.Code, rec.Body.String())
+	// Delete a global secret (would fail-closed every scope's runs that bind it).
+	if rec := reqAs(t, h, http.MethodDelete, "/api/v1/env-secrets/"+globalID, "sec-admins", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("delete global by restricted manager = %d, want 404; body: %s", rec.Code, rec.Body.String())
 	}
-	// Re-scope (capture) a global secret into the actor's own scope → 403.
+	// Re-scope (capture) a global secret into the actor's own scope.
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/env-secrets/"+globalID, "sec-admins",
-		`{"key":"SEC_GLOBAL","source":"stored","scope":"prod","value":"x"}`); rec.Code != http.StatusForbidden {
-		t.Errorf("capture global→prod by restricted manager = %d, want 403; body: %s", rec.Code, rec.Body.String())
+		`{"key":"SEC_GLOBAL","source":"stored","scope":"prod","value":"x"}`); rec.Code != http.StatusNotFound {
+		t.Errorf("capture global→prod by restricted manager = %d, want 404; body: %s", rec.Code, rec.Body.String())
 	}
-	// Migrate a global secret's storage → 403.
+	// Migrate a global secret's storage.
 	if rec := reqAs(t, h, http.MethodPost, "/api/v1/env-secrets/"+globalID+"/migrate-to-vault", "sec-admins",
-		`{"vaultPath":"secret/data/x#f"}`); rec.Code != http.StatusForbidden {
-		t.Errorf("migrate global by restricted manager = %d, want 403; body: %s", rec.Code, rec.Body.String())
+		`{"vaultPath":"secret/data/x#f"}`); rec.Code != http.StatusNotFound {
+		t.Errorf("migrate global by restricted manager = %d, want 404; body: %s", rec.Code, rec.Body.String())
 	}
-	// Label a global secret → 403.
+	// Label a global secret.
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/env-secret-tags/"+globalID, "sec-admins",
-		`{"tags":["x"]}`); rec.Code != http.StatusForbidden {
-		t.Errorf("tag global by restricted manager = %d, want 403; body: %s", rec.Code, rec.Body.String())
+		`{"tags":["x"]}`); rec.Code != http.StatusNotFound {
+		t.Errorf("tag global by restricted manager = %d, want 404; body: %s", rec.Code, rec.Body.String())
 	}
 
 	// The global secret still exists — none of the refused writes took effect.

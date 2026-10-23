@@ -1,6 +1,7 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
+import { useEnsureAgency } from "../../agency";
 import { useGet, useLiveGet, paged, useColumnWidths, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { useNameDisambiguator } from "../../utils/disambiguate";
@@ -16,7 +17,7 @@ import {
   Pager,
   SearchInput,
   StatusBadge,
-  ExecutorBadge,
+  RunnerCell,
   LostBadge,
   StoppedBadge,
   isRunnerLost,
@@ -24,15 +25,18 @@ import {
   fmtDuration,
   fmtTime,
   mono,
+  RunContact,
+  definitionHref,
   TraceId,
   td,
   th,
   usePager,
 } from "./shared";
-import { Btn, DetailPanel, EmptyCell, HoverTr, SkeletonRows, TableSurface, TypeBadge, matchesStatus, statusLabel } from "../../components/ui";
+import { Btn, DetailCell, DetailPanel, EmptyCell, HoverTr, SkeletonRows, TableSurface, TypeBadge, matchesStatus, statusLabel } from "../../components/ui";
 import { RunReferences } from "../../components/ReferenceBindings";
 import { CalendarFilterSelect } from "../scheduling/CalendarFilterSelect";
 import { RunLog } from "./RunLog";
+import { RunNotesCell, RunNotesPanel } from "./RunNotes";
 import { RefreshScope } from "../../components/RefreshScope";
 
 interface Run {
@@ -42,6 +46,12 @@ interface Run {
   // backfill could not attribute. R2F-3 keys the name badge on it.
   jobUid?: string | null;
   jobName?: string;
+  /** Whose run it is (its owner agency's id): where its job is opened. */
+  ownerAgency?: string | null;
+  /** 2.5.2 OP-2 — who to call: the job's annotation, on the detail only. */
+  annotation?: { contact: string; critical: boolean; agencyContact?: string };
+  /** 2.5.2 OP-18 — the run's notes in brief, on the list, only when it has some. */
+  notes?: { acknowledged: boolean; count: number };
   // The run's FROZEN agency snapshot (what it actually ran for), not live
   // membership — so a historical row keeps saying whose run it was.
   agencies?: string[];
@@ -68,7 +78,9 @@ interface Run {
   reactedToRunId?: string | null;
   reactionDepth?: number | null;
   triggerKind?: string | null;
-  runnerId?: number | null;
+  runnerId?: string | null;
+  /** The name of the runner that took the run — the run's own copy, kept after the runner is gone. */
+  runnerName?: string | null;
   workflowTraceId?: string | null;
   queuedAt?: string | null;
   startedAt?: string | null;
@@ -271,13 +283,14 @@ const COL_W: Record<string, number> = {
   job: 220,
   trace: 110,
   type: 110,
-  executor: 110,
+  runner: 150,
   schedule: 150,
   started: 150,
   completed: 150,
   user: 140,
   duration: 100,
   status: 110,
+  notes: 130,
 };
 
 // Sortable columns (TS-5/TS-23, the sorting-update plan). serverSide: the
@@ -289,7 +302,7 @@ const COL_W: Record<string, number> = {
 const SORT_COLS: SortColumn<Run>[] = [
   { key: "job", get: (r) => r.jobName, type: "text" },
   { key: "type", get: (r) => r.type, type: "text" },
-  { key: "executor", get: (r) => r.executor, type: "text" },
+  { key: "runner", get: (r) => r.runnerName, type: "text" },
   { key: "schedule", get: (r) => r.scheduleName, type: "text" },
   { key: "started", get: (r) => r.startedAt, type: "date" },
   { key: "completed", get: (r) => r.completedAt, type: "date" },
@@ -344,6 +357,22 @@ export function ExecutionsTab() {
   const reactedTo = searchParams.get("reactedTo") ?? "";
   // RX-17 — the forward pivot's landing spot: one run, by trace id.
   const traceFocus = searchParams.get("trace") ?? "";
+  // 2.4.4 (SW-8) — the list is the agency in use's; a link to another agency's
+  // run (an alert, a notice, a colleague) switches to its agency. Reading the
+  // one run is not narrowed, and says whose it is.
+  const [traceOwner, setTraceOwner] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!traceFocus) return;
+    let cancelled = false;
+    void api.GET("/runs/{traceId}", { params: { path: { traceId: traceFocus } } }).then((res) => {
+      const owner = (res.data as { ownerAgency?: string } | undefined)?.ownerAgency;
+      if (!cancelled && owner) setTraceOwner(owner);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [traceFocus]);
+  useEnsureAgency(traceOwner);
   const [triggerFilter, setTriggerFilterRaw] = useState(() => {
     const raw = searchParams.get("triggerKind");
     return raw && TRIGGER_WIRE_SET.has(raw) ? raw : "";
@@ -397,7 +426,7 @@ export function ExecutionsTab() {
             // default; sent explicitly so the header state and the wire agree.
             ...(sort.sortKey
               ? {
-                  sort: sort.sortKey as "job" | "type" | "executor" | "schedule" | "started" | "completed" | "user" | "duration" | "status",
+                  sort: sort.sortKey as "job" | "type" | "runner" | "schedule" | "started" | "completed" | "user" | "duration" | "status",
                   order: sort.sortDir,
                 }
               : {}),
@@ -579,7 +608,10 @@ export function ExecutionsTab() {
       cell: (r) =>
         r.kind === "ssh-test" ? <span style={{ color: c.textSec, fontSize: c.fontSm }}>Test</span> : r.type ? <TypeBadge type={r.type} /> : <EmptyCell />,
     },
-    { key: "executor", label: "Executor", sortKey: "executor", width: COL_W.executor, fixed: true, cell: (r) => <ExecutorBadge executor={r.executor} /> },
+    // LR-50 — which runner took the run, where the Executor column was. The key
+    // is new on purpose: a stored column order that names "executor" drops it
+    // and gets this one at its default place (the CO-Q10 merge).
+    { key: "runner", label: "Runner", sortKey: "runner", width: COL_W.runner, cell: (r) => <RunnerCell executor={r.executor} runnerName={r.runnerName} /> },
     {
       key: "schedule",
       label: "Schedule",
@@ -624,6 +656,8 @@ export function ExecutionsTab() {
         </span>
       ),
     },
+    // 2.5.2 OP-18 — whether someone has the run in hand, and how many notes.
+    { key: "notes", label: "Notes", width: COL_W.notes, fixed: true, cell: (r) => <RunNotesCell notes={r.notes} status={r.status} /> },
   ]);
 
   return (
@@ -782,11 +816,11 @@ export function ExecutionsTab() {
                   </HoverTr>
                   {expanded === r.traceId && (
                     <tr style={{ borderBottom: `1px solid ${c.border}` }}>
-                      <td colSpan={cols.visible.length} style={{ padding: "16px 14px", background: c.bg }}>
+                      <DetailCell colSpan={cols.visible.length} padding="16px 14px" background={c.bg}>
                         <RefreshScope>
                         <RunDetail traceId={r.traceId} />
                         </RefreshScope>
-                      </td>
+                      </DetailCell>
                     </tr>
                   )}
                 </Fragment>
@@ -804,7 +838,7 @@ export function ExecutionsTab() {
  * record while it is still queued/running (the useLiveGet idiom) so the header
  * fields settle and RunLog's `active` actually flips off at terminal — with a
  * one-shot useGet, a drawer opened mid-run would tail forever. */
-function RunDetail({ traceId }: { traceId: string }) {
+export function RunDetail({ traceId }: { traceId: string }) {
   const detail = useLiveGet<Run>(
     () => api.GET("/runs/{traceId}", { params: { path: { traceId } } }),
     [traceId],
@@ -846,6 +880,21 @@ function RunDetail({ traceId }: { traceId: string }) {
               </>
             )}
           </Field>
+          {/* 2.5.2 OP-2 — who to call about this run, and its job one click
+              away: the two things an operator mid-incident looked for here and
+              had to go to the agency's Jobs page to find. */}
+          {d.annotation && (
+            <Field label="Contact">
+              <RunContact contact={d.annotation.contact} critical={d.annotation.critical} agencyContact={d.annotation.agencyContact} />
+            </Field>
+          )}
+          {d.jobUid && (
+            <Field label="Job">
+              <Link to={definitionHref("job", d.jobUid, d.ownerAgency)} style={{ color: c.primary, fontWeight: 600, textDecoration: "none" }}>
+                Open job
+              </Link>
+            </Field>
+          )}
           {/* RX-17 — "why did this run?", answered by pointing rather than by
               prose. Both directions live here because a reaction's coupling is
               invisible everywhere else: the forward link is a field on this row,
@@ -859,13 +908,12 @@ function RunDetail({ traceId }: { traceId: string }) {
           <Field label="Set off">
             <TriggeredRunsLink runId={d.traceId} />
           </Field>
-          {d.executor && (
-            <Field label="Executor">
-              <span style={{ display: "inline-flex" }}>
-                <ExecutorBadge executor={d.executor} />
-              </span>
-            </Field>
-          )}
+          {/* Always present, as the Executor field was: "—" is the answer for a
+              run nobody has claimed, and a missing field would read as a
+              missing fact. */}
+          <Field label="Runner">
+            <RunnerCell executor={d.executor} runnerName={d.runnerName} />
+          </Field>
           {/* RT-3 — the pin this run was DISPATCHED with, frozen at trigger time.
               Deliberately its own field beside the runner that actually took it:
               one is intent, the other outcome. A run that waited an hour shows
@@ -892,6 +940,17 @@ function RunDetail({ traceId }: { traceId: string }) {
               an operator trust a log that outlived its disk. */}
           {d.logArchivedAt && <Field label="Log archived to S3">{fmtTime(d.logArchivedAt)}</Field>}
         </div>
+      )}
+      {/* 2.5.2 OP4 — what a shift knew about this run, between its fields and
+          its log. Acknowledge is offered where it means something: a run that
+          failed, was stopped or lost, or is still running (it may be overdue). */}
+      {d && (
+        <RunNotesPanel
+          kind="run"
+          traceId={d.traceId}
+          agencyId={d.ownerAgency}
+          offerAck={["danger", "failure", "killed", "running"].includes(d.status ?? "")}
+        />
       )}
       {/* T2.2 — run-input audit. Rendered ahead of the override block because "this ran
           without a value someone said was required" is the first thing an auditor needs,

@@ -164,7 +164,7 @@ describe("JobComposer — ?script= (Scripts → Create Job hand-off)", () => {
     // hand-off starts from a script and carries no scope, so the author picks:
     // here, the explicit global.
     fireEvent.click(q.getByRole("combobox", { name: "Scope" }));
-    fireEvent.click(q.getByRole("option", { name: /All agencies \(global\)/ }));
+    fireEvent.click(q.getByRole("option", { name: /^No scope/ }));
     fireEvent.click(q.getByRole("button", { name: "Create job" }));
 
     await waitFor(() => expect(posts.filter((p) => p.path === "/jobs")).toHaveLength(1));

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 )
@@ -70,7 +71,7 @@ func GetObservabilityConfig(ctx context.Context, database *sql.DB, appCfg *confi
 	}
 	if tokenEnc, ok := kv["obs.bearerTokenEnc"]; ok && tokenEnc != "" {
 		cfg.BearerTokenSet = true
-		decrypted, err := secrets.DecryptString(appCfg, tokenEnc)
+		decrypted, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelObservabilityBearer, ""), tokenEnc)
 		if err == nil {
 			cfg.BearerToken = maskSecret(decrypted)
 		}
@@ -85,6 +86,12 @@ func GetObservabilityConfig(ctx context.Context, database *sql.DB, appCfg *confi
 // UpdateObservabilityConfig updates the observability settings.
 func UpdateObservabilityConfig(ctx context.Context, database *sql.DB, appCfg *config.Config, inp ObservabilityConfig, actor string) (*ObservabilityConfig, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
+
+	// The mask a read returned, sent back by the form: not a token. From here
+	// on it is what an omitted token is, "keep the stored one" (isMaskedSecret).
+	if isMaskedSecret(inp.BearerToken) {
+		inp.BearerToken = ""
+	}
 
 	switch inp.AuthType {
 	case "", "none", "bearer":
@@ -120,7 +127,7 @@ func UpdateObservabilityConfig(ctx context.Context, database *sql.DB, appCfg *co
 	}
 
 	if inp.BearerToken != "" {
-		token, err := secrets.EncryptString(appCfg, inp.BearerToken)
+		token, err := secrets.EncryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelObservabilityBearer, ""), inp.BearerToken)
 		if err != nil {
 			return nil, fmt.Errorf("encrypt bearer token: %w", err)
 		}
@@ -155,7 +162,7 @@ func UpdateObservabilityConfig(ctx context.Context, database *sql.DB, appCfg *co
 	}
 
 	secrets.RedactionSourceChanged() // AM-4b
-	_ = WriteChangeLog(ctx, database, actor, "Settings", "updated", "Observability Settings", "")
+	_ = WriteChangeLog(ctx, database, agencyid.Global, actor, "Settings", "updated", "Observability Settings", "")
 	return GetObservabilityConfig(ctx, database, appCfg)
 }
 
@@ -196,7 +203,7 @@ func GetMetricsGuard(ctx context.Context, database *sql.DB, appCfg *config.Confi
 	}
 	if g.AuthType == "bearer" {
 		if enc, ok := kv["obs.bearerTokenEnc"]; ok && enc != "" {
-			if decrypted, err := secrets.DecryptString(appCfg, enc); err == nil {
+			if decrypted, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelObservabilityBearer, ""), enc); err == nil {
 				g.BearerToken = decrypted
 			}
 		}

@@ -28,14 +28,13 @@ const base = (over: Partial<RunSummaryInput> = {}): RunSummaryInput => ({
   hostsPhrase: "all 3 hosts in Prod",
   targetsChanged: false,
   targetNames: [],
-  executorWord: "a runner agent",
-  executorChanged: false,
+  runsOn: "any runner",
+  scopeBound: false,
   sshUser: "",
   sshCredential: "",
   jobSshUser: "",
   jobSshCredential: "",
   identityCapable: true,
-  boundRunners: [],
   whenPhrase: "now",
   deferred: false,
   ansCheck: false,
@@ -133,12 +132,14 @@ describe("buildRunSummary — answers", () => {
 });
 
 describe("buildRunSummary — where it runs", () => {
-  it("states scope, targets and executor quietly on a stock run", () => {
+  it("states scope, targets and runner quietly on a stock run", () => {
     const g = group(base(), "targets")!;
     expect(g.rows.map((r) => r.key)).toEqual(["scope", "targets"]);
     expect(g.rows.every((r) => r.accent === undefined)).toBe(true);
     const m = group(base(), "method")!;
-    expect(m.rows.map((r) => r.key)).toEqual(["executor"]);
+    expect(m.rows.map((r) => r.key)).toEqual(["runsOn"]);
+    expect(m.rows[0].value).toBe("any runner");
+    expect(m.rows[0].note).toBeUndefined();
     expect(m.rows.every((r) => r.accent === undefined)).toBe(true);
   });
 
@@ -153,9 +154,9 @@ describe("buildRunSummary — where it runs", () => {
     expect(r.note).toBe("job default: (none)");
   });
 
-  it("accents targets and executor only when they changed", () => {
+  it("accents targets only when they changed", () => {
+    expect(row(base(), "targets", "targets")!.accent).toBeUndefined();
     expect(row(base({ targetsChanged: true }), "targets", "targets")!.accent).toBe("warning");
-    expect(row(base({ executorChanged: true }), "method", "executor")!.accent).toBe("warning");
   });
 
   it("itemizes an explicit target subset — the names, not just the count", () => {
@@ -273,13 +274,18 @@ describe("buildRunSummary — where a bound scope's run lands (SB)", () => {
   it("names the runners the scope is bound to, without accenting it", () => {
     // A fact about the scope, not a choice made in this dialog: nothing here can
     // change it, so it is stated and never flagged as a deviation.
-    const r = row(base({ boundRunners: ["runner-dmz-01", "runner-dmz-02"] }), "method", "runsOn")!;
+    const r = row(base({ runsOn: "runner-dmz-01, runner-dmz-02", scopeBound: true }), "method", "runsOn")!;
     expect(r.value).toBe("runner-dmz-01, runner-dmz-02");
     expect(r.accent).toBeUndefined();
     expect(r.note).toBe("bound to the scope");
   });
 
-  it("is absent when the scope is not bound", () => {
-    expect(row(base(), "method", "runsOn")).toBeUndefined();
+  // LR-50 — the row is always there: with no executor to name, who takes the
+  // run is the Method group's one standing fact, bound scope or not.
+  it("states the rule, never accented, when the scope is not bound", () => {
+    const r = row(base({ runsOn: "an agent" }), "method", "runsOn")!;
+    expect(r.value).toBe("an agent");
+    expect(r.accent).toBeUndefined();
+    expect(r.note).toBeUndefined();
   });
 });

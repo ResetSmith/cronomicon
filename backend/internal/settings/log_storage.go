@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/logarchive"
@@ -377,7 +378,7 @@ func UpdateLogStorageConfig(ctx context.Context, database *sql.DB, appCfg *confi
 		// decrypted stored one — is what the probe must use.
 		secretPlain := inp.S3.SecretKey
 		if secretPlain != "" {
-			token, err := secrets.EncryptString(appCfg, secretPlain)
+			token, err := secrets.EncryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelLogStorageS3SecretKey, ""), secretPlain)
 			if err != nil {
 				return nil, fmt.Errorf("encrypt S3 secret key: %w", err)
 			}
@@ -385,7 +386,7 @@ func UpdateLogStorageConfig(ctx context.Context, database *sql.DB, appCfg *confi
 		} else if existingSecretEnc.Valid && existingSecretEnc.String != "" {
 			s3SecretKeyEnc = &existingSecretEnc.String
 			if inp.Backend == "s3" {
-				plain, err := secrets.DecryptString(appCfg, existingSecretEnc.String)
+				plain, err := secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelLogStorageS3SecretKey, ""), existingSecretEnc.String)
 				if err != nil {
 					return nil, fmt.Errorf("decrypt stored S3 secret key: %w", err)
 				}
@@ -446,7 +447,7 @@ func UpdateLogStorageConfig(ctx context.Context, database *sql.DB, appCfg *confi
 	}
 
 	secrets.RedactionSourceChanged() // AM-4b
-	_ = WriteChangeLog(ctx, database, actor, "Settings", "updated", "Log Storage Settings", "")
+	_ = WriteChangeLog(ctx, database, agencyid.Global, actor, "Settings", "updated", "Log Storage Settings", "")
 	return GetLogStorageConfig(ctx, database, appCfg)
 }
 
@@ -532,7 +533,7 @@ func BuildLogArchive(ctx context.Context, database *sql.DB, appCfg *config.Confi
 	}
 	secret := ""
 	if secretEnc.Valid && secretEnc.String != "" {
-		secret, err = secrets.DecryptString(appCfg, secretEnc.String)
+		secret, err = secrets.DecryptSetting(appCfg, secrets.SettingsBinding(secrets.LabelLogStorageS3SecretKey, ""), secretEnc.String)
 		if err != nil {
 			return nil, fmt.Errorf("decrypt stored S3 secret key: %w", err)
 		}

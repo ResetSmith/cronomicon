@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
@@ -58,7 +61,16 @@ type scheduleUsedBy struct {
 // scheduleDefRow is the JSON shape of the Schedule schema in openapi.yaml.
 type scheduleDefRow struct {
 	// UID — the stable surrogate identity (AF-4a); see jobRow.UID.
-	UID            string            `json:"uid,omitempty"`
+	UID string `json:"uid,omitempty"`
+	// OwnerAgency is the id of the agency the schedule is (2.4.0 Phase R8):
+	// a name is unique within an agency only (I2), and the routes by name
+	// take it as ?agencyId= when two agencies hold one.
+	OwnerAgency string `json:"ownerAgency"`
+	// CanEdit and CanDelete say what the caller's PUT and DELETE would answer
+	// (2.4.2, question 55): compose on the owner, for a schedule built in the
+	// app (one from Git is changed in its repository).
+	CanEdit        bool              `json:"canEdit"`
+	CanDelete      bool              `json:"canDelete"`
 	Name           string            `json:"name"`
 	Source         string            `json:"source"`
 	Description    *string           `json:"description,omitempty"`
@@ -115,8 +127,22 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 		args = append(args, fargs...)
 	}
 
+	// A schedule is its agency's people's to read, and theirs who reach every
+	// agency (CF-1, 2.5.0 C2): by its owner, so one built in the app is judged
+	// too (it had been read by everyone). Both statements below read the table
+	// as `sc`.
+	if frag, fargs := agencyReadFilter(r, agencyid.ColumnOwnerSQL("sc", "owner_agency")); frag != "" {
+		where += frag
+		args = append(args, fargs...)
+	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, agencyid.ColumnOwnerSQL("sc", "owner_agency")); frag != "" {
+		where += frag
+		args = append(args, fargs...)
+	}
+
 	var total int
-	_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM schedules"+where, args...).Scan(&total)
+	_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM schedules sc"+where, args...).Scan(&total)
 
 	// usedBy count is a correlated subquery (one round-trip; no nested-iterator
 	// pool deadlock). Counted by source_ref (D1c) — the exact reverse index: only
@@ -128,14 +154,13 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 		       sc.source_path, sc.synced_at, sc.created_at, sc.last_modified_at, sc.tags,
 		       sc.start_at, sc.end_at, sc.interval, sc.skip_calendars, sc.only_calendars, sc.uid,
 		       -- FX-A4: binned owners cannot fire, so they are not "used by" anyone.
+		       -- By schedule_uid (1300): the entries expanded from THIS schedule.
+		       -- By the bare name a Git row and an in-app row of one name each
+		       -- counted both sets of users.
 		       (SELECT COUNT(*) FROM definition_schedules ds
-		         WHERE ds.source_ref = sc.name
-		           AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
-		                            AND j2.source=ds.owner_source AND j2.name=ds.owner_name
-		                            AND j2.deleted_at IS NOT NULL)
-		           AND NOT EXISTS (SELECT 1 FROM workflows w2 WHERE ds.owner_kind='workflow'
-		                            AND w2.source=ds.owner_source AND w2.name=ds.owner_name
-		                            AND w2.deleted_at IS NOT NULL)) AS used_by
+		         WHERE ds.schedule_uid = sc.uid
+		           AND NOT `+binnedOwnerSQL+`) AS used_by,
+		       sc.owner_agency
 		FROM schedules sc`+where+`
 		ORDER BY sc.source, sc.name LIMIT ? OFFSET ?`, pageArgs...)
 	if err != nil {
@@ -145,11 +170,14 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	items := []scheduleDefRow{}
+	caller, _ := auth.IdentityFrom(r.Context())
 	for rows.Next() {
 		sd, err := scanScheduleDef(rows)
 		if err != nil {
 			continue
 		}
+		sd.CanEdit = sd.Source == "cronomicon" && caller.CanAgency(auth.PermCompose, sd.OwnerAgency)
+		sd.CanDelete = sd.CanEdit
 		items = append(items, sd)
 	}
 
@@ -157,14 +185,18 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
 	source := r.URL.Query().Get("source")
 	if source != "cronomicon" {
 		source = "git"
 	}
+	// Whose (I2): the agency ?agencyId= names, or the one that has it.
+	ref, ok := s.scheduleRef(w, r, source, "")
+	if !ok {
+		return
+	}
 	row := s.db.QueryRowContext(r.Context(), `
-		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
-		FROM schedules WHERE source = ? AND name = ?`, source, name)
+		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0, owner_agency
+		FROM schedules WHERE source = ? AND owner_agency = ? AND name = ?`, source, ref.owner, ref.name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
@@ -172,38 +204,37 @@ func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// usedBy reverse index: jobs/workflows whose definition_schedules entries were
-	// expanded from this first-class schedule (exact, by source_ref — D1c).
+	// expanded from this first-class schedule (exact, by schedule_uid — D1c, 1300).
 	sd.UsedBy = []scheduleUsedBy{}
 	drows, err := s.db.QueryContext(r.Context(),
 		`SELECT owner_kind, owner_name, ds.owner_uid,
-		        (SELECT GROUP_CONCAT(a.name, '\x1f')
-		           FROM jobs j
-		           JOIN scopes sc         ON sc.name = j.scope
-		           JOIN scope_agencies sa ON sa.scope_id = sc.id
-		           JOIN agencies a        ON a.id = sa.agency_id
-		          WHERE ds.owner_kind = 'job' AND j.source = ds.owner_source AND j.name = ds.owner_name)
+		        -- the owner's agency (a job's since 1400; until I2 its scope's)
+		        (SELECT a.name FROM agencies a WHERE a.id = `+agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind")+`),
+		        `+agencyid.Owner(agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind"))+`
 		   FROM definition_schedules ds
-		  WHERE source_ref = ?
-		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
-		                     AND j2.source=ds.owner_source AND j2.name=ds.owner_name
-		                     AND j2.deleted_at IS NOT NULL)
-		    AND NOT EXISTS (SELECT 1 FROM workflows w2 WHERE ds.owner_kind='workflow'
-		                     AND w2.source=ds.owner_source AND w2.name=ds.owner_name
-		                     AND w2.deleted_at IS NOT NULL)
-		  ORDER BY owner_kind, owner_name`, name)
+		  WHERE schedule_uid = ?
+		    AND NOT `+binnedOwnerSQL+`
+		  ORDER BY owner_kind, owner_name`, sd.UID)
+	// CF-7 (2.5.0 C2): only the definitions the caller reads are named;
+	// usedByCount counts them all.
+	total := 0
 	if err == nil {
 		defer drows.Close()
 		for drows.Next() {
-			var kind, owner string
+			var kind, owner, ownerAgency string
 			var uid, agencies sql.NullString
-			if drows.Scan(&kind, &owner, &uid, &agencies) == nil {
+			if drows.Scan(&kind, &owner, &uid, &agencies, &ownerAgency) == nil {
+				total++
+				if !readsAgency(r, ownerAgency) {
+					continue
+				}
 				sd.UsedBy = append(sd.UsedBy, scheduleUsedBy{
 					Name: owner, Kind: kind, UID: uid.String, Agencies: splitAgencies(agencies),
 				})
 			}
 		}
 	}
-	sd.UsedByCount = len(sd.UsedBy)
+	sd.UsedByCount = total
 
 	httpx.JSON(w, http.StatusOK, sd)
 }
@@ -219,28 +250,32 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	name := r.PathValue("name")
 	source := r.URL.Query().Get("source")
 	if source != "cronomicon" {
 		source = "git"
 	}
+	ref, ok := s.scheduleRef(w, r, source, "")
+	if !ok {
+		return
+	}
+	name := ref.name
 
 	// Decode/normalize/UPDATE + RowsAffected==0 → 404 is the shared skeleton (CC.12);
-	// composite (source,name) key. Audit stays BEFORE the re-fetch below.
-	if _, ok := s.writeTagsUpdate(w, r, "schedules", "source = ? AND name = ?", "schedule not found", source, name); !ok {
+	// composite (source, owner, name) key (I2). Audit stays BEFORE the re-fetch below.
+	if _, ok := s.writeTagsUpdate(w, r, "schedules", "source = ? AND owner_agency = ? AND name = ?", "schedule not found", source, ref.owner, name); !ok {
 		return
 	}
 
-	_ = workflow.InsertChangeLog(r.Context(), s.db, actor, "Schedules", "Updated", name, "Schedule tags updated")
+	_ = workflow.InsertChangeLog(r.Context(), s.db, ref.owner, actor, "Schedules", "Updated", name, "Schedule tags updated")
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
-		Kind: "config", Actor: actor, Category: "Schedules", Action: "Updated", Target: name,
+		AgencyID: ref.owner, Kind: "config", Actor: actor, Category: "Schedules", Action: "Updated", Target: name,
 	})
 
 	// Re-read the updated schedule with its usedBy reverse index — same shape as
 	// GET /schedule-defs/{name}.
 	row := s.db.QueryRowContext(r.Context(), `
-		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
-		FROM schedules WHERE source = ? AND name = ?`, source, name)
+		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0, owner_agency
+		FROM schedules WHERE source = ? AND owner_agency = ? AND name = ?`, source, ref.owner, name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
@@ -248,25 +283,25 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 	}
 	sd.UsedBy = []scheduleUsedBy{}
 	drows, derr := s.db.QueryContext(r.Context(),
-		`SELECT owner_kind, owner_name FROM definition_schedules ds
-		  WHERE source_ref = ?
-		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
-		                     AND j2.source=ds.owner_source AND j2.name=ds.owner_name
-		                     AND j2.deleted_at IS NOT NULL)
-		    AND NOT EXISTS (SELECT 1 FROM workflows w2 WHERE ds.owner_kind='workflow'
-		                     AND w2.source=ds.owner_source AND w2.name=ds.owner_name
-		                     AND w2.deleted_at IS NOT NULL)
-		  ORDER BY owner_kind, owner_name`, name)
+		`SELECT owner_kind, owner_name, `+agencyid.Owner(agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind"))+`
+		   FROM definition_schedules ds
+		  WHERE schedule_uid = ?
+		    AND NOT `+binnedOwnerSQL+`
+		  ORDER BY owner_kind, owner_name`, sd.UID)
+	total := 0 // CF-7: named if read, counted either way
 	if derr == nil {
 		defer drows.Close()
 		for drows.Next() {
-			var kind, owner string
-			if drows.Scan(&kind, &owner) == nil {
-				sd.UsedBy = append(sd.UsedBy, scheduleUsedBy{Name: owner, Kind: kind})
+			var kind, owner, ownerAgency string
+			if drows.Scan(&kind, &owner, &ownerAgency) == nil {
+				total++
+				if readsAgency(r, ownerAgency) {
+					sd.UsedBy = append(sd.UsedBy, scheduleUsedBy{Name: owner, Kind: kind})
+				}
 			}
 		}
 	}
-	sd.UsedByCount = len(sd.UsedBy)
+	sd.UsedByCount = total
 
 	httpx.JSON(w, http.StatusOK, sd)
 }
@@ -284,7 +319,7 @@ func scanScheduleDef(sc rowScanner) (scheduleDefRow, error) {
 	)
 	if err := sc.Scan(&sd.Name, &sd.Source, &description, &sd.Cron, &envJSON, &sd.ContentHash,
 		&sourcePath, &syncedAt, &createdAt, &lastModifiedAt, &tags, &startAt, &endAt, &interval,
-		&skipCals, &onlyCals, &uid, &sd.UsedByCount); err != nil {
+		&skipCals, &onlyCals, &uid, &sd.UsedByCount, &sd.OwnerAgency); err != nil {
 		return scheduleDefRow{}, err
 	}
 	sd.UID = uid.String

@@ -52,8 +52,12 @@ func TestSessionRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("session did not decode")
 	}
-	if got.Email != want.Email || !got.HasRole("admin") || len(got.AllowedScopes) != 1 {
+	// LR-78: identity round-trips; authority does not ride the cookie at all.
+	if got.Email != want.Email || got.DisplayName != want.DisplayName {
 		t.Fatalf("round-trip mismatch: %+v", got)
+	}
+	if got.HasRole("admin") || len(got.AllowedScopes) != 0 {
+		t.Fatalf("the cookie carried a role or scopes: %+v", got)
 	}
 }
 

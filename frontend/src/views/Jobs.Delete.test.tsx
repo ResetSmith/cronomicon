@@ -9,12 +9,14 @@ import { MemoryRouter } from "react-router-dom";
 // git-synced rows is translated into a sentence rather than a status code.
 
 // `compose` is the capability under test; `publishSchedule` is a second flag set
-// in the SAME .then() as compose, so the "+ Publish to GitLab" button doubles as
+// in the SAME .then() as compose, so the "+ Publish to the repository" button doubles as
 // a positive control that the capability fetch has landed before a test asserts
 // the ABSENCE of Delete.
 let composeOn = true;
 // GC (v2.2.2) — revision history is a compose ADMINISTRATOR's (see the last block).
 let composeAdminOn = false;
+// 2.5.0 C7.3 — giving a Git job to an agency is a global administrator's.
+let globalAdminOn = false;
 // What DELETE /jobs/{jobId} answers with. 409 is the server's git-source guard.
 let deleteStatus = 200;
 const deletes: { path: string; jobId: unknown }[] = [];
@@ -34,6 +36,21 @@ const JOBS = {
 // microtask. That ordering is what makes the negative tests sound: by the time a
 // row is on screen, canCompose has already been applied.
 const laterTick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// The agency in use and the person's access (2.5.0 C11): none unless a test
+// sets them, which keeps every older test as it was.
+const { inUse, myAccess } = vi.hoisted(() => ({
+  inUse: { current: null as null | { agency: string; agencyName: string } },
+  myAccess: { current: null as unknown },
+}));
+vi.mock("../agency", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agency")>();
+  return { ...actual, useAgencyOptional: () => inUse.current };
+});
+vi.mock("../api/access", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/access")>();
+  return { ...actual, useMyAccess: () => myAccess.current };
+});
 
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
@@ -69,6 +86,7 @@ vi.mock("../api/client", async (importOriginal) => {
       configureApp: false,
       manageEnvVars: false,
       publishSchedule: true,
+      configureAppGlobal: globalAdminOn,
     })),
   };
 });
@@ -78,10 +96,15 @@ import { Jobs } from "./Jobs";
 beforeEach(() => {
   composeOn = true;
   composeAdminOn = false;
+  globalAdminOn = false;
   deleteStatus = 200;
   deletes.length = 0;
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  inUse.current = null;
+  myAccess.current = null;
+});
 
 // Queries are scoped to this render's container rather than document.body, which
 // keeps a second render in the same file from colliding.
@@ -120,7 +143,7 @@ describe("Jobs — expanded-row Delete", () => {
     expandRow(q, "git-job");
     // The whole action strip is gated: canRun is false here (no session), so a
     // git row expands to detail with no actions at all.
-    await waitFor(() => expect(q.getByText("Executor")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("Run on")).toBeTruthy());
     expect(deleteBtn(q)).toBeNull();
     expect(q.queryByRole("link", { name: "Edit" })).toBeNull();
   });
@@ -130,9 +153,9 @@ describe("Jobs — expanded-row Delete", () => {
     const q = await renderJobs();
     // Positive control: publishSchedule rides the same capability .then(), so its
     // button proves the fetch landed and compose was genuinely off.
-    await waitFor(() => expect(q.getByRole("link", { name: /Publish to GitLab/ })).toBeTruthy());
+    await waitFor(() => expect(q.getByRole("link", { name: /Publish to the repository/ })).toBeTruthy());
     expandRow(q, "cronomicon-job");
-    await waitFor(() => expect(q.getByText("Executor")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("Run on")).toBeTruthy());
     expect(deleteBtn(q)).toBeNull();
   });
 
@@ -147,10 +170,57 @@ describe("Jobs — expanded-row Delete", () => {
 
     composeOn = false;
     const off = await renderJobs();
-    // Positive control, as above: Publish to GitLab rides the same capability
+    // Positive control, as above: Publish to the repository rides the same capability
     // fetch, so its presence proves compose was genuinely off rather than unread.
-    await waitFor(() => expect(off.getByRole("link", { name: /Publish to GitLab/ })).toBeTruthy());
+    await waitFor(() => expect(off.getByRole("link", { name: /Publish to the repository/ })).toBeTruthy());
     expect(off.queryByRole("link", { name: "+ Create" })).toBeNull();
+  });
+
+  // 2.5.0 C11, defect 88: what is created and edited here is the agency in
+  // use's, and the server answers 403 to a person who composes elsewhere only.
+  // "May compose somewhere" offered + Create, Edit and Delete in an agency where
+  // they only view.
+  it("offers + Create and Delete only in an agency the person composes in", async () => {
+    myAccess.current = {
+      grants: [{ role: "composer", allScopes: false, agencyId: "ag-fin", agencyName: "Finance", scopes: [], permissions: ["compose"], groups: [], origin: "group" }],
+    };
+    inUse.current = { agency: "ag-tax", agencyName: "Tax" };
+    const tax = await renderJobs();
+    await waitFor(() => expect(tax.getByRole("link", { name: /Publish to the repository/ })).toBeTruthy());
+    expect(tax.queryByRole("link", { name: "+ Create" })).toBeNull();
+    expandRow(tax, "cronomicon-job");
+    await waitFor(() => expect(tax.getByText("Run on")).toBeTruthy());
+    expect(deleteBtn(tax)).toBeNull();
+    cleanup();
+
+    inUse.current = { agency: "ag-fin", agencyName: "Finance" };
+    const fin = await renderJobs();
+    await waitFor(() => expect(fin.getByRole("link", { name: "+ Create" })).toBeTruthy());
+    expandRow(fin, "cronomicon-job");
+    await waitFor(() => expect(deleteBtn(fin)).toBeTruthy());
+  });
+
+  // 2.5.0 C12, defect 94: a grant on every agency that carries compose, with no
+  // configureApp (so not composeAdmin), composes in every agency; C11's gate
+  // asked for an agency grant and hid every action from such a person.
+  it("offers + Create and Delete to a composer on every agency without configureApp", async () => {
+    myAccess.current = {
+      grants: [{ role: "composer", allScopes: true, agencyId: "", agencyName: "", scopes: [], permissions: ["compose"], groups: [], origin: "group" }],
+    };
+    inUse.current = { agency: "ag-tax", agencyName: "Tax" };
+    const q = await renderJobs();
+    await waitFor(() => expect(q.getByRole("link", { name: "+ Create" })).toBeTruthy());
+    expandRow(q, "cronomicon-job");
+    await waitFor(() => expect(deleteBtn(q)).toBeTruthy());
+  });
+
+  // While the person's access is being read, nothing is offered in an agency.
+  it("offers no + Create in an agency while access is still being read", async () => {
+    myAccess.current = undefined;
+    inUse.current = { agency: "ag-fin", agencyName: "Finance" };
+    const q = await renderJobs();
+    await waitFor(() => expect(q.getByRole("link", { name: /Publish to the repository/ })).toBeTruthy());
+    expect(q.queryByRole("link", { name: "+ Create" })).toBeNull();
   });
 
   it("confirms before deleting, then DELETEs the expanded job's id", async () => {
@@ -208,25 +278,41 @@ describe("Jobs — expanded-row Delete", () => {
 // departmental composer, who used to open the dialog and read "could not load
 // history". They keep the row's History button — they do compose — disabled
 // with the reason (FX-7). Edit and Delete are per-scope compose and unaffected.
-describe("Jobs — row History needs a compose administrator (GC)", () => {
-  const WHY = /only a global administrator \(a role on every agency\) can change them\./;
+// 2.5.0 C7 (C3, SO-2): History is compose on the definition's agency, which the
+// server decides, as for Edit and Delete: the button is live for any composer.
+describe("Jobs — row History for a composer (SO-2)", () => {
   const history = (q: ReturnType<typeof within>) => q.getByRole("button", { name: "History" }) as HTMLButtonElement;
 
-  it("disables History with the reason for a departmental composer, and leaves Delete live", async () => {
-    const q = await renderJobs();
-    expandRow(q, "cronomicon-job");
-    await waitFor(() => expect(history(q)).toBeTruthy());
-    expect(history(q).disabled).toBe(true);
-    expect(history(q).title).toMatch(WHY);
-    expect((deleteBtn(q) as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it("enables History for a compose administrator", async () => {
-    composeAdminOn = true;
+  it("leaves History live for a departmental composer", async () => {
     const q = await renderJobs();
     expandRow(q, "cronomicon-job");
     await waitFor(() => expect(history(q)).toBeTruthy());
     expect(history(q).disabled).toBe(false);
     expect(history(q).title).toBe("");
+    expect((deleteBtn(q) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+// 2.5.0 C7.3 (IN-12, question 98): "Give to an agency…" on a Git job, for a
+// global administrator only; a job built in the app is not a file to commit.
+describe("Jobs — give a Git job to an agency (C7.3)", () => {
+  const give = (q: ReturnType<typeof within>) => q.queryByRole("button", { name: "Give to an agency…" });
+
+  it("offers it on a Git job to a global administrator, and not on a job built in the app", async () => {
+    globalAdminOn = true;
+    const q = await renderJobs();
+    expandRow(q, "git-job");
+    await waitFor(() => expect(give(q)).toBeTruthy());
+    expandRow(q, "git-job");
+    expandRow(q, "cronomicon-job");
+    await waitFor(() => expect(q.getByRole("button", { name: "History" })).toBeTruthy());
+    expect(give(q)).toBeNull();
+  });
+
+  it("does not offer it to anyone else", async () => {
+    const q = await renderJobs();
+    expandRow(q, "git-job");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(give(q)).toBeNull();
   });
 });

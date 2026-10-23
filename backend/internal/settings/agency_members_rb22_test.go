@@ -15,9 +15,18 @@ import (
 func rb22DB(t *testing.T) *sql.DB {
 	t.Helper()
 	pool := membershipDB(t)
-	if _, err := pool.Exec(`INSERT INTO runners(id,name,status,capabilities,registered_at,created_at)
-		VALUES('r1','runner-one','online','["bash"]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
-		t.Fatalf("seed runner: %v", err)
+	// r1 is a legacy placement (MA-9): Global's, serving DSS and a third agency
+	// since before 2.3.0. It is the only kind of runner this route can still
+	// change, and only by taking an agency away.
+	for _, q := range []string{
+		`INSERT INTO agencies(id, name, created_at) VALUES('ag-old','OLD','2026-01-01T00:00:00Z')`,
+		`INSERT INTO runners(id,name,status,capabilities,registered_at,created_at)
+		 VALUES('r1','runner-one','online','["bash"]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
+		`INSERT INTO runner_agencies(runner_id, agency_id) VALUES('r1','ag-dss'), ('r1','ag-old')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed runner: %v\n%s", err, q)
+		}
 	}
 	return pool
 }
@@ -44,8 +53,9 @@ func TestSetAgencyMembersRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetAgencyMembers: %v", err)
 	}
-	if len(delta.Added) != 5 || len(delta.Removed) != 0 {
-		t.Fatalf("delta = +%d/-%d, want +5/-0", len(delta.Added), len(delta.Removed))
+	// The runner is already on DSS's serve list, so four are added.
+	if len(delta.Added) != 4 || len(delta.Removed) != 0 {
+		t.Fatalf("delta = +%d/-%d, want +4/-0", len(delta.Added), len(delta.Removed))
 	}
 	d, err := BuildAgencyDetail(ctx, pool, "ag-dss")
 	if err != nil || d == nil {
@@ -55,15 +65,51 @@ func TestSetAgencyMembersRoundTrip(t *testing.T) {
 		t.Fatalf("members = %+v, want all five kinds", d.Members)
 	}
 
-	// Shrink to two. Only the difference is removed.
+	// A member cannot simply be dropped from its only agency. A scope would be
+	// left in none (LR-26); a variable, secret or key is OWNED by its agency
+	// since it joined it (LR-54), and leaves by being moved, not removed.
+	if _, err := SetAgencyMembers(ctx, pool, "ag-dss", refs(
+		[2]string{"secret", "s1"}, [2]string{"env-var", "v1"}, [2]string{"ssh-credential", "k1"}, [2]string{"runner", "r1"},
+	), "t@example.com"); !errors.Is(err, ErrAgencyRequired) {
+		t.Fatalf("a save that strands the scope = %v, want ErrAgencyRequired", err)
+	}
+	if _, err := SetAgencyMembers(ctx, pool, "ag-dss", refs(
+		[2]string{"scope", "sc-prod"}, [2]string{"secret", "s1"}, [2]string{"ssh-credential", "k1"}, [2]string{"runner", "r1"},
+	), "t@example.com"); !errors.Is(err, ErrOwnerRemoval) {
+		t.Fatalf("a save that drops an owned variable = %v, want ErrOwnerRemoval", err)
+	}
+	for table, id := range map[string]string{"secrets": "s1", "env_vars": "v1", "ssh_credentials": "k1"} {
+		if got := entityOwner(ctx, pool, table, id); got != "ag-dss" {
+			t.Errorf("%s %s owner = %q after joining DSS from Global, want ag-dss", table, id, got)
+		}
+	}
+	// Nor can they be given a SECOND agency (LR-7, LR-54): adding one that is
+	// another agency's is a move, and a move is made on the row itself.
+	for _, m := range [][2]string{{"scope", "sc-prod"}, {"secret", "s1"}, {"env-var", "v1"}, {"ssh-credential", "k1"}} {
+		if _, err := SetAgencyMembers(ctx, pool, "ag-nwd", refs(m), "t@example.com"); !errors.Is(err, ErrOneAgency) {
+			t.Errorf("adding DSS's %s to NWD as well = %v, want ErrOneAgency", m[0], err)
+		}
+	}
+	var second int
+	_ = pool.QueryRow(`SELECT (SELECT COUNT(*) FROM scope_agencies WHERE agency_id='ag-nwd') + (SELECT COUNT(*) FROM secret_agencies WHERE agency_id='ag-nwd')
+	                        + (SELECT COUNT(*) FROM env_var_agencies WHERE agency_id='ag-nwd') + (SELECT COUNT(*) FROM ssh_credential_agencies WHERE agency_id='ag-nwd')`).Scan(&second)
+	if second != 0 {
+		t.Fatalf("a refused add wrote %d rows into the second agency", second)
+	}
+	// A runner's serve list has a rule of its own (MA-11): no agency can be
+	// added to it, here or anywhere, and one can be taken off a legacy
+	// placement. Only the difference goes.
+	if _, err := SetAgencyMembers(ctx, pool, "ag-nwd", refs([2]string{"runner", "r1"}), "t@example.com"); !errors.Is(err, ErrServeListFixed) {
+		t.Fatalf("adding a runner to another agency = %v, want ErrServeListFixed", err)
+	}
 	delta, err = SetAgencyMembers(ctx, pool, "ag-dss", refs(
-		[2]string{"secret", "s1"}, [2]string{"runner", "r1"},
+		[2]string{"scope", "sc-prod"}, [2]string{"secret", "s1"}, [2]string{"env-var", "v1"}, [2]string{"ssh-credential", "k1"},
 	), "t@example.com")
 	if err != nil {
 		t.Fatalf("second save: %v", err)
 	}
-	if len(delta.Added) != 0 || len(delta.Removed) != 3 {
-		t.Fatalf("delta = +%d/-%d, want +0/-3", len(delta.Added), len(delta.Removed))
+	if len(delta.Added) != 0 || len(delta.Removed) != 1 || delta.Removed[0].Kind != "runner" {
+		t.Fatalf("delta = +%d/-%d (%+v), want only the runner removed", len(delta.Added), len(delta.Removed), delta.Removed)
 	}
 }
 
@@ -71,13 +117,25 @@ func TestSetAgencyMembersRoundTrip(t *testing.T) {
 // TWO agencies is saved out of one; its membership in the other must be
 // untouched. Under a read-modify-write through the entity-centric setter this is
 // exactly the row a concurrent editor loses.
+//
+// Nothing puts a secret in two agencies since 2.3.0, but an upgraded
+// installation has them: what several agencies shared is Global-owned with each
+// as a member (migration 1220). Saving it out of all but one is how it is
+// settled, and the one that is left becomes its owner.
 func TestSetAgencyMembersIsolation(t *testing.T) {
 	pool := rb22DB(t)
 	ctx := context.Background()
 
-	if err := SetAgencyMembership(ctx, pool, MemberSecret,
-		[]AgencyMembership{{ID: "s1", AgencyIDs: []string{"ag-dss", "ag-nwd"}}}, "t"); err != nil {
-		t.Fatalf("seed membership: %v", err)
+	for _, q := range []string{
+		`DELETE FROM secret_agencies WHERE secret_id = 's1'`,
+		`INSERT INTO secret_agencies (secret_id, agency_id) VALUES ('s1', 'ag-dss'), ('s1', 'ag-nwd')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed the pre-2.3.0 shape: %v", err)
+		}
+	}
+	if got := entityOwner(ctx, pool, "secrets", "s1"); got != "global" {
+		t.Fatalf("fixture: owner = %q, want global", got)
 	}
 
 	// Save ag-dss WITHOUT the secret: it leaves DSS.
@@ -94,6 +152,9 @@ func TestSetAgencyMembersIsolation(t *testing.T) {
 	if nwd != 1 {
 		t.Error("saving ONE agency disturbed the entity's membership in ANOTHER — " +
 			"the isolation this endpoint exists to provide")
+	}
+	if got := entityOwner(ctx, pool, "secrets", "s1"); got != "ag-nwd" {
+		t.Errorf("owner = %q after it was left in NWD alone, want ag-nwd: a row in one agency is that agency's", got)
 	}
 }
 
@@ -142,7 +203,7 @@ func TestSetAgencyMembersValidation(t *testing.T) {
 		t.Errorf("unknown kind = %v, want ErrUnknownMember", err)
 	}
 	var n int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM secret_agencies`).Scan(&n)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM secret_agencies WHERE agency_id <> 'global'`).Scan(&n)
 	if n != 0 {
 		t.Error("a refused batch left a partial write — validation must complete before any row moves")
 	}
