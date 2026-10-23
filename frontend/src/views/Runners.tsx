@@ -8,7 +8,7 @@ import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../compone
 import { RefreshScope } from "../components/RefreshScope";
 import { repoLabel, useRepoConnections } from "../components/RepoPicker";
 import { REPAIR_HINT, RepairDialog, useRepairAllowed, type RepairBody } from "../components/RepairDialog";
-import { AlertBanner, Badge, Btn, ConfirmDialog, CopyButton, CopyText, EmptyCell, Field, HoverTr, InlineLoading, Modal, RefreshButton, Rule, Section, SkeletonRows, StatTile, TableSurface, TagEditor, Toast, SortableLabel, TypeBadge, statusLabel, usePager } from "../components/ui";
+import { AlertBanner, Badge, Btn, ConfirmDialog, CopyButton, CopyText, DetailCell, EmptyCell, Field, HoverTr, InlineLoading, Modal, RefreshButton, Rule, Section, SkeletonRows, StatTile, TableSurface, TagEditor, Toast, SortableLabel, TypeBadge, statusLabel, usePager } from "../components/ui";
 import { RecentRuns, DurationTrend } from "../components/RecentRuns";
 import { TraceId } from "./history/shared";
 import { ReplaceRunnerDialog, type BindableScope } from "./scopes/ScopeRunners";
@@ -1948,9 +1948,11 @@ export function Runners() {
                         </HoverTr>
                         {isExp && (
                           <tr>
-                            <td
+                            <DetailCell
                               colSpan={cols.visible.length}
-                              style={{ padding: "14px 18px", background: c.primaryBg, borderBottom: `1px solid ${c.border}` }}
+                              padding="14px 18px"
+                              background={c.primaryBg}
+                              cellStyle={{ borderBottom: `1px solid ${c.border}` }}
                             >
                               {/* Actions relocated out of the compact row (v0.47.20):
                                   Resync, Scan keys, Drain, Copy upgrade — shown only once
@@ -2040,7 +2042,7 @@ export function Runners() {
                                 }
                               />
                               </RefreshScope>
-                            </td>
+                            </DetailCell>
                           </tr>
                         )}
                         </Fragment>

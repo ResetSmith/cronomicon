@@ -1,7 +1,7 @@
 import { Fragment, useState } from "react";
 import { c } from "../theme";
 import type { components } from "../api/schema";
-import { Badge, HoverTr, InlineLoading, Pager, SectionLabel, statusLabel, type PagerState } from "./ui";
+import { Badge, DetailCell, HoverTr, InlineLoading, Pager, SectionLabel, statusLabel, type PagerState } from "./ui";
 import { TraceId } from "../views/history/shared";
 import { RunLog } from "../views/history/RunLog";
 import { fmtDuration } from "../utils/datetime";
@@ -211,7 +211,7 @@ export function RecentRuns({
                     </HoverTr>
                     {open && r.traceId && (
                       <tr>
-                        <td colSpan={6} style={{ padding: "10px 14px", background: c.panel, borderBottom: `1px solid ${c.border}` }}>
+                        <DetailCell colSpan={6} padding="10px 14px" background={c.panel} cellStyle={{ borderBottom: `1px solid ${c.border}` }}>
                           {/* width:0 + minWidth:100% collapses this cell's intrinsic
                               width so an unbreakable log line (a long path, a URL, a
                               base64 blob) can never inflate the table and drag the
@@ -227,7 +227,7 @@ export function RecentRuns({
                                 matters most on. */}
                             <RunLog traceId={r.traceId} label="" active={r.status === "running" || r.status === "queued"} />
                           </div>
-                        </td>
+                        </DetailCell>
                       </tr>
                     )}
                   </Fragment>

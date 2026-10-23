@@ -106,18 +106,22 @@ caution there); the schema goes from 1210 to 1660.
 
 ### Fixed
 
-- **A run's detail stays within the window when History's table is wider
-  than it.** On Executions and Workflow Runs the expanded detail was as wide
-  as the table, so in a narrower window its right side (Remove
-  acknowledgement, the notes' Next →, Refresh) sat off screen behind the
-  table's sideways scroll. The detail now fits the visible part of the table
-  and stays put while the row's cells scroll beneath it.
-- **An open workflow stays within the window on the Workflows page.** The
-  page scrolled sideways when its table was wider than the window, leaving
-  the open workflow's Refresh, Pause and *Give to an agency…* off screen. The
-  table now scrolls on its own, and the open workflow fits the visible part
-  of it; its contents no longer widen the table, so at common widths the
-  whole table fits.
+- **An opened row stays within the window when its table is wider than
+  the window.** A row that opens into a detail spans every column, so in a
+  narrower window its right side (a run's *Remove acknowledgement* and its
+  notes' *Next →*, a job's *Run*, a workflow's *Pause*, a secret's or a
+  scope's actions) sat off screen behind the table's sideways scroll, or the
+  whole page scrolled sideways. The opened row now fits the visible part of
+  its table and stays put while the row's cells scroll beneath it, and its
+  contents no longer widen the table. This covers History (Executions,
+  Workflow Runs, Git Sync), Jobs and a job's Recent runs, Scripts,
+  Schedules, Workflows, Env Vars (Variables, Secrets, SSH Keys), Scopes
+  (Scopes, Agencies), Runners and Settings → SSH Targets. Tables that had no
+  sideways scroll of their own (Workflows, Schedules' search results, Env
+  Vars, Scopes) now scroll inside the page instead of the page scrolling.
+- **Settings no longer widens the page for a wide table.** SSH Targets' host
+  and bastion tables pushed the whole Settings page past the window; they
+  now scroll inside their cards, as Recent Logins does on Users & Access.
 
 ### Known, and worth knowing
 

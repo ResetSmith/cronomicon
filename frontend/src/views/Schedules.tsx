@@ -7,7 +7,7 @@ import { ColumnsMenu, TableHead, renderCells, useTableColumns, type TableColumn 
 import { c } from "../theme";
 import { useNameDisambiguator } from "../utils/disambiguate";
 import type { components } from "../api/schema";
-import { Btn, DetailPanel, ExpandChevron, Field, HoverTr, InlineTags, Pager, SearchBar, SectionLabel, SkeletonRows, SourceBadge, TagEditor, TagFilterSelect, matchesTags } from "../components/ui";
+import { Btn, DetailCell, DetailPanel, ExpandChevron, Field, HoverTr, InlineTags, Pager, SearchBar, SectionLabel, SkeletonRows, SourceBadge, TagEditor, TagFilterSelect, matchesTags } from "../components/ui";
 import { type SortColumn } from "../utils/sort";
 import { FolderBrowser } from "../components/FolderBrowser";
 import { InventoryTab } from "./scheduling/InventoryTab";
@@ -353,7 +353,7 @@ function CatalogTab() {
         </HoverTr>
         {isExp && (
           <tr style={{ borderBottom: `1px solid ${c.border}` }}>
-            <td colSpan={cols.visible.length} style={{ padding: "16px 18px", background: c.primaryBg }}>
+            <DetailCell colSpan={cols.visible.length} padding="16px 18px" background={c.primaryBg}>
               <RefreshScope>
               <ScheduleDetail
                 listRow={s}
@@ -366,7 +366,7 @@ function CatalogTab() {
                 tagErr={inlineTags.errors[key]}
               />
               </RefreshScope>
-            </td>
+            </DetailCell>
           </tr>
         )}
       </Fragment>
@@ -420,10 +420,13 @@ function CatalogTab() {
           // Search mode: flat results across all folders, full path shown, paged
           // client-side (parity with Jobs/Scripts).
           <>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm }}>
-              <thead>{tableHeader()}</thead>
-              <tbody>{pageItems.map((s) => renderScheduleRow(s, scheduleDisplayPath(s)))}</tbody>
-            </table>
+            <div style={{ overflowX: "auto" }}>
+              {/* The table's own sideways scroll, which an open row's DetailCell holds itself to (2.5.2). */}
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm }}>
+                <thead>{tableHeader()}</thead>
+                <tbody>{pageItems.map((s) => renderScheduleRow(s, scheduleDisplayPath(s)))}</tbody>
+              </table>
+            </div>
             <Pager pager={pager} page={page} total={total} noun="schedules" />
           </>
         ) : (

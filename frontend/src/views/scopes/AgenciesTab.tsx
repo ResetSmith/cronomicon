@@ -7,7 +7,7 @@ import { useGet, rows, useTableSort } from "../../hooks";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { DOC_LINKS } from "../../components/docLinks";
-import { DetailPanel, ExpandChevron, InlineLoading, SkeletonRows, SortableLabel, DocLink } from "../../components/ui";
+import { DetailCell, DetailPanel, ExpandChevron, InlineLoading, SkeletonRows, SortableLabel, DocLink } from "../../components/ui";
 import { RefreshScope } from "../../components/RefreshScope";
 import { REPAIR_HINT, RepairDialog, vaultChangesOf, type RepairBody, type VaultChange } from "../../components/RepairDialog";
 import {
@@ -191,92 +191,95 @@ export function AgenciesTab({
         </div>
       )}
       {filtered.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody }}>
-          <thead>
-            <tr style={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}>
-              <th style={{ ...thStyle(), width: 44 }}></th>
-              <th
-                onClick={() => sort.toggle("name")}
-                title="Sort by Name"
-                aria-sort={sort.ariaSort("name")}
-                style={{ ...thStyle(), cursor: "pointer", color: sort.isActive("name") ? c.text : c.textSec }}
-              >
-                <SortableLabel label="Name" active={sort.isActive("name")} dir={sort.sortDir} />
-              </th>
-              <th style={thStyle()}>Description</th>
-              <th
-                onClick={() => sort.toggle("runners")}
-                title="Sort by Online runners"
-                aria-sort={sort.ariaSort("runners")}
-                style={{ ...thStyle(), cursor: "pointer", color: sort.isActive("runners") ? c.text : c.textSec }}
-              >
-                <SortableLabel label="Online runners" active={sort.isActive("runners")} dir={sort.sortDir} />
-              </th>
-              <th
-                onClick={() => sort.toggle("modified")}
-                title="Sort by Last Modified"
-                aria-sort={sort.ariaSort("modified")}
-                style={{ ...thStyle(), cursor: "pointer", color: sort.isActive("modified") ? c.text : c.textSec }}
-              >
-                <SortableLabel label="Last Modified" active={sort.isActive("modified")} dir={sort.sortDir} />
-              </th>
-              <th style={thStyle()}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {sort.sorted.map((a) => {
-              const isExp = a.id != null && expanded === a.id;
-              const noRunners = (a.onlineRunnerCount ?? 0) === 0;
-              return (
-                <Fragment key={a.id ?? a.name}>
-                  <tr
-                    onClick={() => setExpanded(isExp ? null : (a.id ?? null))}
-                    style={{ borderBottom: isExp ? "none" : `1px solid ${c.border}`, cursor: "pointer", background: isExp ? c.primaryBg : "transparent" }}
-                  >
-                    <td style={{ ...tdStyle(), borderBottom: "none", textAlign: "center" }}>
-                      <Chevron open={isExp} />
-                    </td>
-                    <td style={{ ...tdStyle(), borderBottom: "none", fontWeight: 600 }}>{a.name}</td>
-                    <td style={{ ...tdStyle(), borderBottom: "none", color: c.textSec, fontSize: c.fontSm }}>{a.description || "—"}</td>
-                    <td style={{ ...tdStyle(), borderBottom: "none", fontSize: c.fontSm }}>
-                      <span style={{ fontWeight: 600, color: noRunners ? c.warning : c.text }}>
-                        {a.onlineRunnerCount ?? 0}
-                      </span>
-                      {noRunners && (
-                        <span style={{ color: c.warning, fontSize: c.fontXs, marginLeft: 6 }}>runs will queue</span>
-                      )}
-                    </td>
-                    <td style={{ ...tdStyle(), borderBottom: "none", color: c.textSec, fontSize: c.fontSm }}>{fmtDate(a.lastModifiedAt)}</td>
-                    <td style={{ ...tdStyle(), borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
-                      {canEdit && (
-                        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                          {/* R8 — the row says what the caller may do with it;
-                              the built-in agency is renamed (2.5.2 GR), never deleted. */}
-                          <Btn onClick={() => setEditing(a)} disabled={!!rowWhy(a, a.canEdit)} title={rowWhy(a, a.canEdit) || undefined}>
-                            Edit
-                          </Btn>
-                          <Btn danger onClick={() => setDeleting(a)} disabled={!!rowWhy(a, a.canDelete)} title={rowWhy(a, a.canDelete) || undefined}>
-                            Delete
-                          </Btn>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                  {isExp && a.id != null && (
-                    <tr style={{ background: c.primaryBg, borderBottom: `1px solid ${c.border}` }}>
-                      <td style={{ borderBottom: "none" }} />
-                      <td colSpan={5} style={{ padding: "2px 16px 16px", borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
-                        <RefreshScope>
-                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} rolesAdmin={rolesAdmin} maxConcurrent={a.maxConcurrent ?? null} onMembersChanged={() => setDep((n) => n + 1)} />
-                        </RefreshScope>
+        <div style={{ overflowX: "auto" }}>
+          {/* The table's own sideways scroll, which an open row's DetailCell holds itself to (2.5.2). */}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontBody }}>
+            <thead>
+              <tr style={{ color: c.textSec, textAlign: "left", borderBottom: `1px solid ${c.border}` }}>
+                <th style={{ ...thStyle(), width: 44 }}></th>
+                <th
+                  onClick={() => sort.toggle("name")}
+                  title="Sort by Name"
+                  aria-sort={sort.ariaSort("name")}
+                  style={{ ...thStyle(), cursor: "pointer", color: sort.isActive("name") ? c.text : c.textSec }}
+                >
+                  <SortableLabel label="Name" active={sort.isActive("name")} dir={sort.sortDir} />
+                </th>
+                <th style={thStyle()}>Description</th>
+                <th
+                  onClick={() => sort.toggle("runners")}
+                  title="Sort by Online runners"
+                  aria-sort={sort.ariaSort("runners")}
+                  style={{ ...thStyle(), cursor: "pointer", color: sort.isActive("runners") ? c.text : c.textSec }}
+                >
+                  <SortableLabel label="Online runners" active={sort.isActive("runners")} dir={sort.sortDir} />
+                </th>
+                <th
+                  onClick={() => sort.toggle("modified")}
+                  title="Sort by Last Modified"
+                  aria-sort={sort.ariaSort("modified")}
+                  style={{ ...thStyle(), cursor: "pointer", color: sort.isActive("modified") ? c.text : c.textSec }}
+                >
+                  <SortableLabel label="Last Modified" active={sort.isActive("modified")} dir={sort.sortDir} />
+                </th>
+                <th style={thStyle()}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sort.sorted.map((a) => {
+                const isExp = a.id != null && expanded === a.id;
+                const noRunners = (a.onlineRunnerCount ?? 0) === 0;
+                return (
+                  <Fragment key={a.id ?? a.name}>
+                    <tr
+                      onClick={() => setExpanded(isExp ? null : (a.id ?? null))}
+                      style={{ borderBottom: isExp ? "none" : `1px solid ${c.border}`, cursor: "pointer", background: isExp ? c.primaryBg : "transparent" }}
+                    >
+                      <td style={{ ...tdStyle(), borderBottom: "none", textAlign: "center" }}>
+                        <Chevron open={isExp} />
+                      </td>
+                      <td style={{ ...tdStyle(), borderBottom: "none", fontWeight: 600 }}>{a.name}</td>
+                      <td style={{ ...tdStyle(), borderBottom: "none", color: c.textSec, fontSize: c.fontSm }}>{a.description || "—"}</td>
+                      <td style={{ ...tdStyle(), borderBottom: "none", fontSize: c.fontSm }}>
+                        <span style={{ fontWeight: 600, color: noRunners ? c.warning : c.text }}>
+                          {a.onlineRunnerCount ?? 0}
+                        </span>
+                        {noRunners && (
+                          <span style={{ color: c.warning, fontSize: c.fontXs, marginLeft: 6 }}>runs will queue</span>
+                        )}
+                      </td>
+                      <td style={{ ...tdStyle(), borderBottom: "none", color: c.textSec, fontSize: c.fontSm }}>{fmtDate(a.lastModifiedAt)}</td>
+                      <td style={{ ...tdStyle(), borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
+                        {canEdit && (
+                          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                            {/* R8 — the row says what the caller may do with it;
+                                the built-in agency is renamed (2.5.2 GR), never deleted. */}
+                            <Btn onClick={() => setEditing(a)} disabled={!!rowWhy(a, a.canEdit)} title={rowWhy(a, a.canEdit) || undefined}>
+                              Edit
+                            </Btn>
+                            <Btn danger onClick={() => setDeleting(a)} disabled={!!rowWhy(a, a.canDelete)} title={rowWhy(a, a.canDelete) || undefined}>
+                              Delete
+                            </Btn>
+                          </div>
+                        )}
                       </td>
                     </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                    {isExp && a.id != null && (
+                      <tr style={{ background: c.primaryBg, borderBottom: `1px solid ${c.border}` }}>
+                        <td style={{ borderBottom: "none" }} />
+                        <DetailCell colSpan={5} padding="2px 16px 16px" cellStyle={{ borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
+                          <RefreshScope>
+                          <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} rolesAdmin={rolesAdmin} maxConcurrent={a.maxConcurrent ?? null} onMembersChanged={() => setDep((n) => n + 1)} />
+                          </RefreshScope>
+                        </DetailCell>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {(adding || editing) && (

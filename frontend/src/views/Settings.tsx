@@ -178,7 +178,10 @@ export function Settings() {
             );
           })}
         </div>
-        <div>
+        {/* minWidth 0 (2.5.2): a 1fr column grows to its content's minimum width,
+            so SSH Targets' wide tables widened the whole page instead of
+            scrolling inside their cards, and their edit rows sat off screen. */}
+        <div style={{ minWidth: 0 }}>
           {section === "general" && (
             <>
               <GeneralSection canWrite={isGlobal} />
