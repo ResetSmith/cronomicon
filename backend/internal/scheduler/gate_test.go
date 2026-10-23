@@ -412,21 +412,24 @@ func TestPromotion_GlobalFreezeDeclaredAfterParkingHolds(t *testing.T) {
 }
 
 // seedGlobalFreezeToday inserts a global calendar naming today (in the zone the
-// gate computes in) as a suppressed day.
+// gate computes in) as a suppressed day. It is opsAgency's, the agency
+// seedQueueJob's jobs are (a global calendar freezes its own agency's fires,
+// §0a; and since 2.5.3 the built-in agency's jobs run nothing to freeze).
 func seedGlobalFreezeToday(t *testing.T, pool *sql.DB, s *Scheduler) {
 	t.Helper()
 	day := calendar.DayOf(time.Now(), s.location())
+	seedOpsAgency(t, pool)
 	// global=1 is the fleet-wide tier; a global calendar is skip-polarity by
 	// construction (CAL-27 — a global `only` calendar would be a system-wide
 	// outage shaped like a feature).
 	if _, err := pool.Exec(
-		`INSERT INTO calendars (name, source, global, created_at)
-		 VALUES ('change-freeze','cronomicon',1,'2026-08-12T00:00:00Z')`); err != nil {
+		`INSERT INTO calendars (name, source, global, created_at, owner_agency)
+		 VALUES ('change-freeze','cronomicon',1,'2026-08-12T00:00:00Z',?)`, opsAgency); err != nil {
 		t.Fatalf("seed calendar: %v", err)
 	}
 	if _, err := pool.Exec(
 		`INSERT INTO calendar_days (calendar_owner, calendar_source, calendar_name, day, label)
-		 VALUES ('global','cronomicon','change-freeze',?,'Change freeze')`, day); err != nil {
+		 VALUES (?,'cronomicon','change-freeze',?,'Change freeze')`, opsAgency, day); err != nil {
 		t.Fatalf("seed calendar day: %v", err)
 	}
 }

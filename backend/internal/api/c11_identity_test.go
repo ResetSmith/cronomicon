@@ -154,11 +154,14 @@ func TestC11_ATokenResolvesItsOwnAgencysName(t *testing.T) {
 	if code, body := trigger(allToken); code != http.StatusConflict || !strings.Contains(body, "ambiguous_name") {
 		t.Errorf("the all-agencies token with two agencies' backup = %d %s; want 409 ambiguous_name", code, body)
 	}
-	// ...and Global's own, once there is one, first.
+	// ...and Global's own, once there is one, first. Until 2.5.3 it ran; since
+	// CA-1 Global's job runs nothing, so the name resolves to it (not to the
+	// two agencies' ambiguity) and the run is refused, with nothing enqueued.
 	exec(`INSERT INTO jobs (uid, name, source, run_type, scope, owner_agency, concurrency_policy, enabled, requestable, created_at)
 	      VALUES ('j-g', 'backup', 'cronomicon', 'bash', NULL, NULL, 'Allow', 1, 1, 't')`)
-	if code, body := trigger(allToken); code != http.StatusAccepted || ran() != "j-g" {
-		t.Errorf("the all-agencies token with Global's backup = %d %s, ran %q; want 202 and Global's job", code, body, ran())
+	if code, body := trigger(allToken); code != http.StatusConflict || !strings.Contains(body, "run_refused") ||
+		!strings.Contains(body, "built-in administration agency runs nothing") || ran() != "j-t" {
+		t.Errorf("the all-agencies token with Global's backup = %d %s, ran %q; want 409 run_refused (Global's job runs nothing) and no run", code, body, ran())
 	}
 }
 

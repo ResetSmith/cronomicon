@@ -66,8 +66,9 @@ func TestAParkedWorkflowRunWithNoIdentityDoesNotGuess(t *testing.T) {
 	pool := mustPool(t)
 	ctx := context.Background()
 	seedTwoNightlies(t, pool)
-	if _, err := pool.ExecContext(ctx, `INSERT INTO workflows (uid, name, source, steps, enabled, created_at)
-		VALUES ('w-solo', 'weekly', 'cronomicon', '[]', 1, 't')`); err != nil {
+	seedOpsAgency(t, pool)
+	if _, err := pool.ExecContext(ctx, `INSERT INTO workflows (uid, name, source, steps, enabled, created_at, owner_agency)
+		VALUES ('w-solo', 'weekly', 'cronomicon', '[]', 1, 't', ?)`, opsAgency); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	parkWorkflow(t, pool, "p-two", "nightly", "")
@@ -132,8 +133,9 @@ func TestAReactionParksItsOwnWorkflow(t *testing.T) {
 func TestAParkedJobRunIsOfItsOwnJob(t *testing.T) {
 	pool := mustPool(t)
 	ctx := context.Background()
-	if _, err := pool.ExecContext(ctx, `INSERT INTO jobs (uid, name, source, run_type, command, enabled, synced_at)
-		VALUES ('j-other', 'nightly', 'cronomicon', 'bash', 'true', 1, 't')`); err != nil {
+	seedOpsAgency(t, pool)
+	if _, err := pool.ExecContext(ctx, `INSERT INTO jobs (uid, name, source, run_type, command, enabled, synced_at, owner_agency)
+		VALUES ('j-other', 'nightly', 'cronomicon', 'bash', 'true', 1, 't', ?)`, opsAgency); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	park := func(id, jobUID string) {

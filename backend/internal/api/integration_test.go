@@ -856,6 +856,7 @@ func TestRunTriggerWritesEveryRunForTheRunnerExecutor(t *testing.T) {
 		{"bash-job", "bash"}, {"ansible-job", "ansible"}, {"tf-job", "terraform"},
 	} {
 		id := seedJob(t, pool, tc.name, tc.runType, "")
+		ownJobsByWorkAgency(t, pool, tc.name) // 2.5.3: the built-in agency runs nothing
 		code, run := triggerRun(t, client, csrf, ts.URL, id, nil)
 		if code != http.StatusAccepted {
 			t.Fatalf("%s trigger = %d, want 202", tc.runType, code)
@@ -897,6 +898,7 @@ func TestRunTriggerIgnoresEveryExecutorChoice(t *testing.T) {
 	}
 	// The job's own executor.
 	sID := seedJob(t, pool, "spec-ssh", "bash", "ssh")
+	ownJobsByWorkAgency(t, pool, "spec-ssh") // 2.5.3: the built-in agency runs nothing
 	code, run := triggerRun(t, client, csrf, ts.URL, sID, nil)
 	want("a job whose executor says ssh", code, run)
 	// The global default.
@@ -905,6 +907,7 @@ func TestRunTriggerIgnoresEveryExecutorChoice(t *testing.T) {
 		t.Fatalf("set the old global default: %v", err)
 	}
 	gID := seedJob(t, pool, "global-bash", "bash", "")
+	ownJobsByWorkAgency(t, pool, "global-bash")
 	code, run = triggerRun(t, client, csrf, ts.URL, gID, nil)
 	want("a global default of ssh", code, run)
 	// The per-run override, both values.
@@ -914,9 +917,11 @@ func TestRunTriggerIgnoresEveryExecutorChoice(t *testing.T) {
 	}
 	// What used to be an invalid combination.
 	ansID := seedJob(t, pool, "ansible-job", "ansible", "")
+	ownJobsByWorkAgency(t, pool, "ansible-job")
 	code, run = triggerRun(t, client, csrf, ts.URL, ansID, map[string]any{"executor": "ssh"})
 	want("ssh asked of an ansible job", code, run)
 	tfID := seedJob(t, pool, "tf-job", "terraform", "ssh")
+	ownJobsByWorkAgency(t, pool, "tf-job")
 	code, run = triggerRun(t, client, csrf, ts.URL, tfID, nil)
 	want("a terraform job whose executor says ssh", code, run)
 

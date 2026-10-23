@@ -499,6 +499,12 @@ func (s *Scheduler) reactionVerdict(ctx context.Context, ev srcEvent, r reaction
 		// and a disabled definition must no more react than a paused one.
 		return "suppressed_disabled", "the reacting definition is disabled"
 	}
+	if DefinitionIsCentral(ctx, s.db, r.ownerKind, r.ownerSource, r.ownerName, r.ownerUID) {
+		// 2.5.3, CA-1. The outcome column is a closed set (1050), and a leftover of
+		// Central's is a catalog fact like a disabled one, so it is recorded as
+		// that outcome with its own reason.
+		return "suppressed_disabled", "the reacting definition belongs to the built-in administration agency, which runs nothing: move it to an agency"
+	}
 	if s.isPaused(ctx, r.ownerSource, r.ownerKind, r.ownerName, r.ownerUID) {
 		// promoteOne does NOT check this, so the reactor must. A paused
 		// definition not reacting is not arguable.

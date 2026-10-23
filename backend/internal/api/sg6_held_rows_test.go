@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -18,20 +19,51 @@ import (
 // membership, so any member could reveal it, make it unrevealable for good, or
 // delete a key Global's runs use.
 
-// createSecret creates a stored, unscoped secret as a global administrator in
-// one agency and answers its id.
-func createSecret(t *testing.T, h http.Handler, key, value, agency string) string {
+// createSecret creates a stored, unscoped secret of Global's, as an upgrade
+// leaves one, and answers its id.
+//
+// Until 2.5.3 a global administrator created it through the route. Since CA-4
+// no secret is created as Central's, nor moved there: it is made through the
+// route in FIN, so that its value is sealed as the app seals one, and then
+// written again in place as Global's (a row born Global's is what 1670 leaves
+// alone; only an UPDATE into Central is refused). The seal is bound to the
+// row's table and id, not to its owner (secrets.RowBinding), so it still
+// opens.
+func createSecret(t *testing.T, h http.Handler, pool *sql.DB, key, value string) string {
 	t.Helper()
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gRoot,
-		`{"key":"`+key+`","source":"stored","value":"`+value+`","agencies":["`+agency+`"]}`)
+		`{"key":"`+key+`","source":"stored","value":"`+value+`","agencyIds":["ag:FIN"]}`)
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("creating %s in %s = %d (%s)", key, agency, rec.Code, rec.Body)
+		t.Fatalf("creating %s = %d (%s)", key, rec.Code, rec.Body)
 	}
 	var out struct {
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.ID == "" {
 		t.Fatalf("creating %s: no id in %s", key, rec.Body)
+	}
+	tx, err := pool.Begin() // one connection: the copy is a TEMP table
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, q := range []string{
+		`CREATE TEMP TABLE leftover AS SELECT * FROM secrets WHERE id = ?1`,
+		`UPDATE leftover SET owner_agency = 'global'`,
+		`DELETE FROM secrets WHERE id = ?1`,
+		`INSERT INTO secrets SELECT * FROM leftover`,
+		`DROP TABLE leftover`,
+	} {
+		if _, err := tx.Exec(q, out.ID); err != nil {
+			t.Fatalf("making %s Global's: %v\n%s", key, err, q)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM secrets s WHERE s.id = ? AND s.owner_agency = 'global'
+	                         AND (SELECT group_concat(agency_id) FROM secret_agencies WHERE secret_id = s.id) = 'global'`, out.ID); n != 1 {
+		t.Fatalf("fixture: %s is not Global's alone", key)
 	}
 	return out.ID
 }
@@ -41,7 +73,7 @@ func TestSG6_AHeldRowIsReadOnlyToItsMembers(t *testing.T) {
 	exec := mustExec(t, pool)
 	const at = "2026-01-01T00:00:00Z"
 
-	sid := createSecret(t, h, "HELD_SECRET", "held-secret-value", "global")
+	sid := createSecret(t, h, pool, "HELD_SECRET", "held-secret-value")
 	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES (?, 'ag:FIN'), (?, 'ag:TAX')`, sid, sid)
 	exec(`INSERT INTO ssh_credentials (id,label,source,created_by,last_modified_by,created_at,last_modified_at,owner_agency)
 	      VALUES ('pk-held','HELD_KEY','stored','x','x',?,?,'global')`, at, at)
@@ -123,11 +155,13 @@ type secretKeyWrite struct {
 var secretKeyWriteProbes = map[string]secretKeyWrite{
 	"PUT /api/v1/env-secrets/{secretId}": {http.MethodPut, func(o map[string]string, k string) string { return "/api/v1/env-secrets/" + o["s:"+k] },
 		`{"key":"PROBE","source":"stored","scope":"fin-hosts","value":"rewritten"}`},
-	"DELETE /api/v1/env-secrets/{secretId}":                {http.MethodDelete, func(o map[string]string, k string) string { return "/api/v1/env-secrets/" + o["s:"+k] }, ``},
-	"POST /api/v1/env-secrets/{secretId}/reveal":           {http.MethodPost, func(o map[string]string, k string) string { return "/api/v1/env-secrets/" + o["s:"+k] + "/reveal" }, ``},
-	"POST /api/v1/env-secrets/{secretId}/lock-reveal":      {http.MethodPost, func(o map[string]string, k string) string { return "/api/v1/env-secrets/" + o["s:"+k] + "/lock-reveal" }, ``},
-	"POST /api/v1/env-secrets/{secretId}/migrate-to-vault": {http.MethodPost, func(o map[string]string, k string) string { return "/api/v1/env-secrets/" + o["s:"+k] + "/migrate-to-vault" }, `{"vaultPath":"secret/data/x#f"}`},
-	"PUT /api/v1/env-secret-tags/{secretId}":               {http.MethodPut, func(o map[string]string, k string) string { return "/api/v1/env-secret-tags/" + o["s:"+k] }, `{"tags":["probe"]}`},
+	"DELETE /api/v1/env-secrets/{secretId}":           {http.MethodDelete, func(o map[string]string, k string) string { return "/api/v1/env-secrets/" + o["s:"+k] }, ``},
+	"POST /api/v1/env-secrets/{secretId}/reveal":      {http.MethodPost, func(o map[string]string, k string) string { return "/api/v1/env-secrets/" + o["s:"+k] + "/reveal" }, ``},
+	"POST /api/v1/env-secrets/{secretId}/lock-reveal": {http.MethodPost, func(o map[string]string, k string) string { return "/api/v1/env-secrets/" + o["s:"+k] + "/lock-reveal" }, ``},
+	"POST /api/v1/env-secrets/{secretId}/migrate-to-vault": {http.MethodPost, func(o map[string]string, k string) string {
+		return "/api/v1/env-secrets/" + o["s:"+k] + "/migrate-to-vault"
+	}, `{"vaultPath":"secret/data/x#f"}`},
+	"PUT /api/v1/env-secret-tags/{secretId}": {http.MethodPut, func(o map[string]string, k string) string { return "/api/v1/env-secret-tags/" + o["s:"+k] }, `{"tags":["probe"]}`},
 	"PUT /api/v1/ssh/credentials/{credentialId}": {http.MethodPut, func(o map[string]string, k string) string { return "/api/v1/ssh/credentials/pk-" + k },
 		`{"label":"PROBE_KEY","source":"stored","description":"rewritten"}`},
 	"DELETE /api/v1/ssh/credentials/{credentialId}":  {http.MethodDelete, func(o map[string]string, k string) string { return "/api/v1/ssh/credentials/pk-" + k + "?force=true" }, ``},
@@ -186,7 +220,7 @@ func TestSG6_NoSecretOrKeyWriteAnswersAnotherAgency(t *testing.T) {
 	obj := map[string]string{
 		"s:fin":  fin.ID,
 		"s:tax":  "s-tax0",
-		"s:glob": createSecret(t, h, "GLOB_PROBE", "glob-probe-value", "global"),
+		"s:glob": createSecret(t, h, pool, "GLOB_PROBE", "glob-probe-value"),
 	}
 	for _, k := range [][2]string{{"fin", "ag:FIN"}, {"tax", "ag:TAX"}, {"glob", "global"}} {
 		exec(`INSERT INTO ssh_credentials (id,label,source,description,created_by,last_modified_by,created_at,last_modified_at,owner_agency)
@@ -310,7 +344,7 @@ func TestSG6_AMoveThroughMembersAlerts(t *testing.T) {
 	        smtp_from = excluded.smtp_from, smtp_encryption = excluded.smtp_encryption, last_email_at = NULL`)
 	exec(`INSERT INTO alert_config (id, target_mode, job_name, trigger, channels, recipients, enabled, created_at, owner_agency)
 	      VALUES ('tax-secrets', 'all', NULL, 'secret-changed', '["email"]', 'tax@example.com', 1, 'now', 'ag:TAX')`)
-	sid := createSecret(t, h, "MOVING", "moving-value", "global")
+	sid := createSecret(t, h, pool, "MOVING", "moving-value")
 	exec(`DELETE FROM secret_agencies WHERE secret_id = ?`, sid)
 	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES (?, 'ag:FIN'), (?, 'ag:TAX')`, sid, sid)
 	sent := func() string {

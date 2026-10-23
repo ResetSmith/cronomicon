@@ -2122,6 +2122,11 @@ func (s *Server) requirePauseAuthority(w http.ResponseWriter, r *http.Request, i
 //	          changes the job for everyone, so on a job with no scope it is a
 //	          global administrator's.
 //
+// Since 2.5.3 (CA-1) a job of the built-in agency's is an upgrade's leftover
+// that runJob refuses for everyone (scheduler.DefinitionIsCentral), so canRun
+// is false on it. Pausing it, and stopping a run of it that is already going,
+// are still answered as before.
+//
 // Until 2.3.0 the last two were one flag computed as Can(perm, jobScope), which
 // every grant satisfies for the empty scope: a department's operator was offered
 // Stop and Pause on Global's jobs and refused on the click.
@@ -2134,9 +2139,12 @@ func rowAuthority(actor auth.Identity, jobAgency, jobScope, lastRunStatus, lastR
 		}
 		return auth.ScopeReadableIn(actor, agency, scope) && actor.CanIn(perm, agency, scope)
 	}
-	if jobScope == "" {
-		canRun = actor.CanAgency(auth.PermTriggerJobs, agencyOrGlobal(jobAgency))
-	} else {
+	switch {
+	case agencyOrGlobal(jobAgency) == agencyid.Global:
+		canRun = false
+	case jobScope == "":
+		canRun = actor.CanAgency(auth.PermTriggerJobs, jobAgency)
+	default:
 		canRun = on(auth.PermTriggerJobs, jobAgency, jobScope)
 	}
 	canPause = on(auth.PermKillJobs, jobAgency, jobScope)
@@ -3042,6 +3050,13 @@ func (s *Server) triggerWorkflow(eng *workflow.Engine) http.HandlerFunc {
 		//
 		// The freeze is skipped for a DEFERRED trigger for the same reason the job
 		// path skips it: promotion re-judges at the instant that matters.
+		// Central runs nothing (2.5.3, CA-1): refused now, deferred or not, as a
+		// catalog fact; parking it would only hold it until it expired.
+		if scheduler.DefinitionIsCentral(r.Context(), s.db, "workflow", wr.Source, wr.Name, wr.UID) {
+			httpx.Fail(w, http.StatusConflict, "run_refused",
+				"this workflow belongs to the built-in administration agency, which runs nothing: move it to an agency to run it")
+			return
+		}
 		if runAt == "" {
 			if g := scheduler.Evaluate(r.Context(), s.db, s.log, scheduler.GateRequest{
 				Origin: scheduler.OriginManual, Source: wr.Source, OwnerKind: "workflow", Name: wr.Name, UID: wr.UID,

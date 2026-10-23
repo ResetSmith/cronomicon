@@ -20,6 +20,13 @@ func today(s *Scheduler) string { return calendar.DayOf(time.Now(), s.location()
 
 func seedCal(t *testing.T, pool *sql.DB, name string, global, record bool, days map[string]string) {
 	t.Helper()
+	seedCalOf(t, pool, "global", name, global, record, days)
+}
+
+// seedCalOf is seedCal for an agency's calendar: since §0a a definition's
+// calendars are its own agency's.
+func seedCalOf(t *testing.T, pool *sql.DB, agency, name string, global, record bool, days map[string]string) {
+	t.Helper()
 	b := func(v bool) int {
 		if v {
 			return 1
@@ -27,14 +34,14 @@ func seedCal(t *testing.T, pool *sql.DB, name string, global, record bool, days 
 		return 0
 	}
 	if _, err := pool.ExecContext(context.Background(),
-		`INSERT INTO calendars (source, name, global, record_suppressed, created_at)
-		 VALUES ('cronomicon', ?, ?, ?, '2026-08-06T00:00:00Z')`, name, b(global), b(record)); err != nil {
+		`INSERT INTO calendars (source, name, global, record_suppressed, created_at, owner_agency)
+		 VALUES ('cronomicon', ?, ?, ?, '2026-08-06T00:00:00Z', ?)`, name, b(global), b(record), agency); err != nil {
 		t.Fatalf("seed calendar %s: %v", name, err)
 	}
 	for day, label := range days {
 		if _, err := pool.ExecContext(context.Background(),
 			`INSERT INTO calendar_days (calendar_owner, calendar_source, calendar_name, day, label)
-			 VALUES ('global', 'cronomicon', ?, ?, ?)`, name, day, label); err != nil {
+			 VALUES (?, 'cronomicon', ?, ?, ?)`, agency, name, day, label); err != nil {
 			t.Fatalf("seed day %s/%s: %v", name, day, err)
 		}
 	}
@@ -312,7 +319,8 @@ func TestFireWorkflowSuppressedByCalendarRecords(t *testing.T) {
 	var fired []string
 	s.SetWorkflowFirer(func(_ context.Context, f WorkflowFire) { fired = append(fired, f.Name) })
 
-	if _, err := pool.ExecContext(ctx, `INSERT INTO workflows (name, enabled, synced_at) VALUES ('release', 1, 't')`); err != nil {
+	seedOpsRepo(t, pool)
+	if _, err := pool.ExecContext(ctx, `INSERT INTO workflows (name, enabled, synced_at, repo_id) VALUES ('release', 1, 't', ?)`, opsRepo); err != nil {
 		t.Fatalf("seed workflow: %v", err)
 	}
 	seedCal(t, pool, "federal-holidays", false, false, map[string]string{today(s): "Veterans Day"})

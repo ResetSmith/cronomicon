@@ -289,6 +289,19 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 // for a job with no scope. When two of the actor's agencies hold the name the
 // agency must be named (422 ambiguous_scope). false after a refusal is written.
 func (s *Server) composeOwnerFor(w http.ResponseWriter, r *http.Request, id auth.Identity, in jobComposeInput) (string, bool) {
+	owner, ok := s.composeOwnerResolved(w, r, id, in)
+	if ok && owner == agencyid.Global {
+		// 2.5.3 (CA-4): a new job is never Central's. A job with no scope, or a
+		// scope no agency of the caller's holds, names its agency instead.
+		failCentralRunsNothing(w, "job")
+		return "", false
+	}
+	return owner, ok
+}
+
+// composeOwnerResolved is composeOwnerFor before the 2.5.3 refusal: where the
+// rules of 1400 and I2 place the job.
+func (s *Server) composeOwnerResolved(w http.ResponseWriter, r *http.Request, id auth.Identity, in jobComposeInput) (string, bool) {
 	// 2.4.4 S3: in an agency context the job is that agency's.
 	if a, ok := s.ownerInContext(w, r, in.OwnerAgency, "job"); !ok {
 		return "", false

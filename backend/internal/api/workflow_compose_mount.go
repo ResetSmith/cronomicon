@@ -874,6 +874,19 @@ func (s *Server) workflowOwner(r *http.Request, steps []workflow.Step) (owner st
 // (the change was a repair), and any agency's composer could edit it. false
 // after a refusal is written.
 func (s *Server) workflowSaveOwner(w http.ResponseWriter, r *http.Request, id auth.Identity, steps []workflow.Step, named, stored string) (owner string, spans bool, ok bool) {
+	owner, spans, ok = s.workflowSaveOwnerInContext(w, r, id, steps, named, stored)
+	// 2.5.3 (CA-4): a workflow is never MADE Central's, new or by an edit. One
+	// that already is (an upgrade's leftover) may be edited, and moved out by
+	// pointing it at an agency's jobs. A spanning save is refused by the caller.
+	if ok && !spans && owner == agencyid.Global && stored != agencyid.Global {
+		failCentralRunsNothing(w, "workflow")
+		return "", false, false
+	}
+	return owner, spans, ok
+}
+
+// workflowSaveOwnerInContext is workflowSaveOwner before the 2.5.3 refusal.
+func (s *Server) workflowSaveOwnerInContext(w http.ResponseWriter, r *http.Request, id auth.Identity, steps []workflow.Step, named, stored string) (owner string, spans bool, ok bool) {
 	// 2.4.4 S3: a workflow being created in an agency context is that agency's:
 	// a jobless one takes it, and one whose jobs are another agency's is
 	// refused. An edit keeps the owner it has.

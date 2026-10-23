@@ -33,14 +33,18 @@ func projectJob(t *testing.T, pool *sql.DB, job string) {
 	}
 }
 
-// checkoutAgent registers an agent of Global's that allows checkout, offline.
+// checkoutAgent registers an agent with the given capabilities, offline. It is
+// opsAgency's, the agency seedJobRow's jobs are: a run with no scope is its
+// job's agency's (2.5.3, CA-5; Global's before, and so was this agent), and an
+// agent serves its owner's work only.
 func checkoutAgent(t *testing.T, pool *sql.DB, id string, caps string) {
 	t.Helper()
-	if _, err := pool.Exec(`INSERT INTO runners (id, name, kind, status, os, capabilities, load, max_concurrent, version, registered_at, created_at)
-	      VALUES (?, ?, 'agent', 'offline', 'Linux', ?, 0, 5, '1.0', 't', 't')`, id, id, caps); err != nil {
+	seedOpsAgency(t, pool)
+	if _, err := pool.Exec(`INSERT INTO runners (id, name, kind, status, os, capabilities, load, max_concurrent, version, registered_at, created_at, owner_agency)
+	      VALUES (?, ?, 'agent', 'offline', 'Linux', ?, 0, 5, '1.0', 't', 't', ?)`, id, id, caps, opsAgency); err != nil {
 		t.Fatalf("register %s: %v", id, err)
 	}
-	if _, err := pool.Exec(`INSERT OR IGNORE INTO runner_agencies (runner_id, agency_id) VALUES (?, 'global')`, id); err != nil {
+	if _, err := pool.Exec(`INSERT OR IGNORE INTO runner_agencies (runner_id, agency_id) VALUES (?, ?)`, id, opsAgency); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -33,6 +33,9 @@ func TestJobComposeSSHIdentity(t *testing.T) {
 	      VALUES ('c1','prod-key','stored', x'00', x'00', x'00', 1, 't','t','t','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
+	ownKeyByWorkAgency(t, pool, "c1") // the job's agency's key
 	do := func(method, url string, body any) (*http.Response, func()) {
 		t.Helper()
 		b, _ := json.Marshal(body)
@@ -161,6 +164,8 @@ func TestJobComposeEnvPassthrough(t *testing.T) {
 	      VALUES('site-play','ansible','site.yml','runner','sha256:bbb','scripts/site-play.yaml','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 	do := func(method, url string, body any) (*http.Response, func()) {
 		t.Helper()
 		b, _ := json.Marshal(body)

@@ -51,6 +51,21 @@ func runsOf(t *testing.T, pool *sql.DB, job, status string) int {
 	return n
 }
 
+// centralRefusals counts the deliveries of the reactions of owner that MATCHED
+// an event and were then refused because owner is the built-in agency's
+// (2.5.3, CA-1): such a reaction resolves its names as before, and a match is
+// recorded as suppressed_disabled with its own detail instead of firing.
+func centralRefusals(t *testing.T, pool *sql.DB, owner string) int {
+	t.Helper()
+	n := 0
+	for _, d := range deliveries(t, pool, owner) {
+		if d.Result == "suppressed_disabled" && strings.Contains(d.Detail, "built-in administration agency") {
+			n++
+		}
+	}
+	return n
+}
+
 func TestScheduledFireOfAStrandedJobIsRecordedNotEnqueued(t *testing.T) {
 	pool := mustPool(t)
 	strand := strandable(t, pool, "confined")
@@ -81,9 +96,11 @@ func TestScheduledFireOfAStrandedJobIsRecordedNotEnqueued(t *testing.T) {
 		t.Errorf("skipped rows after two refused fires of one day = %d, want 1", n)
 	}
 
-	// Global's repository's job on an agency's scope is refused the same way
-	// (§0a, IN-3; until then it was nobody's to refuse), and with no scope it
-	// is Global's and fires.
+	// Global's repository's job on an agency's scope is refused (§0a, IN-3;
+	// until then it was nobody's to refuse). Since 2.5.3 (CA-1) every job of
+	// the built-in agency's is refused, on a scope or with none (until then,
+	// with no scope it was Global's and fired), and the refusal it records is
+	// that one: it is asked before the scope is.
 	seedJobRow(t, pool, "of-global", 1)
 	if _, err := pool.Exec(`UPDATE jobs SET repo_id = 'global', scope = 'fin-hosts' WHERE name = 'of-global'`); err != nil {
 		t.Fatal(err)
@@ -100,8 +117,16 @@ func TestScheduledFireOfAStrandedJobIsRecordedNotEnqueued(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.fire("git", "of-global-free", "uid-of-global-free", "bash", "", "Allow", "", "nightly", "")
-	if n := runsOf(t, pool, "of-global-free", "queued"); n != 1 {
-		t.Errorf("queued runs of Global's repository's job with no scope = %d, want 1", n)
+	if n := runsOf(t, pool, "of-global-free", "queued"); n != 0 {
+		t.Errorf("queued runs of Global's repository's job with no scope = %d, want 0: the built-in agency runs nothing (CA-1)", n)
+	}
+	for _, job := range []string{"of-global", "of-global-free"} {
+		if err := pool.QueryRow(`SELECT COALESCE(queued_reason,'') FROM runs WHERE job_name = ? AND status = 'skipped'`, job).Scan(&reason); err != nil {
+			t.Fatalf("no skipped run recorded for %s: the fire vanished silently: %v", job, err)
+		}
+		if reason != reasonCentralRunsNothing {
+			t.Errorf("%s: queued_reason = %q, want %q", job, reason, reasonCentralRunsNothing)
+		}
 	}
 }
 
@@ -228,13 +253,20 @@ func TestAReactionByNameFiresOnItsOwnRepositorysDefinitionOnly(t *testing.T) {
 		exec(`INSERT INTO runs (id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, completed_at, created_at)
 		      VALUES (?, 'nightly', 'git', ?, 'bash', 'success', 't', 'scheduled', ?, ?)`, "r-"+uid+"-"+string(rune('a'+n)), uid, ts, ts)
 	}
+	// after-g is Global's, which since 2.5.3 runs nothing (CA-1): it never
+	// parks a run, and what it would have fired on is counted by its refused
+	// deliveries (until then, by its pending runs).
 	fired := func() map[string]int {
 		t.Helper()
 		s.ScanReactions(ctxb())
 		out := map[string]int{}
-		for _, name := range []string{"after-b", "after-app", "after-g"} {
+		for _, name := range []string{"after-b", "after-app"} {
 			out[name] = countPending(t, pool, name)
 		}
+		if n := countPending(t, pool, "after-g"); n != 0 {
+			t.Errorf("Global's reaction parked %d run(s), want none: the built-in agency runs nothing", n)
+		}
+		out["after-g"] = centralRefusals(t, pool, "after-g")
 		return out
 	}
 	expect := func(when string, want map[string]int) {
@@ -242,7 +274,7 @@ func TestAReactionByNameFiresOnItsOwnRepositorysDefinitionOnly(t *testing.T) {
 		got := fired()
 		for name, w := range want {
 			if got[name] != w {
-				t.Errorf("%s: %s has %d pending run(s), want %d", when, name, got[name], w)
+				t.Errorf("%s: %s has %d pending run(s) (after-g: matched and refused), want %d", when, name, got[name], w)
 			}
 		}
 	}
@@ -254,9 +286,10 @@ func TestAReactionByNameFiresOnItsOwnRepositorysDefinitionOnly(t *testing.T) {
 	finish("n-c")
 	expect("only another agency's nightly", map[string]int{"after-b": 0, "after-app": 0, "after-g": 0})
 
-	// Global's repository gets one. Its run fires Global's reaction only
+	// Global's repository gets one. Its run matches Global's reaction only
 	// (§0a, IN-8; until then the agency's two fired too, Global's being their
-	// second home); the other agency's run still fires none.
+	// second home), which is refused (CA-1); the other agency's run still
+	// matches none.
 	job("n-g", "nightly", "git", "global", nil)
 	finish("n-g")
 	expect("Global's nightly ran", map[string]int{"after-b": 0, "after-app": 0, "after-g": 1})
@@ -264,7 +297,7 @@ func TestAReactionByNameFiresOnItsOwnRepositorysDefinitionOnly(t *testing.T) {
 	expect("the other agency's nightly ran again", map[string]int{"after-b": 0, "after-app": 0, "after-g": 1})
 
 	// repo-b gets its own: it fires repo-b's reaction and the in-app job of
-	// repo-b's agency; Global's reaction still means Global's.
+	// repo-b's agency; Global's reaction still means Global's (and is refused).
 	job("n-b", "nightly", "git", "repo-b", nil)
 	finish("n-g")
 	expect("Global's nightly ran, repo-b having its own", map[string]int{"after-b": 0, "after-app": 0, "after-g": 2})
@@ -305,29 +338,41 @@ func TestAReactionByNameIsUnchangedWithOneRepository(t *testing.T) {
 		exec(`INSERT INTO runs (id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, completed_at, created_at)
 		      VALUES (?, 'nightly', 'git', ?, 'bash', 'success', 't', 'scheduled', ?, ?)`, "r-"+uid+"-"+string(rune('a'+n)), uid, ts, ts)
 	}
-	pending := func() int { t.Helper(); s.ScanReactions(ctxb()); return countPending(t, pool, "after") }
+	// With Global's repository alone, the definitions are Global's, and since
+	// 2.5.3 the built-in agency runs nothing (CA-1); a reaction of another
+	// agency's to them is refused for that (§0a, IN-8). So the name rule is
+	// read off the reaction's MATCHES: each is a delivery refused because
+	// "after" is Global's (until then, a pending run).
+	matched := func() int {
+		t.Helper()
+		s.ScanReactions(ctxb())
+		if n := countPending(t, pool, "after"); n != 0 {
+			t.Errorf("Global's reaction parked %d run(s), want none: the built-in agency runs nothing", n)
+		}
+		return centralRefusals(t, pool, "after")
+	}
 	primeCursor(t, s)
 
 	job("n-1", "nightly", "git", "global")
 	finish("n-1")
-	if got := pending(); got != 1 {
-		t.Fatalf("while the job is there: %d pending, want 1", got)
+	if got := matched(); got != 1 {
+		t.Fatalf("while the job is there: %d matched, want 1", got)
 	}
 	// The job is pruned while its last run is going; the run then finishes.
 	exec(`DELETE FROM jobs WHERE uid = 'n-1'`)
 	finish("n-1")
-	if got := pending(); got != 2 {
-		t.Errorf("after the job was pruned and its last run finished: %d pending, want 2 (as before 2.4.0)", got)
+	if got := matched(); got != 2 {
+		t.Errorf("after the job was pruned and its last run finished: %d matched, want 2 (as before 2.4.0)", got)
 	}
 	// It returns under a new identity, and an old run finishes; then a new one.
 	job("n-2", "nightly", "git", "global")
 	finish("n-1")
-	if got := pending(); got != 3 {
-		t.Errorf("after the job returned and an old run finished: %d pending, want 3 (as before 2.4.0)", got)
+	if got := matched(); got != 3 {
+		t.Errorf("after the job returned and an old run finished: %d matched, want 3 (as before 2.4.0)", got)
 	}
 	finish("n-2")
-	if got := pending(); got != 4 {
-		t.Errorf("after the returned job's run finished: %d pending, want 4", got)
+	if got := matched(); got != 4 {
+		t.Errorf("after the returned job's run finished: %d matched, want 4", got)
 	}
 }
 
@@ -369,12 +414,21 @@ func TestAReactionByNameResolvesWorkflowsTheSameWay(t *testing.T) {
 		                                 started_at, completed_at, created_at)
 		      VALUES (?, 0, 'nightly', 'git', ?, 'success', 't', 'scheduled', ?, ?, ?)`, "wr-"+uid+"-"+string(rune('a'+n)), uid, ts, ts, ts)
 	}
+	// after-g is Global's, which since 2.5.3 runs nothing (CA-1): what it
+	// would have fired on is counted by its refused deliveries.
 	expect := func(when string, want map[string]int) {
 		t.Helper()
 		s.ScanReactions(ctxb())
+		if n := countPending(t, pool, "after-g"); n != 0 {
+			t.Errorf("%s: Global's reaction parked %d run(s), want none: the built-in agency runs nothing", when, n)
+		}
 		for name, w := range want {
-			if got := countPending(t, pool, name); got != w {
-				t.Errorf("%s: %s has %d pending run(s), want %d", when, name, got, w)
+			got := countPending(t, pool, name)
+			if name == "after-g" {
+				got = centralRefusals(t, pool, name)
+			}
+			if got != w {
+				t.Errorf("%s: %s has %d pending run(s) (after-g: matched and refused), want %d", when, name, got, w)
 			}
 		}
 	}
@@ -421,15 +475,22 @@ func TestAReactionOwnersSharedScopeIsGlobals(t *testing.T) {
 		exec(`INSERT INTO runs (id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, completed_at, created_at)
 		      VALUES (?, 'nightly', 'git', ?, 'bash', 'success', 't', 'scheduled', ?, ?)`, id, uid, ts, ts)
 	}
+	// Such a job is Global's, and since 2.5.3 the built-in agency runs nothing
+	// (CA-1): what its reaction matches is read off its refused deliveries
+	// (until then, its pending runs), and it never parks a run.
 	primeCursor(t, s)
 	finish("r1", "n-b", 50*time.Second)
 	s.ScanReactions(ctxb())
-	if got := countPending(t, pool, "after"); got != 0 {
-		t.Errorf("a job on a scope two agencies share reacted to ONE agency's repository's nightly (%d pending)", got)
+	if got := len(deliveries(t, pool, "after")); got != 0 {
+		t.Errorf("a job on a scope two agencies share matched ONE agency's repository's nightly (%d deliveries: %+v)", got, deliveries(t, pool, "after"))
 	}
 	finish("r2", "n-g", 40*time.Second)
 	s.ScanReactions(ctxb())
-	if got := countPending(t, pool, "after"); got != 1 {
-		t.Errorf("the same job did not react to Global's nightly (%d pending, want 1)", got)
+	if got := centralRefusals(t, pool, "after"); got != 1 {
+		t.Errorf("the same job's reaction did not match Global's nightly and was not refused as the built-in agency's (%d refusals, want 1): %+v",
+			got, deliveries(t, pool, "after"))
+	}
+	if got := countPending(t, pool, "after"); got != 0 {
+		t.Errorf("the built-in agency's job parked %d run(s), want none (CA-1)", got)
 	}
 }

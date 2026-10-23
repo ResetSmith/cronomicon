@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
@@ -346,6 +347,9 @@ type detectionEntry struct {
 // scheduleEntriesForDetection returns every entry belonging to a live, enabled,
 // unpaused, unbinned definition. Anything excluded here is a fire that was never
 // expected in the first place, which is cheaper to filter than to explain later.
+// So is a definition of the built-in agency's (2.5.3, CA-1): it never runs, and
+// its skip is recorded once per episode, so watching it would page on-call
+// every other day for a leftover nobody has moved yet.
 func (s *Scheduler) scheduleEntriesForDetection(ctx context.Context) ([]detectionEntry, error) {
 	// FX-B3 — workflows are watched too. A workflow schedule that silently stops
 	// firing was previously undetectable: the suppression half already existed
@@ -371,6 +375,7 @@ func (s *Scheduler) scheduleEntriesForDetection(ctx context.Context) ([]detectio
 		              OR (ds.owner_uid IS NULL AND j.name = ds.owner_name AND j.source = ds.owner_source
 		                  AND (SELECT COUNT(*) FROM jobs o WHERE o.name = ds.owner_name AND o.source = ds.owner_source) = 1)
 		 WHERE ds.owner_kind = 'job' AND j.enabled = 1 AND j.deleted_at IS NULL
+		   AND COALESCE(`+agencyid.JobSQL("j")+`, '') <> '`+agencyid.Global+`'
 		   AND NOT EXISTS (SELECT 1 FROM paused_jobs p
 		                    WHERE p.owner_kind = 'job'
 		                      AND (p.owner_uid = j.uid
@@ -385,6 +390,7 @@ func (s *Scheduler) scheduleEntriesForDetection(ctx context.Context) ([]detectio
 		                   OR (ds.owner_uid IS NULL AND w.name = ds.owner_name AND w.source = ds.owner_source
 		                       AND (SELECT COUNT(*) FROM workflows o WHERE o.name = ds.owner_name AND o.source = ds.owner_source) = 1)
 		 WHERE ds.owner_kind = 'workflow' AND w.enabled = 1 AND w.deleted_at IS NULL
+		   AND COALESCE(`+agencyid.WorkflowSQL+`, '') <> '`+agencyid.Global+`'
 		   AND NOT EXISTS (SELECT 1 FROM paused_jobs p
 		                    WHERE p.owner_kind = 'workflow'
 		                      AND (p.owner_uid = w.uid

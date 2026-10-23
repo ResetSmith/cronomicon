@@ -16,6 +16,7 @@ import (
 func TestFileSightingsAreReadable(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	jobID := createRHJob(t, ts, client, csrf, "ingest")
 
@@ -68,6 +69,7 @@ func TestFileSightingsAreReadable(t *testing.T) {
 func TestJobDetailLiftsTheQueuedReason(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	jobID := createRHJob(t, ts, client, csrf, "billing")
 
@@ -98,6 +100,7 @@ func TestJobDetailLiftsTheQueuedReason(t *testing.T) {
 func TestJobListCarriesNextRunAt(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	if code, b := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs", csrf, map[string]any{
 		"name": "billing", "scriptRef": "deploy.sh", "runType": "bash",

@@ -11,8 +11,13 @@ import (
 // ACROSS env_vars + secrets within a scope, enforced at write time in both
 // directions (each table already enforces its own UNIQUE(key, scope)).
 func TestEnvVarSecretCrossTableUniqueness(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	// The agency's Vault-backed secrets name paths inside its prefixes (1240).
+	if _, err := pool.Exec(`INSERT INTO agency_vault_prefixes (agency_id, prefix, created_at) VALUES (?, 'secret', 't')`, workAgency); err != nil {
+		t.Fatal(err)
+	}
 
 	post := func(path string, body any) int {
 		t.Helper()

@@ -178,11 +178,15 @@ func TestTheComposerResolvesAScriptAndAScheduleInItsAgencysRepository(t *testing
 	if code := compose(gFinAdmin, "fin-wants-global-schedule", "fin-hosts", "deploy.sh", "weekly"); code != http.StatusUnprocessableEntity {
 		t.Errorf("FIN's job naming a schedule only Global's repository has = %d, want 422", code)
 	}
-	// Global's own job takes Global's.
-	if code := compose(gRoot, "global-shared", "", "shared.sh", "weekly"); code/100 != 2 {
-		t.Errorf("Global's job naming Global's script and schedule = %d, want it saved", code)
-	} else if gotScript, gotSchedule := joined("global-shared"); gotScript != "s-shared" || gotSchedule != "d-shared" {
-		t.Errorf("Global's job is joined to %q and %q; want Global's s-shared and d-shared", gotScript, gotSchedule)
+	// Global's own job took Global's until 2.5.3. Since CA-4 Global composes
+	// no job: the global administrator's job with no scope is refused, and
+	// nothing is saved.
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs", gRoot,
+		`{"name":"global-shared","scope":"","scriptRef":"shared.sh","scheduleRefs":["weekly"]}`); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Errorf("Global's job naming Global's script and schedule = %d (%s), want 422 central_runs_nothing", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM jobs WHERE name = 'global-shared'`); n != 0 {
+		t.Errorf("Global's job was saved (%d rows)", n)
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM jobs WHERE name LIKE 'fin-wants-%'`); n != 0 {
 		t.Errorf("%d jobs were saved on another agency's script or schedule", n)
@@ -210,15 +214,15 @@ func TestTheComposersHomeForASharedScopeAndForAWorkflow(t *testing.T) {
 	      ('fin-job', 'cronomicon', 'bash', 'fin-hosts', 1, '2026-01-01T00:00:00Z'),
 	      ('tax-job', 'cronomicon', 'bash', 'tax-hosts', 1, '2026-01-01T00:00:00Z')`)
 
-	// A job on the shared scope: its script is Global's.
+	// A job on the shared scope is Global's, not the first agency's. Until
+	// 2.5.3 it was saved and joined to Global's script; since CA-4 Global
+	// composes no job, so it is refused, and not saved as FIN's either.
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs", gRoot, `{"name":"on-shared","scope":"both-hosts","scriptRef":"deploy.sh"}`)
-	if rec.Code/100 != 2 {
-		t.Fatalf("composing a job on the shared scope = %d (%s)", rec.Code, rec.Body)
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Fatalf("composing a job on the shared scope = %d (%s), want 422 central_runs_nothing", rec.Code, rec.Body)
 	}
-	var script string
-	_ = pool.QueryRow(`SELECT COALESCE(script_uid, '') FROM jobs WHERE name = 'on-shared'`).Scan(&script)
-	if script != "s-glob" {
-		t.Errorf("a job on a scope two agencies share is joined to the script %q; want Global's", script)
+	if n := count(t, pool, `SELECT COUNT(*) FROM jobs WHERE name = 'on-shared'`); n != 0 {
+		t.Errorf("the job on the shared scope was saved (%d rows)", n)
 	}
 
 	// A workflow of FIN's jobs takes FIN's repository's schedule; of TAX's, TAX's.
@@ -236,7 +240,9 @@ func TestTheComposersHomeForASharedScopeAndForAWorkflow(t *testing.T) {
 }
 
 // A workflow that runs a job whose scope is not in the catalog is Global's: the
-// job's runs are Global's, and so is what the workflow reaches.
+// job's runs are Global's, and so is what the workflow reaches. Until 2.5.3 it
+// was saved, Global's; since CA-4 Global composes no workflow, so it is
+// refused (422 central_runs_nothing), and not saved as anyone's.
 func TestAWorkflowOfAJobOnAnUnknownScopeIsGlobals(t *testing.T) {
 	h, pool := gateServer(t)
 	exec := mustExec(t, pool)
@@ -245,13 +251,11 @@ func TestAWorkflowOfAJobOnAnUnknownScopeIsGlobals(t *testing.T) {
 	      ('odd-job', 'cronomicon', 'bash', 'no-such-scope', 1, '2026-01-01T00:00:00Z')`)
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot,
 		`{"name":"odd-flow","steps":[{"type":"job","name":"odd-job"}]}`)
-	if rec.Code/100 != 2 {
-		t.Fatalf("composing = %d (%s)", rec.Code, rec.Body)
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Fatalf("composing = %d (%s), want 422 central_runs_nothing", rec.Code, rec.Body)
 	}
-	var owner string
-	_ = pool.QueryRow(`SELECT owner_agency FROM workflows WHERE name = 'odd-flow'`).Scan(&owner)
-	if owner != "global" {
-		t.Errorf("a workflow of a job on a scope that is not there is %q's; want Global's", owner)
+	if n := count(t, pool, `SELECT COUNT(*) FROM workflows WHERE name = 'odd-flow'`); n != 0 {
+		t.Errorf("a workflow of a job on a scope that is not there was saved (%d rows); want it refused as Global's", n)
 	}
 	// With FIN's job beside it, the workflow spans, and is refused (§0a,
 	// IN-8; until then it was saved, Global's).

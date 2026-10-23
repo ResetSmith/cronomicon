@@ -71,11 +71,13 @@ func TestAWorkflowBelongsToTheAgencyOfItsJobs(t *testing.T) {
 		}
 	}
 
-	// A job with no scope is Global's, and so is a workflow that runs it. One
-	// that runs nothing is its creator's agency's (question 52; Global's until
-	// 2.4.2, whoever built it).
-	if code := post(gRoot, unscoped, "free-flow"); code/100 != 2 || owner("free-flow") != "global" {
-		t.Errorf("a workflow of an unscoped job: %d, %q's; want saved, Global's", code, owner("free-flow"))
+	// A job with no scope is Global's, and so is a workflow that runs it: until
+	// 2.5.3 it was saved, Global's; since CA-4 Global composes no workflow, so
+	// it is refused and not saved. One that runs nothing is its creator's
+	// agency's (question 52; Global's until 2.4.2, whoever built it).
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot, fmt.Sprintf(unscoped, "free-flow")); rec.Code != http.StatusUnprocessableEntity ||
+		errCode(rec.Body.Bytes()) != "central_runs_nothing" || owner("free-flow") != "(not saved)" {
+		t.Errorf("a workflow of an unscoped job: %d %s, %q's; want 422 central_runs_nothing, not saved", rec.Code, rec.Body, owner("free-flow"))
 	}
 	// An agency's job beside an unscoped one is two agencies': the unscoped
 	// job is Global's, so the workflow spans, and is refused (§0a).

@@ -37,8 +37,11 @@ func newGRSchedAPI(t *testing.T) *grSchedAPI {
 	t.Helper()
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	// 2.5.3: the built-in agency composes nothing; the definitions here are an
+	// ordinary agency's, and the Git ones are its repository's (workRepo).
+	workInAgency(t, pool, client)
 	a := &grSchedAPI{t: t, ts: ts, pool: pool, client: client, csrf: csrf}
-	a.exec(`INSERT INTO scripts(name, run_type, command, content_hash, synced_at) VALUES('backup-db','bash','pg_dump','sha256:a','t')`)
+	a.exec(`INSERT INTO scripts(repo_id, name, run_type, command, content_hash, synced_at) VALUES(?, 'backup-db','bash','pg_dump','sha256:a','t')`, workRepo)
 	return a
 }
 
@@ -106,8 +109,8 @@ func (a *grSchedAPI) must(method, path string, body any, want ...int) []byte {
 // source_ref and (the name being unique at that moment) its uid.
 func (a *grSchedAPI) gitScheduleWithJob(schedule, cron, job string) {
 	a.t.Helper()
-	a.exec(`INSERT INTO schedules(uid, name, source, cron, content_hash, synced_at) VALUES(?, ?, 'git', ?, 'h', 't')`, "s-git-"+schedule, schedule, cron)
-	a.exec(`INSERT INTO jobs(uid, name, source, run_type, command, synced_at) VALUES(?, ?, 'git', 'bash', 'echo hi', 't')`, "j-"+job, job)
+	a.exec(`INSERT INTO schedules(uid, name, source, cron, content_hash, synced_at, repo_id, owner_agency) VALUES(?, ?, 'git', ?, 'h', 't', ?, ?)`, "s-git-"+schedule, schedule, cron, workRepo, workAgency)
+	a.exec(`INSERT INTO jobs(uid, name, source, run_type, command, synced_at, repo_id) VALUES(?, ?, 'git', 'bash', 'echo hi', 't', ?)`, "j-"+job, job, workRepo)
 	a.exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, position, source_ref, owner_uid, schedule_uid)
 	        VALUES('git', 'job', ?, ?, ?, 0, ?, ?, ?)`, job, schedule, cron, schedule, "j-"+job, "s-git-"+schedule)
 }
@@ -232,7 +235,7 @@ func TestGR1_TheComposerNeverBindsABinnedSchedule(t *testing.T) {
 	if n := a.count(`SELECT COUNT(*) FROM schedules WHERE source='cronomicon' AND name='weekly' AND deleted_at IS NOT NULL`); n != 1 {
 		t.Fatalf("the in-app schedule is not in the recycle bin (count %d)", n)
 	}
-	a.exec(`INSERT INTO schedules(uid, name, source, cron, content_hash, synced_at) VALUES('s-git-weekly', 'weekly', 'git', '0 0 7 * * 1', 'h', 't')`)
+	a.exec(`INSERT INTO schedules(uid, name, source, cron, content_hash, synced_at, repo_id, owner_agency) VALUES('s-git-weekly', 'weekly', 'git', '0 0 7 * * 1', 'h', 't', ?, ?)`, workRepo, workAgency)
 
 	a.must(http.MethodPost, "/api/v1/jobs",
 		map[string]any{"name": "weekly-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"weekly"}}, http.StatusCreated)

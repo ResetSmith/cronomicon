@@ -19,9 +19,10 @@ func TestComposeAndPauseStampSatelliteUIDs(t *testing.T) {
 	ts, pool := newTestServer(t)
 	ctx := context.Background()
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 
-	if _, err := pool.ExecContext(ctx, `INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
-	      VALUES('backup-db','bash','pg_dump mydb','ssh','sha256:aaa','scripts/backup-db.yaml','t')`); err != nil {
+	if _, err := pool.ExecContext(ctx, `INSERT INTO scripts(repo_id, name, run_type, command, executor, content_hash, source_path, synced_at)
+	      VALUES('repo-work', 'backup-db','bash','pg_dump mydb','ssh','sha256:aaa','scripts/backup-db.yaml','t')`); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/vaultpath"
@@ -249,6 +250,9 @@ func membershipAuthzFor(kind settings.MemberKind) (perm, joinTable, joinCol, lab
 // whether the write is a repair, for the caller's audit row.
 func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Identity,
 	kind settings.MemberKind, entityID string, targets []string, rep repairInput) (repaired, ok bool) {
+	// Repeats of one id are one id (the setters dedupe too), so that what is
+	// judged below is what will be written (the review of 2.5.3 CA1).
+	targets = slices.Compact(slices.Sorted(slices.Values(targets)))
 
 	// An entity that is not there is the setter's to answer (422, or the
 	// handler's 404), before anything about repair (from the review of I4).
@@ -275,6 +279,12 @@ func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Ide
 	// I4; possible before it under the two-sided rule).
 	if sameAgencySet(current, targets) && (owner == "" || len(targets) != 1 || owner == targets[0]) {
 		return false, true
+	}
+	// 2.5.3 (CA-4): nothing moves INTO Central; a leftover may move out.
+	if len(targets) == 1 && targets[0] == agencyid.Global {
+		_, _, _, label := membershipAuthzFor(kind)
+		failCentralRunsNothing(w, label)
+		return false, false
 	}
 	_, _, _, label := membershipAuthzFor(kind)
 	if !s.requireRepair(w, r, id, rep, "this "+label) {
@@ -1512,6 +1522,11 @@ func (s *Server) handleCloneScope(w http.ResponseWriter, r *http.Request) {
 	target := strings.TrimSpace(inp.AgencyID)
 	if target == "" {
 		target = agencyid.Global
+	}
+	// 2.5.3 (CA-4): a clone is a new scope, and no new scope is Central's.
+	if target == agencyid.Global {
+		failCentralRunsNothing(w, "scope")
+		return
 	}
 	if _, ok := s.requireBothSides(w, r, id, settings.MemberScope, sid, []string{target}); !ok {
 		return

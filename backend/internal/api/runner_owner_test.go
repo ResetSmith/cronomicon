@@ -87,10 +87,21 @@ type tokenJSON struct {
 
 // LR-61 — a token names the owner, and minting one takes configureApp on that
 // agency. An agency's administrators enrol their own agents; a global
-// administrator enrols one for any agency, or for Global.
+// administrator enrols one for any agency (until 2.5.3, or for Global).
+//
+// Since 2.5.3 (CA-4) no runner is Central's: a mint for Global, named or
+// defaulted, is refused 422 central_runs_nothing for everyone (until then 403
+// for an agency's administrator, 201 for a global administrator), asked before
+// the caller's authority.
 func TestG3_MintingATokenTakesAuthorityOverItsAgency(t *testing.T) {
 	h, pool := ownerCast(t)
 	const path = "/api/v1/runners/registration-tokens"
+	mintsForCentral := map[string]bool{
+		"an agency admin, naming Global":                          true,
+		"an all-scopes viewer who administers FIN, naming Global": true,
+		"a global admin, naming none: Global":                     true,
+		"Global under a differently-cased key":                    true,
+	}
 
 	for _, tc := range []struct {
 		name, who, body string
@@ -101,10 +112,10 @@ func TestG3_MintingATokenTakesAuthorityOverItsAgency(t *testing.T) {
 		{"an agency admin, naming none: their one agency", gFinAdmin, `{}`, 201, "ag:FIN"},
 		{"an agency admin, with no body at all", gFinAdmin, ``, 201, "ag:FIN"},
 		{"an agency admin, naming another agency", gFinAdmin, `{"agencyId":"ag:TAX"}`, 403, ""},
-		{"an agency admin, naming Global", gFinAdmin, `{"agencyId":"global"}`, 403, ""},
+		{"an agency admin, naming Global", gFinAdmin, `{"agencyId":"global"}`, 422, ""},
 		{"an all-scopes viewer who administers FIN, naming none", gMixed, `{}`, 201, "ag:FIN"},
-		{"an all-scopes viewer who administers FIN, naming Global", gMixed, `{"agencyId":"global"}`, 403, ""},
-		{"a global admin, naming none: Global", gRoot, `{}`, 201, "global"},
+		{"an all-scopes viewer who administers FIN, naming Global", gMixed, `{"agencyId":"global"}`, 422, ""},
+		{"a global admin, naming none: Global", gRoot, `{}`, 422, ""},
 		{"a global admin, naming an agency (MA-3)", gRoot, `{"agencyId":"ag:TAX"}`, 201, "ag:TAX"},
 		{"a global admin, naming an agency that does not exist", gRoot, `{"agencyId":"ag:NOPE"}`, 422, ""},
 		{"a viewer", gFinViewer, `{"agencyId":"ag:FIN"}`, 403, ""},
@@ -119,12 +130,15 @@ func TestG3_MintingATokenTakesAuthorityOverItsAgency(t *testing.T) {
 		{"their own agency, then another under a second spelling", gFinAdmin, `{"agencyId":"ag:FIN","AGENCYID":"ag:TAX"}`, 403, ""},
 		{"their own agency, then another under a lower-case spelling", gFinAdmin, `{"agencyId":"ag:FIN","agencyid":"ag:TAX"}`, 403, ""},
 		{"another agency under a second spelling, then their own", gFinAdmin, `{"agencyid":"ag:TAX","agencyId":"ag:FIN"}`, 201, "ag:FIN"},
-		{"Global under a differently-cased key", gFinAdmin, `{"AgencyId":"global"}`, 403, ""},
+		{"Global under a differently-cased key", gFinAdmin, `{"AgencyId":"global"}`, 422, ""},
 	} {
 		rec := gateReq(t, h, http.MethodPost, path, tc.who, tc.body)
 		if rec.Code != tc.want {
 			t.Errorf("%s: %d, want %d (%s)", tc.name, rec.Code, tc.want, rec.Body)
 			continue
+		}
+		if mintsForCentral[tc.name] && errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+			t.Errorf("%s: %s, want central_runs_nothing (%s)", tc.name, errCode(rec.Body.Bytes()), rec.Body)
 		}
 		if tc.want != 201 {
 			continue
@@ -154,7 +168,7 @@ func TestG3_MintingATokenTakesAuthorityOverItsAgency(t *testing.T) {
 // LR-36 — the token list and the revoke follow the same authority as the mint.
 // The list was open to every signed-in user until 2.3.0.
 func TestG3_TokensAreListedAndRevokedByAuthority(t *testing.T) {
-	h, _ := ownerCast(t)
+	h, pool := ownerCast(t)
 	const path = "/api/v1/runners/registration-tokens"
 	mint := func(who, agency string) int64 {
 		t.Helper()
@@ -166,7 +180,15 @@ func TestG3_TokensAreListedAndRevokedByAuthority(t *testing.T) {
 		_ = json.Unmarshal(rec.Body.Bytes(), &tok)
 		return tok.ID
 	}
-	finTok, taxTok, globalTok := mint(gFinAdmin, "ag:FIN"), mint(gTaxAdmin, "ag:TAX"), mint(gRoot, "global")
+	finTok, taxTok := mint(gFinAdmin, "ag:FIN"), mint(gTaxAdmin, "ag:TAX")
+	// Global's token: since 2.5.3 (CA-4) nobody mints one, so it is an
+	// upgrade's leftover, written as one.
+	mustExec(t, pool)(`INSERT INTO registration_tokens (token_hash, created_by, created_at, expires_at, agency_id)
+	      VALUES ('h-global-leftover', 'root-admins@example.com', '2026-01-01T00:00:00Z', '2999-01-01T00:00:00Z', 'global')`)
+	var globalTok int64
+	if err := pool.QueryRow(`SELECT id FROM registration_tokens WHERE token_hash = 'h-global-leftover'`).Scan(&globalTok); err != nil {
+		t.Fatal(err)
+	}
 
 	list := func(who string) []int64 {
 		t.Helper()

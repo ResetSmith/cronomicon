@@ -228,11 +228,15 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 	h, pool := composeRBACServer(t)
 	allID := composeJobID(t, pool, "all-job")
 
+	// Since 2.5.3 (CA-4) an All job is the built-in agency's, which runs
+	// nothing, and nobody creates one: the creates below are refused 422
+	// central_runs_nothing (they were 403) before the grant is asked. The
+	// invariant holds more strongly: no grant reaches an unbound new job.
 	t.Run("create an All job", func(t *testing.T) {
 		rec := composeReq(t, h, http.MethodPost, "/api/v1/jobs", "fin-composers",
 			`{"name":"new-all-job","scriptRef":"backup-db","scope":""}`)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("departmental composer creating an All job = %d, want 403", rec.Code)
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+			t.Errorf("departmental composer creating an All job = %d %s, want 422 central_runs_nothing", rec.Code, rec.Body)
 		}
 	})
 
@@ -242,8 +246,8 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 		rec := composeReq(t, h, http.MethodPost, "/api/v1/jobs", "fin-composers",
 			`{"name":"unattended","scriptRef":"backup-db","scope":"",`+
 				`"schedules":[{"name":"nightly","cron":"0 0 2 * * *"}]}`)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("departmental composer scheduling an unbound job = %d, want 403 — "+
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+			t.Errorf("departmental composer scheduling an unbound job = %d, want 422 central_runs_nothing — "+
 				"this is the RB-26 bypass RB-30 exists to prevent", rec.Code)
 		}
 	})
@@ -280,13 +284,15 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 		}
 	})
 
-	t.Run("an UNRESTRICTED compose grant may", func(t *testing.T) {
-		// The counterpart that proves the rule is about REACH, not about the
-		// permission: All is reserved for a grant that already covers everything.
+	t.Run("an UNRESTRICTED compose grant may not either", func(t *testing.T) {
+		// Until 2.5.3 the counterpart that proved the rule was about REACH: All
+		// was reserved for a grant that already covered everything. Since CA-4
+		// the All pool is the built-in agency's, which runs nothing, and not
+		// even that grant creates a job in it.
 		rec := composeReq(t, h, http.MethodPost, "/api/v1/jobs", "unrestricted-composers",
 			`{"name":"legit-all-job","scriptRef":"backup-db","scope":""}`)
-		if rec.Code != http.StatusCreated {
-			t.Errorf("unrestricted composer creating an All job = %d, want 201. Body: %s", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+			t.Errorf("unrestricted composer creating an All job = %d, want 422 central_runs_nothing. Body: %s", rec.Code, rec.Body.String())
 		}
 	})
 }
@@ -366,10 +372,12 @@ func TestWorkflowComposeIsBoundToItsJobsAgencies(t *testing.T) {
 	t.Run("over an All-scoped job", func(t *testing.T) {
 		// The RB-30 shape again, one level of indirection out: a workflow over an
 		// unbound job, on a schedule, is the same unattended unchecked run.
+		// Since 2.5.3 (CA-4) such a workflow would be the built-in agency's,
+		// which runs nothing: refused 422 central_runs_nothing (it was 403).
 		rec := composeReq(t, h, http.MethodPost, "/api/v1/workflows", "fin-composers",
 			`{"name":"wf-all","steps":[{"type":"job","name":"all-job"}]}`)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("FIN composer wrapping an All job = %d, want 403", rec.Code)
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+			t.Errorf("FIN composer wrapping an All job = %d %s, want 422 central_runs_nothing", rec.Code, rec.Body)
 		}
 	})
 

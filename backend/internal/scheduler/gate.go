@@ -229,6 +229,12 @@ func Evaluate(ctx context.Context, database *sql.DB, log logger, req GateRequest
 		return GateOutcome{Gate: "disabled", Reason: reasonDefinitionDisabled}
 	}
 
+	// Every origin, a person's Run included: Central runs nothing (2.5.3, CA-1).
+	// A catalog fact like disabled, so callers refuse rather than park.
+	if DefinitionIsCentral(ctx, database, kind, req.Source, req.Name, req.UID) {
+		return GateOutcome{Gate: "central", Reason: reasonCentralRunsNothing}
+	}
+
 	if pol.pause && IsPausedUID(ctx, database, req.Source, kind, req.Name, req.UID) {
 		return GateOutcome{Gate: "pause", Reason: reasonJobPaused}
 	}
@@ -282,6 +288,36 @@ func logErr(log logger, msg string, args ...any) {
 // reasonDefinitionDisabled is the refusal when the catalog says a definition is
 // off. It shares the "Skipped: " prefix the rest of this package's reasons use.
 const reasonDefinitionDisabled = "Skipped: the definition is disabled"
+
+// reasonCentralRunsNothing is the refusal of a definition the built-in agency
+// owns (2.5.3, CA-1, CA-5). It does not name the agency: the name may change
+// (2.5.2 GR), and the string is a de-dupe key (see reasonJobPaused).
+const reasonCentralRunsNothing = "Skipped: the built-in administration agency runs nothing; move this definition to an agency"
+
+// DefinitionIsCentral reports whether the definition EXISTS and is the
+// built-in agency's (2.5.3, CA-1). Since 2.5.3 nothing new can be made Central's
+// through the app, so what it finds is an upgrade's leftover, or a row written
+// past the app (CA-4's documented limit); either way it does not run. Absence,
+// or an unreadable row, is not this gate's question, as for definitionDisabled:
+// a run is never refused on a guess about whose it is.
+func DefinitionIsCentral(ctx context.Context, database *sql.DB, kind, source, name, uid string) bool {
+	owner := `(SELECT ` + agencyid.JobSQL("dj") + ` FROM jobs dj WHERE `
+	if kind == "workflow" {
+		owner = `(SELECT ` + agencyid.WorkflowSQL + ` FROM workflows w WHERE `
+	}
+	// By name, a live definition before a binned one of the same name (the
+	// review of CA1): a binned leftover of Central's must not refuse an
+	// agency's parked row that recorded no uid.
+	q, args := owner+`source = ? AND name = ? ORDER BY deleted_at IS NOT NULL, rowid LIMIT 1)`, []any{source, name}
+	if uid != "" {
+		q, args = owner+`uid = ?)`, []any{uid}
+	}
+	var agency sql.NullString
+	if err := database.QueryRowContext(ctx, `SELECT `+q, args...).Scan(&agency); err != nil || !agency.Valid {
+		return false
+	}
+	return agency.String == agencyid.Global
+}
 
 // definitionDisabled reports whether the definition EXISTS and is switched off.
 //

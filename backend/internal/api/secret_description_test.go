@@ -15,8 +15,9 @@ import (
 // this test proves description now persists through create → read-back → list →
 // update.
 func TestSecretDescriptionRoundTrips(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 
 	const wantDesc = "API token for the nightly backup job"
 

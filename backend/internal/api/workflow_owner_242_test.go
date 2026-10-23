@@ -51,7 +51,7 @@ func TestRV_BinningAWorkflowsJobsDoesNotMakeItsAgencyFree(t *testing.T) {
 // Question 52: a workflow with no jobs is its creator's agency's, not
 // Global's. FIN may empty its own workflow and keep it; another agency's
 // composer may not edit or bin FIN's empty workflow; a global administrator
-// names the agency, or builds Global's.
+// names the agency (until 2.5.3, or built Global's: CA-4 refuses that now).
 func TestRV_AWorkflowWithNoJobsIsItsCreatorsAgencys(t *testing.T) {
 	h, pool := gateServer(t)
 	exec := mustExec(t, pool)
@@ -90,9 +90,17 @@ func TestRV_AWorkflowWithNoJobsIsItsCreatorsAgencys(t *testing.T) {
 		t.Errorf("TAX binning FIN's empty workflow = %d, want 403", c)
 	}
 
-	if c := req(gRoot, http.MethodPost, "/api/v1/workflows", `{"name":"global-draft","steps":[]}`); c/100 != 2 || owner("global-draft") != "global" {
-		t.Errorf("a global administrator's empty workflow = %d, %s's; want Global's", c, owner("global-draft"))
+	// Until 2.5.3 a global administrator who named no agency built Global's;
+	// since CA-4 Global composes no workflow, so that is refused. Global's
+	// draft is then an upgrade's leftover, written here as one.
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot, `{"name":"global-draft","steps":[]}`); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Errorf("a global administrator's empty workflow naming no agency = %d (%s), want 422 central_runs_nothing", rec.Code, rec.Body)
 	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM workflows WHERE name = 'global-draft'`); n != 0 {
+		t.Fatalf("the refused draft was saved (%d rows)", n)
+	}
+	exec(`INSERT INTO workflows (uid, name, source, steps, enabled, created_at, owner_agency)
+	      VALUES ('wf-global-draft', 'global-draft', 'cronomicon', '[]', 1, 't', 'global')`)
 	if c := req(gRoot, http.MethodPost, "/api/v1/workflows", `{"name":"tax-draft","steps":[],"ownerAgency":"ag:TAX"}`); c/100 != 2 || owner("tax-draft") != "ag:TAX" {
 		t.Errorf("a global administrator's empty workflow named for TAX = %d, %s's", c, owner("tax-draft"))
 	}

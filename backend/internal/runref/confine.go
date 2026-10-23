@@ -209,6 +209,13 @@ func StepOutsideWorkflowRepository(ctx context.Context, database *sql.DB, traceI
 	if !agency.Valid {
 		return true, nil
 	}
+	if scope == "" {
+		// 2.5.3 (CA-5): a step with no scope is its job's agency's run, and its
+		// job is the workflow's agency's (ReasonStepJobOtherAgency), so it is
+		// inside. Until then it was Global's run, outside every agency's workflow.
+		// A job that must name a scope is still refused by RepoScopeMismatch.
+		return false, nil
+	}
 	return ScopeOutsideAgency(ctx, database, agency.String, scope)
 }
 

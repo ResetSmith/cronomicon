@@ -19,8 +19,9 @@ import (
 
 func seedQueueJob(t *testing.T, pool *sql.DB, name, policy string) {
 	t.Helper()
+	seedOpsAgency(t, pool)
 	if _, err := pool.ExecContext(context.Background(),
-		`INSERT INTO jobs (uid, name, source, run_type, scope, concurrency_policy, enabled, synced_at)VALUES ('uid-'||?, ?, 'git', 'bash', 'prod', ?, 1, 't')`, name, name, policy); err != nil {
+		`INSERT INTO jobs (uid, name, source, run_type, scope, concurrency_policy, enabled, synced_at, owner_agency)VALUES ('uid-'||?, ?, 'git', 'bash', 'prod', ?, 1, 't', ?)`, name, name, policy, opsAgency); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 }

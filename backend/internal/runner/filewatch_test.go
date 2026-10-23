@@ -27,6 +27,22 @@ func seedWatchJob(t *testing.T, svc *Service, source, name, scope, watchJSON str
 	}
 }
 
+// ownWatchJobs makes every job seeded so far an ordinary agency's (ag-watch,
+// "Watch"), owner by owner as the composer files one. seedWatchJob's jobs are
+// born with no owner and no repository, which is Central's, and Central runs
+// nothing (2.5.3, CA-1): an arrival for such a job is refused before any of the
+// gates these tests are about. Distribution tests do not need it: watches are
+// handed out by agency match, and their runners are Central's too.
+func ownWatchJobs(t *testing.T, svc *Service) {
+	t.Helper()
+	if _, err := svc.db.Exec(`INSERT OR IGNORE INTO agencies(id, name, created_at) VALUES('ag-watch', 'Watch', ?)`, now()); err != nil {
+		t.Fatalf("seed agency: %v", err)
+	}
+	if _, err := svc.db.Exec(`UPDATE jobs SET owner_agency = 'ag-watch'`); err != nil {
+		t.Fatalf("own watch jobs: %v", err)
+	}
+}
+
 func nullIfBlank(v string) any {
 	if v == "" {
 		return nil
@@ -102,6 +118,7 @@ func TestSightingDeDupesAcrossRunners(t *testing.T) {
 	insertRunner(t, svc, "r1", "one", "online", []string{"bash"})
 	insertRunner(t, svc, "r2", "two", "online", []string{"bash"})
 	seedWatchJob(t, svc, "git", "ingest", "", `[{"path":"/srv/incoming/*.csv"}]`)
+	ownWatchJobs(t, svc)
 
 	sg := sightingIn{JobSource: "git", JobName: "ingest", Path: "/srv/incoming/a.csv",
 		SizeBytes: 1024, MTime: "2026-08-11T00:00:00Z"}
@@ -132,6 +149,7 @@ func TestReplacedFileFiresAgain(t *testing.T) {
 	ctx := context.Background()
 	insertRunner(t, svc, "r1", "one", "online", []string{"bash"})
 	seedWatchJob(t, svc, "git", "ingest", "", `[{"path":"/srv/incoming/*.csv"}]`)
+	ownWatchJobs(t, svc)
 
 	base := sightingIn{JobSource: "git", JobName: "ingest", Path: "/srv/incoming/daily.csv",
 		SizeBytes: 100, MTime: "2026-08-11T00:00:00Z"}
@@ -155,6 +173,7 @@ func TestFiredRunCarriesTheArrivalContext(t *testing.T) {
 	ctx := context.Background()
 	insertRunner(t, svc, "r1", "one", "online", []string{"bash"})
 	seedWatchJob(t, svc, "git", "ingest", "", `[{"path":"/srv/incoming/*.csv"}]`)
+	ownWatchJobs(t, svc)
 
 	if ok, err := svc.recordAndFireSighting(ctx, "r1", sightingIn{
 		JobSource: "git", JobName: "ingest", Path: "/srv/incoming/a.csv",
@@ -282,6 +301,7 @@ func TestPausedJobDoesNotFireOnArrival(t *testing.T) {
 	ctx := context.Background()
 	insertRunner(t, svc, "r1", "one", "online", []string{"bash"})
 	seedWatchJob(t, svc, "git", "ingest", "", `[{"path":"/srv/incoming/*.csv"}]`)
+	ownWatchJobs(t, svc)
 	pauseJob(t, svc, "git", "ingest")
 
 	sg := sightingIn{JobSource: "git", JobName: "ingest", Path: "/srv/incoming/a.csv",
@@ -322,6 +342,7 @@ func TestArrivalHonoursTheGlobalConcurrencyCap(t *testing.T) {
 	ctx := context.Background()
 	insertRunner(t, svc, "r1", "one", "online", []string{"bash"})
 	seedWatchJob(t, svc, "git", "ingest", "", `[{"path":"/srv/incoming/*.csv"}]`)
+	ownWatchJobs(t, svc)
 	setGlobalMaxConcurrent(t, svc, "1")
 	seedActiveRun(t, svc, "run-holding-the-slot", "other")
 
@@ -371,6 +392,7 @@ func TestUnpausedUnderCapArrivalStillFires(t *testing.T) {
 
 	// A pause on a DIFFERENT job must not be read as this job's pause.
 	seedWatchJob(t, svc, "git", "other-watcher", "", `[{"path":"/srv/other/*.csv"}]`)
+	ownWatchJobs(t, svc)
 	pauseJob(t, svc, "git", "other-watcher")
 
 	ok, err := svc.recordAndFireSighting(ctx, "r1", sightingIn{
@@ -417,6 +439,7 @@ func TestGlobalFreezeStopsAnArrival(t *testing.T) {
 	ctx := context.Background()
 	insertRunner(t, svc, "r1", "one", "online", []string{"bash"})
 	seedWatchJob(t, svc, "git", "ingest", "", `[{"path":"/srv/incoming/*.csv"}]`)
+	ownWatchJobs(t, svc)
 
 	// Control first: with no freeze the arrival runs. Without this, a broken
 	// fixture below would look like a working gate.
@@ -430,14 +453,17 @@ func TestGlobalFreezeStopsAnArrival(t *testing.T) {
 	// row stored, that zone is UTC — which is what the gate falls back to, and
 	// what the app itself defaults to when the key is absent.
 	day := time.Now().UTC().Format("2006-01-02")
+	// The global calendar is the job's agency's: a definition reads its own
+	// agency's calendars only (§0a), and the job is an agency's because Central
+	// runs nothing (2.5.3).
 	if _, err := svc.db.Exec(
-		`INSERT INTO calendars (name, source, global, created_at)
-		 VALUES ('change-freeze','cronomicon',1,'2026-08-12T00:00:00Z')`); err != nil {
+		`INSERT INTO calendars (name, source, global, owner_agency, created_at)
+		 VALUES ('change-freeze','cronomicon',1,'ag-watch','2026-08-12T00:00:00Z')`); err != nil {
 		t.Fatalf("seed calendar: %v", err)
 	}
 	if _, err := svc.db.Exec(
 		`INSERT INTO calendar_days (calendar_owner, calendar_source, calendar_name, day, label)
-		 VALUES ('global','cronomicon','change-freeze',?,'Change freeze')`, day); err != nil {
+		 VALUES ('ag-watch','cronomicon','change-freeze',?,'Change freeze')`, day); err != nil {
 		t.Fatalf("seed calendar day: %v", err)
 	}
 

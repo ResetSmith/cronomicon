@@ -33,7 +33,7 @@ func TestAgencyHasOnlineRunner(t *testing.T) {
 	exec(`INSERT INTO runners(id,name,status,registered_at,created_at,owner_agency) VALUES('r1','member','online','t','t','a1')`)
 	exec(`INSERT OR IGNORE INTO runner_agencies(runner_id,agency_id) VALUES('r1','a1')`) // online member of alpha
 	exec(`INSERT INTO runners(id,name,status,registered_at,created_at,owner_agency) VALUES('r2','off','offline','t','t','a2')`)
-	exec(`INSERT OR IGNORE INTO runner_agencies(runner_id,agency_id) VALUES('r2','a2')`)                              // offline member of beta
+	exec(`INSERT OR IGNORE INTO runner_agencies(runner_id,agency_id) VALUES('r2','a2')`)                     // offline member of beta
 	exec(`INSERT INTO runners(id,name,status,registered_at,created_at) VALUES('r3','gen','online','t','t')`) // online, untagged
 
 	ctx := context.Background()

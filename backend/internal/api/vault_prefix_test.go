@@ -182,10 +182,11 @@ func TestVaultPrefixes_RemovingOneRaisesANoticeAndRevokesNothing(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("seed = %d (%s)", rec.Code, rec.Body)
 	}
-	// A Global Vault-backed secret has no path limit and is never listed.
-	if rec := gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gRoot, `{"key":"SHARED","source":"vault","vaultPath":"anything/at/all#k"}`); rec.Code != http.StatusCreated {
-		t.Fatalf("seed global = %d (%s)", rec.Code, rec.Body)
-	}
+	// A Global Vault-backed secret has no path limit and is never listed. Since
+	// 2.5.3 (CA-4) nobody creates one; it is an upgrade's leftover, written as
+	// one (born with no owner, it is Global's).
+	mustExec(t, pool)(`INSERT INTO secrets (id, key, source, vault_ref, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('s-shared-vault', 'SHARED', 'vault', 'anything/at/all#k', 't', 't', 't', 't')`)
 	const kind = "vault_path_outside_prefix"
 	outside := func() map[string]noticeRow {
 		t.Helper()

@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -149,8 +150,14 @@ func TestGR0_BinningAChildMakesItsParentRunAnotherAgencysChild(t *testing.T) {
 	if got := childScopes(stepsOf("parent")); len(got) != 0 {
 		t.Errorf("after FIN bins its nightly, FIN's parent's child runs %v; want none (the step fails)", got)
 	}
-	// A global administrator, who may compose both, is asked which.
-	rec := gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot, `{"name":"root-parent","steps":[{"type":"workflow","name":"go","workflow":"nightly"}]}`)
+	// A global administrator, who may compose both, is asked which. Since 2.5.3
+	// (CA-4) a parent with no job of its own is not saved as Global's: the
+	// administrator works in TAX, whose the parent then is.
+	rootInTax := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		return gateReqWithHeader(t, h, http.MethodPost, "/api/v1/workflows", gRoot, body, "X-Cronomicon-Agency", "ag:TAX")
+	}
+	rec := rootInTax(`{"name":"root-parent","steps":[{"type":"workflow","name":"go","workflow":"nightly"}]}`)
 	if rec.Code/100 == 2 {
 		// (FIN's is in the bin now: only TAX's is a candidate.)
 		if !strings.Contains(stepsOf("root-parent"), `"workflowUid":"`+taxNightly+`"`) {
@@ -163,13 +170,13 @@ func TestGR0_BinningAChildMakesItsParentRunAnotherAgencysChild(t *testing.T) {
 		t.Fatalf("seed: %d %s", rec.Code, rec.Body)
 	}
 	mustExec(t, pool)(`UPDATE workflows SET name = 'nightly' WHERE name = 'fin-nightly2'`)
-	rec = gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot, `{"name":"root-parent2","steps":[{"type":"workflow","name":"go","workflow":"nightly"}]}`)
+	rec = rootInTax(`{"name":"root-parent2","steps":[{"type":"workflow","name":"go","workflow":"nightly"}]}`)
 	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "workflowUid") {
 		t.Errorf("a global administrator's parent naming two workflows it may compose = %d %s, want 422 asking for workflowUid", rec.Code, rec.Body)
 	}
 	// Given, it is kept.
-	rec = gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot,
-		`{"name":"root-parent3","steps":[{"type":"workflow","name":"go","workflow":"nightly","workflowUid":"`+taxNightly+`"}]}`)
+	rec = rootInTax(
+		`{"name":"root-parent3","steps":[{"type":"workflow","name":"go","workflow":"nightly","workflowUid":"` + taxNightly + `"}]}`)
 	if rec.Code/100 != 2 || !strings.Contains(stepsOf("root-parent3"), `"workflowUid":"`+taxNightly+`"`) {
 		t.Errorf("a parent that gives its child's identity = %d %s", rec.Code, rec.Body)
 	}
@@ -180,8 +187,8 @@ func TestGR0_BinningAChildMakesItsParentRunAnotherAgencysChild(t *testing.T) {
 		uidOf(`SELECT uid FROM workflows WHERE name = 'tax-parent'`): "is the workflow",
 		finNightly: "recycle bin",
 	} {
-		rec = gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot,
-			`{"name":"root-parent4","steps":[{"type":"workflow","name":"go","workflow":"nightly","workflowUid":"`+uid+`"}]}`)
+		rec = rootInTax(
+			`{"name":"root-parent4","steps":[{"type":"workflow","name":"go","workflow":"nightly","workflowUid":"` + uid + `"}]}`)
 		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), says) {
 			t.Errorf("a parent whose workflowUid %s is not its step's workflow = %d %s, want 422 saying %q", uid, rec.Code, rec.Body, says)
 		}

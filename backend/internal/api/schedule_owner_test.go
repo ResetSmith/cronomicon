@@ -36,13 +36,13 @@ func TestI1_AScheduleIsItsOwnersToWrite(t *testing.T) {
 	if got := count(t, pool, `SELECT COUNT(*) FROM schedules WHERE name = 'fin-nightly' AND owner_agency = 'ag:FIN'`); got != 1 {
 		t.Errorf("FIN's schedule is not FIN's")
 	}
-	for what, body := range map[string]string{
-		"TAX's":    `{"name":"for-tax","cron":"0 2 * * *","ownerAgency":"ag:TAX"}`,
-		"Global's": `{"name":"for-global","cron":"0 2 * * *"}`,
-	} {
-		if c := code(gFinAdmin, http.MethodPost, "/api/v1/schedule-defs", body); c != http.StatusForbidden {
-			t.Errorf("FIN creating %s schedule = %d, want 403", what, c)
-		}
+	if c := code(gFinAdmin, http.MethodPost, "/api/v1/schedule-defs", `{"name":"for-tax","cron":"0 2 * * *","ownerAgency":"ag:TAX"}`); c != http.StatusForbidden {
+		t.Errorf("FIN creating TAX's schedule = %d, want 403", c)
+	}
+	// 2.5.3 (CA-4): no schedule is Global's, whoever asks; the refusal is the
+	// same for FIN's administrator as for a global administrator (below).
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/schedule-defs", gFinAdmin, `{"name":"for-global","cron":"0 2 * * *"}`); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Errorf("FIN creating Global's schedule = %d %s, want 422 central_runs_nothing", rec.Code, rec.Body)
 	}
 	// The name is FIN's within FIN only (I2): TAX has its own of the name,
 	// and a route by the name alone must then say whose.
@@ -75,12 +75,19 @@ func TestI1_AScheduleIsItsOwnersToWrite(t *testing.T) {
 
 	// Editing Global's schedule reaches Global's definitions only. FIN's job
 	// was bound to it before §0a (written here as that left it).
-	if c := code(gRoot, http.MethodPost, "/api/v1/schedule-defs", `{"name":"g-nightly","cron":"0 1 * * *"}`); c != http.StatusCreated {
-		t.Fatalf("a global administrator creating Global's schedule = %d, want 201", c)
+	//
+	// Since 2.5.3 (CA-4) a global administrator cannot create Global's
+	// schedule or job; what is Global's is an upgrade's leftover, written here
+	// as an upgrade leaves it, and may still be edited.
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/schedule-defs", gRoot, `{"name":"g-nightly","cron":"0 1 * * *"}`); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Errorf("a global administrator creating Global's schedule = %d %s, want 422 central_runs_nothing", rec.Code, rec.Body)
 	}
-	if c := code(gRoot, http.MethodPost, "/api/v1/jobs", `{"name":"g-job","scriptRef":"backup-db","scope":"shared","scheduleRefs":["g-nightly"]}`); c/100 != 2 {
-		t.Fatalf("Global's job bound to Global's schedule = %d, want 2xx", c)
-	}
+	exec(`INSERT INTO schedules (uid, name, source, cron, content_hash, owner_agency, created_at)
+	      VALUES ('s-g-nightly', 'g-nightly', 'cronomicon', '0 1 * * *', 'h', 'global', 't')`)
+	exec(`INSERT INTO jobs (uid, name, source, run_type, command, scope, owner_agency, synced_at)
+	      VALUES ('j-g-job', 'g-job', 'cronomicon', 'bash', 'pg_dump mydb', 'shared', 'global', 't')`)
+	exec(`INSERT INTO definition_schedules (owner_source, owner_kind, owner_name, name, cron, position, owner_uid, schedule_uid, source_ref)
+	      VALUES ('cronomicon', 'job', 'g-job', 'g-nightly', '0 1 * * *', 0, 'j-g-job', 's-g-nightly', 'g-nightly')`)
 	exec(`INSERT INTO definition_schedules (owner_source, owner_kind, owner_name, name, cron, position, owner_uid, schedule_uid, source_ref)
 	      SELECT 'cronomicon', 'job', 'fin-job', 'g-nightly', '0 1 * * *', 1, j.uid, s.uid, 'g-nightly'
 	        FROM jobs j, schedules s WHERE j.name = 'fin-job' AND j.source = 'cronomicon' AND s.name = 'g-nightly' AND s.source = 'cronomicon'`)

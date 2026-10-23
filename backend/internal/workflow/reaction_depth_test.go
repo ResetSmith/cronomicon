@@ -145,6 +145,23 @@ func TestDepthCeilingStopsACycleThroughAWorkflowStepGraph(t *testing.T) {
 	pool := openPool(t)
 	seedJob(t, pool, "step-job")
 	seedCascadeWorkflow(t, pool, "cascade", "step-job")
+	// The workflow and its job are an ordinary agency's. Born with no repository
+	// and no owner they are Central's, and Central runs nothing (2.5.3): its
+	// reaction would be suppressed on the first hop, before any ceiling.
+	for _, q := range []string{
+		`INSERT INTO agencies (id, name, created_at) VALUES ('ag-loop', 'Loop', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-loop', 'ag-loop', 'u', 'main')`,
+		`UPDATE workflows SET repo_id = 'repo-loop' WHERE name = 'cascade'`,
+		`INSERT INTO scopes (id, name, source, created_at) VALUES ('s-loop', 'loop-hosts', 'cronomicon', '2026-01-01T00:00:00Z')`,
+		`DELETE FROM scope_agencies WHERE scope_id = 's-loop'`,
+		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-loop', 'ag-loop')`,
+		// A job of an agency's repository runs on a scope of that agency (GR-15).
+		`UPDATE jobs SET repo_id = 'repo-loop', scope = 'loop-hosts' WHERE name = 'step-job'`,
+	} {
+		if _, err := pool.ExecContext(ctx, q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
 
 	// The one reaction edge. include_workflow_children is what makes the cycle
 	// reachable at all — without it a job running as a step emits nothing (§2.5).

@@ -13,9 +13,10 @@ import (
 func TestNamespaceContractEnforcement(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 
-	if _, err := pool.Exec(`INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
-	      VALUES('backup','bash','echo hi','ssh','sha256:aaa','scripts/backup.yaml','t')`); err != nil {
+	if _, err := pool.Exec(`INSERT INTO scripts(repo_id, name, run_type, command, executor, content_hash, source_path, synced_at)
+	      VALUES('repo-work', 'backup','bash','echo hi','ssh','sha256:aaa','scripts/backup.yaml','t')`); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
 

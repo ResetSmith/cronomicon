@@ -50,10 +50,11 @@ func pauseJobRow(t *testing.T, pool *sql.DB, source, name string) {
 func TestPausedJob_ClickOverridesButTokenDoesNot(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	jobID := createRHJob(t, ts, client, csrf, "billing")
-	_, token := mintAccount(t, ts, client, csrf, map[string]any{
+	_, token := mintAccount(t, ts, namingNoAgency(client), csrf, map[string]any{
 		"name": "ci", "role": "admin", "allScopes": true,
 	})
 	// The machine route additionally requires the job to opt in (requestable).
@@ -110,6 +111,7 @@ func TestPausedJob_ClickOverridesButTokenDoesNot(t *testing.T) {
 func TestPausedWorkflow_TriggerStillRefuses(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	createRHJob(t, ts, client, csrf, "step-one")
 
@@ -144,6 +146,7 @@ func TestPausedWorkflow_TriggerStillRefuses(t *testing.T) {
 func TestGlobalFreeze_BlocksTheManualTrigger(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	jobID := createRHJob(t, ts, client, csrf, "billing")
 
@@ -178,6 +181,7 @@ func TestGlobalFreeze_BlocksTheManualTrigger(t *testing.T) {
 func TestGlobalFreeze_BlocksTheWorkflowTrigger(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	createRHJob(t, ts, client, csrf, "step-one")
 

@@ -2,7 +2,6 @@ package api_test
 
 import (
 	"database/sql"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -45,9 +44,14 @@ func unboundRefServer(t *testing.T) (http.Handler, *sql.DB) {
 	return h, pool
 }
 
-// TestUnboundRunWithOwnedCredentialIsRefused — the headline. The job declares a
-// binding to a department-owned row; run unbound, that row resolves for nobody.
-func TestUnboundRunWithOwnedCredentialIsRefused(t *testing.T) {
+// TestScopelessRunOfAnAgencysJobUsesItsOwnCredential — the headline until 2.5.3: the job
+// declared a binding to a department-owned row, and run unbound (Global's
+// snapshot) that row resolved for nobody, so the trigger refused it.
+//
+// Since 2.5.3 (CA-5) a run with no scope is its job's agency's: Finance's
+// scopeless run is stamped Finance and resolves Finance's own credential, so it
+// is not refused, and is enqueued as Finance's.
+func TestScopelessRunOfAnAgencysJobUsesItsOwnCredential(t *testing.T) {
 	h, pool := unboundRefServer(t)
 	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind,owner_source,owner_name,ref_kind,ref_name,created_at)
 	                        VALUES('job','git','unscoped-job','secret','DEPT_PASSWORD','t')`); err != nil {
@@ -57,31 +61,27 @@ func TestUnboundRunWithOwnedCredentialIsRefused(t *testing.T) {
 	_ = pool.QueryRow(`SELECT rowid FROM jobs WHERE name='unscoped-job'`).Scan(&jobID)
 
 	rec := reqAs(t, h, http.MethodPost, "/api/v1/jobs/"+itoa(jobID)+"/run", "sec-admins", `{}`)
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("unbound run consuming an owned credential = %d, want 422 (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("scopeless run of Finance's job consuming Finance's credential = %d, want 202 (%s)", rec.Code, rec.Body.String())
 	}
-	var body map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &body)
-	msg, _ := body["message"].(string)
-	for _, want := range []string{"DEPT_PASSWORD", "bind a scope"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("refusal %q should name %q — the operator has to know which reference and what to do", msg, want)
-		}
+	var agencies string
+	if err := pool.QueryRow(`SELECT COALESCE(agencies_json, '') FROM runs WHERE job_name = 'unscoped-job'`).Scan(&agencies); err != nil {
+		t.Fatalf("exactly one run was expected: %v", err)
 	}
-
-	// Nothing was enqueued: a refusal after the INSERT is not a refusal.
-	var runs int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&runs)
-	if runs != 0 {
-		t.Errorf("refused trigger created %d runs, want 0", runs)
+	if agencies != `["Finance"]` {
+		t.Errorf("the scopeless run's agencies = %s, want [\"Finance\"]: its job's agency's (CA-5)", agencies)
 	}
 }
 
-// TestUnboundRunWithGlobalCredentialStillRuns is the precision half, and the more
-// important of the two: a job binding only GLOBAL rows works unbound today and must
-// keep working. The plan's original blunt rule ("declares bindings ⇒ refuse") would
-// have broken exactly this, and a guard that over-refuses gets switched off.
-func TestUnboundRunWithGlobalCredentialStillRuns(t *testing.T) {
+// TestScopelessRunOfAnAgencysJobCannotUseCentralsCredential was the precision half: a job
+// binding only GLOBAL rows worked unbound, because the unbound run was Global's,
+// and a guard that over-refuses gets switched off.
+//
+// Since 2.5.3 (CA-5) Finance's scopeless run is Finance's, and a row of the
+// built-in agency's is usable by its own runs only (§0a, IN-6): the credential
+// would not resolve at dispatch, so the trigger refuses the run up front, naming
+// it, and enqueues nothing.
+func TestScopelessRunOfAnAgencysJobCannotUseCentralsCredential(t *testing.T) {
 	h, pool := unboundRefServer(t)
 	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind,owner_source,owner_name,ref_kind,ref_name,created_at)
 	                        VALUES('job','git','unscoped-job','secret','SHARED_TOKEN','t')`); err != nil {
@@ -91,9 +91,14 @@ func TestUnboundRunWithGlobalCredentialStillRuns(t *testing.T) {
 	_ = pool.QueryRow(`SELECT rowid FROM jobs WHERE name='unscoped-job'`).Scan(&jobID)
 
 	rec := reqAs(t, h, http.MethodPost, "/api/v1/jobs/"+itoa(jobID)+"/run", "sec-admins", `{}`)
-	if rec.Code == http.StatusUnprocessableEntity {
-		t.Errorf("unbound run consuming a GLOBAL credential = 422, want it allowed — "+
-			"a global row resolves for everyone and this job works today (%s)", rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "SHARED_TOKEN") {
+		t.Errorf("scopeless run of Finance's job consuming the built-in agency's credential = %d, want 422 naming SHARED_TOKEN (%s)",
+			rec.Code, rec.Body.String())
+	}
+	var runs int
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&runs)
+	if runs != 0 {
+		t.Errorf("refused trigger created %d runs, want 0", runs)
 	}
 }
 

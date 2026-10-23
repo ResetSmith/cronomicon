@@ -39,15 +39,16 @@ func TestScheduledFireOfAnUnscopedJobStaysUnbound(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// An unscoped job, and an agency-bound scope that exists but has nothing to do
-	// with it — present so a fire that wrongly picked up a scope would show it.
+	// An unscoped job of an ordinary agency (Ops), and an agency-bound scope
+	// that exists but has nothing to do with it — present so a fire that wrongly
+	// picked up a scope would show it.
 	if _, err := pool.ExecContext(ctx, `
-		INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, synced_at)VALUES ('uid-'||'restart-service', 'restart-service', 'git', 'bash', 'Allow', '2026-01-01T00:00:00Z')`); err != nil {
-		t.Fatalf("seed job: %v", err)
+		INSERT INTO agencies (id, name, created_at) VALUES ('ag-tax','Tax','2026-01-01T00:00:00Z'), (?,'Ops','2026-01-01T00:00:00Z')`, opsAgency); err != nil {
+		t.Fatalf("seed agency: %v", err)
 	}
 	if _, err := pool.ExecContext(ctx, `
-		INSERT INTO agencies (id, name, created_at) VALUES ('ag-tax','Tax','2026-01-01T00:00:00Z')`); err != nil {
-		t.Fatalf("seed agency: %v", err)
+		INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, synced_at, owner_agency)VALUES ('uid-'||'restart-service', 'restart-service', 'git', 'bash', 'Allow', '2026-01-01T00:00:00Z', ?)`, opsAgency); err != nil {
+		t.Fatalf("seed job: %v", err)
 	}
 
 	s := New(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
@@ -68,10 +69,11 @@ func TestScheduledFireOfAnUnscopedJobStaysUnbound(t *testing.T) {
 		t.Errorf("scheduled run scope = %q, want \"\" — a cron fire has no actor to bind one, "+
 			"and inventing one would be fiction (RB-Q11(c))", scope)
 	}
-	// An unbound run is Global's (migration 1220) — what "the general pool"
-	// became when Global was given a row.
-	if agencies != `["Global"]` {
-		t.Errorf("scheduled run agencies_json = %q, want [\"Global\"]", agencies)
+	// An unbound run is its job's agency's (2.5.3, CA-5). From migration 1220
+	// until then it was Global's, whatever the job's agency — what "the general
+	// pool" became when Global was given a row.
+	if agencies != `["Ops"]` {
+		t.Errorf("scheduled run agencies_json = %q, want [\"Ops\"] — the job's agency (CA-5)", agencies)
 	}
 	if triggerKind != "scheduled" || triggeredBy != "scheduler" {
 		t.Errorf("trigger provenance = %q/%q, want scheduled/scheduler — this is what makes "+
@@ -81,9 +83,9 @@ func TestScheduledFireOfAnUnscopedJobStaysUnbound(t *testing.T) {
 		t.Errorf("scheduled run status = %q, want queued", status)
 	}
 
-	// And it is claimable ONLY by a runner that serves Global, which is the
-	// practical consequence §10 of the parent plan documents: a department's
-	// agency-bound fleet cannot pick this up.
+	// And it is claimable ONLY by a runner that serves the job's agency (until
+	// 2.5.3, Global), which is the practical consequence §10 of the parent plan
+	// documents: another department's agency-bound fleet cannot pick this up.
 	var idx int
 	if err := pool.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM run_agencies rag JOIN runs r ON r.id = rag.run_id
@@ -94,8 +96,25 @@ func TestScheduledFireOfAnUnscopedJobStaysUnbound(t *testing.T) {
 	_ = pool.QueryRowContext(ctx, `
 		SELECT rag.agency FROM run_agencies rag JOIN runs r ON r.id = rag.run_id
 		WHERE r.job_name = 'restart-service'`).Scan(&only)
-	if idx != 1 || only != "Global" {
-		t.Errorf("run_agencies for an unbound scheduled run = %d row(s) (%q), want the one Global row", idx, only)
+	if idx != 1 || only != "Ops" {
+		t.Errorf("run_agencies for an unbound scheduled run = %d row(s) (%q), want the one Ops row", idx, only)
+	}
+
+	// The same unscoped job of the built-in agency (as one written with no owner
+	// is born) is not a run at all since 2.5.3 (CA-1): the fire is recorded as
+	// skipped, with the reason, and nothing is queued.
+	if _, err := pool.ExecContext(ctx, `
+		INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, synced_at)VALUES ('uid-'||'central-restart', 'central-restart', 'git', 'bash', 'Allow', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed job: %v", err)
+	}
+	s.fire("git", "central-restart", "", "bash", "", "Allow", "central-restart", "nightly", "")
+	var reason string
+	if err := pool.QueryRowContext(ctx, `
+		SELECT status, COALESCE(queued_reason,'') FROM runs WHERE job_name = 'central-restart'`).Scan(&status, &reason); err != nil {
+		t.Fatalf("the built-in agency's fire left no record: %v", err)
+	}
+	if status != "skipped" || reason != reasonCentralRunsNothing {
+		t.Errorf("the built-in agency's unscoped fire: status/reason = %q/%q, want skipped/%q", status, reason, reasonCentralRunsNothing)
 	}
 }
 

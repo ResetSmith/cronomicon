@@ -562,6 +562,19 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	// resolve, and nothing on a job or a run chooses one.
 	executor := execspec.ExecutorRunner
 
+	// Central runs nothing (2.5.3, CA-1): a leftover of the built-in agency's is
+	// skipped and recorded, as a pause is, so the schedule shows why.
+	if DefinitionIsCentral(ctx, s.db, "job", source, jobName, jobUID) {
+		s.log.Info("scheduler: skip fire — the built-in agency runs nothing", "job", jobName, "source", source, "schedule", scheduleName)
+		if err := s.recordSuppression(ctx, EnqueueParams{
+			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
+			ScheduleName: scheduleName, Executor: executor,
+		}, skipRecord{Reason: reasonCentralRunsNothing, Mode: dedupeEpisodeReason}); err != nil {
+			s.log.Error("scheduler: record central skip", "job", jobName, "err", err)
+		}
+		return
+	}
+
 	// Operator pause (migration 030; 170 made it source/owner_kind aware): a
 	// paused job's cron fires are skipped.
 	if s.isPaused(ctx, source, "job", jobName, jobUID) {
@@ -932,6 +945,15 @@ func (s *Scheduler) fireWorkflow(uid, source, workflowName, scheduleName, envJSO
 	s.mu.Unlock()
 	if firer == nil {
 		s.log.Warn("scheduler: no workflow firer set — skipping", "workflow", workflowName)
+		return
+	}
+
+	if DefinitionIsCentral(ctx, s.db, "workflow", source, workflowName, uid) {
+		s.log.Info("scheduler: skip fire — the built-in agency runs nothing", "workflow", workflowName, "source", source, "schedule", scheduleName)
+		if err := s.recordWorkflowSuppression(ctx, uid, source, workflowName, scheduleName,
+			skipRecord{Reason: reasonCentralRunsNothing, Mode: dedupeEpisodeReason}); err != nil {
+			s.log.Error("scheduler: record central skip", "workflow", workflowName, "err", err)
+		}
 		return
 	}
 

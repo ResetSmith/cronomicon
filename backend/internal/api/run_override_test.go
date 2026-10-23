@@ -32,6 +32,7 @@ func TestRunPathEnvOverride(t *testing.T) {
 	}
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	ownJobsByWorkAgency(t, pool, "envjob") // 2.5.3: the built-in agency runs nothing
 	reqBody, _ := json.Marshal(map[string]any{"env": map[string]string{"FOO": "barbarbar"}})
 	req, _ := http.NewRequest(http.MethodPost,
 		fmt.Sprintf("%s/api/v1/jobs/%d/run", ts.URL, rowid), bytes.NewReader(reqBody))
@@ -88,6 +89,8 @@ func TestRunPathHostSubset(t *testing.T) {
 	}
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	ownScopesByWorkAgency(t, pool, "Fleet")
+	ownJobsByWorkAgency(t, pool, "fleetjob") // 2.5.3: the built-in agency runs nothing; its scope is the job's agency's
 	run := func(hosts []string) (int, string) {
 		t.Helper()
 		reqBody, _ := json.Marshal(map[string]any{"targetHosts": hosts})
@@ -166,6 +169,8 @@ func TestRunPathGroupSubset(t *testing.T) {
 	grp, broken, noscope := rowid("grpjob"), rowid("brokenjob"), rowid("noscopejob")
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	ownScopesByWorkAgency(t, pool, "Fleet", "Broken")
+	ownJobsByWorkAgency(t, pool, "grpjob", "brokenjob", "noscopejob") // 2.5.3: the built-in agency runs nothing; its scopes are the jobs' agency's
 	run := func(rid int64, bodyMap map[string]any) (int, string) {
 		t.Helper()
 		reqBody, _ := json.Marshal(bodyMap)
@@ -242,6 +247,7 @@ func TestRunPathAnsibleTargetHostMetachar(t *testing.T) {
 	}
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	ownJobsByWorkAgency(t, pool, "pinjob") // 2.5.3: the built-in agency runs nothing
 	run := func(bodyMap map[string]any) (int, string) {
 		t.Helper()
 		reqBody, _ := json.Marshal(bodyMap)

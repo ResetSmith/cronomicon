@@ -32,6 +32,9 @@ func TestRunJobReferences(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
+	seedWorkScope(t, pool, "Prod")
 	do := func(method, url string, body any) *http.Response {
 		t.Helper()
 		b, _ := json.Marshal(body)
@@ -156,6 +159,9 @@ func TestRunJobReferenceAliases(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
+	seedWorkScope(t, pool, "Prod")
 	do := func(method, url string, body any) *http.Response {
 		t.Helper()
 		b, _ := json.Marshal(body)
@@ -276,6 +282,7 @@ func TestRunJobReferencesPermGate(t *testing.T) {
 		('g1','ref-admins','admin',NULL,1,'2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO jobs(name, source, run_type, command, scope, content_hash, source_path, synced_at)
 	      VALUES('ref-job','git','bash','echo x','','sha256:a','jobs/ref.yaml','t')`)
+	ownJobsByWorkAgency(t, pool, "ref-job") // 2.5.3: the built-in agency runs nothing
 	var jobID int64
 	if err := pool.QueryRow(`SELECT rowid FROM jobs WHERE name='ref-job'`).Scan(&jobID); err != nil {
 		t.Fatalf("rowid: %v", err)

@@ -87,8 +87,9 @@ func UnboundRunBlocked(ctx context.Context, database *sql.DB, owners []Owner, sc
 	if scope != "" {
 		return nil, nil
 	}
-	// An unbound run is Global's (migration 1220): it resolves Global's rows and
-	// no department's, which is the question this asks. The agencies are passed
+	// An unbound run is its job's agency's (2.5.3, CA-5; Global's from 1220
+	// until then): it resolves that agency's unscoped rows and nothing of another
+	// agency's or of the built-in agency's, which is the question this asks. The agencies are passed
 	// through, not assumed, so the probe and the run it predicts cannot differ.
 	return UnresolvableBindings(ctx, database, owners, "", agencies)
 }
@@ -138,9 +139,14 @@ func UnboundRefusal(blocked []Binding) string {
 	if len(blocked) > 1 {
 		more = " (and " + strconv.Itoa(len(blocked)-1) + " more)"
 	}
-	return "this job consumes department-owned credentials — " +
+	// Since 2.5.3 (CA-5) a run with no scope is its job's agency's, so what it
+	// cannot resolve is a row that agency does not hold (another agency's, the
+	// built-in agency's, or one of a scope it is not on): binding just any scope
+	// is no longer the remedy.
+	return "this job consumes credentials its run cannot use — " +
 		string(blocked[0].Kind) + " " + blocked[0].Name + more +
-		" resolves for no department when the run has no scope; bind a scope to run it"
+		" is not one its agency can use when the run has no scope: create it in the job's agency, " +
+		"or bind the job to the scope it belongs to"
 }
 
 // QueuedReasonUnboundReferences is the runs.queued_reason marker for RA-24's

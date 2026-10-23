@@ -32,6 +32,8 @@ func TestScheduleComposeCRUD(t *testing.T) {
 	      VALUES('gitsched','git','0 0 1 * * *','sha256:bbb','schedules/gitsched.yaml','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 
 	do := func(method, url string, body any, hdrCSRF bool) *http.Response {
 		t.Helper()

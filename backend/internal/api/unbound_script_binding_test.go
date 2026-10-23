@@ -24,8 +24,14 @@ func TestUnboundRunFollowsTheJobsOwnScript(t *testing.T) {
 	}
 	exec(`INSERT INTO scripts(uid, repo_id, name, run_type, command, content_hash, synced_at) VALUES('uid-lib','global','lib.sh','bash','x','h','t')`)
 	exec(`INSERT INTO scripts(uid, repo_id, name, run_type, command, content_hash, synced_at) VALUES('uid-lib-other','repo-b','lib.sh','bash','x','h','t')`)
+	// The script binds a secret of ANOTHER department's. (Until 2.5.3 it bound
+	// Finance's own DEPT_PASSWORD, which a scopeless run, then Global's, could
+	// not resolve; since CA-5 the scopeless run is Finance's and resolves it.)
+	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-tax','Tax','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO secrets(id,key,source,owner_agency,created_at) VALUES('s-tax','TAX_PASSWORD','stored','ag-tax','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO secret_agencies(secret_id,agency_id) VALUES('s-tax','ag-tax')`)
 	exec(`INSERT INTO reference_bindings(owner_kind,owner_source,owner_name,owner_uid,ref_kind,ref_name,created_at)
-	      VALUES('script','','lib.sh','uid-lib','secret','DEPT_PASSWORD','t')`)
+	      VALUES('script','','lib.sh','uid-lib','secret','TAX_PASSWORD','t')`)
 	var jobID int64
 	_ = pool.QueryRow(`SELECT rowid FROM jobs WHERE name='unscoped-job'`).Scan(&jobID)
 	run := func() (int, string) {
@@ -37,11 +43,11 @@ func TestUnboundRunFollowsTheJobsOwnScript(t *testing.T) {
 		return rec.Code, msg
 	}
 
-	// The job uses the script that binds the department's secret.
+	// The job uses the script that binds the other department's secret.
 	exec(`UPDATE jobs SET script_ref='lib.sh', script_uid='uid-lib' WHERE name='unscoped-job'`)
 	code, msg := run()
-	if code != http.StatusUnprocessableEntity || !strings.Contains(msg, "DEPT_PASSWORD") {
-		t.Fatalf("an unbound run whose script binds an owned secret = %d %q, want 422 naming DEPT_PASSWORD", code, msg)
+	if code != http.StatusUnprocessableEntity || !strings.Contains(msg, "TAX_PASSWORD") {
+		t.Fatalf("an unbound run whose script binds an owned secret = %d %q, want 422 naming TAX_PASSWORD", code, msg)
 	}
 	var runs int
 	_ = pool.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&runs)

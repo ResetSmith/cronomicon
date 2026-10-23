@@ -67,14 +67,17 @@ func TestPerAgencyJobNames(t *testing.T) {
 		t.Errorf("refusal wording leaks or drifts: %s", body)
 	}
 
-	// The All pool overlaps everything: a global job of that name is refused…
-	if code, _ := compose("backup-daily", ""); code != http.StatusConflict {
-		t.Errorf("All-pool duplicate = %d, want 409", code)
+	// The All pool is the built-in agency's, which since 2.5.3 (CA-4) runs
+	// nothing: no job is created in it, a duplicate name or not…
+	for _, name := range []string{"backup-daily", "global-sweep"} {
+		if code, body := compose(name, ""); code != http.StatusUnprocessableEntity || !strings.Contains(body, "central_runs_nothing") {
+			t.Errorf("All-pool create of %s = %d (%s), want 422 central_runs_nothing", name, code, body)
+		}
 	}
-	// …and a scoped duplicate of an existing All-pool name is refused too.
-	if code, _ := compose("global-sweep", ""); code != http.StatusCreated {
-		t.Errorf("All-pool create = %d, want 201", code)
-	}
+	// …and the All-pool job an upgrade leaves still overlaps everything: a
+	// scoped duplicate of its name is refused.
+	seed(`INSERT INTO jobs (uid, name, source, run_type, command, owner_agency, synced_at)
+	      VALUES ('j-global-sweep', 'global-sweep', 'cronomicon', 'bash', 'pg_dump', 'global', 't')`)
 	if code, _ := compose("global-sweep", "fin-prod"); code != http.StatusConflict {
 		t.Errorf("scoped duplicate of an All-pool name = %d, want 409", code)
 	}
