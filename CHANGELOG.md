@@ -25,9 +25,17 @@ schema v1660); runner protocol 14 is unchanged.
 
 ### Upgrading
 
-**From 2.5.1:** take a snapshot as for every release, replace the image and
-start it; the three migrations run at the first start. Nothing is one-way
-beyond what 2.5.1 already did. Then:
+**From 2.2.3 (production, and every published image):** follow 2.5.1's
+upgrade below with the 2.5.2 image. It is one step, and one-way for 2.5.1's
+reason (the caution there); the schema goes from 1210 to 1660. 2.5.1 was not
+published: like 2.5.0, 2.4.x and 2.3.x it is a step of the development line,
+and what it changed arrives with 2.5.2.
+
+**From a build of 2.5.1:** take a snapshot as for every release, replace the
+image and start it; the three migrations run at the first start. Nothing is
+one-way beyond what 2.5.1 already did.
+
+Either way, then:
 
 - The built-in agency keeps the name *Global* on an upgraded installation; only
   a new one calls it *Central*. Rename it, if you like, in Scopes → Agencies →
@@ -41,10 +49,6 @@ beyond what 2.5.1 already did. Then:
 - Every alert now has an `Agency:` line: a mail filter or push consumer that
   matches the whole body sees one more line.
 - `/overview` leads to `/?agency=overview`, so bookmarks keep working.
-
-**From 2.2.3 (or any release before 2.5.1):** follow 2.5.1's upgrade below
-with the 2.5.2 image. It is one step, and one-way for 2.5.1's reason (the
-caution there); the schema goes from 1210 to 1660.
 
 ### Added
 
@@ -199,10 +203,12 @@ v1630); runner protocol 14 is unchanged.
 
 ### Upgrading from 2.2.3 (or any release since)
 
-Production and every published image go from 2.2.3 to 2.5.1 in one step: the
-schema goes from 1210 to 1630 in the first start, and runner protocol 14 is
-unchanged. 2.5.0 was not published; like 2.3.x and 2.4.x it is a step of the
-development line, and what it changed arrives with 2.5.1.
+2.5.1 was not published: production and every published image go from 2.2.3
+to **2.5.2** in one step, by these steps with the 2.5.2 image (see 2.5.2 above;
+the schema then goes to 1660). With a build of 2.5.1 the schema goes from 1210
+to 1630 in the first start; runner protocol 14 is unchanged either way. 2.5.0
+was not published either; like 2.3.x and 2.4.x it is a step of the development
+line, and what it changed arrives with 2.5.1.
 
 **Steps 1 to 7 are those of 2.5.0's entry below**, with the 2.5.1 binary: let
 queued runs finish, take the backup (the one the caution above means; keep it
@@ -397,13 +403,13 @@ its concurrency are its own; a global administrator hands a job or workflow to
 an agency as one commit into its repository, and is told when the original
 changes. A copied runner identity file is detected. Not published: like 2.3.x
 and 2.4.x it is a step of the development line, and production goes from 2.2.3
-to 2.5.1 in one step, whose upgrade follows the steps below. Eight migrations
+to 2.5.2 in one step, whose upgrade follows the steps below. Eight migrations
 in this release (1520 to 1590, schema v1590); runner protocol 14 is unchanged.
 
-### Upgrading from 2.2.3 (the steps 2.5.1 follows)
+### Upgrading from 2.2.3 (the steps 2.5.1 and 2.5.2 follow)
 
-Production and every published image go from 2.2.3 to 2.5.1 in one step (see
-2.5.1 above); these are its steps 1 to 7, with the 2.5.1 binary. What each
+Production and every published image go from 2.2.3 to 2.5.2 in one step (see
+2.5.2 and 2.5.1 above); these are its steps 1 to 7, with the 2.5.2 binary. What each
 release in between did is in its own entry below; what has to be done, in
 order, is here. An installation with no data has nothing to do but upgrade the
 agents with the server.
