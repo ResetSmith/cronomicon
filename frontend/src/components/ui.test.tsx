@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { cleanup, render, screen, fireEvent, within } from "@testing-library/react";
 import { statusLabel, jobStatusLabel, matchesStatus, matchesTags, Section, Field, FormField, Disclosure, SectionLabel, DetailCell } from "./ui";
 
 // The canonical display vocabulary (V1.1-4) and its job-state sibling. These map
@@ -269,29 +269,82 @@ describe("Disclosure tone", () => {
 });
 
 // An expanded row's cell keeps its content where the window shows it (2.5.2):
-// the box sticks to the scrolling surface's left edge and carries the padding,
-// so the cell itself has none to push it past the right edge.
+// the box sticks to the table's scroll box and is measured to its visible width,
+// keeping the indent of a cell that starts after a column; it carries the
+// padding, so the cell has none to push it past the right edge. Without a
+// measurement (no ResizeObserver, as here by default) it fills the cell without
+// letting its contents widen the table.
 describe("DetailCell", () => {
-  it("pins its content to the surface's left edge and carries the padding", () => {
-    render(
-      <table>
-        <tbody>
-          <tr>
-            <DetailCell colSpan={7} padding="16px 14px" background="black">
-              detail
-            </DetailCell>
-          </tr>
-        </tbody>
-      </table>,
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+  const row = (cell: React.ReactNode, lead = false) => (
+    <table>
+      <tbody>
+        <tr>
+          {lead && <td />}
+          {cell}
+        </tr>
+      </tbody>
+    </table>
+  );
+  const observe = (boxWidth: number, tdLeft: number) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
     );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(boxWidth);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return { left: this.tagName === "TD" ? tdLeft : 0 } as DOMRect;
+    });
+  };
+
+  it("fills its cell and carries the padding when it cannot measure", () => {
+    render(row(<DetailCell colSpan={7} padding="16px 14px" background="black" cellStyle={{ borderBottom: "1px solid red", padding: 9 }}>detail</DetailCell>));
     const box = screen.getByTestId("detail-cell");
     const cell = box.parentElement as HTMLTableCellElement;
     expect(cell.colSpan).toBe(7);
     expect(cell.style.padding).toBe("0px");
+    expect(cell.style.borderBottom).toBe("1px solid red");
     expect(box.style.position).toBe("sticky");
     expect(box.style.left).toBe("0px");
+    expect(box.style.width).toBe("0px");
+    expect(box.style.minWidth).toBe("100%");
     expect(box.style.padding).toBe("16px 14px");
-    expect(box.style.boxSizing).toBe("border-box");
     expect(box.textContent).toBe("detail");
+  });
+
+  it("is as wide as its scroll box shows", () => {
+    observe(900, 0);
+    render(<div style={{ overflowX: "auto" }}>{row(<DetailCell colSpan={7} padding="16px 14px">detail</DetailCell>)}</div>);
+    const box = screen.getByTestId("detail-cell");
+    expect(box.style.width).toBe("900px");
+    expect(box.style.left).toBe("0px");
+    expect(box.style.minWidth).toBe("");
+  });
+
+  it("keeps the indent of a cell that starts after a column", () => {
+    observe(900, 36);
+    render(<div style={{ overflowX: "auto" }}>{row(<DetailCell colSpan={6} padding="2px 16px 16px">detail</DetailCell>, true)}</div>);
+    const box = screen.getByTestId("detail-cell");
+    expect(box.style.left).toBe("36px");
+    expect(box.style.width).toBe("864px");
+  });
+
+  it("does not pin to the page when the table has no scroll box of its own", () => {
+    observe(900, 0);
+    render(
+      <main style={{ overflow: "auto" }}>
+        {row(<DetailCell colSpan={7} padding="16px 14px">detail</DetailCell>)}
+      </main>,
+    );
+    const box = screen.getByTestId("detail-cell");
+    expect(box.style.width).toBe("0px");
+    expect(box.style.minWidth).toBe("100%");
   });
 });

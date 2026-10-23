@@ -767,7 +767,7 @@ export function ExecutionsTab() {
       {loading && <div style={{ padding: 16 }}><SkeletonRows rows={5} /></div>}
       {error && <ErrorMsg msg={error} />}
       {!loading && !error && (
-        <TableSurface pinsDetail>
+        <TableSurface>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm, tableLayout: "fixed" }}>
             <thead>
               <TableHead columns={cols.visible} sort={sort} cw={cw} thStyle={th} />

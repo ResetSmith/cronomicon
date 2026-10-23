@@ -362,7 +362,7 @@ export function WorkflowRunsTable({
         // No enclosing Card: the table sits between a top and bottom rule instead
         // of inside a fourth box (VU-5). Pager already brings its own top rule and
         // padding, so it reads as the table's footer rather than a floating strip.
-        <TableSurface pinsDetail>
+        <TableSurface>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm, tableLayout: "fixed" }}>
             <thead>
               <TableHead columns={cols.visible} sort={sort} cw={cw} thStyle={th} />

@@ -979,11 +979,11 @@ const th = (): React.CSSProperties => ({
 });
 const td: React.CSSProperties = { padding: "10px 16px", verticalAlign: "top" };
 
-// The table's own sideways scroll, and the size container its expanded row's
-// DetailCell reads its width from (2.5.2): without it the page scrolled
-// sideways instead, and the open workflow's Refresh, Pause and Run sat off
-// screen when the columns were wider than the window.
-const pinnedScroll: React.CSSProperties = { overflowX: "auto", containerType: "inline-size" };
+// The table's own sideways scroll, which its expanded row's DetailCell holds
+// itself to (2.5.2): without it the page scrolled sideways instead, and the
+// open workflow's Refresh, Pause and Run sat off screen when the columns were
+// wider than the window.
+const pinnedScroll: React.CSSProperties = { overflowX: "auto" };
 
 // Absolute app-zone datetime for the Created On / Last Edited columns (V1.1-17);
 // `—` when null (git rows). Routes through the shared app-zone formatter (§5.2).

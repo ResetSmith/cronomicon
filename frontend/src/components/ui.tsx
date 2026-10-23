@@ -3,7 +3,7 @@
 // app keeps one visual language. Everything reads the mutable `c` tokens during
 // render (theme.ts), so components repaint on theme toggle via the Outlet
 // remount in Shell.
-import { useEffect, useRef, useState, type CSSProperties, type InputHTMLAttributes, type KeyboardEvent, type ReactNode, type SelectHTMLAttributes } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type InputHTMLAttributes, type KeyboardEvent, type ReactNode, type SelectHTMLAttributes } from "react";
 import { c } from "../theme";
 import { useTheme } from "../theme-context";
 import { useRefreshAction } from "./RefreshScope";
@@ -227,10 +227,8 @@ export function Rule({ strong, inset, style }: { strong?: boolean; inset?: numbe
 // rule, which is enough to bound it and removes one whole level of nesting from
 // every catalog view. Keeps the panel fill so rows still read as a surface, and
 // keeps horizontal overflow scrolling, which is what the Card was doing for the
-// wide catalogs. `pinsDetail` makes it the size container a <DetailCell> reads
-// its width from; it is opt-in because inline-size containment stops the box
-// sizing to its content, which a table placed in a shrink-to-fit layout relies on.
-export function TableSurface({ children, style, pinsDetail }: { children: ReactNode; style?: CSSProperties; pinsDetail?: boolean }) {
+// wide catalogs.
+export function TableSurface({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
     <div
       style={{
@@ -238,7 +236,6 @@ export function TableSurface({ children, style, pinsDetail }: { children: ReactN
         borderTop: `1px solid ${c.border}`,
         borderBottom: `1px solid ${c.border}`,
         overflowX: "auto",
-        ...(pinsDetail ? { containerType: "inline-size" } : null),
         ...style,
       }}
     >
@@ -248,19 +245,80 @@ export function TableSurface({ children, style, pinsDetail }: { children: ReactN
 }
 
 // DetailCell is an expanded row's cell, its content held to the part of the
-// table the window shows. A cell spanning every column is as wide as the table,
-// so when the columns are wider than the window its right side (a run's
-// Remove acknowledgement, its notes' Next →) sat off screen behind the table's
-// sideways scroll. The content box is as wide as the TableSurface (100cqw, which
-// needs `pinsDetail` on it, or on a table without one an `overflowX: auto` box
-// with `containerType: "inline-size"`, as Workflows has) and sticks to its left
-// edge, so it stays in view
-// while the row's cells scroll beneath it. The padding lives on the box, not the
-// cell, or the box would start that far in and overshoot by as much.
-export function DetailCell({ colSpan, padding, background, children }: { colSpan: number; padding: string; background: string; children: ReactNode }) {
+// table the window shows (2.5.2). A cell spanning every column is as wide as the
+// table, so when the columns were wider than the window its right side (a run's
+// Remove acknowledgement, a job's Run, a scope's Delete) sat off screen behind
+// the table's sideways scroll. The content box sticks to the left edge of the
+// table's scroll box and is measured to its visible width, so it stays in view
+// while the row's cells scroll beneath it.
+//
+// It measures (a ResizeObserver on the scroll box and the table) rather than
+// using container query units because inline-size containment would make the
+// scroll box the containing block of every position: fixed element in the row,
+// and Modal, ConfirmDialog and Toast are fixed and not portaled: a Move agency
+// or Host keys dialog opened from a row would have been trapped in the table.
+//
+// The table needs its own `overflowX: auto` box (TableSurface is one). Where
+// the nearest one is the page's <main>, the cell does not pin and behaves as a
+// plain cell. A cell that starts after a column (the Env Vars and Scopes rows
+// leave the chevron column empty) keeps that indent: it sticks that far in and
+// is that much narrower. Before the first measurement, and where there is no
+// ResizeObserver (tests), the box fills the cell without letting its contents
+// widen the table (width 0, min-width 100%). The padding lives on the box, not
+// the cell, or the box would start that far in and overshoot by as much.
+export function DetailCell({
+  colSpan,
+  padding,
+  background,
+  cellStyle,
+  onClick,
+  children,
+}: {
+  colSpan: number;
+  padding: string;
+  background?: string;
+  /** Anything else the cell carried (a border); its padding is always 0. */
+  cellStyle?: CSSProperties;
+  onClick?: (e: React.MouseEvent<HTMLTableCellElement>) => void;
+  children: ReactNode;
+}) {
+  const cell = useRef<HTMLTableCellElement>(null);
+  const [fit, setFit] = useState<{ left: number; width: number } | null>(null);
+  useLayoutEffect(() => {
+    const td = cell.current;
+    const table = td?.closest("table");
+    if (!td || !table || typeof ResizeObserver === "undefined") return;
+    let box: HTMLElement | null = table.parentElement;
+    while (box && box.tagName !== "MAIN" && box !== document.body) {
+      const ox = getComputedStyle(box).overflowX;
+      if (ox === "auto" || ox === "scroll") break;
+      box = box.parentElement;
+    }
+    if (!box || box.tagName === "MAIN" || box === document.body) return;
+    const scroller = box;
+    const measure = () => {
+      const left = Math.max(0, Math.round(td.getBoundingClientRect().left - table.getBoundingClientRect().left));
+      const width = Math.max(0, scroller.clientWidth - left);
+      setFit((f) => (f && f.left === left && f.width === width ? f : { left, width }));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(scroller);
+    ro.observe(table);
+    return () => ro.disconnect();
+  }, []);
   return (
-    <td colSpan={colSpan} style={{ padding: 0, background }}>
-      <div data-testid="detail-cell" style={{ position: "sticky", left: 0, width: "100cqw", boxSizing: "border-box", padding }}>
+    <td ref={cell} colSpan={colSpan} onClick={onClick} style={{ ...cellStyle, padding: 0, background }}>
+      <div
+        data-testid="detail-cell"
+        style={{
+          position: "sticky",
+          left: fit?.left ?? 0,
+          boxSizing: "border-box",
+          padding,
+          ...(fit ? { width: fit.width } : { width: 0, minWidth: "100%" }),
+        }}
+      >
         {children}
       </div>
     </td>
