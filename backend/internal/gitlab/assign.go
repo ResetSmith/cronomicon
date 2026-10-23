@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"gopkg.in/yaml.v3"
 )
@@ -232,6 +233,15 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 	}
 	if err != nil {
 		return nil, err
+	}
+	if top.repo == repoid.Global {
+		// The built-in agency has no repository since 2.5.3 (CA-6): what its
+		// leftover synced is assigned from nowhere. Reconnecting the URL to an
+		// ordinary agency makes it that agency's, and assignable from there
+		// (question 203). Until this it was "try again in a moment" for ever.
+		return nil, refuse(http.StatusUnprocessableEntity, "central_runs_nothing",
+			"this definition is in the built-in agency's repository from before 2.5.3, which no longer syncs: "+
+				"remove that leftover connection and connect its URL to an ordinary agency, then assign from there")
 	}
 	st.originSvc, st.targetSvc = r.Service(top.repo), r.Service(st.targetRepo)
 	if st.originSvc == nil || st.targetSvc == nil {

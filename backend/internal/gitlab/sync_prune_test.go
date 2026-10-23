@@ -70,22 +70,27 @@ func jobCount(t *testing.T, pool *sql.DB, name string) int {
 	return n
 }
 
+// The repository newSyncFixture builds is an ordinary agency's: the built-in
+// agency has none since 2.5.3 (CA-6), so nothing syncs Central's.
+const (
+	fixtureRepo   = "repo-a"
+	fixtureAgency = "ag-a"
+	// fixtureScope is the scope ag-a owns, built in the app, that the
+	// fixture's jobs are given when they name none (grInItsAgency, GR-14).
+	fixtureScope = "hosts-of-" + fixtureRepo
+)
+
 // newSyncFixture creates a local git remote with jobs/keep.yaml committed and a
-// Service wired to sync from it into a fresh fully-migrated DB.
+// Service wired to sync from it into a fresh fully-migrated DB. The remote is
+// the repository of the agency ag-a (repo-a), connected on its row of
+// git_repos: its URL and branch are there, as every connection's are (the
+// CRONOMICON_GITLAB_* overrides are read no more, 2.5.3 question 207).
+//
+// Until 2.5.3 it was Global's repository, its branch set through
+// Cfg.GitLabWriteBranch (CRONOMICON_GITLAB_WRITE_BRANCH). Cfg.GitLabWriteBranch
+// is still filled in: the other fixtures read the branch from it.
 func newSyncFixture(t *testing.T) (*Service, *gogit.Repository, string) {
 	t.Helper()
-	remote := t.TempDir()
-	repo, err := gogit.PlainInit(remote, false)
-	if err != nil {
-		t.Fatalf("git init: %v", err)
-	}
-	gitCommitFile(t, repo, remote, "jobs/keep.yaml", jobYAML("keep"), "init keep")
-	head, err := repo.Head()
-	if err != nil {
-		t.Fatalf("head: %v", err)
-	}
-	branch := head.Name().Short()
-
 	pool, err := db.Open(filepath.Join(t.TempDir(), "sync.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -95,14 +100,48 @@ func newSyncFixture(t *testing.T) (*Service, *gogit.Repository, string) {
 		t.Fatalf("migrate: %v", err)
 	}
 
+	remote := t.TempDir()
+	repo, err := gogit.PlainInit(remote, false)
+	if err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	// A job in an agency's repository names one of its agency's scopes (GR-14).
+	grAgencyScope(t, pool, fixtureAgency, fixtureScope)
+	grConfinedTo.Store(remote, fixtureScope)
+	gitCommitFile(t, repo, remote, "jobs/keep.yaml", jobYAML("keep"), "init keep")
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	branch := head.Name().Short()
+	if _, err := pool.Exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES (?, ?, ?, ?)`,
+		fixtureRepo, fixtureAgency, remote, branch); err != nil {
+		t.Fatalf("the repository %s's row: %v", fixtureRepo, err)
+	}
+
 	svc := &Service{
 		db:       pool,
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		repoURL:  remote,
+		repoID:   fixtureRepo,
+		agencyID: fixtureAgency,
 		cloneDir: filepath.Join(t.TempDir(), "clone"),
 		Cfg:      &config.Config{GitLabWriteBranch: branch},
 	}
 	return svc, repo, remote
+}
+
+// setBranch changes the branch on the connection of svc's repository: its row
+// of git_repos, which is what sync and publish read (writeBranch). Until 2.5.3
+// the tests set Cfg.GitLabWriteBranch, the CRONOMICON_GITLAB_WRITE_BRANCH
+// override of Global's repository; it is kept equal for the fixtures that read
+// the branch from it.
+func setBranch(t *testing.T, svc *Service, branch string) {
+	t.Helper()
+	if _, err := svc.db.Exec(`UPDATE git_repos SET branch = ? WHERE id = ?`, branch, svc.repo()); err != nil {
+		t.Fatalf("the branch of %s: %v", svc.repo(), err)
+	}
+	svc.Cfg.GitLabWriteBranch = branch
 }
 
 // backdate ages every git job's synced_at so the next sync's prune sees them as

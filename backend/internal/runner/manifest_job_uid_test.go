@@ -99,18 +99,25 @@ func TestManifestIsOfTheRunsOwnJob(t *testing.T) {
 // (runs.checkout_repo), whose commit the pin is. Until 2.4.0 it always named
 // Global's URL. A run that records no repository (one queued before 2.4.0) is
 // Global's, as every run then was.
+//
+// Since 2.5.3 the built-in agency has no repository and the environment's
+// CRONOMICON_GITLAB_BASE_URL, which was its URL, configures nothing (question
+// 207): a run pinned to Global's repository, or recording none, has nowhere
+// to be sent, as a run pinned to a repository that is gone has not. Two
+// agencies' repositories keep the "the one it was pinned to" half.
 func TestManifestNamesTheRepositoryTheRunWasPinnedTo(t *testing.T) {
 	svc := newTestService(t)
-	svc.cfg.GitLabBaseURL = "https://gitlab.example/infra/global-defs.git"
+	svc.cfg.GitLabBaseURL = "https://gitlab.example/infra/global-defs.git" // ignored since 2.5.3
 	as := authSvc(t, svc)
 	runnerID, tok := "runner-repo", "crn_run_repo"
 	insertRunner(t, svc, runnerID, "repo", "online", []string{"ansible"})
 	bindRunnerToken(t, svc, tok, runnerID)
-	if _, err := svc.db.Exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-a', 'A', 't')`); err != nil {
+	if _, err := svc.db.Exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-a', 'A', 't'), ('ag-b', 'B', 't')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES
-		('repo-a', 'ag-a', 'https://gitlab.example/agency-a/defs.git', 'main')`); err != nil {
+		('repo-a', 'ag-a', 'https://gitlab.example/agency-a/defs.git', 'main'),
+		('repo-b', 'ag-b', 'https://gitlab.example/agency-b/defs.git', 'main')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.db.Exec(`
@@ -124,6 +131,8 @@ func TestManifestNamesTheRepositoryTheRunWasPinnedTo(t *testing.T) {
 	for _, q := range []string{
 		`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-a', 'a-hosts', 'cronomicon', 't')`,
 		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-a', 'ag-a')`,
+		`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-b', 'b-hosts', 'cronomicon', 't')`,
+		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-b', 'ag-b')`,
 	} {
 		if _, err := svc.db.Exec(q); err != nil {
 			t.Fatal(err)
@@ -138,9 +147,13 @@ func TestManifestNamesTheRepositoryTheRunWasPinnedTo(t *testing.T) {
 		// agency's run (I2: a run's scope is its agency's); a pin to Global's is a
 		// Global run, on no scope (since §0a a project of Global's runs on Global's
 		// scopes only; until then on any agency's).
-		if repo != nil && repo != "global" {
+		switch repo {
+		case "repo-a", "repo-gone":
 			scope = "a-hosts"
 			agencies = `["A"]`
+		case "repo-b":
+			scope = "b-hosts"
+			agencies = `["B"]`
 		}
 		if _, err := svc.db.Exec(`
 			INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, status, runner_id, executor,
@@ -156,8 +169,7 @@ func TestManifestNamesTheRepositoryTheRunWasPinnedTo(t *testing.T) {
 		url  string
 	}{
 		{"repo-a", "https://gitlab.example/agency-a/defs.git"},
-		{"global", "https://gitlab.example/infra/global-defs.git"},
-		{nil, "https://gitlab.example/infra/global-defs.git"},
+		{"repo-b", "https://gitlab.example/agency-b/defs.git"},
 	} {
 		m := getManifest(t, svc, as, run(c.repo), tok)
 		if m.Checkout == nil || m.Checkout.Repo != c.url || m.Checkout.SHA != sha {
@@ -166,16 +178,40 @@ func TestManifestNamesTheRepositoryTheRunWasPinnedTo(t *testing.T) {
 	}
 
 	// A run pinned to a repository that is no longer connected has nowhere to
-	// be sent, and is not sent to Global's.
+	// be sent, and is not sent to another. Nor, since 2.5.3, has a run pinned
+	// to Global's repository or recording none: the built-in agency has no
+	// repository, and the environment's URL is not read.
 	h := as.RequireRunner(http.HandlerFunc(svc.HandleGetManifest))
-	traceID := run("repo-gone")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/runs/"+traceID+"/manifest", nil)
-	req.SetPathValue("traceId", traceID)
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "no_checkout_repo") {
-		t.Errorf("a run pinned to a repository that is gone was answered %d: %s", rec.Code, rec.Body.String())
+	for _, repo := range []any{"repo-gone", "global", nil} {
+		traceID := run(repo)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/runs/"+traceID+"/manifest", nil)
+		req.SetPathValue("traceId", traceID)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "no_checkout_repo") {
+			t.Errorf("a run pinned to the repository %v was answered %d: %s, want 409 no_checkout_repo", repo, rec.Code, rec.Body.String())
+		}
+	}
+
+	// Not even when the built-in agency kept a connection from before 2.5.3
+	// (a leftover, CA-6): it is removed, never synced or checked out from.
+	if _, err := svc.db.Exec(`INSERT OR IGNORE INTO git_repos (id, agency_id, url, branch) VALUES ('global', 'global', '', 'main')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.Exec(`UPDATE git_repos SET url = 'https://gitlab.example/old/global.git' WHERE id = 'global'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, repo := range []any{"global", nil} {
+		traceID := run(repo)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/runs/"+traceID+"/manifest", nil)
+		req.SetPathValue("traceId", traceID)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "no_checkout_repo") {
+			t.Errorf("with a leftover connection, a run pinned to %v was answered %d: %s, want 409 no_checkout_repo", repo, rec.Code, rec.Body.String())
+		}
 	}
 }
 

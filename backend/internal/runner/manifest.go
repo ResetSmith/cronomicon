@@ -403,10 +403,14 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		// The repository the run was pinned to at enqueue (runs.checkout_repo,
 		// GR-22): the commit is that repository's, so the URL the agent is sent
 		// to must be its URL. A run from before 2.4.0 records none, and there
-		// was then one repository: Global's.
+		// was then one repository: Global's. The built-in agency has none since
+		// 2.5.3 (CA-6), so neither such a run nor one pinned to it is sent
+		// anywhere: a leftover connection of its would otherwise still be one.
 		repo := checkoutRepo.String
-		if repo == "" {
-			repo = repoid.Global
+		if repo == "" || repo == repoid.Global {
+			httpx.Fail(w, http.StatusConflict, "no_checkout_repo",
+				"checkout run names no agency's repository: it records none, or the built-in agency's, which has none")
+			return
 		}
 		repoURL, _, rerr := settings.ResolveRepoRuntime(r.Context(), s.db, s.cfg, repo)
 		if rerr != nil {

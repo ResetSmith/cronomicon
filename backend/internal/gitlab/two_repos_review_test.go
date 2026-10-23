@@ -5,7 +5,14 @@ package gitlab
 // back to what it was and leave every test passing.
 
 import (
+	"context"
+	"io"
+	"log/slog"
+	"path/filepath"
 	"testing"
+
+	"github.com/ResetSmith/cronomicon/internal/config"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 )
 
 // A reaction's upstream is found in the reaction's OWN repository, and in no
@@ -19,7 +26,7 @@ import (
 // was pointed at ANOTHER agency's `nightly` whenever that was the only one.
 func TestGR3_AReactionsUpstreamIsNeverAnotherRepositorys(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
-	grSync(t, a, "Global's repository")
+	grSync(t, a, "ag-a's repository")
 	b, repoB, remoteB := grSecondRepo(t, a)
 	c, repoC, remoteC := grRepo(t, a, "repo-c", "ag-c")
 
@@ -50,16 +57,17 @@ func TestGR3_AReactionsUpstreamIsNeverAnotherRepositorys(t *testing.T) {
 	if got := watched(); got == uidOf("repo-c") {
 		t.Fatalf("the second repository's reaction watches the THIRD repository's nightly")
 	} else if got != "(none)" {
-		t.Errorf("the reaction watches %q although neither its repository nor Global's has a nightly that synced", got)
+		t.Errorf("the reaction watches %q although neither its repository nor another has a nightly that synced", got)
 	}
 
-	// Global's repository gets one: it is NOT where the name resolves next
-	// (§0a, IN-8; present defect 53: until 2.4.2 it was, GR-16).
-	grCommitFiles(t, repoA, remoteA, map[string]string{"jobs/nightly.yaml": grJob("nightly", "echo from-global")}, "Global's nightly")
-	grSync(t, a, "Global's repository with a nightly")
+	// ag-a's repository gets one: it is NOT where the name resolves next
+	// (§0a, IN-8; present defect 53: until 2.4.2 Global's was, GR-16; until
+	// 2.5.3 this was Global's repository, which the built-in agency has no more).
+	grCommitFiles(t, repoA, remoteA, map[string]string{"jobs/nightly.yaml": grJob("nightly", "echo from-a")}, "ag-a's nightly")
+	grSync(t, a, "ag-a's repository with a nightly")
 	grSync(t, b, "second repository again")
-	if got := watched(); got == uidOf("global") {
-		t.Errorf("the reaction watches Global's nightly (present defect 53)")
+	if got := watched(); got == uidOf(fixtureRepo) {
+		t.Errorf("the reaction watches ag-a's nightly (present defect 53)")
 	} else if got != "(none)" {
 		t.Errorf("the reaction watches %q, want none", got)
 	}
@@ -118,17 +126,22 @@ func TestGR3_AnOrphanedPauseIsSweptByItsOwnersUid(t *testing.T) {
 }
 
 // A satellite row with no owner uid is from before the uid, when the one
-// repository there was is the one that is Global's now. Only Global's sync
-// clears those by name; another repository's sync, which may have a definition
-// of the same name, leaves them.
-func TestGR3_RowsFromBeforeTheUidAreGlobalsToClear(t *testing.T) {
+// repository there was is the one that was Global's. Only Global's sync
+// cleared those by name; another repository's sync, which may have a
+// definition of the same name, leaves them.
+//
+// The built-in agency has no repository since 2.5.3 (CA-6), and a connection
+// it kept is not synced: no sync clears them now. Until 2.5.3
+// (TestGR3_RowsFromBeforeTheUidAreGlobalsToClear) the first repository here
+// was Global's, and its sync cleared all three.
+func TestGR3_RowsFromBeforeTheUidAreClearedByNoSync(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
 	const timed = "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: timed\nspec:\n  run_type: bash\n  command: echo hi\n"
 	grCommitFiles(t, repoA, remoteA, map[string]string{
 		"jobs/timed.yaml": timed,
 		"jobs/going.yaml": grJob("going", "echo going"),
-	}, "Global's jobs")
-	grSync(t, a, "Global's repository")
+	}, "ag-a's jobs")
+	grSync(t, a, "ag-a's repository")
 	b, repoB, remoteB := grSecondRepo(t, a)
 	grCommitFiles(t, repoB, remoteB, map[string]string{
 		"jobs/timed.yaml": timed,
@@ -168,13 +181,34 @@ func TestGR3_RowsFromBeforeTheUidAreGlobalsToClear(t *testing.T) {
 		}
 	}
 
-	// Global's sync does both.
+	// The first repository's sync, which rewrites its `timed` and prunes its
+	// `going`, leaves them too: it is an agency's.
 	gitRemoveFile(t, repoA, "jobs/going.yaml", "remove going")
 	grBackdateAll(t, a)
-	grSync(t, a, "Global's repository again")
+	grSync(t, a, "ag-a's repository again")
+	if grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND repo_id='repo-a' AND name='going'`) != 0 {
+		t.Fatalf("the first repository's job was not pruned: the test proves nothing")
+	}
 	for _, c := range [][2]string{{"definition_schedules", "timed"}, {"reactions", "timed"}, {"definition_schedules", "going"}} {
-		if left(c[0], c[1]) != 0 {
-			t.Errorf("Global's sync left the uid-less %s row of %q", c[0], c[1])
+		if left(c[0], c[1]) != 1 {
+			t.Errorf("an agency's repository's sync cleared the uid-less %s row of %q", c[0], c[1])
+		}
+	}
+	// Nor a sync of Central's: a connection it kept from before 2.5.3 is
+	// given no Service, so none runs.
+	if _, err := a.db.Exec(`UPDATE git_repos SET url = ?, branch = ? WHERE id = 'global'`, remoteA, a.Cfg.GitLabWriteBranch); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry(a.db, slog.New(slog.NewTextHandler(io.Discard, nil)), &config.Config{})
+	clones := t.TempDir()
+	reg.cloneDir = func(repoID string) string { return filepath.Join(clones, repoID) }
+	t.Cleanup(reg.Close)
+	if err := reg.Restart(context.Background(), repoid.Global); err != nil || reg.Service(repoid.Global) != nil {
+		t.Fatalf("a write of Central's leftover connection: %v; want no Service started", err)
+	}
+	for _, c := range [][2]string{{"definition_schedules", "timed"}, {"reactions", "timed"}, {"definition_schedules", "going"}} {
+		if left(c[0], c[1]) != 1 {
+			t.Errorf("the uid-less %s row of %q went, with nothing to sync Central's repository", c[0], c[1])
 		}
 	}
 }
@@ -184,8 +218,8 @@ func TestGR3_RowsFromBeforeTheUidAreGlobalsToClear(t *testing.T) {
 // scope stays.
 func TestGR3_AHostRecordOfNoScopeIsReaped(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
-	grCommitFiles(t, repoA, remoteA, map[string]string{"inventory/web.ini": "# cronomicon:v1 owner=t\n[web]\nweb1 ansible_host=10.0.0.1\n"}, "Global's scope")
-	grSync(t, a, "Global's repository")
+	grCommitFiles(t, repoA, remoteA, map[string]string{"inventory/web.ini": "# cronomicon:v1 owner=t\n[web]\nweb1 ansible_host=10.0.0.1\n"}, "ag-a's scope")
+	grSync(t, a, "ag-a's repository")
 	b, repoB, remoteB := grSecondRepo(t, a)
 	grCommitFiles(t, repoB, remoteB, map[string]string{"jobs/other.yaml": grJob("other", "echo other")}, "the second repository")
 
@@ -223,6 +257,6 @@ func TestGR3_AHostRecordOfNoScopeIsReaped(t *testing.T) {
 		t.Errorf("an operator's own record was reaped")
 	}
 	if n := grCount(t, a.db, `SELECT COUNT(*) FROM ssh_hosts WHERE source='git' AND hostname='web1'`); n != 1 {
-		t.Errorf("Global's scope's record was reaped by another repository's sync (count %d)", n)
+		t.Errorf("the first repository's scope's record was reaped by another repository's sync (count %d)", n)
 	}
 }

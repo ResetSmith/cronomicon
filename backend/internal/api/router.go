@@ -197,7 +197,7 @@ func New(o Options) *Server {
 		s.repoTest = gitlab.TestConnection
 	}
 	// The notice agency_no_repository is given the database only (I3).
-	notices.SetGlobalRepoFromEnvironment(o.Config != nil && strings.TrimSpace(o.Config.GitLabBaseURL) != "")
+	notices.SetIgnoredEnvironmentSettings(settings.EnvSettingsIgnored(o.Config))
 	// RB-7: point the role registry at THIS server's database. The registry is a
 	// process-wide cache (requirePerm is mount-time middleware with no context and
 	// no DB handle), so binding it here rather than only at boot matters for tests:

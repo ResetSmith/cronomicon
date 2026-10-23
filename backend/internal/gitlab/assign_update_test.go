@@ -16,12 +16,12 @@ import (
 
 const assignScriptV2 = "#!/bin/sh\necho nightly, version two\n"
 
-// globalChanges commits files to Global's repository and syncs it.
-func (f *assignFixture) globalChanges(files map[string]string) {
+// originChanges commits files to the origin's repository and syncs it.
+func (f *assignFixture) originChanges(files map[string]string) {
 	f.t.Helper()
-	grCommitFiles(f.t, f.globalRepo, f.globalWork, files, "Global changes its template")
-	if r := grSync(f.t, f.global, "Global's repository, changed"); r.Status != "success" {
-		f.t.Fatalf("Global's sync: %s %s", r.Status, r.ErrorMessage)
+	grCommitFiles(f.t, f.originRepo, f.originWork, files, "the origin changes its template")
+	if r := grSync(f.t, f.origin, "the origin's repository, changed"); r.Status != "success" {
+		f.t.Fatalf("the origin's sync: %s %s", r.Status, r.ErrorMessage)
 	}
 }
 
@@ -57,7 +57,7 @@ func (f *assignFixture) updateNotice() (detail string, open, found bool) {
 	}
 	var agency string
 	var resolved sql.NullString
-	err := f.global.db.QueryRow(`SELECT agency_id, detail, resolved_at FROM notices WHERE kind = ? AND subject = ?`,
+	err := f.origin.db.QueryRow(`SELECT agency_id, detail, resolved_at FROM notices WHERE kind = ? AND subject = ?`,
 		notices.KindAssignmentUpdate, "ag-fin:"+f.jobUID).Scan(&agency, &detail, &resolved)
 	if err == sql.ErrNoRows {
 		return "", false, false
@@ -79,7 +79,7 @@ func actions(res *AssignResult) map[string]string {
 	return out
 }
 
-// A change in Global's copy raises the notice, under Finance, naming the file
+// A change in the origin's copy raises the notice, under Finance, naming the file
 // and saying Finance has not changed its copy. Assigning again replaces only
 // that file, in one commit, and the record is the new one; the notice clears.
 func TestAnOriginChangeRaisesTheNoticeAndAnUpdateClearsIt(t *testing.T) {
@@ -92,7 +92,7 @@ func TestAnOriginChangeRaisesTheNoticeAndAnUpdateClearsIt(t *testing.T) {
 		t.Fatal("a notice right after the assignment")
 	}
 
-	f.globalChanges(map[string]string{"scripts/nightly.sh": assignScriptV2})
+	f.originChanges(map[string]string{"scripts/nightly.sh": assignScriptV2})
 	detail, open, _ := f.updateNotice()
 	if !open || !strings.Contains(detail, "scripts/nightly.sh") || !strings.Contains(detail, "has not changed its copy") {
 		t.Fatalf("notice: open %v, %q", open, detail)
@@ -115,10 +115,10 @@ func TestAnOriginChangeRaisesTheNoticeAndAnUpdateClearsIt(t *testing.T) {
 	if got := sysGit(t, f.finBare, "show", res.CommitSHA+":scripts/nightly.sh"); got+"\n" != assignScriptV2 {
 		t.Errorf("the script is %q", got)
 	}
-	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignments`); n != "1" {
+	if n := grString(t, f.origin.db, `SELECT COUNT(*) FROM assignments`); n != "1" {
 		t.Errorf("assignment records: %s, want the new one alone", n)
 	}
-	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ?`, res.AssignmentID); n != "3" {
+	if n := grString(t, f.origin.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ?`, res.AssignmentID); n != "3" {
 		t.Errorf("the new record's files: %s, want 3", n)
 	}
 	if _, open, _ := f.updateNotice(); open {
@@ -134,18 +134,18 @@ func TestAnAgencysChangeIsReportedAndNotOverwritten(t *testing.T) {
 	if _, err := f.assign(); err != nil {
 		t.Fatalf("assign: %v", err)
 	}
-	// Finance changes the script, which Global changes too, and the schedule,
-	// which Global leaves alone: only the first stands in an update's way.
+	// Finance changes the script, which the origin changes too, and the schedule,
+	// which the origin leaves alone: only the first stands in an update's way.
 	schedule := sysGit(t, f.finBare, "show", f.branch+":schedules/nightly-cron.yaml") + "\n# Finance's note\n"
 	f.finChanges(map[string]string{"scripts/nightly.sh": "#!/bin/sh\necho finance's own fix\n", "schedules/nightly-cron.yaml": schedule})
-	f.globalChanges(map[string]string{"scripts/nightly.sh": assignScriptV2})
+	f.originChanges(map[string]string{"scripts/nightly.sh": assignScriptV2})
 
 	detail, open, _ := f.updateNotice()
 	if !open || !strings.Contains(detail, "changed its own copy of scripts/nightly.sh:") {
 		t.Fatalf("notice: open %v, %q", open, detail)
 	}
 	if strings.Contains(detail, "schedules/nightly-cron.yaml") {
-		t.Errorf("the notice names Finance's change to a file Global did not change: %q", detail)
+		t.Errorf("the notice names Finance's change to a file the origin did not change: %q", detail)
 	}
 	before := f.head()
 	_, err := f.assign()
@@ -164,8 +164,8 @@ func TestAnAgencysChangeIsReportedAndNotOverwritten(t *testing.T) {
 	}
 }
 
-// Finance's change to a file Global did not change is Finance's: an update
-// replaces what Global changed and leaves that file as Finance has it.
+// Finance's change to a file the origin did not change is Finance's: an update
+// replaces what the origin changed and leaves that file as Finance has it.
 func TestAnUpdateLeavesAnAgencysChangeToAFileTheOriginLeft(t *testing.T) {
 	f := newAssignFixture(t, nil, nil)
 	f.finHasCalendar()
@@ -174,7 +174,7 @@ func TestAnUpdateLeavesAnAgencysChangeToAFileTheOriginLeft(t *testing.T) {
 	}
 	schedule := sysGit(t, f.finBare, "show", f.branch+":schedules/nightly-cron.yaml") + "\n# Finance's note\n"
 	f.finChanges(map[string]string{"schedules/nightly-cron.yaml": schedule})
-	f.globalChanges(map[string]string{"scripts/nightly.sh": assignScriptV2})
+	f.originChanges(map[string]string{"scripts/nightly.sh": assignScriptV2})
 	res, err := f.assign()
 	if err != nil {
 		t.Fatalf("assign again: %v", err)
@@ -187,7 +187,7 @@ func TestAnUpdateLeavesAnAgencysChangeToAFileTheOriginLeft(t *testing.T) {
 	}
 }
 
-// Global removing the job's file leaves nothing to update from: the copy is
+// The origin removing the job's file leaves nothing to update from: the copy is
 // Finance's own, the record goes, and nothing is raised.
 func TestTheOriginRemovingTheDefinitionEndsTheAssignment(t *testing.T) {
 	f := newAssignFixture(t, nil, nil)
@@ -195,17 +195,17 @@ func TestTheOriginRemovingTheDefinitionEndsTheAssignment(t *testing.T) {
 	if _, err := f.assign(); err != nil {
 		t.Fatalf("assign: %v", err)
 	}
-	gitRemoveFile(t, f.globalRepo, "jobs/nightly.yaml", "Global withdraws the template")
-	grSync(t, f.global, "Global's repository, without the job")
+	gitRemoveFile(t, f.originRepo, "jobs/nightly.yaml", "the origin withdraws the template")
+	grSync(t, f.origin, "the origin's repository, without the job")
 	if _, open, _ := f.updateNotice(); open {
 		t.Error("a notice offering an update from a definition the origin no longer has")
 	}
-	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignments`); n != "0" {
+	if n := grString(t, f.origin.db, `SELECT COUNT(*) FROM assignments`); n != "0" {
 		t.Errorf("assignment records: %s, want none", n)
 	}
 }
 
-// A file Global removes and adds again is a new row, with a new uid: the
+// A file the origin removes and adds again is a new row, with a new uid: the
 // assignment is still found by its file, and assigning again is an update.
 func TestAFileAddedAgainInTheOriginIsStillTheSameAssignment(t *testing.T) {
 	f := newAssignFixture(t, nil, nil)
@@ -213,14 +213,14 @@ func TestAFileAddedAgainInTheOriginIsStillTheSameAssignment(t *testing.T) {
 	if _, err := f.assign(); err != nil {
 		t.Fatalf("assign: %v", err)
 	}
-	gitRemoveFile(t, f.globalRepo, "jobs/nightly.yaml", "removed")
-	grBackdateAll(t, f.global) // so the sync's prune sees the row as stale
-	grSync(t, f.global, "Global's repository, without the job")
-	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM jobs WHERE name = 'nightly' AND repo_id = 'global'`); n != "0" {
+	gitRemoveFile(t, f.originRepo, "jobs/nightly.yaml", "removed")
+	grBackdateAll(t, f.origin) // so the sync's prune sees the row as stale
+	grSync(t, f.origin, "the origin's repository, without the job")
+	if n := grString(t, f.origin.db, `SELECT COUNT(*) FROM jobs WHERE name = 'nightly' AND repo_id = 'repo-a'`); n != "0" {
 		t.Fatalf("the removed job was not pruned (count %s)", n)
 	}
-	f.globalChanges(map[string]string{"jobs/nightly.yaml": strings.Replace(assignJob, "the nightly backup", "the nightly backup, again", 1)})
-	newUID := grString(t, f.global.db, `SELECT uid FROM jobs WHERE name = 'nightly' AND repo_id = 'global'`)
+	f.originChanges(map[string]string{"jobs/nightly.yaml": strings.Replace(assignJob, "the nightly backup", "the nightly backup, again", 1)})
+	newUID := grString(t, f.origin.db, `SELECT uid FROM jobs WHERE name = 'nightly' AND repo_id = 'repo-a'`)
 	if newUID == f.jobUID {
 		t.Fatal("the job kept its uid: this test is of one that does not")
 	}
@@ -243,8 +243,8 @@ func TestReassigningWithAnotherScopeMovesTheCopy(t *testing.T) {
 	if _, err := f.assign(); err != nil {
 		t.Fatalf("assign: %v", err)
 	}
-	grAgencyScope(t, f.global.db, "ag-fin", "fin-other")
-	if _, err := f.global.db.Exec(`UPDATE scopes SET owner_agency = 'ag-fin' WHERE id = 'id-fin-other'`); err != nil {
+	grAgencyScope(t, f.origin.db, "ag-fin", "fin-other")
+	if _, err := f.origin.db.Exec(`UPDATE scopes SET owner_agency = 'ag-fin' WHERE id = 'id-fin-other'`); err != nil {
 		t.Fatal(err)
 	}
 	f.finScope = "fin-other"
@@ -293,11 +293,11 @@ func TestAnAgencyRemovingItsCopyDropsTheRecord(t *testing.T) {
 		t.Fatalf("assign: %v", err)
 	}
 	f.finChanges(nil, "jobs/nightly.yaml")
-	f.globalChanges(map[string]string{"scripts/nightly.sh": assignScriptV2})
+	f.originChanges(map[string]string{"scripts/nightly.sh": assignScriptV2})
 	if _, open, _ := f.updateNotice(); open {
 		t.Error("a notice for a copy the agency removed")
 	}
-	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignments`); n != "0" {
+	if n := grString(t, f.origin.db, `SELECT COUNT(*) FROM assignments`); n != "0" {
 		t.Errorf("assignment records: %s, want none", n)
 	}
 }
@@ -307,15 +307,15 @@ func TestAnAgencyRemovingItsCopyDropsTheRecord(t *testing.T) {
 func TestAnAssignmentNotYetSyncedIsNotJudged(t *testing.T) {
 	f := newAssignFixture(t, nil, nil)
 	f.finHasCalendar()
-	before := grString(t, f.global.db, `SELECT last_sha FROM git_repos WHERE id = 'repo-fin'`)
+	before := grString(t, f.origin.db, `SELECT last_sha FROM git_repos WHERE id = 'repo-fin'`)
 	if _, err := f.assign(); err != nil {
 		t.Fatalf("assign: %v", err)
 	}
-	if _, err := f.global.db.Exec(`UPDATE git_repos SET last_sha = ? WHERE id = 'repo-fin'`, before); err != nil {
+	if _, err := f.origin.db.Exec(`UPDATE git_repos SET last_sha = ? WHERE id = 'repo-fin'`, before); err != nil {
 		t.Fatal(err)
 	}
 	f.updateNotice()
-	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignments`); n != "1" {
+	if n := grString(t, f.origin.db, `SELECT COUNT(*) FROM assignments`); n != "1" {
 		t.Errorf("assignment records: %s, want the one, not judged", n)
 	}
 }

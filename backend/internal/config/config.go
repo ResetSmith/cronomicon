@@ -98,7 +98,7 @@ type Config struct {
 	DevSeed bool
 
 	// Runner auth (T9) + registration (A6.1).
-	RunnerBootstrapToken string // shared registration token, 24h rotation
+	RunnerBootstrapToken string // enrolled agents as Global's; refused since 2.5.3 (question 207), kept to be named when set
 
 	// Runner-agent binary distribution (runner provisioning D1). The server
 	// image bakes cross-compiled cronomicon-runner binaries + SHA256SUMS into this
@@ -164,12 +164,14 @@ type Config struct {
 	// client, so prefer a non-loopback Vault address where possible.
 	OutboundAllowLoopback bool
 
-	// GitLab integration (B3).
+	// GitLab integration (B3). These three (and CRONOMICON_GITLAB_TOKEN, read
+	// from the environment) configured Global's repository. Since 2.5.3 the
+	// built-in agency has no repository (CA-6), so nothing reads them: they are
+	// kept only to be named when set (settings.EnvSettingsIgnored, question 207).
 	GitLabBaseURL string
 	WebhookSecret string
-	// GitLabWriteBranch is the GitOps branch used for BOTH sync-read and
-	// publish-write (V1.1-10). Empty ⇒ fall back to the DB-backed
-	// Global's git_repos.branch, then "main". See gitlab.Service.writeBranch.
+	// GitLabWriteBranch was Global's repository's GitOps branch (V1.1-10); see
+	// GitLabBaseURL.
 	GitLabWriteBranch string
 	// GitFetchTimeout bounds ONE transfer of a sync: a fetch, a clone, or the
 	// update of one submodule. Every repository's syncs and publishes wait in

@@ -53,9 +53,9 @@ func removeAlone(ctx context.Context, reg *Registry, repoID string) (settings.Re
 func TestDisconnectingARepositoryRemovesWhatItSuppliedAndNothingElse(t *testing.T) {
 	t.Setenv("CRONOMICON_GIT_CACHE_DIR", filepath.Join(t.TempDir(), "git-cache", "job-definitions"))
 	a, repoA, remoteA := newSyncFixture(t)
-	gitCommitFile(t, repoA, remoteA, "jobs/global-job.yaml", grJob("global-job", "echo g"), "Global's job")
-	gitCommitFile(t, repoA, remoteA, "scripts/shared.sh", "#!/bin/bash\necho shared\n", "Global's script")
-	grSync(t, a, "Global's repository")
+	gitCommitFile(t, repoA, remoteA, "jobs/global-job.yaml", grJob("global-job", "echo g"), "ag-a's job")
+	gitCommitFile(t, repoA, remoteA, "scripts/shared.sh", "#!/bin/bash\necho shared\n", "ag-a's script")
+	grSync(t, a, "ag-a's repository")
 	b, repoB, remoteB := grSecondRepo(t, a) // repo-b, of ag-b, which owns hosts-of-repo-b
 	grCommitFiles(t, repoB, remoteB, map[string]string{
 		"jobs/b-job.yaml":       grScopedJob("b-job", "hosts-of-repo-b"),
@@ -111,7 +111,9 @@ func TestDisconnectingARepositoryRemovesWhatItSuppliedAndNothingElse(t *testing.
 		}
 		return c
 	}
-	before, globalBefore := of("repo-b"), of("global")
+	// Central's rows (repo_id global, as a connection kept from before 2.5.3
+	// left them) and ag-a's repository's stay.
+	before, globalBefore, aBefore := of("repo-b"), of("global"), of(fixtureRepo)
 	globalProblems := grCount(t, a.db, `SELECT COUNT(*) FROM git_sync_problems WHERE repo_id = 'global'`)
 	if before != (settings.RepoCounts{Jobs: 1, Workflows: 1, Scripts: 1, Schedules: 1, Scopes: 1}) {
 		t.Fatalf("the fixture's repository supplies %+v", before)
@@ -183,6 +185,9 @@ func TestDisconnectingARepositoryRemovesWhatItSuppliedAndNothingElse(t *testing.
 	}
 
 	// Nothing of Global's went, nor its clone, nor the agency's own scope.
+	if got := of(fixtureRepo); got != aBefore || aBefore.Jobs != 2 {
+		t.Errorf("ag-a's repository supplies %+v after the disconnect, was %+v", got, aBefore)
+	}
 	if got := of("global"); got != globalBefore {
 		t.Errorf("Global's repository supplies %+v after the disconnect, was %+v", got, globalBefore)
 	}

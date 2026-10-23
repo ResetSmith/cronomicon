@@ -166,12 +166,12 @@ Only consulted when `CRONOMICON_AUTH_MODE=oidc`.
 
 | Var | Default | Notes |
 |---|---|---|
-| `CRONOMICON_GITLAB_BASE_URL` | _(empty)_ | GitLab repo URL for job-definition sync. |
-| `CRONOMICON_GITLAB_TOKEN` | _(empty)_ | Read token for private repos; unauthenticated clone if empty. Secret. |
-| `CRONOMICON_GITLAB_WEBHOOK_SECRET` | _(empty)_ | Validates `X-Gitlab-Token` on the webhook. Secret. |
+| `CRONOMICON_GITLAB_BASE_URL` | _(empty)_ | **Removed in 2.5.3: no longer read** (the built-in agency has no repository; a set value is named in a warning at start and in a notice). It was Global's repository's URL. Connect a repository to an agency under **Settings → Repositories**. |
+| `CRONOMICON_GITLAB_TOKEN` | _(empty)_ | **Removed in 2.5.3: no longer read** (the built-in agency has no repository; a set value is named in a warning at start and in a notice). It was Global's repository's token. Secret. |
+| `CRONOMICON_GITLAB_WEBHOOK_SECRET` | _(empty)_ | **Removed in 2.5.3: no longer read** (the built-in agency has no repository; a set value is named in a warning at start and in a notice). It pinned Global's webhook secret; an agency's is rotated under **Settings → Repositories**. Secret. |
 | `CRONOMICON_GIT_FETCH_TIMEOUT` | `10m` | How long **one transfer** of a sync may take: a fetch, a first clone, or the update of one submodule. A Go duration (`10m`, `90s`, `1h`); a value that does not parse is ignored and the default used, and zero or less stops the server at start-up. Every repository's syncs and publishes wait in one queue, so a remote that stalls would hold all of them: at the bound the sync fails, the repository's sync problems say that the transfer was given up and name this variable, and the queue moves on. One figure for every repository. Raise it if the first clone of a large repository over a slow link is given up; a publish's push is not bounded by it. |
-| `CRONOMICON_GITLAB_WRITE_BRANCH` | _(empty)_ | The GitOps branch used for **both** sync-read and publish-write — there is one branch, not a read/write pair. Empty ⇒ fall back to the DB-backed branch of Global's repository (`git_repos.branch`, **Settings → Repositories**), then `main`. It applies to Global's repository only. Resolved **fresh per operation**, so a DB-side change applies without a restart; setting it here pins the branch and the panel value is ignored. |
-| `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | _(empty)_ | Out-of-band bootstrap registration token. Multi-use, env-configured; unlike UI-minted tokens (single-use per install) it is never consumed. Since v2.3.0 a registration token decides which agency owns the agent it enrols, and this one names none: an agent that registers with it is owned by, and serves, the **Global** agency. To enrol an agent for a department, mint a token for that agency under Runners. Secret. |
+| `CRONOMICON_GITLAB_WRITE_BRANCH` | _(empty)_ | **Removed in 2.5.3: no longer read** (the built-in agency has no repository; a set value is named in a warning at start and in a notice). It pinned Global's repository's branch; an agency's branch is its connection's (`git_repos.branch`, **Settings → Repositories**). |
+| `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | _(empty)_ | **Removed in 2.5.3: no longer accepted** (a set value is named in a warning at start and in a notice). It enrolled agents as the built-in agency's, which runs nothing since 2.5.3: a registration with it is refused (`bootstrap_token_retired`). Mint a registration token in the agency under **Runners**. An agent enrolled with it before takes no work: deregister it and enrol it again with an agency's token. Secret. |
 | `CRONOMICON_AGENT_DIR` | `/usr/share/cronomicon/agents` | Directory of runner-agent binaries + `SHA256SUMS` served unauthenticated at `GET /agents/{filename}` (the container image bakes them in). Missing dir ⇒ clean 404 with a build-it-yourself hint — bare-metal deploys can point this at their own build output. |
 
 ### Stale-runner reaper
@@ -403,9 +403,9 @@ whenever the connection is saved. The rest are re-read closer to use.
 
 | Setting | Env override | DB source | When applied |
 |---|---|---|---|
-| GitLab repo URL / PAT | `CRONOMICON_GITLAB_BASE_URL` / `CRONOMICON_GITLAB_TOKEN` (Global's repository only) | `git_repos` (the row `global`) | when the connection is saved (its sync service is rebuilt and syncs); an env value at restart |
-| GitLab webhook secret | `CRONOMICON_GITLAB_WEBHOOK_SECRET` (Global's repository only; pins validation; **rotation API returns 409 while set**) | `git_repos` (+ rotation overlap pair) | the stored secret: at once (read per delivery); the env value: restart |
-| GitLab write branch | `CRONOMICON_GITLAB_WRITE_BRANCH` (Global's repository only) | `git_repos.branch` | next sync/publish (read per operation) |
+| GitLab repo URL / PAT | none since 2.5.3 (`CRONOMICON_GITLAB_BASE_URL` / `CRONOMICON_GITLAB_TOKEN` are no longer read) | `git_repos` (an agency's row) | when the connection is saved (its sync service is rebuilt and syncs) |
+| GitLab webhook secret | none since 2.5.3 (`CRONOMICON_GITLAB_WEBHOOK_SECRET` is no longer read) | `git_repos` (+ rotation overlap pair) | at once (read per delivery) |
+| GitLab write branch | none since 2.5.3 (`CRONOMICON_GITLAB_WRITE_BRANCH` is no longer read) | `git_repos.branch` | next sync/publish (read per operation) |
 | Vault addr / AppRole (the installation's, also Global's) | `CRONOMICON_VAULT_ADDR` / `CRONOMICON_VAULT_ROLE_ID[_FILE]` / `CRONOMICON_VAULT_SECRET_ID[_FILE]` | `vault_config` | next Vault operation (the client is keyed on the resolved config) |
 | Vault namespace | `CRONOMICON_VAULT_NAMESPACE` | `vault_config.namespace` | next Vault operation |
 | An agency's own Vault (2.5.1) | — (no env; an agency cannot set the server's environment) | `agency_vaults` (one row per agency; AppRole credentials sealed) | next Vault operation of that agency's rows |

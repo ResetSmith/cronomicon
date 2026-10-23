@@ -24,7 +24,9 @@ func TestR8_RepoNamesAreWhatTheCallerMayRead(t *testing.T) {
 	}{
 		{gFinViewer, []string{"repo-fin"}}, // Global's is everywhere-readers' (C2, question 77)
 		{gFinApprover, []string{"repo-fin"}},
-		{gAllViewer, []string{"global", "repo-fin", "repo-tax"}},
+		// The built-in agency has no repository since 2.5.3 (CA-6): its row is
+		// listed to nobody, everywhere-readers included.
+		{gAllViewer, []string{"repo-fin", "repo-tax"}},
 	} {
 		rec := gateReq(t, h, http.MethodGet, "/api/v1/git-repo-names", c.who, "")
 		var body struct {

@@ -110,8 +110,11 @@ func TestI3_AnAgencyIsCreatedWithItsRepositoryAndDeletedWithIt(t *testing.T) {
 		}
 	}
 
-	// The disconnect route is gone: a repository is changed, not disconnected.
-	if rec := gateReq(t, h, http.MethodDelete, "/api/v1/agencies/ag:FIN/git-repo", gRoot, ""); rec.Code != http.StatusMethodNotAllowed && rec.Code != http.StatusNotFound {
-		t.Errorf("DELETE …/git-repo = %d, want it gone (405 or 404)", rec.Code)
+	// An agency's repository is changed, not disconnected. The route came back
+	// in 2.5.3 for the built-in agency's leftover connection alone (CA-6); for
+	// an agency's it refuses, as the route's absence did.
+	if rec := gateReq(t, h, http.MethodDelete, "/api/v1/agencies/ag:FIN/git-repo", gRoot, ""); rec.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(rec.Body.String(), "repository_not_removable") {
+		t.Errorf("DELETE …/git-repo of an agency's = %d %s, want 422 repository_not_removable", rec.Code, rec.Body)
 	}
 }

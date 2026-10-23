@@ -1206,17 +1206,28 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 	errs = append(errs, invErrs...)
 	warnings = append(warnings, invWarnings...)
 
-	// 2e. Confinement, in an agency's repository (GR-14, confineJobs): a job
-	// with no scope is refused by sync. A job whose scope is not one of the
-	// checkout's is accepted by sync only if the scope is one its agency owns
-	// that was built in the app, which this run cannot see: a warning.
+	// 2e. Confinement (GR-14, confineJobs): a job with no scope is refused by
+	// sync. Since 2.5.3 so without -agency too (question 206): a checkout with
+	// no flag was read as Global's repository, where a job could have none, and
+	// the built-in agency now runs nothing and syncs nothing (CA-1, CA-6). A job
+	// whose scope is not one of the checkout's is accepted by sync only if the
+	// scope is one its agency owns that was built in the app, which this run
+	// cannot see: a warning, asked of an agency's repository (-agency).
+	for _, js := range jobScopes {
+		if js[1] == "" {
+			msg := "a job in an agency's repository must name one of that agency's scopes (spec.scope): " +
+				"with none it would be Global's, and sync refuses it"
+			if !opt.Agency {
+				msg = "every job names one of its agency's scopes (spec.scope): a job with none is refused by sync, " +
+					"and the built-in agency, whose repository this used to be read as, runs nothing since 2.5.3"
+			}
+			errs = append(errs, ValidationError{File: js[0], Field: "spec.scope", Message: msg})
+		}
+	}
 	if opt.Agency {
 		for _, js := range jobScopes {
 			switch {
 			case js[1] == "":
-				errs = append(errs, ValidationError{File: js[0], Field: "spec.scope",
-					Message: "a job in an agency's repository must name one of that agency's scopes (spec.scope): " +
-						"with none it would be Global's, and sync refuses it"})
 			case !ownScopes[js[1]]:
 				warnings = append(warnings, ValidationError{File: js[0], Field: "spec.scope",
 					Message: fmt.Sprintf("the scope %q is not one of this repository's (inventory/): sync accepts the job only "+

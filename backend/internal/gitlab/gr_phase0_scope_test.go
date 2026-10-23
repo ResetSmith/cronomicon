@@ -17,7 +17,9 @@ import (
 // is how a Git scope has always worked, so it is pinned as behaviour to be
 // judged, not as a defect to invert: from Phase R4 a scope from an AGENCY's
 // repository takes its agency from the connection and returns as that
-// agency's (GR-18); a scope from Global's repository still returns as Global's.
+// agency's (GR-18); a scope from Global's repository returned as Global's. The
+// built-in agency has no repository since 2.5.3 (CA-6): this test's
+// repository is an agency's (newSyncFixture), and the scope returns as ag-a's.
 func TestGR0_AScopeThatLeavesGitAndReturnsIsANewScope(t *testing.T) {
 	svc, repo, remote := newSyncFixture(t)
 	exec := func(q string, args ...any) {
@@ -59,8 +61,8 @@ func TestGR0_AScopeThatLeavesGitAndReturnsIsANewScope(t *testing.T) {
 	if second == first {
 		t.Fatalf("the returned scope kept its id: it is no longer a new scope, and this test is to be re-read")
 	}
-	if got := agencies(second); got != "global" {
-		t.Errorf("the returned scope is in %q: it is expected to be born Global's", got)
+	if got := agencies(second); got != fixtureAgency {
+		t.Errorf("the returned scope is in %q: it is expected to be born its repository's agency's (ag-a)", got)
 	}
 	if n := grCount(t, svc.db, `SELECT COUNT(*) FROM scope_runners WHERE scope_id=?`, second); n != 0 {
 		t.Errorf("the returned scope is bound to %d runners: today the binding is expected to be gone", n)

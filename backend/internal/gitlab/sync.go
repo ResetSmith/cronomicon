@@ -1324,7 +1324,7 @@ func (s *Service) writeBranch(ctx context.Context) string {
 // sync after it failed).
 func (s *Service) cloneOrFetch(ctx context.Context, branch string) (*gogit.Repository, error) {
 	if s.repoURL == "" {
-		return nil, fmt.Errorf("CRONOMICON_GITLAB_BASE_URL not configured")
+		return nil, fmt.Errorf("the repository is not configured: its connection has no URL")
 	}
 	if err := s.checkURL(ctx); err != nil {
 		return nil, err

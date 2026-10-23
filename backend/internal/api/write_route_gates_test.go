@@ -122,6 +122,7 @@ var writeRouteGates = map[string]routeGate{
 	"POST /api/v1/git/sync":                                           {clsObject, "configurableRepo — configureApp on the agency of the repository ?repo= names; Global's without it, a global administrator's (GR-9)"},
 	"POST /api/v1/scopes/resync":                                      {clsObject, "configurableRepo, as POST /git/sync (question 53)"},
 	"PUT /api/v1/agencies/{agencyId}/git-repo":                        {clsObject, "requireRepoAgency — configureApp on the repository's agency; Global's is a global administrator's (GR-9)"},
+	"DELETE /api/v1/agencies/{agencyId}/git-repo":                     {clsObject, "requireRepoAgency, then refused 422 for an agency's (changed, never disconnected: IN-2); the built-in agency's leftover connection is a global administrator's repair (requireRepair, 2.5.3 CA-6)"},
 	"POST /api/v1/agencies/{agencyId}/git-repo/test":                  {clsObject, "requireRepoAgency; stores nothing, and the URL is held to GR-10 before anything is reached"},
 	"POST /api/v1/agencies/{agencyId}/git-repo/webhook-secret/rotate": {clsObject, "requireRepoAgency (GR-9, GR-20)"},
 	"POST /api/v1/jobs":                                               {clsCompose, "requireComposeScope on the job's scope"},

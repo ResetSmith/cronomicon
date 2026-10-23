@@ -409,17 +409,18 @@ func TestDrainTransition(t *testing.T) {
 
 // TestRegistrationToken verifies registration token checking (Phase 7:
 // checkRegistrationToken distinguishes valid / unknown / DB-row tokens; the
-// bootstrap token stays multi-use with no row).
+// bootstrap token was multi-use with no row until 2.5.3, and is refused now).
 func TestRegistrationToken(t *testing.T) {
 	svc := newTestService(t)
 
-	// Bootstrap token should validate, with no row id (never consumed).
+	// The bootstrap token validated, with no row id (never consumed), until
+	// 2.5.3: it is refused now, and says so (question 207).
 	chk, err := svc.checkRegistrationToken(context.Background(), "test-bootstrap-token")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !chk.OK || chk.RowID != 0 {
-		t.Errorf("bootstrap token: got %+v, want OK with RowID 0", chk)
+	if chk.OK || chk.RowID != 0 || chk.Code != "bootstrap_token_retired" {
+		t.Errorf("bootstrap token: got %+v, want refused with bootstrap_token_retired and RowID 0", chk)
 	}
 
 	// Unknown token should not validate.
@@ -434,10 +435,28 @@ func TestRegistrationToken(t *testing.T) {
 	// Insert a token and verify it validates and carries its row id.
 	ts := now()
 	expiry := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	// A token with no agency is the built-in agency's (the column's default):
+	// since 2.5.3 it enrols nothing (CA-1). An agency's does.
+	centralToken := "crn_reg_testcentral"
+	if _, err := svc.db.Exec(`
+		INSERT INTO registration_tokens(token_hash, created_by, created_at, expires_at)
+		VALUES (?, 'admin', ?, ?)`, hashToken(centralToken), ts, expiry); err != nil {
+		t.Fatalf("insert the built-in agency's token: %v", err)
+	}
+	chk, err = svc.checkRegistrationToken(context.Background(), centralToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chk.OK || chk.Code != "token_for_central" {
+		t.Errorf("the built-in agency's token: got %+v, want token_for_central", chk)
+	}
+	if _, err := svc.db.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, ?)`, opsAgencyID, opsAgencyName, ts); err != nil {
+		t.Fatal(err)
+	}
 	token := "crn_reg_testtoken123"
 	res, err := svc.db.Exec(`
-		INSERT INTO registration_tokens(token_hash, created_by, created_at, expires_at)
-		VALUES (?, 'admin', ?, ?)`, hashToken(token), ts, expiry)
+		INSERT INTO registration_tokens(token_hash, created_by, created_at, expires_at, agency_id)
+		VALUES (?, 'admin', ?, ?, ?)`, hashToken(token), ts, expiry, opsAgencyID)
 	if err != nil {
 		t.Fatalf("insert token: %v", err)
 	}
@@ -459,7 +478,9 @@ func TestRegisterProtocolVersionHandshake(t *testing.T) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/register",
 			strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer test-bootstrap-token")
+		// A token minted in an ordinary agency: the bootstrap token is refused
+		// since 2.5.3, before the protocol is looked at.
+		req.Header.Set("Authorization", "Bearer "+opsToken(t, svc))
 		rec := httptest.NewRecorder()
 		svc.HandleRegisterRunner(rec, req)
 		return rec
@@ -537,7 +558,7 @@ func TestRegisterStoresToolchains(t *testing.T) {
 		"capabilities":["ansible","checkout","vault","collection:community.vmware"],
 		"toolchains":{"ansibleCore":"2.16.3","checkout":true,"vault":true,"collections":{"community.vmware":"3.5.0"}}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/register", strings.NewReader(body))
-	req.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	req.Header.Set("Authorization", "Bearer "+opsToken(t, svc))
 	rec := httptest.NewRecorder()
 	svc.HandleRegisterRunner(rec, req)
 	if rec.Code != http.StatusCreated {

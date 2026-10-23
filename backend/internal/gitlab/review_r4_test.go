@@ -38,7 +38,7 @@ import (
 // TestGR0_AJobWhoseCopyIsNotRefreshedRunsItsScriptsBodyUnderItsOldRunType.
 func TestGR4_AnInAppJobsTimingStopsFollowingARepositoryItsAgencyNoLongerOwnsAndItsScriptCopyDoesNot(t *testing.T) {
 	a, _, _ := newSyncFixture(t)
-	grSync(t, a, "Global's repository")
+	grSync(t, a, "ag-a's repository")
 	b, repoB, remoteB := grSecondRepo(t, a) // ag-b owns hosts-of-repo-b
 	grCommitFiles(t, repoB, remoteB, map[string]string{
 		"scripts/tool.sh":       "#!/bin/bash\necho one\n",
@@ -125,11 +125,11 @@ func TestGR4_AnInAppJobsTimingStopsFollowingARepositoryItsAgencyNoLongerOwnsAndI
 // A reaction in an agency's repository may watch a definition BUILT IN THE APP
 // only when it is that agency's. Another agency's is refused in the words used
 // for a name nobody holds; and a Git upstream that only another agency's
-// repository has is refused too. Global's repository is held to the same rule
-// since §0a.
+// repository has is refused too. Global's repository was held to the same rule
+// from §0a until 2.5.3; ag-a's, the first repository here since, is held to it.
 func TestGR4_AReactionInAnAgencysRepositoryWatchesItsOwnAgencysDefinitionsOnly(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
-	grSync(t, a, "Global's repository")
+	grSync(t, a, "ag-a's repository")
 	b, repoB, remoteB := grSecondRepo(t, a)
 	c, repoC, remoteC := grRepo(t, a, "repo-c", "ag-c")
 	gitCommitFile(t, repoC, remoteC, "jobs/c-git.yaml", grJob("c-git", "echo c"), "another agency's Git job")
@@ -188,27 +188,28 @@ func TestGR4_AReactionInAnAgencysRepositoryWatchesItsOwnAgencysDefinitionsOnly(t
 		t.Errorf("another agency's Git job and nobody's are refused differently:\n%s\n%s", x, y)
 	}
 
-	// Global's repository watches Global's definitions only (§0a, IN-8; until
-	// then it might watch any agency's): an agency's in-app job is refused in
-	// the same words, and Global's own in-app job (no scope) is watched.
-	if _, err := a.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at) VALUES('app-g', 'g-app', 'cronomicon', 'bash', 't')`); err != nil {
+	// Another agency's repository (ag-a's) watches its own agency's definitions
+	// only (§0a, IN-8; until 2.5.3 this was Global's repository, and until §0a
+	// Global's might watch any agency's): an agency's in-app job is refused in
+	// the same words, and ag-a's own in-app job is watched.
+	if _, err := a.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at, scope, owner_agency) VALUES('app-g', 'g-app', 'cronomicon', 'bash', 't', ?, ?)`, fixtureScope, fixtureAgency); err != nil {
 		t.Fatal(err)
 	}
 	grCommitFiles(t, repoA, remoteA, map[string]string{
 		"jobs/global-watches.yaml": reacting("global-watches", "cronomicon", "job", "c-app"),
 		"jobs/global-own.yaml":     reacting("global-own", "cronomicon", "job", "g-app"),
-	}, "Global reacts to an agency's in-app job, and to its own")
-	grSync(t, a, "Global's repository with reactions")
-	if synced("global", "global-watches") {
-		t.Errorf("Global's repository's job reacting to an agency's in-app job was synced")
+	}, "ag-a reacts to another agency's in-app job, and to its own")
+	grSync(t, a, "ag-a's repository with reactions")
+	if synced(fixtureRepo, "global-watches") {
+		t.Errorf("ag-a's repository's job reacting to another agency's in-app job was synced")
 	}
-	if !synced("global", "global-own") {
-		t.Errorf("Global's repository's job reacting to Global's in-app job was not synced")
+	if !synced(fixtureRepo, "global-own") {
+		t.Errorf("ag-a's repository's job reacting to ag-a's in-app job was not synced")
 	}
 	y := said("nobodys.yaml", "no-such-job") // the agency's repository's words for nobody's
-	rows = grProblems(t, a, "global")
+	rows = grProblems(t, a, fixtureRepo)
 	if x := said("global-watches.yaml", "c-app"); x == "" || x != y {
-		t.Errorf("Global's reaction to an agency's in-app job is refused in other words than nobody's:\n%s\n%s", x, y)
+		t.Errorf("ag-a's reaction to another agency's in-app job is refused in other words than nobody's:\n%s\n%s", x, y)
 	}
 }
 
@@ -217,7 +218,7 @@ func TestGR4_AReactionInAnAgencysRepositoryWatchesItsOwnAgencysDefinitionsOnly(t
 // file is told so, and it is not counted among the scopes synced.
 func TestGR4_AScopeIsNotBornGlobalsForWantOfItsAgency(t *testing.T) {
 	a, _, _ := newSyncFixture(t)
-	grSync(t, a, "Global's repository")
+	grSync(t, a, "ag-a's repository")
 	// A repository row may name an agency that is not there: nothing in the
 	// schema says otherwise, and the route that will refuse it is Phase R6's.
 	remote := t.TempDir()
@@ -251,7 +252,7 @@ func TestGR4_AScopeIsNotBornGlobalsForWantOfItsAgency(t *testing.T) {
 // then the file was refused, the name taken, and so were the jobs).
 func TestGR4_ConfinementCountsOnlyAScopeThatIsItsAgencysAlone(t *testing.T) {
 	a, _, _ := newSyncFixture(t)
-	grSync(t, a, "Global's repository")
+	grSync(t, a, "ag-a's repository")
 	c, repoC, remoteC := grRepo(t, a, "repo-c", "ag-c")
 	gitCommitFile(t, repoC, remoteC, "inventory/cs.ini", fmt.Sprintf(grScope, "c1", "10.0.0.3"), "another agency's scope")
 	grSync(t, c, "another agency's repository")
@@ -285,17 +286,23 @@ func TestGR4_ConfinementCountsOnlyAScopeThatIsItsAgencysAlone(t *testing.T) {
 }
 
 // An inventory whose name a scope BUILT IN THE APP holds is its file's error
-// too, for Global's repository as for any other (it was a line in the log and
+// too, for any repository's (it was a line in the log and
 // a clean success).
 func TestGR4_AnInventoryNamedLikeAnInAppScopeIsItsFilesError(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
-	grSync(t, a, "Global's repository")
+	grSync(t, a, "ag-a's repository")
+	// The repository's agency's own scope built in the app (a scope's name is
+	// unique within its agency, I2; until 2.5.3 this was Global's, and the
+	// repository Global's).
 	if _, err := a.db.Exec(`INSERT INTO scopes (id, name, source, created_by, created_at) VALUES ('s-app', 'built', 'cronomicon', 'a', 't')`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := a.db.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-app', ?)`, fixtureAgency); err != nil {
+		t.Fatal(err)
+	}
 	gitCommitFile(t, repoA, remoteA, "inventory/built.ini", fmt.Sprintf(grScope, "g1", "10.0.0.1"), "an inventory of a name the app holds")
-	res := grSync(t, a, "Global's repository with the inventory")
-	rows := grProblems(t, a, "global")
+	res := grSync(t, a, "ag-a's repository with the inventory")
+	rows := grProblems(t, a, fixtureRepo)
 	if res.Status != "partial" || !grHas(rows, "error scope inventory/built.ini:", `the scope name "built" is already in use`) {
 		t.Errorf("the sync is %q; want partial with an error against the inventory:\n%s", res.Status, strings.Join(rows, "\n"))
 	}
@@ -305,13 +312,13 @@ func TestGR4_AnInventoryNamedLikeAnInAppScopeIsItsFilesError(t *testing.T) {
 }
 
 // "A job that has a script is never moved to another": an in-app job of an
-// agency joined to GLOBAL's script stays on it when its agency's repository
-// syncs a script of the same name.
+// agency joined to ANOTHER agency's script (ag-a's; Global's until 2.5.3)
+// stays on it when its agency's repository syncs a script of the same name.
 func TestGR4_ARejoinNeverMovesAJobThatHasAScript(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
-	gitCommitFile(t, repoA, remoteA, "scripts/task.sh", "#!/bin/bash\necho task-of-global\n", "Global's script")
-	grSync(t, a, "Global's repository")
-	global := grString(t, a.db, `SELECT uid FROM scripts WHERE repo_id='global' AND name='task.sh'`)
+	gitCommitFile(t, repoA, remoteA, "scripts/task.sh", "#!/bin/bash\necho task-of-a\n", "ag-a's script")
+	grSync(t, a, "ag-a's repository")
+	global := grString(t, a.db, `SELECT uid FROM scripts WHERE repo_id='repo-a' AND name='task.sh'`)
 	b, repoB, remoteB := grSecondRepo(t, a)
 	if _, err := a.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at, script_ref, script_uid, scope)
 	                        VALUES('j-b', 'app-b', 'cronomicon', 'bash', 't', 'task.sh', ?, 'hosts-of-repo-b')`, global); err != nil {
@@ -320,6 +327,6 @@ func TestGR4_ARejoinNeverMovesAJobThatHasAScript(t *testing.T) {
 	gitCommitFile(t, repoB, remoteB, "scripts/task.sh", "#!/bin/bash\necho task-of-b\n", "the agency's script of the same name")
 	grSync(t, b, "the agency's repository")
 	if got := grString(t, a.db, `SELECT script_uid FROM jobs WHERE uid = 'j-b'`); got != global {
-		t.Errorf("the job that had Global's script is now joined to %q; want it left on Global's %q", got, global)
+		t.Errorf("the job that had ag-a's script is now joined to %q; want it left on ag-a's %q", got, global)
 	}
 }

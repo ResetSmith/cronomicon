@@ -124,14 +124,18 @@ func TestGR2_ThePreviousWebhookSecretIsMasked(t *testing.T) {
 	}
 }
 
-// The connection functions take the repository they mean, and the environment
-// overrides are Global's alone (GR-21): a second repository reads its own row.
-func TestGR2_TheEnvironmentOverridesAreGlobalsAlone(t *testing.T) {
+// The connection functions take the repository they mean, and each reads its
+// own row. The environment overrides were Global's alone (GR-21); since 2.5.3
+// the built-in agency has no repository (CA-6) and they are read by none
+// (question 207): set, they are named by EnvSettingsIgnored and change
+// nothing, Global's leftover row included.
+func TestGR2_TheEnvironmentOverridesAreReadByNoRepository(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 	cfg := grWebhookCfg()
 	cfg.GitLabBaseURL = "https://git.example/global/defs.git"
 	cfg.GitLabWriteBranch = "env-branch"
+	cfg.WebhookSecret = "env-webhook-secret" // as config.Load reads it
 	t.Setenv("CRONOMICON_GITLAB_TOKEN", "env-token-for-global")
 	t.Setenv("CRONOMICON_GITLAB_WEBHOOK_SECRET", "env-webhook-secret")
 
@@ -144,8 +148,12 @@ func TestGR2_TheEnvironmentOverridesAreGlobalsAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if u, tok, _ := ResolveRepoRuntime(ctx, pool, cfg, repoid.Global); u != "https://git.example/global/defs.git" || tok != "env-token-for-global" {
-		t.Errorf("Global's runtime = %q, %q; want the environment's", u, tok)
+	if got, want := strings.Join(EnvSettingsIgnored(cfg), ","),
+		"CRONOMICON_GITLAB_BASE_URL,CRONOMICON_GITLAB_TOKEN,CRONOMICON_GITLAB_WEBHOOK_SECRET,CRONOMICON_GITLAB_WRITE_BRANCH"; got != want {
+		t.Errorf("the environment settings named as ignored = %q, want %q", got, want)
+	}
+	if u, tok, _ := ResolveRepoRuntime(ctx, pool, cfg, repoid.Global); u != "" || tok != "" {
+		t.Errorf("Global's runtime = %q, %q; want nothing (the environment's settings are not read)", u, tok)
 	}
 	if u, tok, _ := ResolveRepoRuntime(ctx, pool, cfg, "r-fin"); u != "https://git.example/finance/defs.git" || tok != "agency-token-9876" {
 		t.Errorf("the agency's repository's runtime = %q, %q; want its own row's, not the environment's", u, tok)
@@ -158,8 +166,8 @@ func TestGR2_TheEnvironmentOverridesAreGlobalsAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.RepoUrl != "https://git.example/global/defs.git" || !g.WebhookSecretEnvPinned || g.Pat != maskSecret("env-token-for-global") {
-		t.Errorf("Global's connection as read: %+v; want the environment's URL, token mask and pin", g)
+	if g.RepoUrl != "" || g.WebhookSecretEnvPinned || g.Pat != "" || g.PatSet || g.WriteBranch == "env-branch" {
+		t.Errorf("Global's connection as read: %+v; want its own row's (no URL, no token, no pin), none of the environment's", g)
 	}
 	a, err := GetGitlabConfig(ctx, pool, cfg, "r-fin")
 	if err != nil {
@@ -172,15 +180,19 @@ func TestGR2_TheEnvironmentOverridesAreGlobalsAlone(t *testing.T) {
 		t.Errorf("reading a repository that does not exist: %v, want ErrRepoNotFound", err)
 	}
 
-	// The pin refuses a rotation of Global's secret, and of no other's.
-	if _, _, _, err := RotateWebhookSecret(ctx, pool, cfg, repoid.Global, false, 10, "tester"); !errors.Is(err, ErrWebhookSecretEnvPinned) {
-		t.Errorf("rotating Global's pinned secret: %v, want ErrWebhookSecretEnvPinned", err)
+	// The environment's webhook secret pins nothing: no repository's rotation
+	// is refused for it.
+	if _, _, _, err := RotateWebhookSecret(ctx, pool, cfg, repoid.Global, false, 10, "tester"); err != nil {
+		t.Errorf("rotating Global's row's secret: %v, want it rotated (the environment's secret pins nothing since 2.5.3)", err)
 	}
 	if _, _, _, err := RotateWebhookSecret(ctx, pool, cfg, "r-fin", false, 10, "tester"); err != nil {
-		t.Errorf("rotating the agency's repository's secret: %v, want it rotated (the pin is Global's)", err)
+		t.Errorf("rotating the agency's repository's secret: %v, want it rotated", err)
 	}
-	if EnvBranch(cfg, repoid.Global) != "env-branch" || EnvBranch(cfg, "r-fin") != "" {
-		t.Errorf("the branch override: Global %q, the agency %q; want it for Global alone", EnvBranch(cfg, repoid.Global), EnvBranch(cfg, "r-fin"))
+	if EnvWebhookSecret(repoid.Global) != "" || EnvWebhookSecret("r-fin") != "" {
+		t.Errorf("the webhook secret override: Global %q, the agency %q; want it for neither", EnvWebhookSecret(repoid.Global), EnvWebhookSecret("r-fin"))
+	}
+	if EnvBranch(cfg, repoid.Global) != "" || EnvBranch(cfg, "r-fin") != "" {
+		t.Errorf("the branch override: Global %q, the agency %q; want it for neither", EnvBranch(cfg, repoid.Global), EnvBranch(cfg, "r-fin"))
 	}
 
 	// A write names its repository, and does not create one.

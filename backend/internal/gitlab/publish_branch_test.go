@@ -8,8 +8,10 @@ import (
 )
 
 // TestWriteBranchResolution verifies the V1.1-10 branch-resolution precedence
-// used by both sync (read) and publish (write): env override (via
-// config.GitLabWriteBranch, Global's only) → the repository's git_repos.branch → "main".
+// used by both sync (read) and publish (write): the repository's
+// git_repos.branch → "main". Until 2.5.3 an environment override
+// (config.GitLabWriteBranch, CRONOMICON_GITLAB_WRITE_BRANCH, Global's only)
+// came first; it is read no more (question 207).
 //
 // A full publish-to-bare-repo fixture does not exist in this package, and the
 // resolver is the only new branch-selection logic, so we test its precedence
@@ -42,17 +44,17 @@ func TestWriteBranchResolution(t *testing.T) {
 		t.Fatalf("empty db value: want %q, got %q", "main", got)
 	}
 
-	// 4. Env (config) override wins over DB even when DB is set.
+	// 4. The environment's branch (config) is ignored since 2.5.3: the row wins.
 	if _, err := db.Exec(`UPDATE git_repos SET branch='from-db' WHERE id='global'`); err != nil {
 		t.Fatalf("reset branch: %v", err)
 	}
 	s.Cfg = &config.Config{GitLabWriteBranch: "env-branch"}
-	if got := s.writeBranch(ctx); got != "env-branch" {
-		t.Fatalf("env override: want %q, got %q", "env-branch", got)
+	if got := s.writeBranch(ctx); got != "from-db" {
+		t.Fatalf("with the environment's branch set: want the row's %q, got %q", "from-db", got)
 	}
 
-	// 5. The override is Global's repository's alone (GR-21): another
-	// repository's Service reads its own row, and "main" when it names none.
+	// 5. Another repository's Service reads its own row (until 2.5.3 the
+	// override was Global's alone, GR-21), and "main" when it names none.
 	if _, err := db.Exec(`INSERT INTO git_repos(id, agency_id, branch) VALUES('repo-b', 'ag-b', 'b-branch')`); err != nil {
 		t.Fatalf("second repository: %v", err)
 	}

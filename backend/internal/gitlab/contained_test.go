@@ -65,7 +65,7 @@ func TestGR3_ASymlinkOutOfTheRepositoryIsNotRead(t *testing.T) {
 	link("schedules/leak.yaml", out("schedules", "their-schedule.yaml"))
 	link("jobs/absolute.yaml", filepath.Join(outside, "their-job.yaml"))
 	// A link that stays inside the repository, and a plain file beside them.
-	mustWrite(t, filepath.Join(remote, "shared", "aliased.yaml"), jobYAML("aliased-job"))
+	mustWrite(t, filepath.Join(remote, "shared", "aliased.yaml"), grScopedJob("aliased-job", fixtureScope))
 	link("jobs/alias.yaml", filepath.Join("..", "shared", "aliased.yaml"))
 	wt, err := repo.Worktree()
 	if err != nil {
@@ -291,7 +291,7 @@ func TestGR3_NeitherASidecarNorABodyNorTheClonesGitDirIsReadThroughALink(t *test
 			t.Errorf("the sync says where a link leads (%q): %s", where, res.ErrorMessage)
 		}
 	}
-	rows := grProblems(t, svc, "global")
+	rows := grProblems(t, svc, fixtureRepo)
 	if !grHas(rows, "error script scripts/wrapped.yaml:", "could not be read") {
 		t.Errorf("no row saying the script's body could not be read:\n%s", strings.Join(rows, "\n"))
 	}
@@ -336,7 +336,7 @@ func TestGR3_ALinkedInventoryDirectoryIsNotListed(t *testing.T) {
 	if n := grCount(t, svc.db, `SELECT COUNT(*) FROM scope_hosts WHERE host='stolen-host'`); n != 0 {
 		t.Errorf("a host was imported from a directory outside the repository")
 	}
-	rows := grProblems(t, svc, "global")
+	rows := grProblems(t, svc, fixtureRepo)
 	said := res.ErrorMessage + " " + strings.Join(rows, " ")
 	for _, leak := range []string{"theirscope", marker, outside, filepath.Base(outside)} {
 		if strings.Contains(said, leak) {

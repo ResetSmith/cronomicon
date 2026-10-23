@@ -109,15 +109,14 @@ func (r *Registry) Start(ctx context.Context) error {
 	return nil
 }
 
-// repoIDs lists the repositories, Global's first. Global's is listed even when
-// its row is missing (it cannot be, since migration 1310; a hand-built test
-// database may have none): the routes that existed before 2.4.0 mean Global's
-// repository and need a Service to answer them.
+// repoIDs lists the agencies' repositories. The built-in agency's is not one
+// (2.5.3, CA-6): it has no repository, and a connection it kept from before
+// does not sync (restart).
 func (r *Registry) repoIDs(ctx context.Context) ([]string, error) {
-	ids := []string{repoid.Global}
+	var ids []string
 	rows, err := r.db.QueryContext(ctx, `SELECT id FROM git_repos WHERE id <> ?`, repoid.Global)
 	if err != nil {
-		return ids, nil //nolint:nilerr // no table yet: Global's alone, as before 1310
+		return ids, nil //nolint:nilerr // no table yet: nothing to start
 	}
 	defer rows.Close()
 	var rest []string
@@ -174,6 +173,13 @@ func (r *Registry) Restart(_ context.Context, repoID string) error {
 // installation with none records "not configured" once per start). A written
 // connection with no URL has nothing to sync and records nothing.
 func (r *Registry) restart(repoID string, atStart bool) error {
+	if repoID == repoid.Global {
+		// The built-in agency has no repository (2.5.3, CA-6): nothing syncs
+		// for it, a leftover connection included. Its definitions would be
+		// Central's, which run nothing (CA-1).
+		r.Stop(repoID)
+		return nil
+	}
 	r.restartMu.Lock()
 	defer r.restartMu.Unlock()
 
@@ -195,10 +201,6 @@ func (r *Registry) restart(repoID string, atStart bool) error {
 		return err
 	}
 	svc := NewService(r.db, r.log, repoURL, token, r.cloneDir(repoID), "")
-	if repoID == repoid.Global && r.cfg != nil {
-		// The secret read from the environment at start-up is Global's alone (GR-21).
-		svc.webhookSecret = r.cfg.WebhookSecret
-	}
 	svc.repoID = repoID
 	svc.agencyID = agency
 	svc.Cfg = r.cfg

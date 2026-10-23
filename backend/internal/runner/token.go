@@ -359,6 +359,12 @@ func (s *Service) checkRegistrationToken(ctx context.Context, token string) (reg
 		// fallback into Global, which would put a department's machine on shared
 		// work; the token enrols nothing and is not consumed.
 		return regTokenCheck{Code: "agency_gone", Msg: "the agency this registration token was minted for no longer exists — mint a new one"}, nil
+	case agencyID == agencyid.Global:
+		// 2.5.3 (CA-1): the built-in agency runs nothing, so it enrols no agent.
+		// No token is minted for it since (the API refuses); one minted before
+		// enrols nothing and is not consumed.
+		return regTokenCheck{Code: "token_for_central", Msg: "this registration token was minted for the built-in " +
+			"agency, which runs nothing — mint a token in the agency the agent is for (Runners)"}, nil
 	default:
 		return regTokenCheck{OK: true, RowID: rowID, AgencyID: agencyID}, nil
 	}
@@ -368,9 +374,12 @@ func (s *Service) checkRegistrationToken(ctx context.Context, token string) (reg
 	if s.cfg.RunnerBootstrapToken != "" &&
 		subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.RunnerBootstrapToken)) == 1 {
 		// The environment bootstrap token has no row, so it cannot name an
-		// agency: it enrols a Global-owned agent serving Global, as a global
-		// administrator's token for Global does (LR-61).
-		return regTokenCheck{OK: true, AgencyID: agencyid.Global}, nil
+		// agency: it enrolled a Global-owned agent serving Global (LR-61). Since
+		// 2.5.3 the built-in agency runs nothing (CA-1), so it enrols nothing
+		// (question 207): the one who presents it is told what to use instead.
+		return regTokenCheck{Code: "bootstrap_token_retired", Msg: "the environment's bootstrap registration token is no " +
+			"longer accepted: the built-in agency runs nothing. Enrol this agent with a registration token minted in " +
+			"its agency (Runners)"}, nil
 	}
 	return regTokenCheck{Code: "unauthorized", Msg: "registration token invalid or expired"}, nil
 }

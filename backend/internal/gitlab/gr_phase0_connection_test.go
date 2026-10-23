@@ -39,6 +39,7 @@ func TestGR2_AChangedURLReachesTheClone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	grConfinedTo.Store(second, fixtureScope) // the same agency's repository
 	gitCommitFile(t, repo2, second, "jobs/other.yaml", jobYAML("other"), "the second repository's job")
 	head2, err := repo2.Head()
 	if err != nil {
@@ -108,7 +109,7 @@ func TestGR2_AChangedBranchIsFollowed(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The connection's branch is changed to it.
-	svc.Cfg.GitLabWriteBranch = "release"
+	setBranch(t, svc, "release")
 
 	res := svc.SyncBlocking(t.Context(), "manual")
 	if res.Status == "failed" {
@@ -130,7 +131,7 @@ func TestGR2_AChangedBranchIsFollowed(t *testing.T) {
 	}
 
 	// And back to the first branch: the job that is only on `release` goes.
-	svc.Cfg.GitLabWriteBranch = first
+	setBranch(t, svc, first)
 	grBackdate(t, svc.db)
 	back := svc.SyncBlocking(t.Context(), "manual")
 	if back.Status == "failed" {
@@ -141,7 +142,7 @@ func TestGR2_AChangedBranchIsFollowed(t *testing.T) {
 	}
 	// A branch the repository does not have is an error that says so, and the
 	// definitions stay as they were.
-	svc.Cfg.GitLabWriteBranch = "no-such-branch"
+	setBranch(t, svc, "no-such-branch")
 	if gone := svc.SyncBlocking(t.Context(), "manual"); gone.Status != "failed" || !strings.Contains(gone.ErrorMessage, "no-such-branch") {
 		t.Errorf("a branch that does not exist: status %q, error %q; want a failure that names it", gone.Status, gone.ErrorMessage)
 	}
@@ -171,7 +172,7 @@ func TestGR2_TheActivityLineNamesWhatWasSynced(t *testing.T) {
 		t.Fatalf("create the branch: %v", err)
 	}
 	gitCommitFile(t, repo, remote, "jobs/t.yaml", jobYAML("t"), "a job on trunk")
-	svc.Cfg.GitLabWriteBranch = "trunk"
+	setBranch(t, svc, "trunk")
 	// "manual": the history row's trigger is CHECKed, and a sync whose history
 	// row is refused writes no activity line either.
 	if res := svc.SyncBlocking(t.Context(), "manual"); res.Status == "failed" {

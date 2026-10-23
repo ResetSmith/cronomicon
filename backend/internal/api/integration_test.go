@@ -3,7 +3,9 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -78,6 +80,73 @@ func newTestServerWithLogDir(t *testing.T, logDir string) (*httptest.Server, *sq
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, pool
+}
+
+// itAgencyID and itAgencyName are the ordinary agency the integration tests
+// enrol agents in. The environment's bootstrap token enrolled them as Global's
+// until 2.5.3; the built-in agency runs nothing since (CA-1), and the
+// bootstrap token is refused (question 207).
+const (
+	itAgencyID   = "ag:OPS"
+	itAgencyName = "OPS"
+)
+
+// mintAgencyRegToken writes a single-use registration token for itAgencyID, as
+// POST /runners/registration-tokens mints one (its SHA-256 at rest), creating
+// the agency if it is not there yet, and returns the plaintext.
+func mintAgencyRegToken(t *testing.T, pool *sql.DB) string {
+	t.Helper()
+	if _, err := pool.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, '2026-01-01T00:00:00Z')`,
+		itAgencyID, itAgencyName); err != nil {
+		t.Fatalf("seed agency: %v", err)
+	}
+	token := "crn_reg_it-" + db.NewTraceID()
+	sum := sha256.Sum256([]byte(token))
+	if _, err := pool.Exec(`INSERT INTO registration_tokens (token_hash, created_by, created_at, expires_at, agency_id)
+		VALUES (?, 'tester', '2026-01-01T00:00:00Z', '2999-01-01T00:00:00Z', ?)`,
+		hex.EncodeToString(sum[:]), itAgencyID); err != nil {
+		t.Fatalf("seed registration token: %v", err)
+	}
+	return token
+}
+
+// itRepoURL is where connectAgencyRepo points itAgencyID's repository: a host
+// on the allowed list that the outbound guard refuses at the dial (loopback),
+// so a sync fails at once and nothing leaves the machine. The connection test
+// is fakeRepoTest, which lets it push.
+const itRepoURL = "http://127.0.0.1:1/ops.git"
+
+// connectAgencyRepo connects itAgencyID's repository through the route an
+// administrator uses (the built-in agency has no repository since 2.5.3,
+// CA-6), creating the agency and listing the host first, and returns its id.
+// The caller sets CRONOMICON_GIT_CACHE_DIR before the server is built, so the
+// clone a sync starts is under the test's own directory.
+func connectAgencyRepo(t *testing.T, ts *httptest.Server, client *http.Client, csrf string, pool *sql.DB) string {
+	t.Helper()
+	if _, err := pool.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, '2026-01-01T00:00:00Z')`,
+		itAgencyID, itAgencyName); err != nil {
+		t.Fatalf("seed agency: %v", err)
+	}
+	if _, err := pool.Exec(`INSERT OR REPLACE INTO settings (key, value, last_modified_by, last_modified_at)
+		VALUES ('gitAllowedHosts', '["127.0.0.1:1"]', 't', 't')`); err != nil {
+		t.Fatalf("seed allowed hosts: %v", err)
+	}
+	b, _ := json.Marshal(map[string]any{"repoUrl": itRepoURL, "writeBranch": "main", "pat": "glpat-ops-1234"})
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/agencies/"+itAgencyID+"/git-repo", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", csrf)
+	r, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	var made struct {
+		ID string `json:"id"`
+	}
+	if r.StatusCode != http.StatusCreated || json.NewDecoder(r.Body).Decode(&made) != nil || made.ID == "" {
+		t.Fatalf("connect %s's repository = %d", itAgencyID, r.StatusCode)
+	}
+	return made.ID
 }
 
 func TestHealthAndReadiness(t *testing.T) {
@@ -212,18 +281,20 @@ func TestDevLoginListsPopulatedData(t *testing.T) {
 }
 
 // TestRunnerRegisterAndPoll exercises the core DB-bus path end-to-end through
-// the real HTTP handlers: a runner registers with the bootstrap token, a queued
-// run is enqueued, and the runner's long-poll claims it (queued→running).
+// the real HTTP handlers: a runner registers with a registration token minted
+// in an agency, a queued run of that agency is enqueued, and the runner's
+// long-poll claims it (queued→running). (The environment's bootstrap token
+// enrolled a Global agent here until 2.5.3: the built-in agency runs nothing.)
 func TestRunnerRegisterAndPoll(t *testing.T) {
 	ts, pool := newTestServer(t)
 
-	// Register a bash-capable runner with the bootstrap token.
+	// Register a bash-capable runner with a token minted in OPS.
 	body, _ := json.Marshal(map[string]any{
 		"name": "runner-1", "os": "Linux", "capabilities": []string{"bash"}, "version": "1.0.0",
 		"protocolVersion": runnerproto.ProtocolVersion,
 	})
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/runners/register", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer boot-token")
+	req.Header.Set("Authorization", "Bearer "+mintAgencyRegToken(t, pool))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -244,13 +315,17 @@ func TestRunnerRegisterAndPoll(t *testing.T) {
 		t.Fatalf("register response missing runner.id/apiKey: %+v", reg)
 	}
 
-	// Enqueue a queued bash run for the runner to claim (the B5→B4 seam).
+	// Enqueue a queued bash run of OPS for the runner to claim (the B5→B4 seam).
 	traceID := db.NewTraceID()
 	if _, err := pool.Exec(`
-		INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES (?, 'integration-job', 'bash', 'queued', 'tester', 'manual', 'runner', '2026-06-09T00:00:00Z')`,
-		traceID); err != nil {
+		INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, executor, agencies_json, created_at)
+		VALUES (?, 'integration-job', 'bash', 'queued', 'tester', 'manual', 'runner', ?, '2026-06-09T00:00:00Z')`,
+		traceID, `["`+itAgencyName+`"]`); err != nil {
 		t.Fatalf("seed queued run: %v", err)
+	}
+	// What the enqueue path materializes beside agencies_json (mig. 690).
+	if _, err := pool.Exec(`INSERT INTO run_agencies (run_id, agency) VALUES (?, ?)`, traceID, itAgencyName); err != nil {
+		t.Fatalf("seed run_agencies: %v", err)
 	}
 
 	// Poll — should immediately claim the queued run.
@@ -271,7 +346,8 @@ func TestRunnerRegisterAndPoll(t *testing.T) {
 }
 
 func TestSettingsEndpointsIntegration(t *testing.T) {
-	ts, _ := newTestServer(t)
+	t.Setenv("CRONOMICON_GIT_CACHE_DIR", filepath.Join(t.TempDir(), "git-cache", "job-definitions"))
+	ts, pool := newTestServer(t)
 
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{
@@ -300,15 +376,18 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 
 	// Secret-bearing settings need a KEK — newTestServer sets SecretKEKEnv.
 
-	// 1. GitLab Settings GET / PUT
+	// 1. GitLab Settings GET / PUT — an agency's repository's connection: the
+	// built-in agency has none since 2.5.3 (CA-6).
+	connectAgencyRepo(t, ts, client, csrfToken, pool)
+	repoRoute := ts.URL + "/api/v1/agencies/" + itAgencyID + "/git-repo"
 	var gitlabCfg settings.GitlabConfig
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/agencies/global/git-repo", nil)
+	req, _ := http.NewRequest(http.MethodGet, repoRoute, nil)
 	r, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.StatusCode != http.StatusOK {
-		t.Fatalf("GET /agencies/global/git-repo = %d", r.StatusCode)
+		t.Fatalf("GET /agencies/%s/git-repo = %d", itAgencyID, r.StatusCode)
 	}
 	json.NewDecoder(r.Body).Decode(&gitlabCfg)
 	r.Body.Close()
@@ -316,7 +395,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	gitlabCfg.BotName = "custom-bot-name"
 	gitlabCfg.Pat = "new-pat-token"
 	b, _ := json.Marshal(gitlabCfg)
-	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/agencies/global/git-repo", bytes.NewReader(b))
+	req, _ = http.NewRequest(http.MethodPut, repoRoute, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrfToken)
 	r, err = client.Do(req)
@@ -325,7 +404,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	}
 	if r.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(r.Body)
-		t.Fatalf("PUT /agencies/global/git-repo = %d, body = %s", r.StatusCode, body)
+		t.Fatalf("PUT /agencies/%s/git-repo = %d, body = %s", itAgencyID, r.StatusCode, body)
 	}
 	r.Body.Close()
 
@@ -481,7 +560,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 		"overlapMinutes": 10,
 	}
 	b, _ = json.Marshal(rotInput)
-	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/v1/agencies/global/git-repo/webhook-secret/rotate", bytes.NewReader(b))
+	req, _ = http.NewRequest(http.MethodPost, repoRoute+"/webhook-secret/rotate", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrfToken)
 	r, err = client.Do(req)
@@ -490,7 +569,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	}
 	if r.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(r.Body)
-		t.Fatalf("POST /agencies/global/git-repo/webhook-secret/rotate = %d, body = %s", r.StatusCode, body)
+		t.Fatalf("POST /agencies/%s/git-repo/webhook-secret/rotate = %d, body = %s", itAgencyID, r.StatusCode, body)
 	}
 	var rotResult map[string]any
 	json.NewDecoder(r.Body).Decode(&rotResult)
@@ -933,14 +1012,35 @@ func TestRunTriggerIgnoresEveryExecutorChoice(t *testing.T) {
 }
 
 // TestResyncScopes verifies the POST /api/v1/scopes/resync endpoint's basic
-// functionality and error response when git sync is unconfigured.
+// functionality and error response when the repository cannot be reached.
+//
+// With no ?repo= the route meant Global's repository; the built-in agency has
+// none since 2.5.3 (CA-6), and a global administrator is told so (404
+// not_connected). The resync is of an agency's repository, named.
 func TestResyncScopes(t *testing.T) {
-	ts, _ := newTestServer(t)
+	t.Setenv("CRONOMICON_GIT_CACHE_DIR", filepath.Join(t.TempDir(), "git-cache", "job-definitions"))
+	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
 
-	// Since GitLab isn't configured in the test server, sync will fail.
-	// But it should still return Status 200 OK with the error listed in the "errors" field.
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/scopes/resync", nil)
+	for _, path := range []string{"/api/v1/scopes/resync", "/api/v1/scopes/resync?repo=global"} {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+path, nil)
+		req.Header.Set("X-CSRF-Token", csrf)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("POST %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "not_connected") {
+			t.Errorf("POST %s = %d %s, want 404 not_connected", path, resp.StatusCode, body)
+		}
+	}
+
+	// The agency's repository cannot be reached (its host is loopback), so the
+	// sync fails. But it should still return Status 200 OK with the error
+	// listed in the "errors" field.
+	repo := connectAgencyRepo(t, ts, client, csrf, pool)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/scopes/resync?repo="+url.QueryEscape(repo), nil)
 	req.Header.Set("X-CSRF-Token", csrf)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -985,8 +1085,13 @@ func TestResyncScopes(t *testing.T) {
 // TestRequestBodySizeLimit proves PP-M1: an oversized JSON body on a write route
 // is rejected (rather than buffered whole and risking OOM on the single-process
 // backend), while a normal-sized body on the same route still succeeds.
+//
+// The route is an agency's repository's connection: Global's was the one
+// until 2.5.3, and is refused before its body is read since (CA-6), which
+// would prove nothing about the cap.
 func TestRequestBodySizeLimit(t *testing.T) {
-	ts, _ := newTestServer(t)
+	t.Setenv("CRONOMICON_GIT_CACHE_DIR", filepath.Join(t.TempDir(), "git-cache", "job-definitions"))
+	ts, pool := newTestServer(t)
 
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{
@@ -1009,8 +1114,9 @@ func TestRequestBodySizeLimit(t *testing.T) {
 		}
 	}
 
+	connectAgencyRepo(t, ts, client, csrfToken, pool)
 	put := func(body []byte) int {
-		req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/agencies/global/git-repo", bytes.NewReader(body))
+		req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/agencies/"+itAgencyID+"/git-repo", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-CSRF-Token", csrfToken)
 		r, err := client.Do(req)
@@ -1029,8 +1135,9 @@ func TestRequestBodySizeLimit(t *testing.T) {
 		t.Fatalf("oversized PUT = %d, want a 4xx rejection (body cap not enforced)", got)
 	}
 
-	// Normal-sized body on the same route still works.
-	small, _ := json.Marshal(map[string]string{"bot_name": "ci-bot"})
+	// Normal-sized body on the same route still works: the connection as it
+	// is, with another bot name.
+	small, _ := json.Marshal(map[string]string{"repoUrl": itRepoURL, "writeBranch": "main", "botName": "ci-bot"})
 	if got := put(small); got != http.StatusOK {
 		t.Fatalf("normal PUT = %d, want 200 (cap rejected a legitimate body)", got)
 	}

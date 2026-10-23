@@ -9,11 +9,15 @@ import (
 // `cronomicon validate` is told what a checkout is (2.4.0 Phase R7; GR-14,
 // GR-25, R0's item 3 for R7, R4's note for R7).
 //
-// A checkout cannot say which repository it is, and one rule differs: an
-// agency's job must name a scope (GR-14: sync refuses one with none), where
-// Global's may name none (it is Global's then).
+// A checkout cannot say which repository it is. Until 2.5.3 one rule
+// differed: an agency's job must name a scope (GR-14: sync refuses one with
+// none), where Global's could name none (it was Global's then). The built-in
+// agency has no repository since (CA-6), and every job names a scope
+// (question 206).
 //
-//   - With no option, the checkout is Global's: as before.
+//   - With no option: a job with no scope is an error (until 2.5.3 the
+//     checkout was read as Global's, and it was not reported); a scope not
+//     the checkout's own is not asked about.
 //   - -agency: a job with no scope is an error; one whose scope is not the
 //     checkout's own is a warning.
 //   - In both, a reference the checkout does not have is an ERROR, as at sync
@@ -62,23 +66,29 @@ func TestValidateRepoIsToldWhatTheCheckoutIs(t *testing.T) {
 		return out
 	}
 
-	// ── Global's repository (no option): as it always was.
+	// ── No option (until 2.5.3 read as Global's repository).
 	g := run(ValidateOptions{})
 	for _, c := range []struct{ field, text string }{
 		{"spec.script_ref", `"global-script"`}, {"spec.scheduleRefs", `"global-nightly"`}, {"spec.reactions[after].onName", `no such job "global-job"`},
 	} {
 		if !in(g.errs, "jobs/borrows.yaml", c.field, c.text) {
-			t.Errorf("Global's checkout: %s is not an error (Global's has nothing to borrow from): %v", c.text, g.errs)
+			t.Errorf("a checkout with no option: %s is not an error (it has nothing to borrow from): %v", c.text, g.errs)
 		}
 	}
 	if !in(g.errs, "jobs/dangling.yaml", "spec.script_ref", `"nowhere"`) {
-		t.Errorf("Global's checkout: a dangling script_ref is not an error: %v", g.errs)
+		t.Errorf("a checkout with no option: a dangling script_ref is not an error: %v", g.errs)
 	}
-	if len(of(g.errs, "jobs/noscope.yaml"))+len(of(g.warnings, "jobs/noscope.yaml"))+len(of(g.warnings, "jobs/other.yaml")) != 0 {
-		t.Errorf("Global's checkout: a job with no scope, or another's, is reported (Global's may name any or none): %v %v", g.errs, g.warnings)
+	if !in(g.errs, "jobs/noscope.yaml", "spec.scope", "every job names one of its agency's scopes") {
+		t.Errorf("a checkout with no option: a job with no scope is not an error: %v", g.errs)
+	}
+	if n := len(of(g.errs, "jobs/noscope.yaml")); n != 1 {
+		t.Errorf("a checkout with no option: a job with no scope has %d errors, want the one: %v", n, g.errs)
+	}
+	if len(of(g.warnings, "jobs/noscope.yaml"))+len(of(g.errs, "jobs/other.yaml"))+len(of(g.warnings, "jobs/other.yaml")) != 0 {
+		t.Errorf("a checkout with no option: a scope not the checkout's own is reported, or a job with none is warned of too: %v %v", g.errs, g.warnings)
 	}
 	if !in(g.warnings, "workflows/flow.yaml", "spec.steps", `step job "global-job"`) || in(g.warnings, "workflows/flow.yaml", "spec.steps", "may be Global's") {
-		t.Errorf("Global's checkout: the step is not the plain warning: %v", g.warnings)
+		t.Errorf("a checkout with no option: the step is not the plain warning: %v", g.warnings)
 	}
 
 	// ── An agency's.

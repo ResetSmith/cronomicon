@@ -37,8 +37,8 @@ func TestAnInAppJobFollowsItsScript(t *testing.T) {
 		"jobs/greet-git.yaml":   "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: greet-git\nspec:\n  script_ref: greet\n",
 	}, "an inline script, a project, and a Git job")
 	grSync(t, svc, "first sync")
-	greet := grString(t, svc.db, `SELECT uid FROM scripts WHERE repo_id='global' AND name='greet'`)
-	proj := grString(t, svc.db, `SELECT uid FROM scripts WHERE repo_id='global' AND name='proj'`)
+	greet := grString(t, svc.db, `SELECT uid FROM scripts WHERE repo_id='repo-a' AND name='greet'`)
+	proj := grString(t, svc.db, `SELECT uid FROM scripts WHERE repo_id='repo-a' AND name='proj'`)
 	hashOne := grString(t, svc.db, `SELECT content_hash FROM scripts WHERE uid=?`, greet)
 
 	// In-app jobs, as the composer writes them: the name, the join, and a copy

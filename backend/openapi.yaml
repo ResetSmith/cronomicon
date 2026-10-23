@@ -7272,15 +7272,21 @@ paths:
         in: path
         required: true
         schema: { type: string }
-        description: The agency's id; `global` for Global's repository.
+        description: The agency's id. `global` is the built-in agency, which has no repository since v2.5.3.
     get:
       tags: [Agencies]
       operationId: getAgencyGitRepo
       summary: An agency's repository and its connection (v2.4.0)
       description: |
-        Needs `configureApp` on the agency (GR-9); Global's needs a global
-        administrator. 403 for anyone else, whether or not the agency or its
-        repository is there. 404 `not_connected` when the agency has none.
+        Needs `configureApp` on the agency (GR-9); the built-in agency's needs a
+        global administrator. 403 for anyone else, whether or not the agency or
+        its repository is there. 404 `not_connected` when the agency has none.
+
+        **The built-in agency (`global`, v2.5.3, CA-6)** has no repository: 404
+        `not_connected`, unless it still holds one from before 2.5.3 (its row
+        with a URL or a synced commit, or definitions synced from it), which is
+        answered with `leftover: true`. A leftover does not sync; it is removed
+        with `DELETE` (a repair), and its URL connected to an ordinary agency.
       responses:
         '200':
           description: The repository; `pat` is always masked on read.
@@ -7321,6 +7327,9 @@ paths:
         out of a first write. The connection is applied when it is saved: the
         repository's sync service is started (or rebuilt) from it and syncs at
         once.
+
+        **The built-in agency (`global`)** has no repository since v2.5.3
+        (CA-6): 422 `central_runs_nothing`, and nothing is stored.
       parameters: [{ $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -7341,6 +7350,54 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+    delete:
+      tags: [Agencies]
+      operationId: deleteAgencyGitRepo
+      summary: Remove the built-in agency's leftover repository (v2.5.3)
+      description: |
+        "Remove the leftover repository" (v2.5.3, CA-6, question 203): the
+        built-in agency's repository from before 2.5.3 goes, with what it
+        synced (jobs and their schedules, workflows, scripts, Git schedules,
+        Git scopes and their imported host records, its sync problems), as an
+        agency's deletion removes its repository's. Its run history stays. To
+        keep the definitions, connect the same URL and branch to an ordinary
+        agency afterwards: its sync brings them in as that agency's.
+
+        A global administrator's repair: `repair: true` and a `reason` (at most
+        500 characters, written to the audit log). 403 for anyone else; 409
+        `repair_required` without `repair`; 422 `validation_failed` without a
+        reason; 404 `not_connected` when there is no leftover; 409
+        `scopes_busy`, naming them, while a scope of it is bound to runners and
+        has work queued (nothing is removed).
+
+        An agency's repository is changed, never disconnected (IN-2): for any
+        other agency, 422 `repository_not_removable` (404 for an agency that is
+        not there).
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repair, reason]
+              properties:
+                repair: { type: boolean }
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: The leftover was removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  removed: { type: boolean }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Validation' }
 
   /agencies/{agencyId}/git-repo/test:
@@ -14574,7 +14631,12 @@ components:
           properties:
             id:
               type: string
-              description: The repository's id; `global` for Global's. It is the `{repoId}` of the webhook route.
+              description: The repository's id; `global` for the built-in agency's leftover (v2.5.3). It is the `{repoId}` of the webhook route.
+            leftover:
+              type: boolean
+              description: |
+                v2.5.3 (CA-6): the built-in agency's repository from before 2.5.3,
+                which does not sync and is only removed. Absent for an agency's.
             agencyId:
               type: string
               description: The agency the repository belongs to; `global` for Global's.
