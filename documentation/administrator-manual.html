@@ -4181,9 +4181,9 @@ cronomicon validate .                # Global's repository
                     <li><strong>Each sealed value is bound to its row</strong> (since 2.5.1). The row a value lives in
                         (a secret's or SSH key's row; a sealed setting's row, such as one repository's token) is part
                         of its encryption, so a value copied into another row, another agency's secret or another
-                        repository's token, does not open there, even with the KEK. The first start of 2.5.1 binds
-                        every value from before, and from then on an unbound value is refused. <strong>This is why
-                            2.5.1 is a one-way upgrade</strong> (&sect;8.6).</li>
+                        repository's token, does not open there, even with the KEK. The first start of 2.5.1 or later
+                        binds every value from before, and from then on an unbound value is refused. <strong>This is
+                            why an upgrade from a release before 2.5.1 is one-way</strong> (&sect;8.6).</li>
                     <li><strong>Vault secrets</strong> store only a reference (<code>path#field</code>, in the Vault KV
                         v2 key-value secrets engine). The value stays in Vault, and the server gets it live with the
                         Vault auth method configured for the row's <strong>owner</strong> agency: its own Vault when it
@@ -6661,15 +6661,15 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
 
                 <h3 id="backups">8.6 Backups &amp; restore</h3>
                 <div class="callout danger">
-                    <div class="ct"><span class="em">⚠️</span> 2.5.1 is a one-way upgrade: back up before you start it</div>
-                    <p>At its first start, 2.5.1 re-encrypts every stored secret, SSH key and sealed setting (repository
+                    <div class="ct"><span class="em">⚠️</span> The upgrade to 2.5.2 is one-way: back up before you start it</div>
+                    <p>At its first start, 2.5.2 (by 2.5.1's migrations, which it carries) re-encrypts every stored secret, SSH key and sealed setting (repository
                         tokens, Vault, S3, SMTP and metrics credentials, push-target URLs) so that each value is bound
                         to its own row (&sect;6.1). It logs when it does. From then on <strong>the release you came
                             from cannot open those values</strong>: starting it again on the same database leaves every
                         secret, key, token and credential unreadable, and reversing the migrations does not undo it.
                         The only way back to that release (2.2.3, or a build of 2.5.0) is the backup you took before
                         the upgrade, and anything changed since is lost.
-                        <strong>Take that backup, and keep it apart, before you start 2.5.1.</strong></p>
+                        <strong>Take that backup, and keep it apart, before you start 2.5.2.</strong></p>
                 </div>
                 <p>A retention and backup worker runs a daily sweep at a fixed <strong>wall-clock UTC time</strong>
                     (<code>CRONOMICON_BACKUP_AT</code>, default <strong>02:00</strong>). It prunes aged rows <em>and
@@ -6856,10 +6856,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             </tr>
                             <tr>
                                 <td>Upgrade</td>
-                                <td><strong>From 2.5.1 to 2.5.2, see <a href="#upgrade-2-5-2">From 2.5.1 to
-                                            2.5.2</a>: replace the image. From 2.2.3 (or any release before 2.5.1),
-                                        follow <a href="#upgrade-2-5-1">Upgrading from 2.2.3 to 2.5.1</a> with the
-                                        2.5.2 image: it is one step, and one-way.</strong> In general:
+                                <td><strong>From 2.2.3 (production, and every published image), follow <a
+                                            href="#upgrade-2-5-1">Upgrading from 2.2.3 to 2.5.2</a>: it is one step,
+                                        and one-way. From a build of 2.5.1, see <a href="#upgrade-2-5-2">From a 2.5.1
+                                            build to 2.5.2</a>: replace the image.</strong> In general:
                                     <strong>first, run <code>cronomicon preflight</code></strong> with the new binary
                                     against the database that is in use (add <code>-db &lt;path&gt;</code> if the path is
                                     not in the environment). It is read-only. It tells you what the new release changes
@@ -6911,11 +6911,13 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     </table>
                 </div>
 
-                <h4 id="upgrade-2-5-2">From 2.5.1 to 2.5.2</h4>
-                <p>2.5.2 adds three migrations (<strong>1640</strong> to <strong>1660</strong>), which run at the
-                    first start; the runner protocol stays at <strong>14</strong>, and nothing is one-way beyond what
-                    2.5.1 already did. Take a snapshot as for every release (&sect;8.6), replace the image, and start
-                    it. Then:</p>
+                <h4 id="upgrade-2-5-2">From a 2.5.1 build to 2.5.2</h4>
+                <p>2.5.1 was not published, but an installation that runs a build of it (schema 1630) goes to 2.5.2
+                    by replacing the image. 2.5.2 adds three migrations (<strong>1640</strong> to
+                    <strong>1660</strong>), which run at the first start; the runner protocol stays at
+                    <strong>14</strong>, and nothing is one-way beyond what 2.5.1 already did. Take a snapshot as for
+                    every release (&sect;8.6), replace the image, and start it. Then, and after an upgrade from 2.2.3
+                    as well:</p>
                 <ul>
                     <li><strong>The built-in agency keeps its name.</strong> An upgraded installation still calls it
                         <em>Global</em>; only a new installation calls it <em>Central</em>. To rename it, Scopes
@@ -6935,24 +6937,25 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         call.</li>
                 </ul>
 
-                <h4 id="upgrade-2-5-1">Upgrading from 2.2.3 to 2.5.1</h4>
+                <h4 id="upgrade-2-5-1">Upgrading from 2.2.3 to 2.5.2</h4>
                 <div class="callout danger">
-                    <div class="ct"><span class="em">⚠️</span> 2.5.1 is a one-way upgrade: back up before you start it</div>
-                    <p>At its first start 2.5.1 binds every stored secret, SSH key and sealed setting to its own row
+                    <div class="ct"><span class="em">⚠️</span> The upgrade is one-way: back up before you start it</div>
+                    <p>At its first start 2.5.2 (by 2.5.1's migrations, which it carries) binds every stored secret,
+                        SSH key and sealed setting to its own row
                         (&sect;6.1). From then on <strong>the release you came from cannot open them</strong>, and
                         reversing the migrations does not undo it. The only way back to that release is the backup
                         taken before the upgrade (step 2); anything changed since is lost.</p>
                 </div>
-                <p>Production and every published image go from 2.2.3 (or any release since) to 2.5.1 <strong>in one
-                        step</strong>: there is no stop at 2.3.x, 2.4.x or 2.5.0. 2.5.0 was not published; like 2.3.x
-                    and 2.4.x it is a step of the development line, and what it changed arrives with 2.5.1. The schema
-                    goes from 1210 to <strong>1630</strong> in the first start, and the runner protocol stays at
+                <p>Production and every published image go from 2.2.3 (or any release since) to 2.5.2 <strong>in one
+                        step</strong>: there is no stop at 2.3.x, 2.4.x, 2.5.0 or 2.5.1. None of them was published;
+                    each is a step of the development line, and what it changed arrives with 2.5.2. The schema goes
+                    from 1210 to <strong>1660</strong> in the first start, and the runner protocol stays at
                     <strong>14</strong>. The project's <code>CHANGELOG.md</code> says what each release in between
-                    did. What has to be done, in order, is this; the same steps, with the 2.5.2 image, go straight
-                    to 2.5.2 (the schema then goes to <strong>1660</strong>, and <a href="#upgrade-2-5-2">From 2.5.1
-                        to 2.5.2</a> says what else to look at). An installation with no data has nothing to do but
-                    upgrade the agents with the server. An installation that already runs a build of 2.5.0 follows
-                    <a href="#upgrade-2-5">From a 2.5.0 build</a> below instead.</p>
+                    did. What has to be done, in order, is this, with the 2.5.2 image; then <a
+                        href="#upgrade-2-5-2">From a 2.5.1 build to 2.5.2</a> says what else to look at. An
+                    installation with no data has nothing to do but upgrade the agents with the server. An
+                    installation that already runs a build of 2.5.0 follows <a href="#upgrade-2-5">From a 2.5.0
+                        build</a> below instead.</p>
                 <ol class="steps">
                     <li><strong>Before you stop the old server, let queued runs finish, or cancel them.</strong> A
                         run still queued for the in-app SSH executor of 2.2.x is closed at the upgrade as skipped,
@@ -6982,7 +6985,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         (<code>systemctl kill --kill-who=main &lt;unit&gt;</code>: a second <code>systemctl
                         stop</code> joins the stop under way and sends none), and the run
                         is closed as <code>runner_lost</code> when the agent starts again. <strong>Then stop the old
-                        server and start 2.5.1 on the same database</strong> (it migrates at its first start, and binds
+                        server and start 2.5.2 on the same database</strong> (it migrates at its first start, and binds
                         the sealed values, step 8); the steps below come after.</li>
                     <li><strong>Read the Notices inbox</strong> (&sect;8.10). Every conversion that needs a person is
                         listed there, by agency: what was shared before 2.4.0 stays Global's and stops where it
@@ -7011,7 +7014,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <li><strong>Assign Vault path prefixes</strong> (Scopes &rarr; Agencies) to each agency that
                         holds Vault-backed secrets or keys. Until it has one, an agency's administrators cannot
                         manage its Vault-backed secrets and keys; its runs are not affected.</li>
-                    <li><strong>What the first start of 2.5.1 binds, and what is optional.</strong> The first start
+                    <li><strong>What the first start binds (since 2.5.1), and what is optional.</strong> The first start
                         binds every sealed value to its row and logs that it did; it also encrypts the push targets'
                         URLs. With no KEK there is nothing to bind. A value it cannot open (a KEK version that is not
                         configured) is left readable, and the start tries again next time: configure the missing KEK
@@ -7053,15 +7056,16 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
 
                 <h4 id="upgrade-2-5">From a 2.5.0 build</h4>
                 <p>2.5.0 was not published, but an installation that runs a build of it (schema 1590) has the steps
-                    above behind it, and goes to 2.5.1 in four.</p>
+                    above behind it, and goes to 2.5.2 in four.</p>
                 <ol class="steps">
                     <li><strong>Take a backup</strong> of the database (or the volume), and keep it apart
                         (&sect;8.6). It is the only way back to 2.5.0 (above).</li>
-                    <li><strong>Start 2.5.1.</strong> The first start binds the sealed values (step 8 above), and
+                    <li><strong>Start 2.5.2.</strong> The first start binds the sealed values (step 8 above), and
                         empties the unread list of Apprise URLs that 2.5.0 left in <code>notification_config</code>.
-                        The schema goes from 1590 to <strong>1630</strong>.</li>
+                        The schema goes from 1590 to <strong>1660</strong>.</li>
                     <li><strong>Upgrade the agents with the server</strong>, as for every release.</li>
-                    <li><strong>Optionally</strong>, as in step 8 above.</li>
+                    <li><strong>Optionally</strong>, as in step 8 above; then read <a href="#upgrade-2-5-2">From a 2.5.1
+                            build to 2.5.2</a> for what else to look at.</li>
                 </ol>
 
                 <h4 id="upgrade-2-3">What the first start converts from 2.2.x (the 2.3.0 changes)</h4>
@@ -7470,7 +7474,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                         run from the server</em> (<code>may_run_on_server</code>);<br><em>Shell
                                         jobs that ran in two places may now run in either</em>
                                     (<code>mixed_scope</code>)</td>
-                                <td>Raised only on an installation that went through the 2.3.0 upgrade pass with the SSH executor on (the pass is retired in 2.5.0, so an upgrade from 2.2.3 to 2.5.1 raises none), for an unbound scope (or for the jobs with no scope) that had shell jobs then. Before the upgrade, the scope's shell jobs ran in one place. Now a
+                                <td>Raised only on an installation that went through the 2.3.0 upgrade pass with the SSH executor on (the pass is retired in 2.5.0, so an upgrade from 2.2.3 to 2.5.2 raises none), for an unbound scope (or for the jobs with no scope) that had shell jobs then. Before the upgrade, the scope's shell jobs ran in one place. Now a
                                     runner of the other kind serves the agency too, so a job can run in a
                                     different place, with different keys and different approved host keys.</td>
                                 <td>Bind the scope to the runners that are to serve it (&sect;7.10). The notice

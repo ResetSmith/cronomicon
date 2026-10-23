@@ -7,11 +7,12 @@ cloned on the volume (since 2.4.0, one clone per repository); the clones are not
 in the snapshot, because the repositories are their source and the server
 rebuilds them (see [After a restore: runs and repositories](#after-a-restore-runs-and-repositories)).
 
-> **2.5.1 is a one-way upgrade: back up before you start it.** At its first
-> start 2.5.1 binds every sealed value (stored secrets, SSH keys, repository
-> tokens, Vault and other credentials) to its own row. After that **the
-> release you came from cannot open them** (2.2.3, from which production goes
-> to 2.5.1 in one step, or a build of the unpublished 2.5.0), and the down of
+> **The upgrade to 2.5.2 is one-way: back up before you start it.** At its
+> first start 2.5.2 (by 2.5.1's migrations, which it carries) binds every
+> sealed value (stored secrets, SSH keys, repository tokens, Vault and other
+> credentials) to its own row. After that **the release you came from cannot
+> open them** (2.2.3, from which production goes to 2.5.2 in one step, or a
+> build of the unpublished 2.5.0), and the down of
 > migration 1620 does not undo it. The backup taken before the upgrade is the
 > only way back to that release; anything changed since is lost. Restoring
 > that backup and starting the old release on it works.
