@@ -48,25 +48,43 @@ func readOP7Attention(t *testing.T, h http.Handler) (op7Attention, map[string]st
 	return ov, byItem
 }
 
-func TestOP7AFailedStepIsListedTwiceToday(t *testing.T) {
+func TestOP7AFailedStepIsListedOnce(t *testing.T) {
 	h, pool := gateServer(t)
 	seedSwitcher(t, pool)
-	seedFailedSteps(t, mustExec(t, pool))
+	exec := mustExec(t, pool)
+	seedFailedSteps(t, exec)
 
 	ov, items := readOP7Attention(t, h)
 	for k, trace := range map[string]string{
 		"workflow_failed s0-tax-flow": "wr-tax-step",
-		"job_failed s0-tax-job":       "r-tax-step", // defect 100: the same failure again
-		"job_failed s0-fin-job":       "r-fin-step",
+		// FIN's workflow got past its step: the job's item is the only one.
+		"job_failed s0-fin-job": "r-fin-step",
 	} {
 		if items[k] != trace {
 			t.Errorf("%s: run %q, want %q (all: %v)", k, items[k], trace, items)
 		}
 	}
+	if trace, ok := items["job_failed s0-tax-job"]; ok {
+		t.Errorf("TAX's step %q is listed beside the workflow it failed", trace)
+	}
 	if _, ok := items["workflow_failed s0-fin-flow"]; ok {
 		t.Errorf("FIN's workflow succeeded past its step, yet it is listed")
 	}
-	if ov.AttentionTotal != len(ov.Attention) || ov.AttentionTotal != 3 {
-		t.Errorf("attentionTotal %d for %d items, want 3", ov.AttentionTotal, len(ov.Attention))
+	// The total counts the failure once: the drop comes before the count.
+	if ov.AttentionTotal != len(ov.Attention) || ov.AttentionTotal != 2 {
+		t.Errorf("attentionTotal %d for %d items, want 2", ov.AttentionTotal, len(ov.Attention))
+	}
+
+	// TAX's workflow runs again and succeeds: the step's failure is still the
+	// job's latest run, and now nothing else shows it.
+	exec(`INSERT INTO workflow_runs (id, workflow_name, workflow_source, workflow_uid, status, triggered_by, trigger_kind, created_at) VALUES
+	        ('wr-tax-again', 's0-tax-flow', 'cronomicon', 'w-tax', 'success', 'x', 'manual', ?)`,
+		time.Now().UTC().Add(-10*time.Minute).Format(time.RFC3339))
+	_, items = readOP7Attention(t, h)
+	if items["job_failed s0-tax-job"] != "r-tax-step" {
+		t.Errorf("TAX's step after its workflow succeeded: %q, want r-tax-step (all: %v)", items["job_failed s0-tax-job"], items)
+	}
+	if _, ok := items["workflow_failed s0-tax-flow"]; ok {
+		t.Errorf("TAX's workflow succeeded since, yet it is listed")
 	}
 }

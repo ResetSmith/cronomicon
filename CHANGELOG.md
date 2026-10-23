@@ -106,6 +106,13 @@ caution there); the schema goes from 1210 to 1660.
 
 ### Fixed
 
+- **A failed workflow step is listed once in Needs attention.** A workflow
+  failed by one of its steps showed two items, the step's job and the
+  workflow, each with its own *Acknowledge*, so acknowledging the workflow
+  left the job's item counted as not yet acknowledged. The workflow's item
+  now stands for both. A step failure the workflow got past (continue on
+  error, a failure branch), or one whose workflow has run again since, is
+  still listed as the job's own item: nothing else shows it.
 - **An opened row stays within the window when its table is wider than
   the window.** A row that opens into a detail spans every column, so in a
   narrower window its right side (a run's *Remove acknowledgement* and its

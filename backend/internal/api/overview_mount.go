@@ -449,7 +449,8 @@ func (s *Server) annotateFromDefinitions(ctx context.Context, items []attentionI
 // overviewAttention is what needs a person, across agencies: jobs and
 // workflows whose last run failed, runs lost in the last day, and runs still
 // running past their job's timeout. (A repository whose last sync failed is
-// added by the caller.)
+// added by the caller.) A step that failed its listed workflow is listed
+// once, under the workflow (dropCoveredSteps).
 func (s *Server) overviewAttention(ctx context.Context, now time.Time, since string, names map[string]string) ([]attentionItem, error) {
 	var out []attentionItem
 	add := func(kind, owner, name string, idv, trace sql.NullString, at string) {
@@ -478,12 +479,35 @@ func (s *Server) overviewAttention(ctx context.Context, now time.Time, since str
 		}
 		return rows.Err()
 	}
-	if err := scan("job_failed", `SELECT `+agencyid.JobOwnerSQL("j")+`, j.name, j.uid, r.id, r.created_at
+	// A failed job's run may be a step of a workflow run (2.5.2 OP7): which
+	// one is kept beside the item, for dropCoveredSteps.
+	stepOf := map[string]string{} // job_failed run id → its workflow run
+	scanFailedJobs := func() error {
+		rows, err := s.db.QueryContext(ctx, `SELECT `+agencyid.JobOwnerSQL("j")+`, j.name, j.uid, r.id, r.created_at,
+		       COALESCE(r.workflow_run_id, '')
 		  FROM jobs j
 		  JOIN runs r ON r.id = (SELECT r2.id FROM runs r2 WHERE r2.job_uid = j.uid AND r2.kind = 'job'
 		                           AND r2.status NOT IN ('queued', 'running', 'skipped')
 		                         ORDER BY r2.created_at DESC LIMIT 1)
-		 WHERE j.deleted_at IS NULL AND r.status IN ('failure', 'killed')`); err != nil {
+		 WHERE j.deleted_at IS NULL AND r.status IN ('failure', 'killed')`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var owner, name, at, workflowRun string
+			var idv, trace sql.NullString
+			if err := rows.Scan(&owner, &name, &idv, &trace, &at, &workflowRun); err != nil {
+				return err
+			}
+			add("job_failed", owner, name, idv, trace, at)
+			if workflowRun != "" && trace.Valid {
+				stepOf[trace.String] = workflowRun
+			}
+		}
+		return rows.Err()
+	}
+	if err := scanFailedJobs(); err != nil {
 		return nil, err
 	}
 	if err := scan("workflow_failed", `SELECT `+agencyid.WorkflowOwnerSQL+`, w.name, w.uid, wr.id, wr.created_at
@@ -519,7 +543,34 @@ func (s *Server) overviewAttention(ctx context.Context, now time.Time, since str
 			add("run_overdue", owner, name, idv, trace, started)
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return dropCoveredSteps(out, stepOf), nil
+}
+
+// dropCoveredSteps takes out a failed job's item whose run was a step of a
+// workflow run listed as failed (2.5.2 OP7, defect 100): the workflow's item
+// says it, and two items asked for two acknowledgements of one failure. A step
+// failure its workflow got past (continueOnError, a failure branch), or one
+// whose workflow has run again since, keeps its item: nothing else shows it.
+// It runs before the caller counts and caps the list, so the total counts the
+// failure once and the cap cannot keep the step's item without the workflow's.
+func dropCoveredSteps(items []attentionItem, stepOf map[string]string) []attentionItem {
+	listed := map[string]bool{}
+	for _, it := range items {
+		if it.Kind == "workflow_failed" && it.TraceID != nil {
+			listed[*it.TraceID] = true
+		}
+	}
+	kept := items[:0]
+	for _, it := range items {
+		if it.Kind == "job_failed" && it.TraceID != nil && listed[stepOf[*it.TraceID]] {
+			continue
+		}
+		kept = append(kept, it)
+	}
+	return kept
 }
 
 // nextFireByAgency is each agency's next scheduled run in the coming week, as
