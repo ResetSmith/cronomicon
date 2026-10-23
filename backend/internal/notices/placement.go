@@ -153,25 +153,12 @@ func checkRunPlacement(ctx context.Context, database *sql.DB) error {
 						engineDifference, bindRemedy)})
 			}
 		}
-		for _, agency := range u.Placed {
-			var name string
-			var serves bool
-			err := database.QueryRowContext(ctx, `
-				SELECT a.name, EXISTS (SELECT 1 FROM runner_agencies ra JOIN runners rn ON rn.id = ra.runner_id
-				                        WHERE rn.kind = 'server' AND ra.agency_id = a.id)
-				  FROM agencies a WHERE a.id = ?`, agency).Scan(&name, &serves)
-			if errors.Is(err, sql.ErrNoRows) || (err == nil && !serves) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			found[KindAgencyPlaced] = append(found[KindAgencyPlaced], Finding{AgencyID: agencyid.Global, Subject: agency,
-				Detail: fmt.Sprintf("The upgrade to 2.3.0 added %s to the agencies the local runner serves, because the server "+
-					"was running that agency's shell jobs and would otherwise have stopped. The local runner takes the runs of "+
-					"the agencies on its list and no others (Settings → Local runner). Leave %s there to keep those jobs "+
-					"running from the server, or take it off once an agent of its own serves it.", name, name)})
-		}
+		// KindAgencyPlaced (the 2.3.0 upgrade added an agency to the local
+		// runner's serve list) is no longer raised (the review of 2.5.3 CA3): its
+		// remedy, "take it off", edits a serve list that is the local runner's
+		// owner alone since 2.5.3 (CA-8), and giving the local runner to one of
+		// the agencies it named made it come back. Its open notices clear at the
+		// next check.
 	}
 	for _, kind := range []string{KindMayRunOnAgent, KindMixedScope, KindMayRunOnServer, KindAgencyPlaced} {
 		if err := Reconcile(ctx, database, kind, found[kind]); err != nil {
@@ -409,8 +396,9 @@ func checkNoRunnerForShellJobs(ctx context.Context, database *sql.DB) error {
 			AgencyID: id,
 			Subject:  id,
 			Detail: fmt.Sprintf("%s has shell jobs (%s) and no runner that can run them: no agent of its own. "+
-				"Until 2.3.0 the server ran every agency's shell jobs; since 2.4.0 the local runner is Global's and "+
-				"runs Global's only, so a run of these jobs waits. Enrol an agent for %s (Runners → Add Runner).",
+				"Until 2.3.0 the server ran every agency's shell jobs; since 2.5.3 the local runner runs the work "+
+				"of the one agency a global administrator gives it, so a run of these jobs waits. Enrol an agent for "+
+				"%s (Runners → Add Runner), or ask a global administrator for the local runner.",
 				name, list, name),
 		})
 	}

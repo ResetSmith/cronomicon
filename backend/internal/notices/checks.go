@@ -45,6 +45,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindAgencyNoRepository, checkAgencyNoRepository},
 		{KindEnvironmentSettingsIgnored, checkEnvironmentSettingsIgnored},
 		{KindLocalRunnerServed, checkLocalRunnerServed},
+		{KindLocalRunnerUnassigned, checkLocalRunnerUnassigned},
 		{KindGlobalScriptJob, checkGlobalScriptJob},
 		{KindGlobalScheduleBound, checkGlobalScheduleBound},
 		{KindGlobalCalendarScope, checkCalendarAgencies},

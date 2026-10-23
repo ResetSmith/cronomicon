@@ -868,21 +868,82 @@ func (s *Server) handleSetLocalRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Enabled       *bool `json:"enabled"`
-		MaxConcurrent *int  `json:"maxConcurrent"`
+		// OwnerAgency gives the local runner to an agency, or to none ("" or
+		// "global": unassigned, which is off) (2.5.3, CA-8, CA-9). Applied
+		// before the switch, so one request may assign it and turn it on.
+		OwnerAgency   *string `json:"ownerAgency"`
+		Enabled       *bool   `json:"enabled"`
+		MaxConcurrent *int    `json:"maxConcurrent"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
-	if body.Enabled == nil && body.MaxConcurrent == nil {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_error", "give enabled, maxConcurrent, or both")
+	if body.OwnerAgency == nil && body.Enabled == nil && body.MaxConcurrent == nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_error", "give ownerAgency, enabled, maxConcurrent, or several")
 		return
 	}
-	lr, err := settings.SetLocalRunner(r.Context(), s.db, s.cfg.LocalRunnerForbid, body.Enabled, body.MaxConcurrent, id.Email)
+	// Every field is judged before anything is written (the review of CA3): a
+	// request that changed the agency and then failed on another field left
+	// the agency changed, the answer an error, and the engine untold.
+	if body.MaxConcurrent != nil && (*body.MaxConcurrent < 1 || *body.MaxConcurrent > settings.LocalRunnerMaxConcurrentCap) {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_error",
+			"maxConcurrent must be between 1 and "+strconv.Itoa(settings.LocalRunnerMaxConcurrentCap))
+		return
+	}
+	if body.Enabled != nil && *body.Enabled {
+		if s.cfg.LocalRunnerForbid {
+			httpx.Fail(w, http.StatusConflict, "local_runner_forbidden", settings.ErrLocalRunnerForbidden.Error())
+			return
+		}
+		owner, oerr := settings.LocalRunnerOwnerAfter(r.Context(), s.db, body.OwnerAgency)
+		if oerr != nil {
+			httpx.Fail500(w, s.log, "db_error", oerr)
+			return
+		}
+		if owner == agencyid.Global {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "local_runner_unassigned", settings.ErrLocalRunnerUnassigned.Error())
+			return
+		}
+	}
+	var lr *settings.LocalRunner
+	var err error
+	ownerChanged := false
+	if body.OwnerAgency != nil {
+		lr, ownerChanged, err = settings.SetLocalRunnerOwner(r.Context(), s.db, *body.OwnerAgency, id.Email)
+	}
+	if err == nil && (body.Enabled != nil || body.MaxConcurrent != nil) {
+		lr, err = settings.SetLocalRunner(r.Context(), s.db, s.cfg.LocalRunnerForbid, body.Enabled, body.MaxConcurrent, id.Email)
+	}
+	if err != nil && ownerChanged && s.sshExec != nil {
+		// The agency changed and was committed (and with it the switch turned
+		// off): the engine is told even though a later step failed.
+		if aerr := s.sshExec.Apply(context.WithoutCancel(r.Context())); aerr != nil {
+			s.log.Error("local runner: its agency changed and the engine could not apply it", "error", aerr)
+		}
+	}
+	if err == nil && lr == nil {
+		lr, err = settings.GetLocalRunner(r.Context(), s.db, s.cfg.LocalRunnerForbid)
+	}
+	var bound *settings.LocalRunnerBoundError
 	switch {
+	case errors.As(err, &bound):
+		httpx.Fail(w, http.StatusConflict, "local_runner_bound", err.Error())
+		return
 	case errors.Is(err, settings.ErrLocalRunnerForbidden):
 		httpx.Fail(w, http.StatusConflict, "local_runner_forbidden", err.Error())
+		return
+	case errors.Is(err, settings.ErrLocalRunnerUnassigned):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "local_runner_unassigned", err.Error())
+		return
+	case errors.Is(err, settings.ErrLocalRunnerBusy):
+		httpx.Fail(w, http.StatusConflict, "local_runner_busy", err.Error())
+		return
+	case errors.Is(err, settings.ErrUnknownAgency):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "the agency named for the local runner does not exist")
+		return
+	case errors.Is(err, settings.ErrLocalRunnerGlobalOnly):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "local_runner_serves_owner", err.Error())
 		return
 	case errors.Is(err, settings.ErrNoLocalRunner):
 		httpx.Fail(w, http.StatusNotFound, "not_found", err.Error())

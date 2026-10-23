@@ -950,9 +950,8 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 				return ErrUnknownAgency
 			}
 		}
-		// Global beside another agency is refused for an agent (its list is its
-		// owner). The local runner is the one runner whose list may hold both
-		// (MA-11): it serves whoever a global administrator names.
+		// An agent's list, and since 2.5.3 the local runner's, is its owner
+		// (MA-11, CA-8): CheckRunnerPlacement judges it.
 		local, err := IsLocalRunner(ctx, database, a.RunnerID)
 		if err != nil {
 			return err

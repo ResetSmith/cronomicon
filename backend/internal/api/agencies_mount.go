@@ -1192,7 +1192,7 @@ func failAgencyRule(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, settings.ErrOwnerChangeRefused):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "owner_change_refused", err.Error())
 	case errors.Is(err, settings.ErrLocalRunnerGlobalOnly):
-		httpx.Fail(w, http.StatusUnprocessableEntity, "local_runner_global_only", err.Error())
+		httpx.Fail(w, http.StatusUnprocessableEntity, "local_runner_serves_owner", err.Error())
 	default:
 		return false
 	}

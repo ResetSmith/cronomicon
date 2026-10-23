@@ -51,15 +51,54 @@ func localRow(t *testing.T, pool *sql.DB) (id, status string, conc int) {
 	return id, status, conc
 }
 
+// localAgency is the agency the tests give the local runner to: since 2.5.3
+// it serves the one agency a global administrator gives it, and with none it
+// is off (CA-8, CA-9). Its runs are that agency's.
+const (
+	localAgency     = "ag-local"
+	localAgencyName = "Local"
+)
+
+func ensureLocalAgency(t *testing.T, pool *sql.DB) {
+	t.Helper()
+	if _, err := pool.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, 't')`, localAgency, localAgencyName); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// giveLocalRunner gives the local runner (made if the server has not made it
+// yet, seeded as the server's start would) to localAgency. A change of agency
+// turns it off (2.5.3, CA3), so with on it is turned on again, as a global
+// administrator does once the agency has approved its hosts' keys.
+func giveLocalRunner(ctx context.Context, t *testing.T, pool *sql.DB, on bool, seedConcurrency int) {
+	t.Helper()
+	ensureLocalAgency(t, pool)
+	if _, _, err := settings.EnsureLocalRunner(ctx, pool, on, seedConcurrency); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := settings.SetLocalRunnerOwner(ctx, pool, localAgency, "root@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if on {
+		if _, err := settings.SetLocalRunner(ctx, pool, false, &on, nil, "root@example.com"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func queueSSHRun(t *testing.T, pool *sql.DB, id string) {
 	t.Helper()
+	ensureLocalAgency(t, pool)
 	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := pool.Exec(`INSERT OR IGNORE INTO jobs(name, run_type, command, concurrency_policy, synced_at) VALUES('j-local','bash','true','Allow',?)`, now); err != nil {
+	if _, err := pool.Exec(`INSERT OR IGNORE INTO jobs(name, run_type, command, concurrency_policy, synced_at, owner_agency) VALUES('j-local','bash','true','Allow',?,?)`, now, localAgency); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`
-		INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES(?, 'j-local', 'bash', 'queued', 'tester', 'manual', 'runner', ?)`, id, now); err != nil {
+		INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, executor, created_at, agencies_json)
+		VALUES(?, 'j-local', 'bash', 'queued', 'tester', 'manual', 'runner', ?, ?)`, id, now, `["`+localAgencyName+`"]`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(`INSERT OR IGNORE INTO run_agencies (run_id, agency) VALUES (?, ?)`, id, localAgencyName); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -86,15 +125,30 @@ func waitFor(t *testing.T, what string, d time.Duration, ok func() bool) {
 }
 
 // An upgrade arrives in the state it was running in: the SSH executor's old
-// switch seeds the setting once, the row is created, and the engine claims.
+// switch seeds the setting once and the row is created. Since 2.5.3 the row is
+// born the built-in agency's, which is unassigned and so off whatever the seed
+// (CA-9): nothing is claimed until a global administrator gives it to an
+// agency, and then the engine claims at once.
 func TestStartCreatesTheLocalRunnerAndClaimsWhenSeededOn(t *testing.T) {
 	svc, pool, ctx := localRunnerEngine(t, &config.Config{SSHExecutorEnabled: true, SSHExecutorConcurrency: 3})
 	queueSSHRun(t, pool, "run-seeded")
 	svc.Start(ctx)
 
 	_, status, conc := localRow(t, pool)
-	if status != "online" || conc != 3 {
-		t.Errorf("after start: status %q, concurrency %d; want online and the seeded 3", status, conc)
+	if status != "offline" || conc != 3 {
+		t.Errorf("after start, unassigned: status %q, concurrency %d; want offline and the seeded 3", status, conc)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if s := runStatus(t, pool, "run-seeded"); s != "queued" {
+		t.Fatalf("an unassigned local runner claimed a run: %s", s)
+	}
+
+	giveLocalRunner(ctx, t, pool, true, 3)
+	if err := svc.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, status, _ := localRow(t, pool); status != "online" {
+		t.Errorf("given to an agency with its seeded switch on: status %q, want online", status)
 	}
 	// It has no target to reach, so the run fails — what matters is that it was CLAIMED.
 	waitFor(t, "the queued ssh run to be claimed", 5*time.Second, func() bool { return runStatus(t, pool, "run-seeded") != "queued" })
@@ -121,6 +175,7 @@ func TestApplyStartsAndStopsTheClaimLoop(t *testing.T) {
 	svc.Start(ctx)
 	on, off := true, false
 
+	giveLocalRunner(ctx, t, pool, false, 0) // unassigned is off and is not turned on (2.5.3, CA-9)
 	if _, err := settings.SetLocalRunner(ctx, pool, false, &on, nil, "root@example.com"); err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +234,7 @@ func TestApplyStartsAndStopsTheClaimLoop(t *testing.T) {
 func TestTheHostCanForbidTheLocalRunner(t *testing.T) {
 	svc, pool, ctx := localRunnerEngine(t, &config.Config{SSHExecutorEnabled: true, LocalRunnerForbid: true})
 	queueSSHRun(t, pool, "run-forbidden")
+	giveLocalRunner(ctx, t, pool, true, 0) // assigned, so only the forbid keeps it off
 	svc.Start(ctx)
 	if on, _ := settings.LocalRunnerEnabled(ctx, pool, false); !on {
 		t.Fatal("fixture: the stored setting should have been seeded on")
@@ -245,6 +301,7 @@ func TestTheBoundCountsRunsLeftInFlightByAnEarlierLoop(t *testing.T) {
 	for _, id := range []string{"r1", "r2", "r3", "r4", "r5"} {
 		queueSSHRun(t, pool, id)
 	}
+	giveLocalRunner(ctx, t, pool, true, 2)
 	svc.Start(ctx)
 	waitFor(t, "two runs in flight", 5*time.Second, func() bool { return countRuns(t, pool, "running") == 2 })
 
@@ -288,6 +345,7 @@ func TestTheHeartbeatKeepsTheRowTrue(t *testing.T) {
 	t.Cleanup(func() { heartbeatEvery = old })
 
 	svc, pool, ctx := localRunnerEngine(t, &config.Config{SSHExecutorEnabled: true})
+	giveLocalRunner(ctx, t, pool, true, 0)
 	svc.Start(ctx)
 	if _, err := pool.Exec(`UPDATE runners SET status = 'offline', last_seen_at = NULL WHERE kind = 'server'`); err != nil {
 		t.Fatal(err)

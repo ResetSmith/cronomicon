@@ -220,6 +220,7 @@ func run() error {
 	// the inbox is opened. A failure here is a stale inbox, not a failed boot.
 	notices.SetRecordKeyNameCheck(sshexec.BastionKeyNameFindings)
 	notices.SetLocalRunnerHostKeysCheck(hostkeys.LocalRunnerMissingKeys)
+	notices.SetLocalRunnerUnassignedCheck(settings.LocalRunnerUnassignedButSwitchedOn)
 	// 2.5.3 (question 207): settings this version no longer reads are named
 	// here and in a notice, rather than silently ignored.
 	ignoredEnv := settings.EnvSettingsIgnored(cfg)

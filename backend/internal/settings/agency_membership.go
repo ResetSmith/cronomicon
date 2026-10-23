@@ -865,9 +865,9 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 			continue
 		}
 		if m.Kind == "runner" {
-			// The local runner is the one row that may hold Global beside
-			// named agencies (MA-14); PUT /runner-agencies allows the same
-			// list, and the invariant below still judges it.
+			// The local runner's list is its owner (2.5.3, CA-8); the
+			// invariant below judges it (MA-14 let it hold Global beside
+			// named agencies until §0a).
 			if local, lerr := IsLocalRunner(ctx, database, m.ID); lerr != nil {
 				return nil, lerr
 			} else if local {

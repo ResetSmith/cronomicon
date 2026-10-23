@@ -4971,11 +4971,11 @@ paths:
       description: |
         The server can run shell jobs (bash, perl, powershell, python) itself,
         over SSH, from inside its own process. Since v2.3.0 that engine is the
-        **local runner**: one row in the runner list, of kind `server`, owned by
-        Global. It claims what it is placed to serve like any other runner, and
-        it is the one runner with a serve list: a global administrator sets the
-        agencies it serves with `PUT /runner-agencies` (any non-empty set, which
-        may hold Global beside others).
+        **local runner**: one row in the runner list, of kind `server`. Since
+        v2.5.3 (CA-8, CA-9) it belongs to the one agency a global administrator
+        gives it (`PUT` with `ownerAgency`), serves that agency alone and claims
+        its runs like any of its runners; or to none (`owner` null), and then it
+        is off whatever its switch says.
 
         The row always exists once the server has started; turned off, it is
         `offline` and claims nothing. Any session may read this: the runner list
@@ -4996,8 +4996,22 @@ paths:
       description: |
         A global administrator's (`configureApp` on every agency): turned on,
         this server holds SSH private keys and opens connections to job targets.
-        Give `enabled`, `maxConcurrent`, or both; a field left out is unchanged.
-        Each change is recorded in the activity feed.
+        Give `ownerAgency`, `enabled`, `maxConcurrent`, or several; a field left
+        out is unchanged. Each change is recorded in the activity feed.
+
+        **Its agency (v2.5.3, CA-8 to CA-10).** `ownerAgency` gives it to an
+        agency (its id), or to none (`""` or `"global"`): its owner and serve list
+        become exactly that agency, its scope bindings and the host keys approved
+        for it are cleared (that agency approves its own hosts' keys: its
+        administrators review them, question 204), and it is turned **off**, so
+        that it claims nothing before those keys are approved. Applied before
+        `enabled`, so one request may give it and turn it on, deliberately. 409
+        `local_runner_busy` while it is running a run; 409 `local_runner_bound` while scopes are bound to it
+        (their agency unbinds them, or binds a runner of its own, first: removing
+        the binding would open the scope); 422 `unknown_agency`. A request is
+        judged whole before anything is written.
+        Turning it on while it belongs to no agency is 422
+        `local_runner_unassigned`.
 
         The change takes effect at once, without a restart. Turning **off**
         drains: runs the local runner is running finish, it claims no more, and
@@ -5018,6 +5032,9 @@ paths:
             schema:
               type: object
               properties:
+                ownerAgency:
+                  type: string
+                  description: The agency it is given to (v2.5.3); `""` or `"global"` for none.
                 enabled: { type: boolean }
                 maxConcurrent:
                   type: integer
@@ -5034,7 +5051,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: The host forbids the local runner (`local_runner_forbidden`).
+          description: The host forbids the local runner (`local_runner_forbidden`), or it is running a run and its agency would change (`local_runner_busy`), or scopes are bound to it and its agency would change (`local_runner_bound`, and their agency unbinds them first).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -8165,11 +8182,12 @@ paths:
         `agency_required`, and Global beside a named agency is 422 `global_mixed`
         (a runner that serves Global claims Global's runs and no department's).
 
-        The **local runner** (kind `server`) is Global's and serves Global only
-        (v2.4.0): for it this route takes exactly Global, and anything else is
-        422 `local_runner_global_only`. (From v2.3.0 a global administrator gave
-        it any non-empty set of agencies; the upgrade narrows it, and the notice
-        `local_runner_served` names each agency it served.)
+        The **local runner** (kind `server`) serves exactly its owner: since
+        v2.5.3 the agency a global administrator gives it (`PUT /local-runner`,
+        `ownerAgency`), or the built-in agency while it belongs to none. For it
+        this route takes exactly its owner, and anything else is 422
+        `local_runner_serves_owner` (`local_runner_global_only` until v2.5.3,
+        when its owner was always Global).
 
         **An agent serves exactly the agency that owns it** (v2.3.0, MA-11), so
         this route no longer places one: the list written must be exactly the
@@ -12458,10 +12476,19 @@ components:
               with the reason. Subject: the job's uid. Filed under the job's
               agency. It clears when the job is built on a script of its own
               agency's repository.
-            - `local_runner_served` — the local runner served this agency until
-              v2.4.0, and serves Global only now; the agency's shell jobs wait
-              for an agent of its own. Subject: the agency's id. Filed under the
-              agency. It clears when an agent the agency owns serves it.
+            - `local_runner_served` — retired in v2.5.3 (raised no more, and
+              cleared): the local runner served this agency until v2.4.0, then
+              Global only; since v2.5.3 it belongs to the agency a global
+              administrator gives it.
+            - `local_runner_unassigned` — v2.5.3: the local runner's switch is
+              stored on and it belongs to no agency, so it is off (an upgrade from
+              an installation where it was on). Subject `local-runner`. Filed
+              under the built-in agency. It clears when it is given to an agency
+              or turned off.
+            - `environment_settings_ignored` — v2.5.3: the server was started
+              with `CRONOMICON_GITLAB_*` or `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN`,
+              which it no longer reads. Subject `environment`. Filed under the
+              built-in agency. It clears at a start without them.
             - `reaction_other_agency` — a reaction is pinned to a definition of
               another agency than its own (v2.4.0). A reaction watches its own
               agency's definitions only: it does not fire, and each run of the
@@ -14177,6 +14204,15 @@ components:
             properties:
               id: { type: string }
               name: { type: string }
+        owner:
+          type: object
+          nullable: true
+          description: |
+            v2.5.3 (CA-8): the agency it belongs to and serves; null while it
+            belongs to none, which is off.
+          properties:
+            id: { type: string }
+            name: { type: string }
 
     RegistrationTokenInfo:
       type: object

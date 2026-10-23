@@ -39,10 +39,11 @@ var (
 		"may be handed to that agency. To move an agent any other way, deregister it and enrol it again")
 
 	// ErrLocalRunnerGlobalOnly is returned when a write would give the local
-	// runner any serve list but Global (§0a, IN-3). Mapped 422
-	// `local_runner_global_only`.
-	ErrLocalRunnerGlobalOnly = errors.New("the local runner is Global's and serves Global only. " +
-		"An agency's shell jobs run on an agent of that agency's own")
+	// runner any serve list but its owner (§0a, IN-3; since 2.5.3 its owner is
+	// the agency a global administrator gives it, CA-8). Mapped 422
+	// `local_runner_serves_owner`.
+	ErrLocalRunnerGlobalOnly = errors.New("the local runner serves the agency it belongs to and no other: " +
+		"a global administrator gives it to an agency under Settings → Local runner")
 )
 
 // CheckRunnerPlacement is THE invariant (MA-11), called by every writer of
@@ -54,16 +55,18 @@ var (
 // non-empty subset of the list before it. Never empty. So a new shape is
 // impossible and an old one only shrinks.
 //
-// local is the local runner (Phase A), whose serve list is Global and nothing
-// else (§0a, IN-3; until then whatever non-empty list a global administrator
-// gave it, MA-11).
+// local is the local runner (Phase A), whose serve list is its owner and
+// nothing else: since 2.5.3 the agency a global administrator gives it, or the
+// built-in agency's while it belongs to none (CA-8, CA-9); Global alone from
+// §0a (IN-3); before that whatever non-empty list a global administrator gave
+// it (MA-11).
 func CheckRunnerPlacement(local bool, owner string, before, after []string) error {
 	after = dedupeIDs(after)
 	if len(after) == 0 {
 		return ErrAgencyRequired
 	}
 	if local {
-		if len(after) != 1 || after[0] != agencyid.Global {
+		if len(after) != 1 || after[0] != owner {
 			return ErrLocalRunnerGlobalOnly
 		}
 		return nil
@@ -119,8 +122,9 @@ func SetRunnerOwner(ctx context.Context, database *sql.DB, runnerID, agencyID, a
 	if owner == agencyID {
 		return nil // already theirs
 	}
-	// The local runner is Global's and stays Global's (MA-12): it is this
-	// server, and serves whoever a global administrator lists.
+	// The local runner changes agency by SetLocalRunnerOwner alone (2.5.3,
+	// CA-8): it is this server, and a change of its agency is a global
+	// administrator's, with what it clears.
 	if local || owner != agencyid.Global || agencyID == agencyid.Global ||
 		len(serves) != 1 || serves[0] != agencyID {
 		return ErrOwnerChangeRefused

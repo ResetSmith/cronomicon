@@ -2,6 +2,7 @@ package notices_test
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -75,5 +76,31 @@ func TestCA2EnvironmentSettingsThatAreNoLongerReadAreReported(t *testing.T) {
 	notices.SetIgnoredEnvironmentSettings(nil)
 	if got := check(); len(got) != 0 {
 		t.Errorf("after a start without them: %v, want it cleared", got)
+	}
+}
+
+// 2.5.3 (CA-9): an upgraded installation whose local runner was on finds it
+// unassigned and off; a notice for global administrators says so, and clears
+// when it is given to an agency or turned off (the reader is settings', given
+// at start: stubbed here).
+func TestCA3AnUnassignedLocalRunnerThatWasOnIsReported(t *testing.T) {
+	pool := open(t)
+	state := true
+	notices.SetLocalRunnerUnassignedCheck(func(context.Context, *sql.DB) (bool, error) { return state, nil })
+	t.Cleanup(func() { notices.SetLocalRunnerUnassignedCheck(nil) })
+	check := func() map[string]notices.Notice {
+		t.Helper()
+		if err := notices.RunChecks(context.Background(), pool); err != nil {
+			t.Fatalf("checks: %v", err)
+		}
+		return openOf(t, pool, notices.KindLocalRunnerUnassigned)
+	}
+	got := check()
+	if n, ok := got["local-runner"]; !ok || len(got) != 1 || n.AgencyID != "global" || !strings.Contains(n.Detail, "approved") {
+		t.Fatalf("an unassigned local runner that was on: %v, want one notice, the built-in agency's, saying keys are approved first", got)
+	}
+	state = false
+	if got := check(); len(got) != 0 {
+		t.Errorf("once given to an agency or turned off: %v, want cleared", got)
 	}
 }
