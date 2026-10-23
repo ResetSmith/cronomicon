@@ -26,7 +26,7 @@ import {
   th,
   usePager,
 } from "../history/shared";
-import { Btn, ExpandChevron, HoverTr, SkeletonRows, TableSurface, statusLabel } from "../../components/ui";
+import { Btn, DetailCell, ExpandChevron, HoverTr, SkeletonRows, TableSurface, statusLabel } from "../../components/ui";
 import { RefreshScope } from "../../components/RefreshScope";
 
 interface WorkflowRun {
@@ -362,7 +362,7 @@ export function WorkflowRunsTable({
         // No enclosing Card: the table sits between a top and bottom rule instead
         // of inside a fourth box (VU-5). Pager already brings its own top rule and
         // padding, so it reads as the table's footer rather than a floating strip.
-        <TableSurface>
+        <TableSurface pinsDetail>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm, tableLayout: "fixed" }}>
             <thead>
               <TableHead columns={cols.visible} sort={sort} cw={cw} thStyle={th} />
@@ -407,11 +407,11 @@ export function WorkflowRunsTable({
                     </HoverTr>
                     {isExp && (
                       <tr style={{ borderBottom: `1px solid ${c.border}` }}>
-                        <td colSpan={cols.visible.length} style={{ padding: "14px 16px 18px", background: c.primaryBg }}>
+                        <DetailCell colSpan={cols.visible.length} padding="14px 16px 18px" background={c.primaryBg}>
                           <RefreshScope>
                           <WorkflowRunDetail traceId={w.traceId} live={live} showOwner={!compact} />
                           </RefreshScope>
-                        </td>
+                        </DetailCell>
                       </tr>
                     )}
                   </Fragment>

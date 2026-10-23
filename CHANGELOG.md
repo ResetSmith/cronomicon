@@ -104,6 +104,15 @@ caution there); the schema goes from 1210 to 1660.
 - **A new installation calls the built-in agency *Central*.** An upgraded one
   keeps *Global* until someone renames it.
 
+### Fixed
+
+- **A run's detail stays within the window when History's table is wider
+  than it.** On Executions and Workflow Runs the expanded detail was as wide
+  as the table, so in a narrower window its right side (Remove
+  acknowledgement, the notes' Next →, Refresh) sat off screen behind the
+  table's sideways scroll. The detail now fits the visible part of the table
+  and stays put while the row's cells scroll beneath it.
+
 ### Known, and worth knowing
 
 - **The manuals say "Global" for the built-in agency, whatever it is

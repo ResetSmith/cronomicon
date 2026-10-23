@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
-import { statusLabel, jobStatusLabel, matchesStatus, matchesTags, Section, Field, FormField, Disclosure, SectionLabel } from "./ui";
+import { statusLabel, jobStatusLabel, matchesStatus, matchesTags, Section, Field, FormField, Disclosure, SectionLabel, DetailCell } from "./ui";
 
 // The canonical display vocabulary (V1.1-4) and its job-state sibling. These map
 // raw wire/DB tokens onto the labels the whole app shows (VC.1). The one subtle
@@ -265,5 +265,33 @@ describe("Disclosure tone", () => {
       return (q.getByText("CHECK MODE") as HTMLElement).style.fontSize;
     });
     expect(new Set(sizes).size).toBe(1);
+  });
+});
+
+// An expanded row's cell keeps its content where the window shows it (2.5.2):
+// the box sticks to the scrolling surface's left edge and carries the padding,
+// so the cell itself has none to push it past the right edge.
+describe("DetailCell", () => {
+  it("pins its content to the surface's left edge and carries the padding", () => {
+    render(
+      <table>
+        <tbody>
+          <tr>
+            <DetailCell colSpan={7} padding="16px 14px" background="black">
+              detail
+            </DetailCell>
+          </tr>
+        </tbody>
+      </table>,
+    );
+    const box = screen.getByTestId("detail-cell");
+    const cell = box.parentElement as HTMLTableCellElement;
+    expect(cell.colSpan).toBe(7);
+    expect(cell.style.padding).toBe("0px");
+    expect(box.style.position).toBe("sticky");
+    expect(box.style.left).toBe("0px");
+    expect(box.style.padding).toBe("16px 14px");
+    expect(box.style.boxSizing).toBe("border-box");
+    expect(box.textContent).toBe("detail");
   });
 });

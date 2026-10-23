@@ -227,8 +227,10 @@ export function Rule({ strong, inset, style }: { strong?: boolean; inset?: numbe
 // rule, which is enough to bound it and removes one whole level of nesting from
 // every catalog view. Keeps the panel fill so rows still read as a surface, and
 // keeps horizontal overflow scrolling, which is what the Card was doing for the
-// wide catalogs.
-export function TableSurface({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+// wide catalogs. `pinsDetail` makes it the size container a <DetailCell> reads
+// its width from; it is opt-in because inline-size containment stops the box
+// sizing to its content, which a table placed in a shrink-to-fit layout relies on.
+export function TableSurface({ children, style, pinsDetail }: { children: ReactNode; style?: CSSProperties; pinsDetail?: boolean }) {
   return (
     <div
       style={{
@@ -236,11 +238,30 @@ export function TableSurface({ children, style }: { children: ReactNode; style?:
         borderTop: `1px solid ${c.border}`,
         borderBottom: `1px solid ${c.border}`,
         overflowX: "auto",
+        ...(pinsDetail ? { containerType: "inline-size" } : null),
         ...style,
       }}
     >
       {children}
     </div>
+  );
+}
+
+// DetailCell is an expanded row's cell, its content held to the part of the
+// table the window shows. A cell spanning every column is as wide as the table,
+// so when the columns are wider than the window its right side (a run's
+// Remove acknowledgement, its notes' Next →) sat off screen behind the table's
+// sideways scroll. The content box is as wide as the TableSurface (100cqw, which
+// needs `pinsDetail` on it) and sticks to its left edge, so it stays in view
+// while the row's cells scroll beneath it. The padding lives on the box, not the
+// cell, or the box would start that far in and overshoot by as much.
+export function DetailCell({ colSpan, padding, background, children }: { colSpan: number; padding: string; background: string; children: ReactNode }) {
+  return (
+    <td colSpan={colSpan} style={{ padding: 0, background }}>
+      <div data-testid="detail-cell" style={{ position: "sticky", left: 0, width: "100cqw", boxSizing: "border-box", padding }}>
+        {children}
+      </div>
+    </td>
   );
 }
 
