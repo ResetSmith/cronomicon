@@ -221,6 +221,7 @@ func run() error {
 	notices.SetRecordKeyNameCheck(sshexec.BastionKeyNameFindings)
 	notices.SetLocalRunnerHostKeysCheck(hostkeys.LocalRunnerMissingKeys)
 	notices.SetLocalRunnerUnassignedCheck(settings.LocalRunnerUnassignedButSwitchedOn)
+	notices.SetCentralLeftoverRepoCheck(settings.CentralLeftoverRepo)
 	// 2.5.3 (question 207): settings this version no longer reads are named
 	// here and in a notice, rather than silently ignored.
 	ignoredEnv := settings.EnvSettingsIgnored(cfg)

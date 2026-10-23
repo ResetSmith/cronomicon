@@ -199,6 +199,7 @@ func New(o Options) *Server {
 	// The notice agency_no_repository is given the database only (I3).
 	notices.SetIgnoredEnvironmentSettings(settings.EnvSettingsIgnored(o.Config))
 	notices.SetLocalRunnerUnassignedCheck(settings.LocalRunnerUnassignedButSwitchedOn)
+	notices.SetCentralLeftoverRepoCheck(settings.CentralLeftoverRepo)
 	// RB-7: point the role registry at THIS server's database. The registry is a
 	// process-wide cache (requirePerm is mount-time middleware with no context and
 	// no DB handle), so binding it here rather than only at boot matters for tests:

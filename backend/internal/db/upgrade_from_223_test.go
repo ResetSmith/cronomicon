@@ -13,6 +13,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/preflight"
 	"github.com/ResetSmith/cronomicon/internal/runcap"
 	"github.com/ResetSmith/cronomicon/internal/scheduler"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
 // The upgrade from 2.2.3 (schema 1210) to 2.5.0 in one step, over a database
@@ -198,7 +199,11 @@ func TestC11_TheUpgradeFrom223(t *testing.T) {
 		}
 	}
 
-	// And the notices list what needs a person.
+	// And the notices list what needs a person. Since 2.5.3 what the built-in
+	// agency holds is one notice for global administrators (CA-17), which
+	// asks whether its repository is a leftover (settings', given at start).
+	notices.SetCentralLeftoverRepoCheck(settings.CentralLeftoverRepo)
+	t.Cleanup(func() { notices.SetCentralLeftoverRepoCheck(nil) })
 	if err := notices.RunChecks(ctx, pool); err != nil {
 		t.Fatalf("RunChecks: %v", err)
 	}
@@ -216,9 +221,13 @@ func TestC11_TheUpgradeFrom223(t *testing.T) {
 	got := strings.Join(open, " ")
 	for _, want := range []string{
 		"agency_no_repository:ag-ops", "agency_no_repository:ag-web",
-		"global_job_on_agency_scope:j-ops", "global_job_on_agency_scope:j-script", "global_job_on_agency_scope:j-webgit",
+		// The jobs of Global's repository (j-ops, j-script, j-webgit) were
+		// global_job_on_agency_scope's until 2.5.3; the repository is now a
+		// leftover the built-in agency holds (CA-6, CA-17), and so are the
+		// shared secret and the hand-written host record.
+		"central_holds_work:central:repository", "central_holds_work:central:secret", "central_holds_work:central:host",
 		"legacy_placement:r-both", "scope_several_agencies:sc-shared", "global_host_record:ag-ops:h1.ops",
-		"grant_group_unlisted:g1", "shared_ownership:secret:se-shared",
+		"grant_group_unlisted:g1",
 	} {
 		if !strings.Contains(" "+got+" ", " "+want+" ") {
 			t.Errorf("no open notice %s after the upgrade; open: %s", want, got)

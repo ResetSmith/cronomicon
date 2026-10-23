@@ -11,6 +11,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/notices"
 	"github.com/ResetSmith/cronomicon/internal/repoid"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
 // A job of Global's repository that names an agency's scope (I-7, allowed
@@ -51,12 +52,16 @@ func TestI1_GlobalsJobOnAnAgencysScopeIsKeptAsItWas(t *testing.T) {
 	if got := grString(t, a.db, `SELECT COALESCE((SELECT uid || ' enabled=' || enabled FROM jobs WHERE source='git' AND name='g-theirs'), '(gone)')`); got != "uid-g-theirs enabled=0" {
 		t.Errorf("Global's job on an agency's scope: %s; want it kept as it was (uid-g-theirs enabled=0)", got)
 	}
+	// Since 2.5.3 (CA-18) the leftover and what it synced are listed by
+	// central_holds_work; global_job_on_agency_scope is retired.
+	notices.SetCentralLeftoverRepoCheck(settings.CentralLeftoverRepo)
+	t.Cleanup(func() { notices.SetCentralLeftoverRepoCheck(nil) })
 	if err := notices.RunChecks(ctx, a.db); err != nil {
 		t.Fatal(err)
 	}
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM notices WHERE kind = ? AND subject = 'uid-g-theirs' AND resolved_at IS NULL AND agency_id = 'global'`,
-		notices.KindGlobalJobOnAgencyScope); n != 1 {
-		t.Errorf("open notices for the kept job = %d, want 1", n)
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM notices WHERE kind = ? AND subject = 'central:repository' AND resolved_at IS NULL AND agency_id = 'global'`,
+		notices.KindCentralHoldsWork); n != 1 {
+		t.Errorf("open notices for the leftover holding the kept job = %d, want 1", n)
 	}
 
 	// The leftover connection is removed: the job goes with it, and the notice
@@ -87,8 +92,8 @@ func TestI1_GlobalsJobOnAnAgencysScopeIsKeptAsItWas(t *testing.T) {
 	if err := notices.RunChecks(ctx, a.db); err != nil {
 		t.Fatal(err)
 	}
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM notices WHERE kind = ? AND resolved_at IS NULL`, notices.KindGlobalJobOnAgencyScope); n != 0 {
-		t.Errorf("the notice is still open after the job went")
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM notices WHERE kind = ? AND subject = 'central:repository' AND resolved_at IS NULL`, notices.KindCentralHoldsWork); n != 0 {
+		t.Errorf("the notice is still open after the leftover went")
 	}
 }
 

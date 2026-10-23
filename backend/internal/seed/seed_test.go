@@ -109,8 +109,8 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 		}
 	}
 	// The demo fleet can take the demo work: every agency that owns a scope has
-	// an online runner, and Global has a runner of its own. (Until 2.3.0 every
-	// seeded runner was in no agency and every seeded scope was in one.)
+	// an online runner. (Until 2.3.0 every seeded runner was in no agency and
+	// every seeded scope was in one.)
 	var unserved int
 	if err := pool.QueryRow(`
 		SELECT COUNT(*) FROM (SELECT DISTINCT agency_id FROM scope_agencies) sa
@@ -118,10 +118,12 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 		                    WHERE ra.agency_id = sa.agency_id AND rn.status = 'online')`).Scan(&unserved); err != nil || unserved != 0 {
 		t.Errorf("%d agencies that own a scope have no online runner (%v)", unserved, err)
 	}
+	// And none serves the built-in agency, which runs nothing since 2.5.3
+	// (CA-1; until then Global had a runner of its own, for jobs with no scope).
 	var globalRunners int
 	_ = pool.QueryRow(`SELECT COUNT(*) FROM runner_agencies WHERE agency_id = 'global'`).Scan(&globalRunners)
-	if globalRunners == 0 {
-		t.Error("no seeded runner serves Global, so no seeded job without a scope can ever run")
+	if globalRunners != 0 {
+		t.Errorf("%d seeded runners serve the built-in agency, which runs nothing", globalRunners)
 	}
 
 	// A fresh demo starts with an empty inbox: every notice is a condition an

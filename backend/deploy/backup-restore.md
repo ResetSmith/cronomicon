@@ -190,12 +190,21 @@ happens next depends on which token they hold:
 
 | The agent presents | Outcome |
 |---|---|
-| The server's `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | Re-registration completes unattended — **as a Global agent** (see below). For an agent that belonged to a department this is the wrong agency, and it must be enrolled again. |
+| The server's `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | Re-registration **fails** since 2.5.3 (`bootstrap_token_retired`): the token enrolled agents as the built-in agency's, which runs nothing now. As for a spent single-use token below. (Until 2.5.3 it completed unattended, as a Global agent.) |
 | A single-use `crn_reg_*` from its original install | Re-registration **fails**: `token_used` when the restored database holds the token as consumed (the usual case after a reap), `unauthorized` or `token_expired` when it does not know the token or the token has aged out. The agent is offline until an administrator of its agency mints a fresh token for that agency, places it on the host, and restarts the unit. |
 
 Note that the agent discards its identity *before* it attempts to register, so an
-agent in the second case cannot fall back to its old key — it stays down until
+agent in either case cannot fall back to its old key — it stays down until
 attended to. Per host.
+
+**So, after every restore: enrol again each agent enrolled since the backup was
+taken** (2.5.3, question 211). Since 2.5.3 no registration token is multi-use,
+so none of them comes back on its own. List them first — the agents in
+**Runners** from before the restore that the restored list no longer shows —
+then, for each, an administrator of its agency mints a registration token in
+that agency (**Runners → + Add Runner**, working in the agency), places it on
+the host, and restarts the unit. It comes back with a new id, owned by and
+serving that agency (next section).
 
 > **A long outage widens this.** An agent that stays offline past
 > `CRONOMICON_RUNNER_DEREGISTER_AFTER` (default **14 days**) is reaped, which
@@ -206,8 +215,9 @@ attended to. Per host.
 **The local runner** (the server running shell jobs itself) is not an agent and
 does not re-register: its row is the server's own and is never reaped. What a
 restore changes for it is everything it keeps in the database, which is all of
-it — whether it is on, how many runs it takes, which agencies it serves, and
-its **approved host keys**. Its trust store is the ledger, not a file, so a
+it — whether it is on, how many runs it takes, **which agency it belongs to**
+(since 2.5.3 the one a global administrator gave it, or none, and with none it
+is off), and its **approved host keys**. Its trust store is the ledger, not a file, so a
 host key approved after the restore point is gone: runs to that host fail with
 `host_key_unverified` until the key is approved again (Runners → Local runner →
 Host keys). Review **Settings → Local runner** and the *The local runner has no
@@ -223,12 +233,12 @@ and never by its name:
 - A token minted under **Runners → + Add Runner** names the agency it was
   minted for. An agent re-enrolled with a fresh token for its own agency comes
   back owned by, and serving, that agency.
-- The bootstrap token names no agency, so an agent that re-registers with it
-  is owned by **Global** and serves Global: it takes runs with no scope and
-  runs on Global's scopes, and none of its former department's. Nothing moves
-  it back. An agent's serve list cannot be widened or changed, and its owner
-  changes only one way, which is not this one. Deregister it, mint a token for
-  its agency, and enrol it again.
+- The bootstrap token named no agency, so until 2.5.3 an agent that
+  re-registered with it was owned by **Global** and served Global. Since 2.5.3
+  it is refused (`bootstrap_token_retired`). An agent that came back that way
+  before takes no work (the built-in agency runs nothing) and nothing moves it:
+  deregister it, mint a token for its agency, and enrol it again. The
+  *Central still holds work* notice lists such agents.
 
 Either way the new id has no tags, no scope bindings and no approved host keys —
 those are keyed to the id that was just deleted, and they are operator-owned,

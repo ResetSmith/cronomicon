@@ -12306,7 +12306,11 @@ components:
               owns and only some agencies may use: what several agencies shared
               before 2.3.0, or a row the upgrade would not give to its one
               agency because that would have changed what some run resolves.
-              It works as it did. Subject `<kind>:<id>`.
+              Subject `<kind>:<id>@<agency id>`, filed under each agency listed
+              for it (v2.5.1). Since v2.5.3 the built-in agency runs nothing,
+              so the agencies' runs no longer find it; the global
+              administrators' finding (subject `<kind>:<id>`) is retired and
+              the row is listed by `central_holds_work`.
             - `orphaned` — a scope, runner, secret, variable or SSH key that
               belongs to no agency. Nothing can use it and only a global
               administrator can re-home it. Subject `<kind>:<id>`.
@@ -12427,13 +12431,11 @@ components:
               for one that comes to span later (a scope given to another
               agency). Subject: the workflow's uid. Filed under Global. It
               clears when the workflow's jobs are all one agency's.
-            - `global_job_on_agency_scope` — a job of Global's repository names
-              a scope that is not Global's (allowed before v2.4.0). A job of
-              Global's repository runs on Global's scopes only: it does not
-              run (each run is refused, with the reason), and Global's sync
-              keeps it as it was rather than removing it. Subject: the job's
-              uid. Filed under Global. It clears when its file names a scope
-              of Global's, or none, or leaves the repository.
+            - `global_job_on_agency_scope` — retired in v2.5.3 (raised no
+              more, and cleared): a job of Global's repository named a scope
+              that was not Global's. Since v2.5.3 the built-in agency has no
+              repository that syncs, and what its leftover repository holds is
+              listed by `central_holds_work`.
             - `global_credential_bound` — a job of an agency binds a secret, a
               variable or an SSH key by a name only Global holds (v2.4.0). A row
               of Global's is used by Global's runs only: the job's runs do not
@@ -12458,11 +12460,10 @@ components:
               (`configureApp` on it) connects it. Subject: the agency's id.
               Filed under the agency. It clears when the repository is
               connected.
-            - `global_calendar_scope` — a calendar of Global's is global. Until
-              v2.4.0 it froze every agency's fires; now it freezes Global's only
-              (the whole installation is /settings/freeze). Raised while there
-              is an agency besides Global. Subject: the calendar's name. Filed
-              under Global. It clears when the calendar is not global.
+            - `global_calendar_scope` — retired in v2.5.3 (raised no more, and
+              cleared): a calendar of Global's was global, and froze Global's
+              fires only. Since v2.5.3 the built-in agency's calendars are the
+              catalogue agencies take copies of.
             - `global_schedule_bound` — a job or workflow of an agency is bound
               to a schedule of Global's (allowed before v2.4.0). A schedule's
               edits reach its own agency's definitions only: this one keeps the
@@ -12489,6 +12490,21 @@ components:
               with `CRONOMICON_GITLAB_*` or `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN`,
               which it no longer reads. Subject `environment`. Filed under the
               built-in agency. It clears at a start without them.
+            - `central_holds_work` — v2.5.3: the built-in agency still owns
+              something that runs or that runs use, from before v2.5.3. The
+              built-in agency runs nothing: none of it runs, and nothing is
+              moved automatically. One notice per kind, naming the rows (the
+              first ten, and how many more) and saying the way out: jobs,
+              workflows and schedules built in the app are made again in an
+              agency; scopes, secrets, variables, SSH keys, host records and
+              bastions are given to an agency (a repair, with a reason); an
+              agent serving the built-in agency alone is enrolled again with a
+              token of its agency's; a leftover repository is removed and the
+              same URL and branch connected to an agency. Subject
+              `central:<job|workflow|schedule|scope|secret|env-var|ssh-credential|host|bastion|runner|repository>`.
+              Filed under the built-in agency. Each clears when the built-in
+              agency holds none of its kind. Its calendars are not listed: they
+              are the catalogue.
             - `reaction_other_agency` — a reaction is pinned to a definition of
               another agency than its own (v2.4.0). A reaction watches its own
               agency's definitions only: it does not fire, and each run of the

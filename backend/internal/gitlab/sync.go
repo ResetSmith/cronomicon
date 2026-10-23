@@ -887,8 +887,9 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	// Global's repository is the exception to "removed" (§0a, open point 1): a
 	// job of it that was synced, and names an agency's scope (I-7, allowed
 	// until §0a), is KEPT as it was, not pruned. It does not run (run-time
-	// confinement refuses it, with the reason), the notice
-	// global_job_on_agency_scope lists it, and it goes when its file does.
+	// confinement refuses it, with the reason), and it goes when its file
+	// does. (Until 2.5.3; since then Central's repository syncs no more, CA-6,
+	// and central_holds_work lists the leftover.)
 	var keepAsWas []string
 	if kept, refused, cerr := s.confineJobs(ctx, goodJobs, scopes); cerr != nil {
 		// What could not be asked is not answered "no": nothing is refused,

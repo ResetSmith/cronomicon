@@ -335,9 +335,11 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		{"business-hours", "Weekday business-hours sweep", "0 9 * * 1-5", `{"WINDOW":"business"}`, "sha256:seedbiz"},
 		{"nightly-window", "Nightly maintenance window", "0 0 2 * * *", "", "sha256:seednight"},
 	} {
-		exec(`INSERT INTO schedules (name, source, description, cron, env, content_hash, created_by, created_at, last_modified_by, last_modified_at, uid)
-		      VALUES (?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			sd.name, sd.desc, sd.cron, nullStr(sd.env), sd.hash, dev, ago(10*day), dev, ago(2*day), db.NewID())
+		// agency-alpha's: the built-in agency owns nothing that runs since
+		// 2.5.3 (CA-1, CA-16), and a schedule left as its would be a leftover.
+		exec(`INSERT INTO schedules (name, source, description, cron, env, content_hash, created_by, created_at, last_modified_by, last_modified_at, uid, owner_agency)
+		      VALUES (?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			sd.name, sd.desc, sd.cron, nullStr(sd.env), sd.hash, dev, ago(10*day), dev, ago(2*day), db.NewID(), agencies[0].id)
 	}
 
 	// ── Runs (history) — spread over the last week across statuses ─────────────
@@ -554,8 +556,8 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		{"runner-linux-02", "online", "Linux", `["bash","ansible"]`, 0, 5, 15 * time.Second,
 			`{"ansibleCore":"2.15.9","sandboxed":true,"keyNames":["ansible_rh8_key"]}`, agencies[1].id},
 		{"runner-win-01", "online", "Windows", `["powershell"]`, 1, 3, 45 * time.Second, "", agencies[0].id},
-		// Global's own runner: it takes the jobs that have no scope.
-		{"runner-linux-03", "draining", "Linux", `["bash","terraform"]`, 1, 5, 2 * minute, "", ""},
+		// agency-alpha's too (it was Global's until 2.5.3, which runs nothing since).
+		{"runner-linux-03", "draining", "Linux", `["bash","terraform"]`, 1, 5, 2 * minute, "", agencies[0].id},
 		{"runner-linux-04", "offline", "Linux", `["bash"]`, 0, 5, 3 * hour, "", agencies[1].id},
 	}
 	for _, r := range runners {
@@ -602,12 +604,16 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		// global one is born Global's on both counts (migration 1220). An agency
 		// member that Global still owned is the unresolved shape an upgrade can
 		// leave behind, not one a demo should start in.
+		// An unscoped one is agency-alpha's since 2.5.3: the built-in agency owns
+		// nothing that runs (CA-1, CA-16).
+		owner := scopeAgency[e.scope]
+		if owner == "" {
+			owner = agencies[0].id
+		}
 		vid := db.NewID()
 		exec(`INSERT INTO env_vars (id, key, scope, value, description, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
-		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, vid, e.key, scope, e.value, desc, dev, ago(18*day), dev, ago(2*day), scopeAgency[e.scope])
-		if aid := scopeAgency[e.scope]; aid != "" {
-			exec(`INSERT INTO env_var_agencies (env_var_id, agency_id) VALUES (?, ?)`, vid, aid)
-		}
+		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, vid, e.key, scope, e.value, desc, dev, ago(18*day), dev, ago(2*day), owner)
+		exec(`INSERT OR IGNORE INTO env_var_agencies (env_var_id, agency_id) VALUES (?, ?)`, vid, owner)
 	}
 
 	// ── Secrets (vault-backed refs only — no KEK needed for demo) ──────────────
@@ -623,16 +629,17 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		if s.scope != "" {
 			scope = s.scope
 		}
+		// A SCOPED secret is its scope's agency's, owner and member; an UNSCOPED
+		// one is agency-alpha's since 2.5.3 (it was Global's: the built-in agency
+		// owns nothing that runs now, CA-1, CA-16).
+		owner := scopeAgency[s.scope]
+		if owner == "" {
+			owner = agencies[0].id
+		}
 		sid := db.NewID()
 		exec(`INSERT INTO secrets (id, key, scope, description, source, vault_ref, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
-		      VALUES (?, ?, ?, ?, 'vault', ?, ?, ?, ?, ?, ?)`, sid, s.key, scope, s.desc, s.ref, dev, ago(18*day), dev, ago(5*day), scopeAgency[s.scope])
-		// A SCOPED secret is its scope's agency's, owner and member; an UNSCOPED
-		// (global) one is Global's, which every agency's runs may use. Seeding
-		// global secrets into every agency would demo a narrower model than the
-		// one that actually ships.
-		if aid := scopeAgency[s.scope]; aid != "" {
-			exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES (?, ?)`, sid, aid)
-		}
+		      VALUES (?, ?, ?, ?, 'vault', ?, ?, ?, ?, ?, ?)`, sid, s.key, scope, s.desc, s.ref, dev, ago(18*day), dev, ago(5*day), owner)
+		exec(`INSERT OR IGNORE INTO secret_agencies (secret_id, agency_id) VALUES (?, ?)`, sid, owner)
 	}
 
 	// LR-80: an agency names Vault paths only inside the prefixes a global
@@ -714,9 +721,10 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	// dual-source precedence in Settings → SSH Targets. Tied to Production; starts
 	// unverified (first dial would TOFU). created_by/last_modified_by set so the
 	// strict scanSshHost read works.
-	exec(`INSERT INTO ssh_hosts (id, source, scope_id, hostname, address, port, auth_key_env_var, username, status, created_by, created_at, last_modified_by, last_modified_at)
-	      VALUES (?, 'git', (SELECT id FROM scopes WHERE name='Production'), 'app-01', '10.0.1.11', 22, 'SSH_DEPLOY_KEY', 'deploy', 'unverified', 'gitlab', ?, 'gitlab', ?)`,
-		db.NewID(), ago(2*day), ago(2*day))
+	// Its scope's agency's (it was left Global's by the column's default).
+	exec(`INSERT INTO ssh_hosts (id, source, scope_id, hostname, address, port, auth_key_env_var, username, status, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+	      VALUES (?, 'git', (SELECT id FROM scopes WHERE name='Production'), 'app-01', '10.0.1.11', 22, 'SSH_DEPLOY_KEY', 'deploy', 'unverified', 'gitlab', ?, 'gitlab', ?, ?)`,
+		db.NewID(), ago(2*day), ago(2*day), scopeAgency["Production"])
 
 	// ── Alert destinations + rules ─────────────────────────────────────────────
 	//

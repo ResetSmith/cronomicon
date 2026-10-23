@@ -7,10 +7,10 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/notices"
 )
 
-// A global calendar of Global's is reported to Global while there are other
-// agencies (§0a, 2.4.0: it freezes Global only now). An agency's entry naming
-// a calendar of its own is nothing to report (since I2 each agency has its
-// own calendars, and a name is unique within the agency only).
+// A global calendar of Global's was reported to Global while there were other
+// agencies (§0a, 2.4.0: it froze Global only). Retired in 2.5.3 (CA-18):
+// Central's calendars are the catalogue agencies take copies of (CA-25), and
+// the notice is raised no more. An agency's own global calendar never was.
 func TestI1_CalendarsAcrossAgenciesAreReported(t *testing.T) {
 	pool := open(t)
 	mustExec(t, pool, `INSERT INTO agencies (id, name, created_at) VALUES ('ag-tax', 'Tax', 't')`)
@@ -20,7 +20,7 @@ func TestI1_CalendarsAcrossAgenciesAreReported(t *testing.T) {
 	if err := notices.RunChecks(context.Background(), pool); err != nil {
 		t.Fatal(err)
 	}
-	if got := openOf(t, pool, notices.KindGlobalCalendarScope); len(got) != 1 || got["freeze"].AgencyID != "global" {
-		t.Errorf("global_calendar_scope = %v, want Global's freeze calendar alone (Tax's is Tax's)", got)
+	if got := openOf(t, pool, notices.KindGlobalCalendarScope); len(got) != 0 {
+		t.Errorf("global_calendar_scope = %v, want none: the notice is retired", got)
 	}
 }
