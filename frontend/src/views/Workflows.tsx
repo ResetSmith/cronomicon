@@ -26,7 +26,7 @@ const WorkflowCanvasLazy = lazy(() =>
 );
 import { FolderBrowser } from "../components/FolderBrowser";
 import { parentOf } from "../utils/tree";
-import { AlertBanner, Btn, ConfirmDialog, DerivedAgencies, EmptyCell, ExpandChevron, RefreshButton, HoverTr, Modal, InlineTags, Pager, SearchBar, Section, SkeletonRows, TabBar, TagEditor, TagFilterSelect, Toast, jobStatusLabel, matchesStatus, matchesTags, statusLabel, statusTone, agencySortKey } from "../components/ui";
+import { AlertBanner, Btn, ConfirmDialog, DerivedAgencies, DetailCell, EmptyCell, ExpandChevron, RefreshButton, HoverTr, Modal, InlineTags, Pager, SearchBar, Section, SkeletonRows, TabBar, TagEditor, TagFilterSelect, Toast, jobStatusLabel, matchesStatus, matchesTags, statusLabel, statusTone, agencySortKey } from "../components/ui";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns, type TableColumn } from "../components/table";
 import { type SortColumn } from "../utils/sort";
 import { RevisionHistory } from "./RevisionHistory";
@@ -678,7 +678,7 @@ export function Workflows() {
         </HoverTr>
         {isExp && (
           <tr id={`workflow-detail-${workflowName(w)}`} style={{ borderBottom: `1px solid ${c.border}` }}>
-            <td colSpan={cols.visible.length} style={{ padding: "16px 18px", background: c.primaryBg }}>
+            <DetailCell colSpan={cols.visible.length} padding="16px 18px" background={c.primaryBg}>
               {/* EV-3 — the meta strip that used to sit here (Last run / Next run /
                   Schedule) is gone: it restated three columns of the row it hangs
                   off, verbatim. Actions keep their top-right home (EV-4). */}
@@ -802,7 +802,7 @@ export function Workflows() {
                 </div>
               </div>
               </RefreshScope>
-            </td>
+            </DetailCell>
           </tr>
         )}
       </Fragment>
@@ -869,28 +869,32 @@ export function Workflows() {
           // Search mode: flat results across all folders, full path shown,
           // sorted (TS-8) and paged client-side (TS-15).
           <>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm, tableLayout: "fixed" }}>
-              <thead>{tableHeader()}</thead>
-              <tbody>{pageItems.map((w) => renderWorkflowRow(w, workflowDisplayPath(w)))}</tbody>
-            </table>
+            <div style={pinnedScroll}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm, tableLayout: "fixed" }}>
+                <thead>{tableHeader()}</thead>
+                <tbody>{pageItems.map((w) => renderWorkflowRow(w, workflowDisplayPath(w)))}</tbody>
+              </table>
+            </div>
             <Pager pager={pager} page={page} total={total} noun="workflows" />
           </>
         ) : (
           // Browse mode: navigate the folder tree one level at a time.
-          <FolderBrowser
-            // TS-24: the sorted array, so the active column orders each folder's
-            // leaves; folders themselves stay alpha-first.
-            items={sort.sorted}
-            preserveLeafOrder
-            getPath={workflowDisplayPath}
-            getName={workflowName}
-            path={path}
-            onNavigate={setPath}
-            rootLabel="Workflows"
-            header={tableHeader()}
-            colCount={cols.visible.length}
-            renderLeaf={(leaf) => renderWorkflowRow(leaf.item, leaf.label)}
-          />
+          <div style={pinnedScroll}>
+            <FolderBrowser
+              // TS-24: the sorted array, so the active column orders each folder's
+              // leaves; folders themselves stay alpha-first.
+              items={sort.sorted}
+              preserveLeafOrder
+              getPath={workflowDisplayPath}
+              getName={workflowName}
+              path={path}
+              onNavigate={setPath}
+              rootLabel="Workflows"
+              header={tableHeader()}
+              colCount={cols.visible.length}
+              renderLeaf={(leaf) => renderWorkflowRow(leaf.item, leaf.label)}
+            />
+          </div>
         ))}
 
       {laterFor && (
@@ -974,6 +978,12 @@ const th = (): React.CSSProperties => ({
   whiteSpace: "nowrap",
 });
 const td: React.CSSProperties = { padding: "10px 16px", verticalAlign: "top" };
+
+// The table's own sideways scroll, and the size container its expanded row's
+// DetailCell reads its width from (2.5.2): without it the page scrolled
+// sideways instead, and the open workflow's Refresh, Pause and Run sat off
+// screen when the columns were wider than the window.
+const pinnedScroll: React.CSSProperties = { overflowX: "auto", containerType: "inline-size" };
 
 // Absolute app-zone datetime for the Created On / Last Edited columns (V1.1-17);
 // `—` when null (git rows). Routes through the shared app-zone formatter (§5.2).

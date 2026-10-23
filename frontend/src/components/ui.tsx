@@ -252,7 +252,9 @@ export function TableSurface({ children, style, pinsDetail }: { children: ReactN
 // so when the columns are wider than the window its right side (a run's
 // Remove acknowledgement, its notes' Next →) sat off screen behind the table's
 // sideways scroll. The content box is as wide as the TableSurface (100cqw, which
-// needs `pinsDetail` on it) and sticks to its left edge, so it stays in view
+// needs `pinsDetail` on it, or on a table without one an `overflowX: auto` box
+// with `containerType: "inline-size"`, as Workflows has) and sticks to its left
+// edge, so it stays in view
 // while the row's cells scroll beneath it. The padding lives on the box, not the
 // cell, or the box would start that far in and overshoot by as much.
 export function DetailCell({ colSpan, padding, background, children }: { colSpan: number; padding: string; background: string; children: ReactNode }) {

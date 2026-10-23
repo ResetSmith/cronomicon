@@ -112,6 +112,12 @@ caution there); the schema goes from 1210 to 1660.
   acknowledgement, the notes' Next →, Refresh) sat off screen behind the
   table's sideways scroll. The detail now fits the visible part of the table
   and stays put while the row's cells scroll beneath it.
+- **An open workflow stays within the window on the Workflows page.** The
+  page scrolled sideways when its table was wider than the window, leaving
+  the open workflow's Refresh, Pause and *Give to an agency…* off screen. The
+  table now scrolls on its own, and the open workflow fits the visible part
+  of it; its contents no longer widen the table, so at common widths the
+  whole table fits.
 
 ### Known, and worth knowing
 
