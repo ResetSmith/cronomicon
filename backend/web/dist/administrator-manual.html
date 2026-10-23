@@ -6704,6 +6704,11 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         than the last sync does not know which logs are already in the bucket; reconcile lists the
                         prefix, restores the archive markers, and resets the archived count to what the bucket holds.
                         History then reads those logs from S3 (&sect;8.6.1).</li>
+                    <li><strong>If people reach this server by another address</strong> than the installation the
+                        snapshot came from (a disaster-recovery host, a staging copy), open <strong>Settings &rarr;
+                            Notifications &rarr; Alert Link Address</strong> and change it. A restored database keeps
+                        its alert link address, so until then its alerts link to the original installation, and no
+                        visit corrects it (<a href="#alert-link">&sect;8.11</a>).</li>
                 </ol>
                 <p>An <strong>encrypted</strong> snapshot (<code>cronomicon-YYYYMMDD.db.age</code>, &sect;8.6.2) needs a
                     private key: <code>cronomicon restore --identity cronomicon-backup.key</code> (repeat
@@ -7858,6 +7863,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         <strong>Change</strong> to set the address that people reach the app by, if it is not that
                         one. To avoid the problem, make your first visit as a global administrator through that
                         address.</p>
+                    <p><strong>A restored database keeps its alert link address.</strong> Restored on a host people
+                        reach by another address (a disaster-recovery host, a staging copy), its alerts link to the
+                        original installation until you change the address here; no visit corrects it (<a
+                            href="#backups">&sect;8.6</a>).</p>
                 </div>
                 <p><strong>Settings &rarr; Notifications is the relay alone</strong> (the Installation group, a
                     global administrator's): the mail and Apprise transport, and the default recipients. It shows
