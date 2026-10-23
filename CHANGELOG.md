@@ -32,9 +32,12 @@ beyond what 2.5.1 already did. Then:
 - The built-in agency keeps the name *Global* on an upgraded installation; only
   a new one calls it *Central*. Rename it, if you like, in Scopes → Agencies →
   Edit.
-- The alert link address (below) fills itself in the first time a global
-  administrator opens the app. Check it on Settings → Notifications if people
-  reach the app by more than one name.
+- **Check the alert link address after your first visit.** It fills itself
+  in from the browser of the first global administrator to open the app,
+  whatever address that visit used: localhost, a tunnel or a raw IP address
+  sticks, and later visits do not correct it. Open Settings → Notifications →
+  Alert Link Address and change it if it is not the address people reach the
+  app by. A database restored on another host keeps it too.
 - Every alert now has an `Agency:` line: a mail filter or push consumer that
   matches the whole body sees one more line.
 - `/overview` leads to `/?agency=overview`, so bookmarks keep working.
