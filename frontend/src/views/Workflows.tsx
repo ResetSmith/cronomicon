@@ -31,6 +31,7 @@ import { ColumnsMenu, TableHead, renderCells, useTableColumns, type TableColumn 
 import { type SortColumn } from "../utils/sort";
 import { RevisionHistory } from "./RevisionHistory";
 import { fmtInAppZone } from "../utils/datetime";
+import { useInCentral } from "../components/CentralRunsNothing";
 
 // F-3: the tabs no longer carry their own predicates. Each one is just its
 // canonical label, matched by `matchesStatus` — the same fold the row's own
@@ -169,6 +170,7 @@ function WorkflowAnnotation({
 }
 
 export function Workflows() {
+  const inCentral = useInCentral(); // 2.5.3 CA-12: Central has no create actions
   const [refresh, setRefresh] = useState(0);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -825,7 +827,7 @@ export function Workflows() {
         {/* I-1 (VF-11) — same gate as the empty state's "Create a workflow"
             below, and as the editor's own. Ungated, it was a primary button
             leading a Viewer to WorkflowEditor's refusal notice. */}
-        {canComposeHere && (
+        {canComposeHere && !inCentral && (
           <Link to="/workflow-editor" style={{ textDecoration: "none" }}>
             <Btn primary style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ Create</Btn>
           </Link>

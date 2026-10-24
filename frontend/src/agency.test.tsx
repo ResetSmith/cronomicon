@@ -238,6 +238,20 @@ describe("the switcher (2.4.4 F1)", () => {
     expect(screen.queryByTestId("agency-switcher")).toBeNull();
   });
 
+  // 2.5.3 CA-12: Central runs nothing; among the choices it reads as the
+  // administration, and so does the switcher while it is chosen. Its name
+  // alone for a person whose one choice it is (above).
+  it("labels the built-in agency as the administration among the choices", async () => {
+    renderAt("/jobs");
+    await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("ag-a"));
+    fireEvent.click(screen.getByTestId("agency-switcher"));
+    const central = await screen.findByRole("option", { name: /Global · administration/ });
+    expect(screen.getByRole("option", { name: /agency-alpha/ }).textContent).not.toContain("administration");
+    fireEvent.click(central);
+    await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("global"));
+    expect(screen.getByTestId("agency-switcher").textContent).toContain("Global · administration");
+  });
+
   it("switches, and shows each agency's waiting work and the default", async () => {
     BADGES = [
       { agencyId: "ag-b", openNotices: 2, failedRuns24h: 3 },

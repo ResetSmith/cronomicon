@@ -40,6 +40,7 @@ import {
   valueBoxStyle,
 } from "./ui";
 import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
+import { useInCentral } from "../../components/CentralRunsNothing";
 
 interface EnvVarRow {
   // UUIDv7 (K-3) — this said `number` on the strength of an openapi.yaml
@@ -74,6 +75,7 @@ const COL_W: Record<string, number> = {
 };
 
 export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; canEdit: boolean }) {
+  const inCentral = useInCentral(); // 2.5.3 CA-12: Central has no create actions
   const [dep, setDep] = useState(0);
   const cw = useColumnWidths("envvars-variables");
   const { data, error, loading } = useGet<unknown>(() => api.GET("/env-vars"), [dep]);
@@ -270,7 +272,7 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
         <ScopeFilterSelect scopes={scopeNames.filter((s) => s !== ALL_SCOPE_OPTION)} value={scopeFilter} onChange={setScopeFilter} />
         <TagFilterSelect items={items} selected={tagFilter} onChange={setTagFilter} getTags={(v) => tagState.tagsFor(v)} matchMode={tagMatch} onMatchModeChange={setTagMatch} />
         <ColumnsMenu cols={cols} cw={cw} />
-        {canEdit && (
+        {canEdit && !inCentral && (
           <Btn primary onClick={() => setAdding(true)}>
             + Add Variable
           </Btn>

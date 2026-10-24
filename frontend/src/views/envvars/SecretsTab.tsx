@@ -46,6 +46,7 @@ import {
 } from "./ui";
 import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
 import { globalAgencyName } from "../../globalName";
+import { useInCentral } from "../../components/CentralRunsNothing";
 
 type SecretSource = "stored" | "vault";
 
@@ -87,6 +88,7 @@ const COL_W: Record<string, number> = {
 };
 
 export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canEdit: boolean }) {
+  const inCentral = useInCentral(); // 2.5.3 CA-12: Central has no create actions
   const [dep, setDep] = useState(0);
   const { data, error, loading } = useGet<unknown>(() => api.GET("/env-secrets"), [dep]);
   const items = rows<EnvSecretRow>(data);
@@ -386,7 +388,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         <TagFilterSelect items={items} selected={tagFilter} onChange={setTagFilter} getTags={(v) => tagState.tagsFor(v)} matchMode={tagMatch} onMatchModeChange={setTagMatch} />
         <ColumnsMenu cols={cols} cw={cw} />
         <SecretsReportButton />
-        {canEdit && (
+        {canEdit && !inCentral && (
           <Btn primary onClick={() => setAdding(true)}>
             + Add Secret
           </Btn>

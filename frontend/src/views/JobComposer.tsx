@@ -199,11 +199,12 @@ export function JobComposer() {
   // What "No scope" means, said of the agency the job is created in (2.5.0 C11,
   // defect 90: it said "visible to every agency", and even the 2.5.0 hint was
   // true only in Global): the agency's job, a scope of its given to each run.
+  // Central composes nothing since 2.5.3 (CA-1, CA-14): the page is not offered
+  // there, and no job is ever Central's.
   const inAgency = useAgencyOptional();
-  const noScopeMeans =
-    !inAgency || inAgency.agency === "global"
-      ? "the job is Global's, and runs on Global's hosts and runners"
-      : `the job is ${inAgency.agencyName}'s, and each run is given one of ${inAgency.agencyName}'s scopes when it starts`;
+  const noScopeMeans = inAgency
+    ? `the job is ${inAgency.agencyName}'s, and each run is given one of ${inAgency.agencyName}'s scopes when it starts`
+    : "the job is its agency's, and each run is given one of that agency's scopes when it starts";
   // Reactions were, from GC (v2.2.2) until 2.4.2, the one part of this form the
   // server took only from a compose administrator; since question 61 they are
   // the job's agency's, like the job.
@@ -474,10 +475,11 @@ export function JobComposer() {
   const identityCapable = isIdentityCapable(runType);
   const chosenScope = scopesList.find((s) => s.scope === scope);
   // The job's agency is its scope's (2.4.0, I2): its schedule entries are
-  // judged by that agency's calendars (2.4.1). No scope is Global's; a scope
-  // not chosen yet, or in no single agency, leaves it unknown.
+  // judged by that agency's calendars (2.4.1). No scope is the job's own
+  // agency's, the one it is made in (2.5.3 CA-5); a scope not chosen yet, or in
+  // no single agency, leaves it unknown.
   const jobAgency =
-    scope === "" ? "global" : (chosenScope?.agencies ?? []).length === 1 ? chosenScope!.agencies![0].id : undefined;
+    scope === "" ? inAgency?.agency : (chosenScope?.agencies ?? []).length === 1 ? chosenScope!.agencies![0].id : undefined;
   const scopeHosts = chosenScope?.hosts ?? [];
 
   // JC-P4 — env context for the chosen scope. '*'/empty scope = a global (mirrors the

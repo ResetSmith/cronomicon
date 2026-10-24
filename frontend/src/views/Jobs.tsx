@@ -31,6 +31,7 @@ import { RunCalendarNote } from "./scheduling/RunCalendarNote";
 import { calendarRollup } from "./scheduling/calendars";
 import { reactionsWatchingRefusal, useReactionEdges } from "./scheduling/reactions";
 import { ReactionPanels } from "./scheduling/ReactionPanels";
+import { useInCentral } from "../components/CentralRunsNothing";
 
 type Job = components["schemas"]["Job"];
 type Scope = components["schemas"]["Scope"];
@@ -151,6 +152,7 @@ const jobSortCols = (resolveCritical: (j: Job) => boolean): SortColumn<Job>[] =>
 ];
 
 export function Jobs() {
+  const inCentral = useInCentral(); // 2.5.3 CA-12: Central has no create actions
   const [bump, setBump] = useState(0);
   // Fetch the catalog at the server max page size (200) rather than the default
   // 50 (which silently truncated the list — anything past the first 50 jobs by
@@ -871,14 +873,14 @@ export function Jobs() {
             saw a primary button that led to JobComposer's "requires the Compose
             capability" notice: the page disagreed with itself, and the
             disagreement cost a click to discover. */}
-        {canComposeHere && (
+        {canComposeHere && !inCentral && (
           <Link to="/compose" style={{ textDecoration: "none" }}>
             <Btn primary style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ Create</Btn>
           </Link>
         )}
         {/* GitLab publish authoring (kind: Job YAML) — gated on PublishSchedule
             (admin OR approver), matching the server requirePerm gate (PP-B1). */}
-        {canPublish && (
+        {canPublish && !inCentral && (
           <Link to="/jobs/publish" style={{ textDecoration: "none" }}>
             <Btn style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ Publish to the repository</Btn>
           </Link>

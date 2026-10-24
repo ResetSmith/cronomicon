@@ -109,8 +109,10 @@ describe("JobComposer — scope is a required choice (AF-1)", () => {
     await waitFor(() => expect(posts.filter((p) => p.path === "/jobs")).toHaveLength(1));
     expect(posts[0].body).toMatchObject({ name: "global-job", scope: "" });
     // The consequence is stated, so "No scope" is never chosen blind; and it is
-    // the agency's, not every agency's (2.5.0 C11, defect 90).
-    expect(q.getAllByText(/No scope: the job is Global.s, and runs on Global.s hosts/).length).toBeGreaterThan(0);
+    // the agency's, not every agency's (2.5.0 C11, defect 90), and never
+    // Central's, which runs nothing (2.5.3 CA-5, CA-14).
+    expect(q.getAllByText(/No scope: the job is its agency.s, and each run is given one of that agency.s scopes/).length).toBeGreaterThan(0);
+    expect(q.queryByText(/Global.s hosts/)).toBeNull();
     expect(q.queryByText(/Visible to every agency/)).toBeNull();
   });
 

@@ -10,6 +10,7 @@ import { DOC_LINKS } from "../../components/docLinks";
 import { DetailCell, DetailPanel, ExpandChevron, InlineLoading, SkeletonRows, SortableLabel, DocLink } from "../../components/ui";
 import { RefreshScope } from "../../components/RefreshScope";
 import { REPAIR_HINT, RepairDialog, vaultChangesOf, type RepairBody, type VaultChange } from "../../components/RepairDialog";
+import { grantAgencyAdmins } from "../../api/grants";
 import {
   Btn,
   Chevron,
@@ -319,14 +320,20 @@ export function AgenciesTab({
   );
 }
 
-function AgencyFormModal({
+export function AgencyFormModal({
   initial,
   onClose,
   onSaved,
+  withAdminGroup,
+  onCreated,
 }: {
   initial: AgencyRow | null;
   onClose: () => void;
   onSaved: (msg: string) => void;
+  /** 2.5.3 CA-16, question 210: also ask for the administrators' AD group (the first-agency card). */
+  withAdminGroup?: boolean;
+  /** Called with the new agency's id once it is created (and its group granted). */
+  onCreated?: (id: string) => void;
 }) {
   const isEdit = initial != null;
   const [name, setName] = useState(initial?.name ?? "");
@@ -339,6 +346,7 @@ function AgencyFormModal({
   const [repoUrl, setRepoUrl] = useState("");
   const [pat, setPat] = useState("");
   const [branch, setBranch] = useState("main");
+  const [adminGroup, setAdminGroup] = useState("");
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -365,6 +373,18 @@ function AgencyFormModal({
                 : {}),
             },
           });
+    if (!res.error && !isEdit && withAdminGroup) {
+      const id = (res.data as { id?: string } | undefined)?.id ?? "";
+      // The agency stands whatever the grant's answer; the form says so.
+      const refused = adminGroup.trim() && id ? await grantAgencyAdmins(id, adminGroup) : null;
+      setBusy(false);
+      if (refused) {
+        setFormError(`${name.trim()} was created, but the administrators' group was not added: ${refused}`);
+        return;
+      }
+      onCreated?.(id);
+      return;
+    }
     setBusy(false);
     if (res.error) setFormError(errMsg(res.error));
     else if (isEdit) onSaved(`Agency updated: ${name.trim()}`);
@@ -416,6 +436,18 @@ function AgencyFormModal({
             style={inputStyle()}
           />
         </div>
+        {!isEdit && withAdminGroup && (
+          <div>
+            <label style={labelStyle()}>Administrators' AD group (optional)</label>
+            <input
+              aria-label="Administrators' AD group"
+              value={adminGroup}
+              onChange={(e) => setAdminGroup(e.target.value)}
+              placeholder="e.g. ops-admins"
+              style={inputStyle()}
+            />
+          </div>
+        )}
         {!isEdit && (
           <button
             type="button"

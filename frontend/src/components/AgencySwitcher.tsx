@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { OVERVIEW, useAgency, type AgencyChoice } from "../agency";
+import { GLOBAL_AGENCY } from "../api/access";
 import { c } from "../theme";
+
+// 2.5.3 CA-12: Central runs nothing; among the choices it reads as what it is.
+const label = (id: string, name: string) => (id === GLOBAL_AGENCY ? `${name} · administration` : name);
 
 // The agency switcher (2.4.4 F1), under the wordmark. One agency at a time:
 // the menu lists the person's choices — All agencies (the Dashboard across
@@ -99,8 +103,9 @@ export function AgencySwitcher({ collapsed }: { collapsed: boolean }) {
   }, [open]);
 
   const currentId = ag.onOverview ? OVERVIEW : ag.agency;
-  const currentName = ag.onOverview ? "All agencies" : ag.agencyName;
   const single = ag.choices.length <= 1;
+  // A person whose one choice is Central (no grant at all) sees its name alone.
+  const currentName = ag.onOverview ? "All agencies" : single ? ag.agencyName : label(ag.agency, ag.agencyName);
   const elsewhere = Object.values(badges).some(
     (b) => b.agencyId !== ag.agency && (b.openNotices > 0 || b.failedRuns24h > 0),
   );
@@ -130,7 +135,7 @@ export function AgencySwitcher({ collapsed }: { collapsed: boolean }) {
 
   const shown: AgencyChoice[] =
     ag.choices.length >= SEARCH_FROM && q.trim()
-      ? ag.choices.filter((ch) => ch.name.toLowerCase().includes(q.trim().toLowerCase()))
+      ? ag.choices.filter((ch) => label(ch.id, ch.name).toLowerCase().includes(q.trim().toLowerCase()))
       : ag.choices;
 
   return (
@@ -233,7 +238,7 @@ export function AgencySwitcher({ collapsed }: { collapsed: boolean }) {
                   textAlign: "left",
                 }}
               >
-                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.name}</span>
+                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label(ch.id, ch.name)}</span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                   {ch.kind === "agency" && <BadgeChips badge={badges[ch.id]} />}
                   {ag.effectiveDefault === ch.id && (

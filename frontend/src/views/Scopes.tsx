@@ -5,6 +5,7 @@ import { useGet, rows } from "../hooks";
 import { TabBar } from "./envvars/ui";
 import { ScopesTab, type ScopeRow } from "./scopes/ScopesTab";
 import { AgenciesTab } from "./scopes/AgenciesTab";
+import { CentralGate, useInCentral } from "../components/CentralRunsNothing";
 
 // Scopes — the WHERE primitive (hosts / execution environments). Promoted from a
 // tab on Env Vars to its own top-level page (SC1); the Agencies catalog moved
@@ -22,8 +23,11 @@ const SLUGS = ["scopes", "agencies"];
 
 export function Scopes() {
   const [params, setParams] = useSearchParams();
+  // 2.5.3 CA-12: Central owns no scope; it keeps the agency catalog, so there
+  // the page opens on Agencies.
+  const inCentral = useInCentral();
   const [tab, setTab] = useState(() => {
-    const slug = params.get("tab") ?? SLUGS[0];
+    const slug = params.get("tab") ?? (inCentral ? "agencies" : SLUGS[0]);
     if (slug === "membership") return 1; // RB-22: the matrix's successor lives on Agencies
     return Math.max(0, SLUGS.indexOf(slug));
   });
@@ -64,7 +68,11 @@ export function Scopes() {
   return (
     <div>
       <TabBar tabs={["Scopes", "Agencies"]} active={tab} onChange={select} />
-      {tab === 0 && <ScopesTab scopes={scopes} loading={loading} error={error} refetch={() => setScopesDep((n) => n + 1)} canEdit={canConfig} globalAdmin={globalAdmin} dep={scopesDep} />}
+      {tab === 0 && (
+        <CentralGate holds={["scope"]}>
+          <ScopesTab scopes={scopes} loading={loading} error={error} refetch={() => setScopesDep((n) => n + 1)} canEdit={canConfig} globalAdmin={globalAdmin} dep={scopesDep} />
+        </CentralGate>
+      )}
       {/* RB-22 — the Membership matrix tab is gone. It was rows × 24 agency
           columns with a non-sticky name cell: scrolled right, you were ticking
           anonymous checkboxes — the same horizontal wall as the deleted Scope

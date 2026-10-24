@@ -14,6 +14,7 @@ import { CriticalChip } from "../../components/Annotation";
 import { RunContact } from "../history/shared";
 import { relationLabel } from "../history/RunNotes";
 import { c } from "../../theme";
+import { CreateFirstAgencyCard } from "./FirstAgency";
 
 // The Dashboard with All agencies chosen (2.5.2 OP5, OP-21 to OP-26; the
 // Operations overview of 2.4.4 F3 until then). One page across every agency,
@@ -433,6 +434,8 @@ export function AllAgenciesDashboard() {
 
   return (
     <div data-testid="overview">
+      {/* 2.5.3 CA-16: with every agency deleted, the way to make one. */}
+      <CreateFirstAgencyCard />
       <AllAgenciesStrip
         total={data.attentionTotal}
         unacked={data.attention.length - ackedCount}

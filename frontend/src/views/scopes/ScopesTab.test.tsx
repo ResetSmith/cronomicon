@@ -530,18 +530,20 @@ describe("ScopesTab — Add Scope names its agency (GC-6, LR-7)", () => {
     expect(Array.from(picker(body).options).map((o) => o.textContent)).not.toContain("Global");
   });
 
-  it("offers a global administrator Global by default, and any agency", async () => {
+  // 2.5.3 CA-1, CA-14: Central owns no scope; a global administrator's scope
+  // is an agency's, the one there is preselected.
+  it("offers a global administrator the agencies, never Global", async () => {
     caps = { configureAppGlobal: true };
     agencies = [{ id: "global", name: "Global" }, { id: "ag-tax", name: "Tax" }];
     const body = await openAdd(true);
-    await waitFor(() => expect(picker(body).value).toBe("global"));
-    expect(Array.from(picker(body).options).map((o) => o.textContent)).toEqual(["Global", "Tax"]);
+    await waitFor(() => expect(picker(body).value).toBe("ag-tax"));
+    expect(Array.from(picker(body).options).map((o) => o.textContent)).toEqual(["Tax"]);
 
     fireEvent.change(body.getByPlaceholderText("e.g. Edge-Lab"), { target: { value: "Shared" } });
     fireEvent.click(body.getByRole("button", { name: "Create Scope" }));
     await waitFor(() => expect(posts.some((p) => p.path === "/scopes")).toBe(true));
     const sent = posts.find((p) => p.path === "/scopes")!.body as Record<string, unknown>;
-    // Said outright: the scope is Global's.
-    expect(sent.agencyIds).toEqual(["global"]);
+    // Said outright: the scope is Tax's.
+    expect(sent.agencyIds).toEqual(["ag-tax"]);
   });
 });

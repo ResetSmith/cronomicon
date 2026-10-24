@@ -26,6 +26,7 @@ import {
 import { BindingNotices, BoundRunnersCell, ScopeRunnersField, UnboundHostKeysNote, type BoundRunner } from "./ScopeRunners";
 import { ScopeKeyCoverage } from "../runners/HostKeys";
 import { globalAgencyName } from "../../globalName";
+import { useInCentral } from "../../components/CentralRunsNothing";
 
 
 export interface ScopeRow {
@@ -135,6 +136,7 @@ export function ScopesTab({
   /** The parent's list-load counter. A fresh load drops the optimistic tag overrides. */
   dep?: number;
 }) {
+  const inCentral = useInCentral(); // 2.5.3 CA-12: Central has no create actions
   const [search, setSearch] = useState("");
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [tagMatch, setTagMatch] = useState<"any" | "all">("any");
@@ -435,9 +437,11 @@ export function ScopesTab({
             >
               {resyncing ? "Re-syncing…" : syncable.length === 1 ? `↻ Re-sync from ${repoLabel(syncable[0])} repository` : "↻ Re-sync from the repository"}
             </Btn>
-            <Btn primary onClick={() => setAdding(true)}>
-              + Add Scope
-            </Btn>
+            {!inCentral && (
+              <Btn primary onClick={() => setAdding(true)}>
+                + Add Scope
+              </Btn>
+            )}
           </>
         )}
       </div>

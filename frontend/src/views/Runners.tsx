@@ -43,6 +43,7 @@ import {
   type ProvisionOptions,
 } from "./runner-provision";
 import { globalAgencyName } from "../globalName";
+import { useInCentral } from "../components/CentralRunsNothing";
 
 // Ported from the prototype's RunnersSection (cronomicon-settings.jsx).
 // GET /runners, GET|POST /runners/registration-tokens (single-use, Phase 7),
@@ -462,7 +463,7 @@ function ScopesServed({
 /** The local runner: this server itself, listed with the agents. */
 const isLocal = (r: Runner) => r.kind === "server";
 
-// Where the local runner is turned on and off (it serves Global only, §0a).
+// Where the local runner is given its agency and turned on and off (2.5.3 CA-8, CA-9).
 const LOCAL_RUNNER_SETTINGS = "/settings?tab=localrunner";
 
 // Where the local runner is turned on and off. That Settings section is listed
@@ -626,8 +627,8 @@ function OwnerAndServes({ runner, onSaved }: { runner: Runner; onSaved: () => vo
       </div>
       {local ? (
         <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6 }}>
-          The local runner is this server, and serves Global only. A global administrator turns it on or off under{" "}
-          <LocalRunnerSettingsLink>Settings → Local runner</LocalRunnerSettingsLink>.
+          The local runner is this server, and serves one agency, or none and is off. A global administrator chooses its
+          agency and turns it on or off under <LocalRunnerSettingsLink>Settings → Local runner</LocalRunnerSettingsLink>.
         </div>
       ) : (
         !legacy && (
@@ -993,8 +994,9 @@ function RunnerDetail({
           {local && (
             <Section title="Settings">
               <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-                <LocalRunnerState />A global administrator turns it on or off, and sets how many runs it takes at once, under{" "}
-                <LocalRunnerSettingsLink>Settings → Local runner</LocalRunnerSettingsLink>. It serves Global only.
+                <LocalRunnerState />A global administrator chooses its agency, turns it on or off, and sets how many runs it
+                takes at once, under <LocalRunnerSettingsLink>Settings → Local runner</LocalRunnerSettingsLink>. It serves its
+                agency only; with none it is off.
               </span>
             </Section>
           )}
@@ -1329,6 +1331,7 @@ function runnerOrigin(): string {
 
 
 export function Runners() {
+  const inCentral = useInCentral(); // 2.5.3 CA-12: Central has no create actions
   const [refresh, setRefresh] = useState(0);
   const [tokenV, setTokenV] = useState(0);
   const [canConfig, setCanConfig] = useState(false);
@@ -1598,7 +1601,8 @@ export function Runners() {
   const [mintLabel, setMintLabel] = useState("");
   // LR-61 — a token names the agency that will OWN the agent it enrols. The
   // caller is offered the agencies they administer; a global administrator is
-  // offered Global and every agency. One option is not a choice and is chosen.
+  // offered every agency, never Central, whose agents take no work since 2.5.3
+  // (CA-1, CA-14). One option is not a choice and is chosen.
   const access = useMyAccess();
   // 2.5.0 C11, defect 86: a token is minted in the agency the person works in
   // (the server refuses another, agency_context_mismatch). A global
@@ -1607,7 +1611,7 @@ export function Runners() {
   const ag = useAgencyOptional();
   const here: AgencyRef | null = ag ? { id: ag.agency, name: ag.agencyName } : null;
   const mayMintFor: AgencyRef[] = canConfigGlobal
-    ? [{ id: GLOBAL_AGENCY, name: globalAgencyName() }, ...availableAgencies.filter((a) => a.id !== GLOBAL_AGENCY)]
+    ? availableAgencies.filter((a) => a.id !== GLOBAL_AGENCY)
     : agenciesFor(access ?? null, "configureApp");
   const tokenOwners: AgencyRef[] = here ? [here] : mayMintFor;
   const [mintAgencyPick, setMintAgency] = useState("");
@@ -1615,15 +1619,13 @@ export function Runners() {
     ? here.id
     : tokenOwners.some((a) => a.id === mintAgencyPick)
       ? mintAgencyPick
-      : canConfigGlobal
-        ? GLOBAL_AGENCY
-        : tokenOwners.length === 1
-          ? tokenOwners[0].id
-          : "";
+      : tokenOwners.length === 1
+        ? tokenOwners[0].id
+        : "";
   const mintBlocked =
     here && !canConfigGlobal && access != null && !mayMintFor.some((a) => a.id === here.id)
       ? `You do not administer ${here.name}: switch to an agency you administer to mint a token there`
-      : !here && !canConfigGlobal && tokenOwners.length > 1 && !mintAgency
+      : !here && tokenOwners.length > 1 && !mintAgency
         ? "Choose the agency this runner is for"
         : "";
   // The plaintext token is returned by the mint POST only once; the list never
@@ -1652,7 +1654,7 @@ export function Runners() {
       title="The agency that will own the runner this token enrols. Its administrators manage the runner, and it serves that agency's runs and no other's."
       style={{ padding: "7px 8px", background: c.panel2, border: `1px solid ${c.borderStrong}`, borderRadius: c.radiusChip, fontSize: c.fontSm, color: c.text, maxWidth: 220 }}
     >
-      {!here && !canConfigGlobal && tokenOwners.length !== 1 && <option value="">Runner for…</option>}
+      {!here && tokenOwners.length !== 1 && <option value="">Runner for…</option>}
       {tokenOwners.map((a) => (
         <option key={a.id} value={a.id}>
           For {a.name}
@@ -1842,9 +1844,11 @@ export function Runners() {
           </a>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <Btn primary onClick={openAddRunner}>
-            + Add Runner
-          </Btn>
+          {!inCentral && (
+            <Btn primary onClick={openAddRunner}>
+              + Add Runner
+            </Btn>
+          )}
           <a
             href={RUNNER_INSTALL_SCRIPT_PATH}
             download

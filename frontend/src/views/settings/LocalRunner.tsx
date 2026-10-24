@@ -2,27 +2,30 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import type { components } from "../../api/schema";
+import { GLOBAL_AGENCY } from "../../api/access";
 import { useGet } from "../../hooks";
 import { c } from "../../theme";
 import { AlertBanner, ConfirmDialog, InlineLoading } from "../../components/ui";
 import { globalOnly } from "../../api/globalAdmin";
 import { Btn, Card, SettingRow, csrfHeader, errMsg, inputStyle } from "./ui";
-import { globalAgencyName } from "../../globalName";
 
 type LocalRunner = components["schemas"]["LocalRunner"];
+type Agency = { id: string; name: string };
 
 // The Local runner card (LR-1, LR-17, LR-43, LR-44; v2.3.0).
 //
 // The server can run shell jobs itself, over SSH, from inside its own process.
-// That is the LOCAL RUNNER: one row in the runner list, Global's, off unless it
-// is turned on here. Turning it on makes this server hold SSH private keys and
-// open connections to job targets, so both directions are confirmed, and each
-// says what changes for runs that are queued or running.
+// That is the LOCAL RUNNER: one row in the runner list, off unless it is turned
+// on here. Turning it on makes this server hold SSH private keys and open
+// connections to job targets, so both directions are confirmed, and each says
+// what changes for runs that are queued or running.
 //
-// It serves Global and nothing else since 2.4.0 (§0a, IN-3; migration 1380):
-// the server refuses any other serve list (422 local_runner_global_only), so
-// the card shows it and offers nothing to change (R8). Until then it was the
-// one runner whose serve list was chosen here (MA-14).
+// 2.5.3 (CA-8 to CA-10): it belongs to one agency, chosen here, and serves that
+// agency alone; or to none ("Unassigned"), and is off and cannot be turned on
+// (422 local_runner_unassigned). Changing its agency is refused while it runs a
+// run (local_runner_busy) or while scopes are bound to it (local_runner_bound),
+// clears its host-key approvals (the new agency approves the keys of its own
+// hosts), and turns it off.
 //
 // `canWrite` — a global administrator for configureApp. The section is only
 // listed for one; the flag is honoured anyway, control by control.
@@ -30,7 +33,9 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
   const why = globalOnly(canWrite);
   const [bump, setBump] = useState(0);
   const q = useGet<LocalRunner>(() => api.GET("/local-runner"), [bump]);
+  const agenciesQ = useGet<Agency[]>(() => api.GET("/agencies"), []);
   const [confirm, setConfirm] = useState<"on" | "off" | null>(null);
+  const [moveTo, setMoveTo] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [conc, setConc] = useState<string | null>(null);
@@ -41,14 +46,18 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
     return <AlertBanner type="danger">Could not read the local runner: {q.error ?? "no data"}</AlertBanner>;
   }
   const lr = q.data;
-  const serves = lr.serves ?? [];
+  const agencies = (Array.isArray(agenciesQ.data) ? agenciesQ.data : []).filter((a) => a.id !== GLOBAL_AGENCY);
+  const owner = lr.owner && lr.owner.id !== GLOBAL_AGENCY ? lr.owner : null;
+  const ownerName = owner?.name ?? "";
+  const nameOf = (id: string) => agencies.find((a) => a.id === id)?.name ?? id;
 
-  const put = async (body: { enabled?: boolean; maxConcurrent?: number }) => {
+  const put = async (body: { ownerAgency?: string; enabled?: boolean; maxConcurrent?: number }) => {
     setSaving(true);
     setErr(null);
-    const { error } = await api.PUT("/local-runner", { params: { header: csrfHeader }, body });
+    const { error } = await api.PUT("/local-runner", { params: { header: csrfHeader }, body: body as never });
     setSaving(false);
     setConfirm(null);
+    setMoveTo(null);
     if (error) setErr(errMsg(error));
     else setConc(null);
     // Read it back either way: a refusal can still have saved the setting
@@ -58,8 +67,9 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
   const concValue = conc ?? String(lr.maxConcurrent);
   const concNum = Number(concValue);
   const concOk = Number.isInteger(concNum) && concNum >= 1 && concNum <= 64;
-  const state = lr.forbidden ? "Forbidden on this host" : lr.enabled ? "On" : "Off";
+  const state = lr.forbidden ? "Forbidden on this host" : lr.enabled ? "On" : owner ? "Off" : "Off: it belongs to no agency";
   const stateColor = lr.forbidden ? c.textSec : lr.enabled ? c.success : c.textSec;
+  const onWhy = why || (!owner ? "Choose its agency first: with no agency it is off." : "");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -71,10 +81,31 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
       <Card title="Local runner">
         <p style={{ margin: "0 0 12px", fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
           This server can run shell jobs itself (bash, perl, powershell, python), connecting to the target hosts over SSH. It
-          is listed with the other runners and claims what it is placed to serve, like them. It has no Ansible or Terraform:
+          belongs to one agency and claims that agency's shell runs, like an agent of it. It has no Ansible or Terraform:
           those need a runner agent. Turned on, <strong style={{ color: c.text }}>this server holds SSH private keys and opens
           connections to job targets</strong>.
         </p>
+        <SettingRow
+          label="Agency"
+          hint="The agency whose shell runs it claims. Its administrators approve the host keys of its hosts. With no agency it is off and cannot be turned on."
+        >
+          <select
+            aria-label="Agency"
+            value={owner?.id ?? ""}
+            disabled={busy || !!why}
+            title={why || undefined}
+            onChange={(e) => setMoveTo(e.target.value)}
+            style={{ ...inputStyle(), width: 240 }}
+          >
+            <option value="">Unassigned (off)</option>
+            {owner && !agencies.some((a) => a.id === owner.id) && <option value={owner.id}>{owner.name}</option>}
+            {agencies.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </SettingRow>
         <SettingRow label="State" hint={lr.forbidden ? "CRONOMICON_LOCAL_RUNNER=forbid is set on the host, so it cannot be turned on here." : undefined}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 600, color: stateColor }}>{state}</span>
@@ -84,7 +115,7 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
                   Turn off…
                 </Btn>
               ) : (
-                <Btn primary onClick={() => setConfirm("on")} disabled={busy || !!why} title={why || undefined}>
+                <Btn primary onClick={() => setConfirm("on")} disabled={busy || !!onWhy} title={onWhy || undefined}>
                   Turn on…
                 </Btn>
               ))}
@@ -93,7 +124,7 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
             </Link>
           </div>
         </SettingRow>
-        <SettingRow label="Runs at once" hint="How many runs it executes at the same time. Each run opens SSH sessions from this server.">
+        <SettingRow label="Runs at once" hint="How many runs it executes at the same time. Each run opens SSH sessions from this server." last>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <input
               aria-label="Runs at once"
@@ -118,15 +149,33 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
             )}
           </div>
         </SettingRow>
-        <SettingRow
-          label="Serves"
-          hint="Global: the jobs with no scope and Global's own scopes. An agency's runs are claimed by an agent enrolled for that agency. Narrow a scope to particular runners by binding it, on the Scopes page."
-          last
-        >
-          <span style={{ fontWeight: 600, color: c.text }}>{serves.map((a) => a.name).join(", ") || globalAgencyName()}</span>
-        </SettingRow>
       </Card>
 
+      {moveTo !== null && (
+        <ConfirmDialog
+          title={moveTo ? `Give the local runner to ${nameOf(moveTo)}?` : "Take the local runner from its agency?"}
+          danger={false}
+          busy={busy}
+          message={
+            moveTo ? (
+              <>
+                It will claim {nameOf(moveTo)}'s shell runs{owner ? ` instead of ${ownerName}'s` : ""}. Its host-key approvals are
+                cleared, so {nameOf(moveTo)}'s administrators approve the keys of its hosts, and it is turned off: turn it on again
+                when they are ready. It is refused while it is running a run, or while scopes are bound to it. The change is
+                recorded with your name.
+              </>
+            ) : (
+              <>
+                It will belong to no agency, and is turned off: with no agency it cannot run. Its host-key approvals are cleared.
+                It is refused while it is running a run, or while scopes are bound to it. The change is recorded with your name.
+              </>
+            )
+          }
+          confirmLabel={moveTo ? `Give it to ${nameOf(moveTo)}` : "Unassign it"}
+          onCancel={() => setMoveTo(null)}
+          onConfirm={() => put({ ownerAgency: moveTo })}
+        />
+      )}
       {confirm === "on" && (
         <ConfirmDialog
           title="Turn the local runner on?"
@@ -135,8 +184,8 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
           message={
             <>
               This server will hold SSH private keys in memory and open connections to job targets. It starts claiming at once:
-              queued shell runs of {serves.map((a) => a.name).join(", ") || globalAgencyName()} that no other runner has taken
-              will run from here. The change is recorded with your name.
+              queued shell runs of {ownerName} that no other runner has taken will run from here. The change is recorded with
+              your name.
             </>
           }
           confirmLabel="Turn on"
