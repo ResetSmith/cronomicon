@@ -280,6 +280,16 @@ func run() error {
 			logger.Error("demo seed failed", "error", err)
 		}
 	}
+	// 2.5.3 CA-16: Central runs nothing, so an installation with no agency but
+	// Central gets one to work in, Operations, once (after the seed, which
+	// makes its own). Non-fatal: the first-agency card makes one by hand.
+	if id, why, ferr := settings.EnsureFirstAgency(ctx0, pool); ferr != nil {
+		logger.Error("could not make the first agency; create one in the app", "error", ferr)
+	} else if id != "" {
+		logger.Info("first agency made", "agency", settings.FirstAgencyName, "id", id)
+	} else if why != "it ran before" {
+		logger.Info("first agency not made", "reason", why)
+	}
 
 	// Identity: OIDC relying party + operator sessions (B2). Never
 	// hard-fails — login degrades if the issuer is unreachable (T12).

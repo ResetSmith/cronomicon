@@ -1328,6 +1328,181 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/calendars/catalogue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What Central's calendar catalogue offers (v2.5.3)
+         * @description The catalogue is the built-in agency's calendars, which global
+         *     administrators write with the ordinary calendar routes while working in
+         *     it; no run reads them. Any agency's calendar editor (compose on some
+         *     agency) reads it here (403 otherwise), to add a copy to an agency
+         *     (POST /calendars/from-central). Each item carries the hash of its
+         *     content; `copiedAs` names the copies of it that the agency the request
+         *     works in holds. The name `catalogue` is reserved for this route: no
+         *     calendar is created with it.
+         */
+        get: operations["listCalendarCatalogue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calendars/from-central": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a calendar from Central's catalogue to an agency (v2.5.3)
+         * @description A copy of a catalogue calendar: the agency's own row with its days,
+         *     description and flags, linked to it, and read-only in the agency until
+         *     it is made the agency's own (POST /calendars/{name}/detach). In the
+         *     agency the request works in (compose on it; 422 `agency_required` when
+         *     the request names none), or, for a global administrator, in each of
+         *     `agencyIds` (recorded as acting in each). The copy is named as the
+         *     catalogue calendar unless `name` says otherwise; a name the agency
+         *     holds is 409, and a global (freeze) calendar under a name an entry of
+         *     the agency keeps to is 422. The built-in agency takes no copy (422
+         *     `catalogue_copies_nothing`). Judged whole: one refusal, nothing added.
+         */
+        post: operations["addCalendarFromCentral"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calendars/{name}/update": {
+        parameters: {
+            query?: {
+                /** @description Whose calendar of the name: required when more than one agency has one. */
+                agencyId?: string;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update a copy from Central's catalogue (v2.5.3)
+         * @description The copy takes the catalogue calendar's content as it is now: several
+         *     changes made while it was behind are one update. Compose on the copy's
+         *     agency. Answered as it is when up to date. 409 `not_from_central` for a
+         *     calendar that is no copy, `calendar_no_longer_offered` when the
+         *     catalogue calendar was deleted, and `calendar_update_blocked` when the
+         *     update would make it global (a freeze calendar) while an entry of the
+         *     agency keeps to it (CAL-27): the reason names the entry.
+         */
+        post: operations["updateCalendarFromCentral"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calendars/{name}/update-mode": {
+        parameters: {
+            query?: {
+                /** @description Whose calendar of the name: required when more than one agency has one. */
+                agencyId?: string;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * How a copy takes Central's changes (v2.5.3)
+         * @description `ask`: a change to the catalogue calendar puts the copy behind, with the
+         *     notice `calendar_update_available` and the alert event
+         *     `calendar-update-available`, until its agency updates it. `auto`: the
+         *     copy is updated in the catalogue save's own transaction, with a
+         *     change-log row and the event `calendar-updated` in its agency; one its
+         *     agency's bindings forbid (CAL-27) stays behind and the notice says why.
+         *     Set to `auto` while behind, the copy takes the pending update at once
+         *     when its bindings allow. Compose on the copy's agency; 409 as for an
+         *     update.
+         */
+        put: operations["setCalendarUpdateMode"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calendars/{name}/detach": {
+        parameters: {
+            query?: {
+                /** @description Whose calendar of the name: required when more than one agency has one. */
+                agencyId?: string;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make a copy the agency's own (v2.5.3)
+         * @description The copy becomes an ordinary calendar of its agency, editable, with no
+         *     link to the catalogue and no updates; its notices resolve. A copy whose
+         *     catalogue calendar was deleted is made its own the same way. Compose on
+         *     its agency; 409 `not_from_central` for a calendar that is no copy.
+         */
+        post: operations["detachCalendar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calendars/catalogue/{uid}/push": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The catalogue calendar's uid. */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push a catalogue calendar's update to agencies (v2.5.3)
+         * @description A global administrator's (403 otherwise): each named agency's copies of
+         *     the catalogue calendar take its content, acting in each agency, with
+         *     the event `calendar-updated` there. A copy up to date is left as it is,
+         *     one its agency's bindings forbid (CAL-27) is listed in `blocked` with
+         *     the reason, and an agency with no copy is listed in `noCopy`.
+         */
+        post: operations["pushCatalogueCalendar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/schedules": {
         parameters: {
             query?: never;
@@ -2929,11 +3104,11 @@ export interface paths {
          * The local runner — this server running shell jobs itself (v2.3.0)
          * @description The server can run shell jobs (bash, perl, powershell, python) itself,
          *     over SSH, from inside its own process. Since v2.3.0 that engine is the
-         *     **local runner**: one row in the runner list, of kind `server`, owned by
-         *     Global. It claims what it is placed to serve like any other runner, and
-         *     it is the one runner with a serve list: a global administrator sets the
-         *     agencies it serves with `PUT /runner-agencies` (any non-empty set, which
-         *     may hold Global beside others).
+         *     **local runner**: one row in the runner list, of kind `server`. Since
+         *     v2.5.3 (CA-8, CA-9) it belongs to the one agency a global administrator
+         *     gives it (`PUT` with `ownerAgency`), serves that agency alone and claims
+         *     its runs like any of its runners; or to none (`owner` null), and then it
+         *     is off whatever its switch says.
          *
          *     The row always exists once the server has started; turned off, it is
          *     `offline` and claims nothing. Any session may read this: the runner list
@@ -2945,8 +3120,22 @@ export interface paths {
          * Turn the local runner on or off, and set its concurrency
          * @description A global administrator's (`configureApp` on every agency): turned on,
          *     this server holds SSH private keys and opens connections to job targets.
-         *     Give `enabled`, `maxConcurrent`, or both; a field left out is unchanged.
-         *     Each change is recorded in the activity feed.
+         *     Give `ownerAgency`, `enabled`, `maxConcurrent`, or several; a field left
+         *     out is unchanged. Each change is recorded in the activity feed.
+         *
+         *     **Its agency (v2.5.3, CA-8 to CA-10).** `ownerAgency` gives it to an
+         *     agency (its id), or to none (`""` or `"global"`): its owner and serve list
+         *     become exactly that agency, its scope bindings and the host keys approved
+         *     for it are cleared (that agency approves its own hosts' keys: its
+         *     administrators review them, question 204), and it is turned **off**, so
+         *     that it claims nothing before those keys are approved. Applied before
+         *     `enabled`, so one request may give it and turn it on, deliberately. 409
+         *     `local_runner_busy` while it is running a run; 409 `local_runner_bound` while scopes are bound to it
+         *     (their agency unbinds them, or binds a runner of its own, first: removing
+         *     the binding would open the scope); 422 `unknown_agency`. A request is
+         *     judged whole before anything is written.
+         *     Turning it on while it belongs to no agency is 422
+         *     `local_runner_unassigned`.
          *
          *     The change takes effect at once, without a restart. Turning **off**
          *     drains: runs the local runner is running finish, it claims no more, and
@@ -4493,16 +4682,22 @@ export interface paths {
             query?: never;
             header?: never;
             path: {
-                /** @description The agency's id; `global` for Global's repository. */
+                /** @description The agency's id. `global` is the built-in agency, which has no repository since v2.5.3. */
                 agencyId: string;
             };
             cookie?: never;
         };
         /**
          * An agency's repository and its connection (v2.4.0)
-         * @description Needs `configureApp` on the agency (GR-9); Global's needs a global
-         *     administrator. 403 for anyone else, whether or not the agency or its
-         *     repository is there. 404 `not_connected` when the agency has none.
+         * @description Needs `configureApp` on the agency (GR-9); the built-in agency's needs a
+         *     global administrator. 403 for anyone else, whether or not the agency or
+         *     its repository is there. 404 `not_connected` when the agency has none.
+         *
+         *     **The built-in agency (`global`, v2.5.3, CA-6)** has no repository: 404
+         *     `not_connected`, unless it still holds one from before 2.5.3 (its row
+         *     with a URL or a synced commit, or definitions synced from it), which is
+         *     answered with `leftover: true`. A leftover does not sync; it is removed
+         *     with `DELETE` (a repair), and its URL connected to an ordinary agency.
          */
         get: operations["getAgencyGitRepo"];
         /**
@@ -4533,10 +4728,34 @@ export interface paths {
          *     out of a first write. The connection is applied when it is saved: the
          *     repository's sync service is started (or rebuilt) from it and syncs at
          *     once.
+         *
+         *     **The built-in agency (`global`)** has no repository since v2.5.3
+         *     (CA-6): 422 `central_runs_nothing`, and nothing is stored.
          */
         put: operations["putAgencyGitRepo"];
         post?: never;
-        delete?: never;
+        /**
+         * Remove the built-in agency's leftover repository (v2.5.3)
+         * @description "Remove the leftover repository" (v2.5.3, CA-6, question 203): the
+         *     built-in agency's repository from before 2.5.3 goes, with what it
+         *     synced (jobs and their schedules, workflows, scripts, Git schedules,
+         *     Git scopes and their imported host records, its sync problems), as an
+         *     agency's deletion removes its repository's. Its run history stays. To
+         *     keep the definitions, connect the same URL and branch to an ordinary
+         *     agency afterwards: its sync brings them in as that agency's.
+         *
+         *     A global administrator's repair: `repair: true` and a `reason` (at most
+         *     500 characters, written to the audit log). 403 for anyone else; 409
+         *     `repair_required` without `repair`; 422 `validation_failed` without a
+         *     reason; 404 `not_connected` when there is no leftover; 409
+         *     `scopes_busy`, naming them, while a scope of it is bound to runners and
+         *     has work queued (nothing is removed).
+         *
+         *     An agency's repository is changed, never disconnected (IN-2): for any
+         *     other agency, 422 `repository_not_removable` (404 for an agency that is
+         *     not there).
+         */
+        delete: operations["deleteAgencyGitRepo"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4756,7 +4975,9 @@ export interface paths {
          *     refuses the assignment (422 `calendar_missing`, `calendars`; question
          *     94): calendars are not files before 2.6.0, and the agency's sync would
          *     refuse the schedule naming it, and the definition with it. Create the
-         *     calendars in the agency and assign again. So does, for the same reason
+         *     calendars in the agency and assign again; since v2.5.3
+         *     `catalogueCalendars` lists those of them Central's catalogue offers,
+         *     which the agency adds from Central. So does, for the same reason
          *     (2.5.0 C11), a schedule that keeps to (`onlyCalendars`) a calendar the
          *     agency has as global (422 `calendar_not_bindable`, `calendars`), and a
          *     reaction whose upstream the agency would not have: a Git one not in its
@@ -5060,11 +5281,12 @@ export interface paths {
          *     `agency_required`, and Global beside a named agency is 422 `global_mixed`
          *     (a runner that serves Global claims Global's runs and no department's).
          *
-         *     The **local runner** (kind `server`) is Global's and serves Global only
-         *     (v2.4.0): for it this route takes exactly Global, and anything else is
-         *     422 `local_runner_global_only`. (From v2.3.0 a global administrator gave
-         *     it any non-empty set of agencies; the upgrade narrows it, and the notice
-         *     `local_runner_served` names each agency it served.)
+         *     The **local runner** (kind `server`) serves exactly its owner: since
+         *     v2.5.3 the agency a global administrator gives it (`PUT /local-runner`,
+         *     `ownerAgency`), or the built-in agency while it belongs to none. For it
+         *     this route takes exactly its owner, and anything else is 422
+         *     `local_runner_serves_owner` (`local_runner_global_only` until v2.5.3,
+         *     when its owner was always Global).
          *
          *     **An agent serves exactly the agency that owns it** (v2.3.0, MA-11), so
          *     this route no longer places one: the list written must be exactly the
@@ -6016,6 +6238,19 @@ export interface components {
             readonly id?: number;
             /** @description v2.4.2, on GET /jobs/{jobId}. The id of the agency the job is (its owner since 1400): whose calendars its schedule entries are judged by. */
             readonly ownerAgency?: string;
+            /**
+             * @description v2.5.3, on the detail. Its own Forbid calendars (CA-30): it does
+             *     not start automatically on a day one lists. Its agency's calendars.
+             */
+            forbidCalendars?: string[];
+            /**
+             * @description v2.5.3, on the detail. Its own Allow calendars: it starts
+             *     automatically only on a day one lists (any of them). With an
+             *     entry's onlyCalendars, both levels must list the day; a Forbid one
+             *     (its own, the entry's, or the agency's freeze calendars) prevails.
+             */
+            allowCalendars?: string[];
+            calendarToday?: components["schemas"]["CalendarToday"];
             /** @description AF-4a — the definition's stable surrogate identity, assigned when the row is first seen (by sync or by the composer) and preserved across syncs, edits and restores. Unlike `id` (a numeric handle) and unlike the name (which a later phase will allow to repeat across agencies), the uid never changes for the life of the row. New integrations should key on it. */
             readonly uid?: string;
             readonly name?: string;
@@ -6365,6 +6600,10 @@ export interface components {
             }[];
             enabled?: boolean;
             requestable?: boolean;
+            /** @description v2.5.3: its own Forbid calendars (CA-30), of its agency; validated as an entry's skipCalendars (422 for a name the agency lacks). */
+            forbidCalendars?: string[];
+            /** @description v2.5.3: its own Allow calendars, of its agency; a global (freeze) calendar is refused (422), as for an entry's onlyCalendars, and so is a name in both lists. */
+            allowCalendars?: string[];
             timeoutSeconds?: number;
             retries?: number;
             /** @description WB-R1 job-level default backoff between retry attempts. */
@@ -6756,6 +6995,19 @@ export interface components {
         };
         Workflow: {
             readonly id?: number;
+            /**
+             * @description v2.5.3, on the detail. The workflow's own Forbid calendars (CA-30): it does
+             *     not start automatically on a day one lists. Its agency's calendars.
+             */
+            forbidCalendars?: string[];
+            /**
+             * @description v2.5.3, on the detail. Its own Allow calendars: it starts
+             *     automatically only on a day one lists (any of them). With an
+             *     entry's onlyCalendars, both levels must list the day; a Forbid one
+             *     (its own, the entry's, or the agency's freeze calendars) prevails.
+             */
+            allowCalendars?: string[];
+            calendarToday?: components["schemas"]["CalendarToday"];
             /** @description v2.4.0 — the repository a Git workflow is of; absent for one built in the app. */
             readonly repoId?: string;
             /**
@@ -6859,6 +7111,10 @@ export interface components {
         WorkflowComposeInput: {
             /** @description Workflow name (slug). Immutable on edit. */
             name?: string;
+            /** @description v2.5.3: its own Forbid calendars (CA-30), of its agency; validated as an entry's skipCalendars (422 for a name the agency lacks). */
+            forbidCalendars?: string[];
+            /** @description v2.5.3: its own Allow calendars, of its agency; a global (freeze) calendar is refused (422), as for an entry's onlyCalendars, and so is a name in both lists. */
+            allowCalendars?: string[];
             description?: string;
             enabled?: boolean;
             /** @description The step graph (job/parallel/branch). Each job step's referenced job must exist. */
@@ -7102,9 +7358,23 @@ export interface components {
          *     `ambiguous_calendar` when several do. The upgrade to v2.4.0 gave each
          *     agency a copy of every global calendar of Global's, and of each
          *     calendar its entries named of another agency's, under the same name.
+         *
+         *     Since v2.5.3 the built-in agency's calendars are Central's catalogue:
+         *     global administrators write them, no run reads them, and an agency
+         *     adds a copy (POST /calendars/from-central). A copy carries
+         *     `fromCentral`; it is read-only in its agency (409
+         *     `calendar_from_central` on PUT and PUT .../days; `canEdit` false) until
+         *     made the agency's own, and may be deleted. A catalogue calendar
+         *     carries `copies`. Saving one updates the copies set to update
+         *     automatically, in the same transaction; deleting one leaves its copies,
+         *     no longer offered.
          */
         Calendar: {
             name?: string;
+            /** @description v2.5.3: the calendar's identity, never changed. */
+            readonly uid?: string;
+            fromCentral?: components["schemas"]["CalendarOrigin"];
+            readonly copies?: components["schemas"]["CalendarCopyRef"][];
             /** @description The agency id the calendar belongs to (v2.4.0). */
             ownerAgency?: string;
             /** @description v2.4.2, on the list. The caller's writes to this calendar would pass: compose on its agency. */
@@ -7146,13 +7416,87 @@ export interface components {
             /** Format: date-time */
             readonly createdAt?: string;
         };
+        /**
+         * @description A copy's link to Central's catalogue (v2.5.3). `state`: `up_to_date`;
+         *     `update_available`, with `pending` (what an update would change) and,
+         *     when the agency's bindings forbid it (CAL-27), `blocked`;
+         *     `no_longer_offered`, once the catalogue calendar was deleted.
+         */
+        CalendarOrigin: {
+            catalogueUid?: string;
+            /** @description The catalogue calendar's name now; absent once it is gone. */
+            catalogueName?: string;
+            /** @enum {string} */
+            updateMode?: "ask" | "auto";
+            /** @enum {string} */
+            state?: "up_to_date" | "update_available" | "no_longer_offered";
+            blocked?: string;
+            pending?: {
+                daysAdded?: string[];
+                daysRemoved?: string[];
+                daysRelabelled?: string[];
+                descriptionChanged?: boolean;
+                /** @description The catalogue's value, when the update changes it. */
+                global?: boolean;
+                /** @description The catalogue's value, when the update changes it. */
+                recordSuppressed?: boolean;
+            };
+        };
+        /** @description One agency's copy of a catalogue calendar (v2.5.3). */
+        CalendarCopyRef: {
+            agencyId?: string;
+            agencyName?: string;
+            name?: string;
+            /** @enum {string} */
+            updateMode?: "ask" | "auto";
+            /** @enum {string} */
+            state?: "up_to_date" | "update_available" | "no_longer_offered";
+            blocked?: string;
+        };
+        /** @description One calendar Central's catalogue offers (v2.5.3). */
+        CatalogueCalendar: {
+            uid?: string;
+            name?: string;
+            description?: string;
+            global?: boolean;
+            recordSuppressed?: boolean;
+            dayCount?: number;
+            lastDay?: string | null;
+            /** @description The hash of its content (description, flags, days and labels; not the name). */
+            hash?: string;
+            /** @description The copies of it the agency the request works in holds. */
+            copiedAs?: string[];
+        };
+        CalendarPushResult: {
+            agencyId?: string;
+            name?: string;
+            reason?: string;
+        };
         CalendarDay: {
             /** @description Wall-clock date, strict YYYY-MM-DD. Matched in the effective app timezone, never UTC. */
             day: string;
             /** @description Human label shown as the suppression reason (e.g. "Independence Day (observed)"). */
             label?: string;
         };
-        /** @description One schedule entry that names a calendar. */
+        /**
+         * @description v2.5.3 (CA-32): what a definition's own calendars say of today, when
+         *     they would stop an automatic start: the Run dialog's "Today is
+         *     forbidden by …" (`polarity` skip) or "Today is not in …" (only). A
+         *     person's Run is not stopped by them. Absent when they allow today.
+         */
+        CalendarToday: {
+            day?: string;
+            /** @enum {string} */
+            polarity?: "skip" | "only";
+            calendar?: string;
+            label?: string;
+            reason?: string;
+        };
+        /**
+         * @description One schedule entry that names a calendar, or (v2.5.3, `level`
+         *     `definition`, no `scheduleName`) a job's or a workflow's own Forbid
+         *     (`skip`) or Allow (`only`) calendar.
+         */
         CalendarBinding: {
             /** @enum {string} */
             ownerKind?: "job" | "workflow";
@@ -7166,6 +7510,11 @@ export interface components {
             scheduleName?: string;
             /** @enum {string} */
             polarity?: "skip" | "only";
+            /**
+             * @description v2.5.3: the definition's own calendar, which no entry carries.
+             * @enum {string}
+             */
+            level?: "definition";
         };
         BackupRecipient: {
             /** @description An age X25519 public key (age1…). */
@@ -8105,7 +8454,11 @@ export interface components {
              *       owns and only some agencies may use: what several agencies shared
              *       before 2.3.0, or a row the upgrade would not give to its one
              *       agency because that would have changed what some run resolves.
-             *       It works as it did. Subject `<kind>:<id>`.
+             *       Subject `<kind>:<id>@<agency id>`, filed under each agency listed
+             *       for it (v2.5.1). Since v2.5.3 the built-in agency runs nothing,
+             *       so the agencies' runs no longer find it; the global
+             *       administrators' finding (subject `<kind>:<id>`) is retired and
+             *       the row is listed by `central_holds_work`.
              *     - `orphaned` — a scope, runner, secret, variable or SSH key that
              *       belongs to no agency. Nothing can use it and only a global
              *       administrator can re-home it. Subject `<kind>:<id>`.
@@ -8226,13 +8579,11 @@ export interface components {
              *       for one that comes to span later (a scope given to another
              *       agency). Subject: the workflow's uid. Filed under Global. It
              *       clears when the workflow's jobs are all one agency's.
-             *     - `global_job_on_agency_scope` — a job of Global's repository names
-             *       a scope that is not Global's (allowed before v2.4.0). A job of
-             *       Global's repository runs on Global's scopes only: it does not
-             *       run (each run is refused, with the reason), and Global's sync
-             *       keeps it as it was rather than removing it. Subject: the job's
-             *       uid. Filed under Global. It clears when its file names a scope
-             *       of Global's, or none, or leaves the repository.
+             *     - `global_job_on_agency_scope` — retired in v2.5.3 (raised no
+             *       more, and cleared): a job of Global's repository named a scope
+             *       that was not Global's. Since v2.5.3 the built-in agency has no
+             *       repository that syncs, and what its leftover repository holds is
+             *       listed by `central_holds_work`.
              *     - `global_credential_bound` — a job of an agency binds a secret, a
              *       variable or an SSH key by a name only Global holds (v2.4.0). A row
              *       of Global's is used by Global's runs only: the job's runs do not
@@ -8257,11 +8608,10 @@ export interface components {
              *       (`configureApp` on it) connects it. Subject: the agency's id.
              *       Filed under the agency. It clears when the repository is
              *       connected.
-             *     - `global_calendar_scope` — a calendar of Global's is global. Until
-             *       v2.4.0 it froze every agency's fires; now it freezes Global's only
-             *       (the whole installation is /settings/freeze). Raised while there
-             *       is an agency besides Global. Subject: the calendar's name. Filed
-             *       under Global. It clears when the calendar is not global.
+             *     - `global_calendar_scope` — retired in v2.5.3 (raised no more, and
+             *       cleared): a calendar of Global's was global, and froze Global's
+             *       fires only. Since v2.5.3 the built-in agency's calendars are the
+             *       catalogue agencies take copies of.
              *     - `global_schedule_bound` — a job or workflow of an agency is bound
              *       to a schedule of Global's (allowed before v2.4.0). A schedule's
              *       edits reach its own agency's definitions only: this one keeps the
@@ -8275,10 +8625,45 @@ export interface components {
              *       with the reason. Subject: the job's uid. Filed under the job's
              *       agency. It clears when the job is built on a script of its own
              *       agency's repository.
-             *     - `local_runner_served` — the local runner served this agency until
-             *       v2.4.0, and serves Global only now; the agency's shell jobs wait
-             *       for an agent of its own. Subject: the agency's id. Filed under the
-             *       agency. It clears when an agent the agency owns serves it.
+             *     - `local_runner_served` — retired in v2.5.3 (raised no more, and
+             *       cleared): the local runner served this agency until v2.4.0, then
+             *       Global only; since v2.5.3 it belongs to the agency a global
+             *       administrator gives it.
+             *     - `local_runner_unassigned` — v2.5.3: the local runner's switch is
+             *       stored on and it belongs to no agency, so it is off (an upgrade from
+             *       an installation where it was on). Subject `local-runner`. Filed
+             *       under the built-in agency. It clears when it is given to an agency
+             *       or turned off.
+             *     - `environment_settings_ignored` — v2.5.3: the server was started
+             *       with `CRONOMICON_GITLAB_*` or `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN`,
+             *       which it no longer reads. Subject `environment`. Filed under the
+             *       built-in agency. It clears at a start without them.
+             *     - `calendar_update_available` — v2.5.3: a calendar an agency copied
+             *       from Central's catalogue is behind it: the agency's Update applies
+             *       it, or an automatic update was refused by the agency's bindings
+             *       (the detail says why). Subject `calendar:<the copy's uid>`. Filed
+             *       under the copy's agency. It clears when the copy is up to date,
+             *       made the agency's own, or deleted.
+             *     - `calendar_no_longer_offered` — v2.5.3: the catalogue calendar a
+             *       copy was taken from was deleted; the copy stays, read-only.
+             *       Subject `calendar:<the copy's uid>`. Filed under the copy's
+             *       agency. It clears when the copy is made the agency's own or
+             *       deleted.
+             *     - `central_holds_work` — v2.5.3: the built-in agency still owns
+             *       something that runs or that runs use, from before v2.5.3. The
+             *       built-in agency runs nothing: none of it runs, and nothing is
+             *       moved automatically. One notice per kind, naming the rows (the
+             *       first ten, and how many more) and saying the way out: jobs,
+             *       workflows and schedules built in the app are made again in an
+             *       agency; scopes, secrets, variables, SSH keys, host records and
+             *       bastions are given to an agency (a repair, with a reason); an
+             *       agent serving the built-in agency alone is enrolled again with a
+             *       token of its agency's; a leftover repository is removed and the
+             *       same URL and branch connected to an agency. Subject
+             *       `central:<job|workflow|schedule|scope|secret|env-var|ssh-credential|host|bastion|runner|repository>`.
+             *       Filed under the built-in agency. Each clears when the built-in
+             *       agency holds none of its kind. Its calendars are not listed: they
+             *       are the catalogue.
              *     - `reaction_other_agency` — a reaction is pinned to a definition of
              *       another agency than its own (v2.4.0). A reaction watches its own
              *       agency's definitions only: it does not fire, and each run of the
@@ -9645,6 +10030,14 @@ export interface components {
                 id?: string;
                 name?: string;
             }[];
+            /**
+             * @description v2.5.3 (CA-8): the agency it belongs to and serves; null while it
+             *     belongs to none, which is off.
+             */
+            owner?: {
+                id?: string;
+                name?: string;
+            } | null;
         };
         /**
          * @description A single-use registration token row (Phase 7, D6) — metadata and the
@@ -10018,8 +10411,13 @@ export interface components {
          *     last sync, and how much it supplies.
          */
         GitRepo: {
-            /** @description The repository's id; `global` for Global's. It is the `{repoId}` of the webhook route. */
+            /** @description The repository's id; `global` for the built-in agency's leftover (v2.5.3). It is the `{repoId}` of the webhook route. */
             id: string;
+            /**
+             * @description v2.5.3 (CA-6): the built-in agency's repository from before 2.5.3,
+             *     which does not sync and is only removed. Absent for an agency's.
+             */
+            leftover?: boolean;
             /** @description The agency the repository belongs to; `global` for Global's. */
             agencyId: string;
             agencyName?: string;
@@ -10299,9 +10697,10 @@ export interface components {
              *     `sla-breach` and `missed-run` (SL) are NOT run outcomes: one fires mid-run when a job passes its `warnAfterSeconds` or `mustFinishBy` deadline, the other when a schedule expected a fire and none appeared. `any` deliberately does NOT cover them — an operator with an "any run" rule asked about run outcomes, and silently widening it would have turned every such rule into a pager the day SL shipped.
              *
              *     `secret-revealed`, `secret-changed` and `backup-key-changed` (v2.5.1) are not about runs either: a stored secret was revealed; a secret or SSH key was created, rotated, updated, moved, deleted or migrated to Vault; the installation's backup keys changed. They are matched by a rule whose target is `all` only. An agency's rule hears of its own agency's secrets, Global's of every agency's, and `backup-key-changed` is Global's alone. The message names the actor and says when they are outside the agency.
+             *     `calendar-update-available` and `calendar-updated` (v2.5.3) are an agency's copy of a calendar from Central's catalogue falling behind it (update mode ask, or an automatic update its bindings refused), and being updated from it (automatically, or pushed by a global administrator). Matched by a rule whose target is `all`; an agency's rule hears of its own copies, the built-in agency's of every agency's.
              * @enum {string}
              */
-            trigger: "failure" | "success" | "warning" | "killed" | "skipped" | "any" | "sla-breach" | "missed-run" | "secret-revealed" | "secret-changed" | "backup-key-changed";
+            trigger: "failure" | "success" | "warning" | "killed" | "skipped" | "any" | "sla-breach" | "missed-run" | "secret-revealed" | "secret-changed" | "backup-key-changed" | "calendar-update-available" | "calendar-updated";
             channels: ("email" | "apprise")[];
             recipients?: string;
             owner?: string | null;
@@ -13422,6 +13821,205 @@ export interface operations {
             422: components["responses"]["Validation"];
         };
     };
+    listCalendarCatalogue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The catalogue. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: components["schemas"]["CatalogueCalendar"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    addCalendarFromCentral: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    catalogueUid: string;
+                    /** @description The copy's name; the catalogue calendar's when empty. */
+                    name?: string;
+                    /**
+                     * @description ask (the default) or auto.
+                     * @enum {string}
+                     */
+                    updateMode?: "ask" | "auto";
+                    /** @description A global administrator's: the agencies to add it to. */
+                    agencyIds?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description The copies made. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: components["schemas"]["Calendar"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    updateCalendarFromCentral: {
+        parameters: {
+            query?: {
+                /** @description Whose calendar of the name: required when more than one agency has one. */
+                agencyId?: string;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The copy. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Calendar"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    setCalendarUpdateMode: {
+        parameters: {
+            query?: {
+                /** @description Whose calendar of the name: required when more than one agency has one. */
+                agencyId?: string;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    updateMode: "ask" | "auto";
+                };
+            };
+        };
+        responses: {
+            /** @description The copy. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Calendar"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    detachCalendar: {
+        parameters: {
+            query?: {
+                /** @description Whose calendar of the name: required when more than one agency has one. */
+                agencyId?: string;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The calendar. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Calendar"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    pushCatalogueCalendar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The catalogue calendar's uid. */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    agencyIds: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description What was done. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        updated?: components["schemas"]["CalendarPushResult"][];
+                        upToDate?: components["schemas"]["CalendarPushResult"][];
+                        blocked?: components["schemas"]["CalendarPushResult"][];
+                        noCopy?: string[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
     listSchedules: {
         parameters: {
             query?: never;
@@ -14811,6 +15409,13 @@ export interface operations {
              *     `suppressed_by_calendar` is not raised when the request defers the
              *     run (`runAt`): the freeze is re-judged at the promotion instant, so
              *     parking a run for after the freeze is allowed.
+             *
+             *     v2.5.3 (CA-32): on the TOKEN route the job's own Forbid and Allow
+             *     calendars gate the start too (a person's Run is not gated by them;
+             *     the job's `calendarToday` warns instead). A start they refuse is
+             *     `suppressed_by_calendar`, and recorded as a skipped run; a deferred
+             *     one is judged on the day of `runAt` and refused now, never parked
+             *     for a day they forbid.
              */
             409: {
                 headers: {
@@ -16146,6 +16751,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description The agency it is given to (v2.5.3); `""` or `"global"` for none. */
+                    ownerAgency?: string;
                     enabled?: boolean;
                     /** @description How many runs it executes at once. */
                     maxConcurrent?: number;
@@ -16165,7 +16772,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description The host forbids the local runner (`local_runner_forbidden`). */
+            /** @description The host forbids the local runner (`local_runner_forbidden`), or it is running a run and its agency would change (`local_runner_busy`), or scopes are bound to it and its agency would change (`local_runner_bound`, and their agency unbinds them first). */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -18848,7 +19455,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The agency's id; `global` for Global's repository. */
+                /** @description The agency's id. `global` is the built-in agency, which has no repository since v2.5.3. */
                 agencyId: string;
             };
             cookie?: never;
@@ -18877,7 +19484,7 @@ export interface operations {
                 "X-CSRF-Token": components["parameters"]["csrf"];
             };
             path: {
-                /** @description The agency's id; `global` for Global's repository. */
+                /** @description The agency's id. `global` is the built-in agency, which has no repository since v2.5.3. */
                 agencyId: string;
             };
             cookie?: never;
@@ -18909,6 +19516,46 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    deleteAgencyGitRepo: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                /** @description The agency's id. `global` is the built-in agency, which has no repository since v2.5.3. */
+                agencyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    repair: boolean;
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The leftover was removed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        removed?: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["Validation"];
         };
     };
