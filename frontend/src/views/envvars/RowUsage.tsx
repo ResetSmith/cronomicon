@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, errMsg } from "../../api/client";
 import { useAgencyOptional } from "../../agency";
+import { globalAgencyName } from "../../globalName";
 import type { components } from "../../api/schema";
 import { useGet } from "../../hooks";
 import { c } from "../../theme";
@@ -90,13 +91,14 @@ export function HeldByGlobal({ kind }: { kind: "secret" | "key" }) {
   const items = (q.data?.items ?? []).filter((i) => i.kind === kind);
   if (!agency || items.length === 0) return null;
   const noun = kind === "secret" ? "secret" : "SSH key";
+  const central = globalAgencyName();
   return (
-    <div style={{ ...detailBoxStyle(), marginBottom: 16 }} aria-label="Held by Global">
-      <SectionLabel>Held by Global</SectionLabel>
+    <div style={{ ...detailBoxStyle(), marginBottom: 16 }} aria-label={`Held by ${central}`}>
+      <SectionLabel>Held by {central}</SectionLabel>
       <div style={{ color: c.textSec, fontSize: c.fontSm, lineHeight: 1.6, marginBottom: 8 }}>
-        These were shared with {ctx?.agencyName ?? "this agency"} before 2.3.0. Global holds them, and since 2.4.0 only
-        Global's runs use them: your agency's runs do not. A global administrator can give one to your agency; until then,
-        create your own {noun} if your jobs need one.
+        These were shared with {ctx?.agencyName ?? "this agency"} before 2.3.0. {central} holds them, and {central} runs
+        nothing, so no run uses them: your agency's runs do not. A global administrator can give one to your agency (Move
+        agency); until then, create your own {noun} if your jobs need one.
       </div>
       {items.map((it) => (
         <div key={it.id} style={{ borderTop: `1px solid ${c.borderLight}`, padding: "6px 0" }}>

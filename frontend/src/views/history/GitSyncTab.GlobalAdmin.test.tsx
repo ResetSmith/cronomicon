@@ -50,7 +50,8 @@ vi.mock("../../api/access", async (importOriginal) => {
 
 import { GitSyncTab } from "./GitSyncTab";
 
-const WHY = "Only a global administrator (a role on every agency) can sync Global's repository.";
+// 2.5.3 (CA2): the built-in agency has no repository; its past log stays readable.
+const WHY = "Global has no repository to sync: choose an agency's repository.";
 
 beforeEach(() => {
   global = false;

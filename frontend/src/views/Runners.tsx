@@ -510,7 +510,7 @@ function notOwnerWhy(runner: Runner): string {
   if (runner.canManage ?? true) return "";
   const owner = runner.ownerAgency;
   return !owner || owner.id === GLOBAL_AGENCY
-    ? "This runner is Global's — only a global administrator (a role on every agency) can manage it."
+    ? `This runner is ${globalAgencyName()}'s — only a global administrator (a role on every agency) can manage it.`
     : `This runner belongs to ${owner.name} — only that agency's administrators can manage it.`;
 }
 

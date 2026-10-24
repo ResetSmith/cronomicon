@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, fetchCapabilities } from "../../api/client";
-import { VAULT_SECRET_GLOBAL_ONLY, globalOnly } from "../../api/globalAdmin";
+import { globalOnly, vaultSecretGlobalOnly } from "../../api/globalAdmin";
 import { GLOBAL_AGENCY, useAgencyIdByName } from "../../api/access";
 import { useVaultPrefixes, vaultPathWhy } from "../../api/vaultPaths";
 import { useAgencyOptional } from "../../agency";
@@ -108,7 +108,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
   // global administrator's: `vaultWhy` is "" for them and the explanation for
   // anyone else, and it applies to Global's rows only (rowVaultWhy).
   const [vaultGlobal, setVaultGlobal] = useState(false);
-  const vaultWhy = globalOnly(vaultGlobal, VAULT_SECRET_GLOBAL_ONLY);
+  const vaultWhy = globalOnly(vaultGlobal, vaultSecretGlobalOnly());
   const rowVaultWhy = (v: EnvSecretRow) => (!v.ownerAgency || v.ownerAgency === globalAgencyName() ? vaultWhy : "");
   useEffect(() => {
     let cancelled = false;

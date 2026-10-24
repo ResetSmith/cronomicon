@@ -102,7 +102,7 @@ describe("HeldByGlobal", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText("Held by Global")).toBeTruthy();
-    expect(screen.getByText(/only\s+Global's runs use them/)).toBeTruthy();
+    expect(screen.getByText(/Global holds them, and Global runs\s+nothing, so no run uses them: your agency's runs do not/)).toBeTruthy();
     expect(screen.queryByText("old-deploy")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /OLD_SHARED/ }));
     expect(await screen.findByLabelText("Usage")).toBeTruthy();

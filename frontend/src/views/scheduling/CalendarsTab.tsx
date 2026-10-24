@@ -71,7 +71,7 @@ function ExpiryBadge({ state, daysRemaining }: { state: ExpiryState; daysRemaini
 
 const GlobalBadge = () => (
   <span
-    title="Applies to every schedule entry of its agency, whether or not the entry names it."
+    title="A freeze calendar: it forbids its days to every start of its agency, whether or not the job or entry names it."
     style={{
       fontSize: c.fontXs,
       fontWeight: 600,
@@ -83,7 +83,7 @@ const GlobalBadge = () => (
       whiteSpace: "nowrap",
     }}
   >
-    global
+    freeze
   </span>
 );
 
@@ -236,10 +236,10 @@ export function CalendarsTab() {
           <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
             <p style={{ marginTop: 0 }}>
               A calendar is a list of dates — your company holidays, a change freeze, your month-end close.
-              Bind one to a schedule as a <strong>skip</strong> calendar and no fire lands on those days; bind it as a{" "}
-              <strong>run-day</strong> calendar and the schedule fires on no others. Mark one <strong>global</strong> and
-              it applies to every schedule of its agency at once, which is how an agency's change freeze is one checkbox
-              instead of N edits. It does not reach another agency's schedules.
+              Name one on a job, a workflow or a schedule as a <strong>Forbid</strong> calendar and nothing starts on
+              those days; name it as an <strong>Allow</strong> calendar and nothing starts on any other. Mark one a{" "}
+              <strong>freeze</strong> calendar and it forbids its days to every start of its agency at once, which is how an
+              agency's change freeze is one checkbox instead of N edits. It does not reach another agency.
             </p>
             <p>
               <strong>Cronomicon ships no holiday dates</strong> — every date is yours to author, so no list of ours can be
@@ -247,7 +247,7 @@ export function CalendarsTab() {
               pasted block of <code>YYYY-MM-DD,label</code> lines, or a CSV or .ics file.
             </p>
             <p style={{ marginBottom: 0 }}>
-              A calendar stops working when it runs out of days — a skip calendar simply stops suppressing, with nothing
+              A calendar stops working when it runs out of days — a Forbid calendar simply stops suppressing, with nothing
               else to tell you. This list flags one that has expired or is close to it, so renewing next year's dates
               stays an annual task with an owner.
             </p>
@@ -475,7 +475,7 @@ function CalendarEditor({
     const nm = slug.trim();
     if (!NAME_RE.test(nm)) return setErr("Name must be a slug (a-z, 0-9, _-, ≤64 chars).");
     if (global && boundAsOnly.length > 0) {
-      return setErr(`"${nm}" is bound as a run-day calendar by ${boundAsOnly.length} entr${boundAsOnly.length === 1 ? "y" : "ies"} — a global calendar may only ever skip.`);
+      return setErr(`"${nm}" is named as an Allow calendar ${boundAsOnly.length} time${boundAsOnly.length === 1 ? "" : "s"} — a freeze calendar may only ever forbid.`);
     }
     if (!isEdit && ownerPick.blockedReason) return setErr(`${ownerPick.blockedReason}.`);
     setBusy(true);
@@ -582,14 +582,14 @@ function CalendarEditor({
         <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: c.fontSm, color: c.text }}>
           <input type="checkbox" checked={global} onChange={(e) => setGlobal(e.target.checked)} disabled={readOnly || boundAsOnly.length > 0} style={{ marginTop: 3 }} />
           <span>
-            Apply to every schedule of {ownerLabel} (global)
+            Freeze: forbid its days to every start of {ownerLabel}
             <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 2 }}>
-              Its days are skipped by every entry of {ownerLabel}, whether or not the entry names it — a change freeze as one
-              checkbox instead of N schedule edits. Other agencies' schedules are not affected. Skip only: a global calendar
-              can never be a run-day calendar.
+              No job, workflow or schedule entry of {ownerLabel} starts on its days, whether or not it names the calendar — a
+              change freeze as one checkbox instead of N edits. Other agencies are not affected. Forbid only: a freeze
+              calendar can never be an Allow calendar.
               {boundAsOnly.length > 0 && (
                 <span style={{ color: c.warning }}>
-                  {" "}Unavailable — {boundAsOnly.length} entr{boundAsOnly.length === 1 ? "y binds" : "ies bind"} this as a run-day calendar.
+                  {" "}Unavailable — it is named as an Allow calendar {boundAsOnly.length} time{boundAsOnly.length === 1 ? "" : "s"}.
                 </span>
               )}
             </div>
@@ -598,11 +598,11 @@ function CalendarEditor({
         <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: c.fontSm, color: c.text }}>
           <input type="checkbox" checked={recordSuppressed} onChange={(e) => setRecordSuppressed(e.target.checked)} disabled={readOnly} style={{ marginTop: 3 }} />
           <span>
-            Record run-day (only) suppressions in History
+            Record a schedule's Allow misses in History
             <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 2 }}>
-              Skip-mode suppressions are always recorded — that is the compliance question. Leave this off unless you
-              want an audit row every time a run-day calendar holds a fire back, which for a weekdays-only calendar is
-              every weekend.
+              Forbidden starts are always recorded — that is the compliance question — and so is any start other than the
+              schedule that an Allow calendar holds back. Leave this off unless you want an audit row every time an Allow
+              calendar holds a scheduled fire back, which for a weekdays-only calendar is every weekend.
             </div>
           </span>
         </label>

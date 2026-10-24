@@ -154,7 +154,7 @@ export function CalendarPicker({
                 }}
               >
                 {name}
-                {cal?.global ? " ◦ global" : ""}
+                {cal?.global ? " ◦ freeze" : ""}
                 {missing ? " — missing" : ""}
               </button>
             );

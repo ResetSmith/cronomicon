@@ -288,7 +288,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
   const ownedWhy = (owner: string | undefined | null, name: string | undefined | null, what: string): string => {
     if (!known || !owner || mine.has(owner)) return "";
     return owner === GLOBAL_AGENCY
-      ? `This ${what} is Global's — only a global administrator (a role on every agency) can change it.`
+      ? `This ${what} is ${globalAgencyName()}'s — only a global administrator (a role on every agency) can change it.`
       : `This ${what} belongs to ${ownerName(owner, name)} — only that agency's administrators can change it.`;
   };
   // R8 — a row says what this caller may do with it (canEdit, canDelete),
@@ -300,7 +300,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
     if (flag === undefined) return derived;
     if (derived) return derived;
     return owner === GLOBAL_AGENCY || !owner
-      ? `This ${what} is Global's — only a global administrator (a role on every agency) can change it.`
+      ? `This ${what} is ${globalAgencyName()}'s — only a global administrator (a role on every agency) can change it.`
       : `This ${what} belongs to ${ownerName(owner, name)} — only that agency's administrators can change it.`;
   };
   // 2.5.0 C11, defect 86: a record is created in the agency the person works

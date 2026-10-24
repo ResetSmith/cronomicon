@@ -74,7 +74,7 @@ vi.mock("../../api/access", async (importOriginal) => {
 import { SecretsTab } from "./SecretsTab";
 
 const WHY =
-  "A Vault-backed secret that is Global's may name any path on the installation's Vault — only a global administrator can create, edit or migrate one.";
+  "A Vault-backed secret that is Global's may name any path on the installation's Vault — only a global administrator can edit or migrate one.";
 
 const grant = (agencyId: string, agencyName: string) => ({
   role: "admin", allScopes: false, agencyId, agencyName, scopes: [], permissions: ["manageEnvVars"], groups: [], origin: "group",

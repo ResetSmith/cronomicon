@@ -270,7 +270,7 @@ export function MyAccessDialog({ onClose }: { onClose: () => void }) {
           </div>
           {access.grants.length === 0 ? (
             <div style={{ fontSize: c.fontSm, color: c.text }}>
-              None of your groups is named by an access grant, so you can see what belongs to Global and change nothing. Ask an
+              None of your groups is named by an access grant, so you can see no agency's work and change nothing. Ask an
               administrator to grant one of your groups a role.
             </div>
           ) : (

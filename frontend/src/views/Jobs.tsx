@@ -1650,6 +1650,9 @@ export function RunDialog({
   // only as a 403 on a job that worked yesterday, with the remedy hidden inside a
   // collapsed section — the worst possible shape for a new rule.
   const jobUnscoped = !(job.scope ?? "");
+  // 2.5.3 (CA-5): a run with no scope is its job's agency's, and a runner that
+  // serves that agency takes it. The list row names the job's agency.
+  const jobAgency = job.agencies?.length === 1 ? job.agencies[0] : "the job's agency";
   const mustBindScope = jobUnscoped && !unrestricted;
   const scopeMissing = mustBindScope && !scope;
   // M3 — groups come from the effective scope's projection (NAMES only). A shell
@@ -2674,7 +2677,7 @@ export function RunDialog({
       <FormField label={mustBindScope ? "Target scope (required)" : "Target scope"}>
         <select value={scope} onChange={(e) => setScope(e.target.value)} style={{ ...inputStyle(), cursor: "pointer", marginBottom: 8 }}>
           {/* RB-26: for an unscoped job the empty value is not a "default", it is
-              the no-scope run, which is Global's — and the server asks for the verb
+              the no-scope run, which is the job's agency's — and the server asks for the verb
               on every agency (this option still follows the broader `unrestricted`
               flag, so a refusal there is possible and shows the server's reason).
               Say so rather than letting it read as a harmless default. */}
@@ -2682,7 +2685,7 @@ export function RunDialog({
             {job.scope
               ? `Job default (${job.scope})`
               : unrestricted
-                ? "No scope (Global) — runs on a runner that serves Global"
+                ? `No scope — runs on a runner that serves ${jobAgency}`
                 : "Choose a scope…"}
           </option>
           {scopes.map((s) => (
@@ -2824,18 +2827,18 @@ export function RunDialog({
           ) : runnerOnly ? (
             <>
               <strong>{job.type}</strong> needs the local toolchain, so an agent that serves{" "}
-              {effScope ? <>scope <strong>{effScope}</strong></> : "the Global agency"} takes the run. The local runner
+              {effScope ? <>scope <strong>{effScope}</strong></> : jobAgency} takes the run. The local runner
               (this server) does not run {job.type}.
             </>
           ) : bindsKey ? (
             <>
               This run binds an SSH key, which only an agent delivers as a file, so an agent that serves{" "}
-              {effScope ? <>scope <strong>{effScope}</strong></> : "the Global agency"} takes it. The local runner (this
+              {effScope ? <>scope <strong>{effScope}</strong></> : jobAgency} takes it. The local runner (this
               server) does not take a run that binds one.
             </>
           ) : (
             <>
-              Whichever runner that serves {effScope ? <>scope <strong>{effScope}</strong></> : "the Global agency"} asks
+              Whichever runner that serves {effScope ? <>scope <strong>{effScope}</strong></> : jobAgency} asks
               first takes the run: an agent, or the local runner (this server, over SSH) where it is switched on and
               serves that agency. To keep a scope&rsquo;s jobs on particular runners, bind them on Scopes → Runners.
             </>
@@ -2846,7 +2849,7 @@ export function RunDialog({
           {scopeBound ? (
             <RunsOn bound={boundRunners} scope={scope} runType={job.type} />
           ) : (
-            `Any ${agentOnly ? "agent" : "runner"} that serves ${effScope ? "this scope" : "the Global agency"}`
+            `Any ${agentOnly ? "agent" : "runner"} that serves ${effScope ? "this scope" : jobAgency}`
           )}
         </div>
       </FormField>

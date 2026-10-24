@@ -6,6 +6,7 @@ import { AlertBanner, Btn, InlineLoading } from "../components/ui";
 import { fmtInAppZone } from "../utils/datetime";
 import { c } from "../theme";
 import type { components } from "../api/schema";
+import { globalAgencyName } from "../globalName";
 
 // Notices — one inbox for standing conditions (LR-85, v2.3.0).
 //
@@ -43,8 +44,10 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   schedule_gone: { title: "A schedule in use was removed from Git", to: "/schedules", toLabel: "Schedules" },
   workflow_spans_agencies: { title: "A workflow runs jobs of more than one agency", to: "/workflows", toLabel: "Workflows" },
   reaction_other_agency: { title: "A reaction watches another agency's definition", to: "/schedules?tab=reactions", toLabel: "Reactions" },
-  global_credential_bound: { title: "A job binds a secret, variable or key only Global has", to: "/env-vars", toLabel: "Env Vars" },
-  global_host_record: { title: "A host only Global has a record for", to: "/settings?tab=targets", toLabel: "SSH Targets" },
+  // The built-in agency's name is read when the title is shown (a getter): this
+  // table is built at import, before the name is known.
+  global_credential_bound: { get title() { return `A job binds a secret, variable or key only ${globalAgencyName()} has`; }, to: "/env-vars", toLabel: "Env Vars" },
+  global_host_record: { get title() { return `A host only ${globalAgencyName()} has a record for`; }, to: "/settings?tab=targets", toLabel: "SSH Targets" },
   // 2.5.1 SG-40: an agency may be created without one; its administrator connects it.
   agency_no_repository: { title: "An agency has no repository connected", to: "/settings?tab=repositories", toLabel: "Repositories" },
   // 2.5.0 C5 (GA-2): its delegates delete it in Users & Access; a global
@@ -52,8 +55,8 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   grant_group_unlisted: { title: "A grant names a group its agency does not list", to: "/settings?tab=users", toLabel: "Users & Access" },
   // 2.5.1 SG-28: the agency's own Vault did not answer.
   agency_vault_unreachable: { title: "An agency's own Vault cannot be reached", to: "/settings?tab=agencyvault", toLabel: "Agency Vault" },
-  global_script_job: { title: "A job is built on a script of Global's repository", to: "/jobs", toLabel: "Jobs" },
-  global_schedule_bound: { title: "A job or workflow is bound to a schedule of Global's", to: "/schedules", toLabel: "Schedules" },
+  global_script_job: { get title() { return `A job is built on a script of ${globalAgencyName()}'s repository`; }, to: "/jobs", toLabel: "Jobs" },
+  global_schedule_bound: { get title() { return `A job or workflow is bound to a schedule of ${globalAgencyName()}'s`; }, to: "/schedules", toLabel: "Schedules" },
   schedule_entry_no_owner: { title: "A schedule entry with no owner no longer fires", to: "/schedules", toLabel: "Schedules" },
   may_run_on_agent: { title: "Shell jobs that ran from the server may now run on an agent", to: "/scopes", toLabel: "Scopes" },
   mixed_scope: { title: "Shell jobs that ran in two places may now run in either", to: "/scopes", toLabel: "Scopes" },

@@ -1,3 +1,5 @@
+import { globalAgencyName } from "../globalName";
+
 // GC (v2.2.2, "gate closing") — the words for a control that needs a GLOBAL
 // administrator.
 //
@@ -31,13 +33,15 @@ export const GLOBAL_ADMIN_ONLY = globalAdminOnly();
 export const GLOBAL_ADMIN_VIEW_ONLY = globalAdminOnly("view or change this");
 
 /**
- * A Vault-backed secret or key that is GLOBAL's: any path on the installation's
- * one Vault connection, so a global administrator's. (An agency's own is its
- * administrators', inside the Vault paths assigned to that agency — v2.3.0,
- * LR-80; see api/vaultPaths.)
+ * A Vault-backed secret or key that is the built-in agency's: any path on the
+ * installation's one Vault connection, so a global administrator's. (An
+ * agency's own is its administrators', inside the Vault paths assigned to that
+ * agency — v2.3.0, LR-80; see api/vaultPaths.) Since 2.5.3 none is created
+ * there (CA-1): one is left from before. A function, so it reads the agency's
+ * name when it is shown.
  */
-export const VAULT_SECRET_GLOBAL_ONLY =
-  "A Vault-backed secret that is Global's may name any path on the installation's Vault — only a global administrator can create, edit or migrate one.";
+export const vaultSecretGlobalOnly = (): string =>
+  `A Vault-backed secret that is ${globalAgencyName()}'s may name any path on the installation's Vault — only a global administrator can edit or migrate one.`;
 
 /**
  * globalOnly turns a "…Global" capability flag into the reason a control is

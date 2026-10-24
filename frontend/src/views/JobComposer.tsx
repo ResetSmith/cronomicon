@@ -1103,7 +1103,7 @@ export function JobComposer() {
             ) : (
               <>
                 Whichever runner that serves the job&rsquo;s scope asks first takes a run: an agent, or the local runner
-                (this server, over SSH) where it is switched on, for a job of Global&rsquo;s.
+                (this server, over SSH) where it is switched on and belongs to the job&rsquo;s agency.
               </>
             )}{" "}
             To keep a scope&rsquo;s jobs on particular runners, bind them on Scopes → Runners.

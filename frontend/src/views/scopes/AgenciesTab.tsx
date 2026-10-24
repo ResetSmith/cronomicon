@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { allReadable, api } from "../../api/client";
 import { GLOBAL_AGENCY } from "../../api/access";
+import { globalAgencyName } from "../../globalName";
 import { globalOnly } from "../../api/globalAdmin";
 import { useGet, rows, useTableSort } from "../../hooks";
 import { type SortColumn } from "../../utils/sort";
@@ -653,7 +654,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
       desired: [...members.map((x) => ({ kind: x.kind, id: x.id })), { kind, id }],
       busyKey: `add-${kind}`,
       title: `Give ${name} to this agency?`,
-      message: `${name} is Global's. Adding it here makes this agency its owner: other agencies' runs that bind it stop resolving it the next time they start.`,
+      message: `${name} is ${globalAgencyName()}'s, which runs nothing, so no run uses it. Adding it here makes this agency its owner, and this agency's runs can bind it.`,
       confirm: "Give it to this agency",
     });
   };
@@ -725,7 +726,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
           // ADDING here takes one of Global's rows out of Global: a repair, a
           // global administrator's (configureApp on every agency) whatever the
           // kind. For anyone else it is disabled with why.
-          const why = globalAdmin ? "" : `Adding one of Global's here changes its agency. ${REPAIR_HINT}`;
+          const why = globalAdmin ? "" : `Adding one of ${globalAgencyName()}'s here changes its agency. ${REPAIR_HINT}`;
           // REMOVING is possible only for a row still in several agencies (from
           // before 2.3.0): a row in one agency cannot be left in none, and one
           // this agency owns is moved, not removed. So the control exists only
@@ -810,7 +811,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
                     color: c.textSec,
                   }}
                 >
-                  <option value="">{avail.length === 0 ? "Nothing of Global's to add" : "+ Add one of Global's…"}</option>
+                  <option value="">{avail.length === 0 ? `Nothing of ${globalAgencyName()}'s to add` : `+ Add one of ${globalAgencyName()}'s…`}</option>
                   {avail.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
@@ -825,7 +826,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
       </div>
       <div style={{ fontSize: c.fontXs, color: c.textMuted }}>
         A scope, secret, variable and key belongs to exactly one agency, and another agency gets one by a copy. A global
-        administrator can repair a placement that was a mistake: add one of Global's here, which makes this agency its
+        administrator can repair a placement that was a mistake: add one of {globalAgencyName()}'s here, which makes this agency its
         owner, or change its agency on the row itself. A repair asks for a reason, written to the audit log.
       </div>
       {pending && (

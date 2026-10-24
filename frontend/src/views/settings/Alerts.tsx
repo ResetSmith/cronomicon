@@ -49,7 +49,7 @@ export function AlertsSection({ isGlobal }: { isGlobal: boolean }) {
     !known || !agency || isGlobal || mine.some((a) => a.id === agency)
       ? ""
       : agency === GLOBAL_AGENCY
-        ? "Global's alerts are a global administrator's (a role on every agency) to change."
+        ? `${agencyName}'s alerts are a global administrator's (a role on every agency) to change.`
         : `Only ${agencyName}'s administrators can change its alerts.`;
 
   const [bump, setBump] = useState(0);
@@ -66,7 +66,7 @@ export function AlertsSection({ isGlobal }: { isGlobal: boolean }) {
       <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
         The alert rules and push targets of <strong style={{ color: c.text }}>{agencyName || "your agency"}</strong>.{" "}
         {agency === GLOBAL_AGENCY
-          ? "Global's rules match the runs of every agency."
+          ? `${agencyName}'s rules match the runs of every agency.`
           : "Its rules match its own runs only, and push to its own targets."}{" "}
         To change another agency's, switch to it. The mail server and the Apprise gateway are the installation's, on
         Notifications.
@@ -74,7 +74,7 @@ export function AlertsSection({ isGlobal }: { isGlobal: boolean }) {
       <AgencyContactCard
         agency={agency}
         agencyName={agencyName}
-        why={why && (agency === GLOBAL_AGENCY ? "Global's contact is a global administrator's to change." : `Only ${agencyName}'s administrators can change its contact.`)}
+        why={why && (agency === GLOBAL_AGENCY ? `${agencyName}'s contact is a global administrator's to change.` : `Only ${agencyName}'s administrators can change its contact.`)}
       />
       <PushTargetsCard
         agency={agency}

@@ -483,12 +483,13 @@ export function DerivedAgencies({
     );
   }
   if (scope != null && scope === "") {
+    const central = globalAgencyName();
     return (
       <span
-        title="No scope (Global) — it is Global's, and runs on a runner that serves Global."
+        title={`No scope, and no agency named: it is ${central}'s, which runs nothing.`}
         style={{ fontSize: c.fontXs, padding: "1px 6px", borderRadius: c.radiusChip, border: `1px dashed ${c.borderStrong}`, color: c.textSec, whiteSpace: "nowrap" }}
       >
-        Global
+        {central}
       </span>
     );
   }

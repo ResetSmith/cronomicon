@@ -191,7 +191,7 @@ function CatalogTab() {
     if (flagged === true || (flagged === undefined && (composeAdmin || access == null || composesOn.has(owner)))) return "";
     if (sched.source !== "cronomicon") return "";
     return owner === GLOBAL_AGENCY
-      ? "This schedule is Global's — only a global composer (Compose on every agency) can change it."
+      ? `This schedule is ${agencyName(GLOBAL_AGENCY)}'s — only a global composer (Compose on every agency) can change it.`
       : `This schedule belongs to ${agencyName(owner)} — only that agency's composers can change it.`;
   };
   const [tagFilter, setTagFilter] = useState<string[]>([]);

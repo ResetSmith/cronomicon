@@ -44,8 +44,8 @@ export function GlobalCalendarBanner({ onGoToCalendars }: { onGoToCalendars?: ()
       {activeToday.length > 0 && (
         <div style={bannerStyle(c.warning)}>
           <strong>
-            Scheduled runs of {owners.join(", ")} are suppressed today
-            {activeToday.length === 1 ? "" : ` by ${activeToday.length} global calendars`}.
+            Nothing of {owners.join(", ")} starts today
+            {activeToday.length === 1 ? "" : ` by ${activeToday.length} freeze calendars`}.
           </strong>{" "}
           {activeToday.map((g, i) => (
             <span key={g.key}>
@@ -55,7 +55,7 @@ export function GlobalCalendarBanner({ onGoToCalendars }: { onGoToCalendars?: ()
               {g.label ? ` — ${g.label}` : ""}
             </span>
           ))}
-          . Other agencies' schedules and manual runs are unaffected.
+          . A freeze stops a person's Run too; other agencies are unaffected.
           {onGoToCalendars && (
             <button type="button" onClick={onGoToCalendars} style={linkBtn()}>
               Review calendars
@@ -65,7 +65,7 @@ export function GlobalCalendarBanner({ onGoToCalendars }: { onGoToCalendars?: ()
       )}
       {lapsed.map((g) => (
         <div key={g.key} style={bannerStyle(g.state === "expired" ? c.danger : c.warning)}>
-          The global calendar <span style={{ fontFamily: c.mono }}>{g.name}</span>{" "}
+          The freeze calendar <span style={{ fontFamily: c.mono }}>{g.name}</span>{" "}
           {g.state === "expired"
             ? "has no future days left, so it no longer suppresses anything — runs it used to hold back are firing again."
             : `${coverageEnds(g.daysRemaining)}. Renew its dates before it silently stops suppressing.`}

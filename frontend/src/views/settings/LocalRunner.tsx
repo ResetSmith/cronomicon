@@ -81,8 +81,8 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
       <Card title="Local runner">
         <p style={{ margin: "0 0 12px", fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
           This server can run shell jobs itself (bash, perl, powershell, python), connecting to the target hosts over SSH. It
-          belongs to one agency and claims that agency's shell runs, like an agent of it. It has no Ansible or Terraform:
-          those need a runner agent. Turned on, <strong style={{ color: c.text }}>this server holds SSH private keys and opens
+          belongs to one agency and claims that agency's shell runs, like an agent of it. It has no Ansible:
+          that needs a runner agent. Turned on, <strong style={{ color: c.text }}>this server holds SSH private keys and opens
           connections to job targets</strong>.
         </p>
         <SettingRow
