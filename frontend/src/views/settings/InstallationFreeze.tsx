@@ -157,11 +157,11 @@ export function InstallationFreezeCard({ canWrite }: { canWrite: boolean }) {
           {when === "now" && !until ? (
             <>
               <strong>No run will start in any agency until a global administrator lifts the freeze.</strong> This is
-              every agency's work, not only Global's.
+              every agency's work, not only one agency's.
             </>
           ) : (
             <>
-              <strong>No run will start in any agency {words}.</strong> This is every agency's work, not only Global's.
+              <strong>No run will start in any agency {words}.</strong> This is every agency's work, not only one agency's.
             </>
           )}
         </AlertBanner>

@@ -329,7 +329,7 @@ func checkShellJobRequires(ctx context.Context, database *sql.DB) error {
 		if source == "git" {
 			where = "change the job's file in Git"
 		}
-		on := "no scope (it is Global's)"
+		on := "no scope (each run takes one of its agency's scopes)"
 		if scope != "" {
 			on = "the scope " + scope
 		}

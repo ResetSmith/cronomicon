@@ -237,7 +237,7 @@ func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {
 		// by itself — the account for every agency is the all-scopes one.
 		if in.AgencyID == agencyid.Global {
 			httpx.Fail(w, http.StatusBadRequest, "validation",
-				"Global cannot be named for a service account: use allScopes for one that reaches every agency")
+				agencyid.CurrentGlobalName(r.Context(), s.db)+" cannot be named for a service account: use allScopes for one that reaches every agency")
 			return
 		}
 		var n int

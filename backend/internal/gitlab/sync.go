@@ -1087,7 +1087,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 				`UPDATE jobs SET synced_at = ? WHERE source = 'git' AND repo_id = ? AND name = ?
 				    AND EXISTS (SELECT 1 FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
 				                 WHERE sc.name = jobs.scope AND sa.agency_id <> ?)`, nowStr, repoID, name, agencyid.Global); err != nil {
-				allErrs = append(allErrs, "keep Global's job on an agency's scope: "+err.Error())
+				allErrs = append(allErrs, "keep the built-in agency's job on an agency's scope: "+err.Error())
 				dbErr = err
 				break
 			}
@@ -2931,7 +2931,7 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		if strings.TrimSpace(j.Spec.Scope) == "" {
 			// 2.5.0 C11, defect 90: it said the job "lands in All — visible to
 			// every agency", the pre-2.4 model.
-			s.logWarn("git sync: job declares no scope: in Global's repository it is Global's and runs on Global's hosts and runners, and an agency's repository refuses it; add `spec.scope`",
+			s.logWarn("git sync: job declares no scope: an agency's repository refuses it; add `spec.scope`",
 				"job", j.Metadata.Name, "source_path", j.SourcePath)
 		}
 		// LR-71 — a fixed target_host must be one of the job's scope's hosts, or

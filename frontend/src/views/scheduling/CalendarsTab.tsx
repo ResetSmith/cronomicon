@@ -170,7 +170,7 @@ export function CalendarsTab() {
         </div>
         {canCompose && !inCentral && (
           <Btn onClick={() => setAddingFromCentral(true)} style={{ padding: "8px 14px", fontSize: c.fontSm }}>
-            Add from Central
+            Add from {globalAgencyName()}
           </Btn>
         )}
         {canCompose && (

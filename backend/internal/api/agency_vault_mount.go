@@ -57,7 +57,7 @@ func (s *Server) agencyVaultAgency(w http.ResponseWriter, r *http.Request) (stri
 		return "", id, false
 	}
 	if agency == agencyid.Global {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "use_installation_vault", "Global's Vault is the installation's: Settings → Vault")
+		httpx.Fail(w, http.StatusUnprocessableEntity, "use_installation_vault", agencyid.CurrentGlobalName(r.Context(), s.db)+"'s Vault is the installation's: Settings → Vault")
 		return "", id, false
 	}
 	return agency, id, true

@@ -1624,7 +1624,7 @@ export function Runners() {
         : "";
   const mintBlocked = inCentral
     ? // 2.5.3 CA-1, CA-17: an agent of Central's takes no work.
-      "Central runs nothing: mint the token working in the agency the runner is for"
+      `${globalAgencyName()} runs nothing: mint the token working in the agency the runner is for`
     : here && !canConfigGlobal && access != null && !mayMintFor.some((a) => a.id === here.id)
       ? `You do not administer ${here.name}: switch to an agency you administer to mint a token there`
       : !here && tokenOwners.length > 1 && !mintAgency

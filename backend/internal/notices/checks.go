@@ -149,6 +149,7 @@ var ownedKinds = []struct {
 // injected into Global's runs only), which the agency would otherwise never
 // see. The agency reads such a row, and its Usage, through heldByGlobalFor.
 func checkSharedOwnership(ctx context.Context, database *sql.DB) error {
+	central := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	var found []Finding
 	for _, k := range ownedKinds {
 		rows, err := database.QueryContext(ctx, `
@@ -199,10 +200,10 @@ func checkSharedOwnership(ctx context.Context, database *sql.DB) error {
 				found = append(found, Finding{
 					AgencyID: member,
 					Subject:  k.kind + ":" + id + "@" + member,
-					Detail: fmt.Sprintf("The %s %s%s was shared with your agency before 2.3.0. Global holds it, and since "+
-						"2.4.0 only Global's runs use it: your agency's runs do not. You can see it, and which runs used it, "+
-						"under Held by Global. A global administrator can give it to your agency; until then, create your "+
-						"own %s if your jobs need one.", k.noun, name, where, k.noun),
+					Detail: fmt.Sprintf("The %s %s%s was shared with your agency before 2.3.0. %s holds it, and %s runs "+
+						"nothing since 2.5.3, so no run uses it: your agency's runs do not. You can see it, and which runs used it, "+
+						"under Held by %s. A global administrator can give it to your agency; until then, create your "+
+						"own %s if your jobs need one.", k.noun, name, where, central, central, central, k.noun),
 				})
 			}
 		}

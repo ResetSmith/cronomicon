@@ -35,7 +35,7 @@ var (
 	// ErrOwnerChangeRefused is returned for any owner change but the one that is
 	// allowed: a Global-owned agent that serves exactly one agency, handed to
 	// that agency. Mapped 422 `owner_change_refused`.
-	ErrOwnerChangeRefused = errors.New("an agent's owner changes only one way: a Global-owned agent that serves exactly one agency " +
+	ErrOwnerChangeRefused = errors.New("an agent's owner changes only one way: an agent of the built-in administration agency that serves exactly one agency " +
 		"may be handed to that agency. To move an agent any other way, deregister it and enrol it again")
 
 	// ErrLocalRunnerGlobalOnly is returned when a write would give the local
@@ -150,8 +150,8 @@ func SetRunnerOwner(ctx context.Context, database *sql.DB, runnerID, agencyID, a
 		Category:   "Agencies",
 		Target:     "runner:" + name,
 		RunnerName: name,
-		Summary: fmt.Sprintf("handed to %s: it was Global's and served only that agency; its administrators manage it now",
-			firstOr(agencyNamesFor(ctx, tx, []string{agencyID}), agencyID)),
+		Summary: fmt.Sprintf("handed to %s: it was %s's and served only that agency; its administrators manage it now",
+			firstOr(agencyNamesFor(ctx, tx, []string{agencyID}), agencyID), agencyid.CurrentGlobalName(ctx, tx)),
 	}); err != nil {
 		return err
 	}

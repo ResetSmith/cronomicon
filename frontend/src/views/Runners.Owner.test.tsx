@@ -87,6 +87,7 @@ vi.mock("../api/access", async (importOriginal) => {
 });
 
 import { Runners } from "./Runners";
+import { setGlobalAgencyName } from "../globalName";
 
 const grant = (a: { id: string; name: string }, permissions: string[]) => ({
   role: "admin", allScopes: false, agencyId: a.id, agencyName: a.name, scopes: [], permissions, groups: [], origin: "group",
@@ -106,6 +107,7 @@ afterEach(() => {
   POST.mockClear();
   PUT.mockClear();
   inUse.current = null;
+  setGlobalAgencyName(null);
 });
 
 const renderRunners = () =>
@@ -560,6 +562,7 @@ describe("Runners — a registration token names the owner (LR-61)", () => {
   // their way out), no token is minted there: an agent of Central's takes no work.
   it("mints no token while working in Central, and says where to", async () => {
     inUse.current = { agency: "global", agencyName: "Central" };
+    setGlobalAgencyName("Central"); // the built-in agency's name, read, never a literal
     renderRunners();
     await screen.findByText("fin-agent");
     const mint = screen.getByRole("button", { name: "Mint token" }) as HTMLButtonElement;

@@ -56,6 +56,7 @@ vi.mock("../../api/client", async (importOriginal) => {
 });
 
 import { CalendarsTab } from "./CalendarsTab";
+import { setGlobalAgencyName } from "../../globalName";
 
 const OPS: Ctx = { agency: "ag-ops", agencyName: "Operations", onOverview: false, choices: [] };
 const CENTRAL: Ctx = { agency: "global", agencyName: "Central", onOverview: false, choices: [] };
@@ -82,7 +83,10 @@ beforeEach(() => {
   pushAnswer = {};
   writes.length = 0;
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  setGlobalAgencyName(null);
+});
 
 const show = () =>
   render(
@@ -141,6 +145,7 @@ describe("Calendars in an agency (CA-26 to CA-29)", () => {
 
   it("adds a calendar from Central under a name and an update mode of the agency's choosing", async () => {
     CATALOGUE = [{ uid: "cal-2", name: "uk-holidays", global: false, recordSuppressed: false, dayCount: 8, lastDay: "2027-12-28", hash: "h", copiedAs: [] }];
+    setGlobalAgencyName("Central"); // the button names the built-in agency by its name
     show();
     fireEvent.click(await screen.findByRole("button", { name: "Add from Central" }));
     fireEvent.click(await screen.findByRole("radio", { name: /uk-holidays/ }));

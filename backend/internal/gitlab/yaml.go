@@ -1227,7 +1227,7 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 	for _, js := range jobScopes {
 		if js[1] == "" {
 			msg := "a job in an agency's repository must name one of that agency's scopes (spec.scope): " +
-				"with none it would be Global's, and sync refuses it"
+				"sync refuses a job with none"
 			if !opt.Agency {
 				msg = "every job names one of its agency's scopes (spec.scope): a job with none is refused by sync, " +
 					"and the built-in agency, whose repository this used to be read as, runs nothing since 2.5.3"

@@ -25,14 +25,15 @@ import (
 // The two things a refused file is told. Neither says whether the scope it
 // named exists: "another agency has a scope of that name" is theirs to know.
 // What became of the job differs by repository: an agency's job is not
-// written (a new one is absent, one synced before is removed); Global's that
-// was synced before is kept as it was, not run (see keepAsWas in the sync).
+// written (a new one is absent, one synced before is removed); the built-in
+// agency's that was synced before is kept as it was, not run (see keepAsWas in
+// the sync; since 2.5.3 it has no repository and syncs nothing, CA-6).
 const (
-	refusedNoScope     = "a job in an agency's repository must name one of that agency's scopes (spec.scope): with none it would be Global's; %s"
+	refusedNoScope     = "a job in an agency's repository must name one of that agency's scopes (spec.scope); %s"
 	refusedOtherScope  = "the scope %q is not one of this repository's agency's scopes: a job in an agency's repository must name a scope its agency owns; %s"
-	refusedGlobalScope = "the scope %q is an agency's, and Global's jobs run on Global's scopes only (§0a); %s"
+	refusedGlobalScope = "the scope %q is an agency's, and the built-in administration agency's jobs run on its own scopes only (§0a); %s"
 	becameNotSynced    = "this job was not synced"
-	becameKeptAsWas    = "this job is as it was at the last sync and does not run, until its file names one of Global's scopes"
+	becameKeptAsWas    = "this job is as it was at the last sync and does not run"
 )
 
 // scopeOwnedAlone reports whether agency owns the scope of that name and it is
