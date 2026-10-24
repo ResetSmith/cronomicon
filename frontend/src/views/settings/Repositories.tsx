@@ -57,7 +57,8 @@ export function RepositoriesSection({ isGlobal }: { isGlobal: boolean }) {
   // The agencies the caller may connect a repository for and has none: from
   // before 2.4.0 (agency_no_repository says which). A global administrator,
   // every agency; anyone else, those they administer.
-  const mine = isGlobal ? agencies : agenciesFor(access ?? null, "configureApp");
+  // Never Central, which has no repository since 2.5.3 (CA-6, CA-15).
+  const mine = (isGlobal ? agencies : agenciesFor(access ?? null, "configureApp")).filter((a) => a.id !== "global");
   // An agency with a row (Global's has one even unconfigured) is edited on
   // that row's card; only one with none gets a Connect card (from R8's review).
   const connected = new Set((repos ?? []).map((r) => r.agencyId));

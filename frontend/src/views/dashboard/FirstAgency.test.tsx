@@ -33,8 +33,12 @@ vi.mock("../../api/client", async (importOriginal) => {
         if (path === "/access-grants") return { data: GRANTS };
         return { data: [] };
       }),
-      PUT: vi.fn(async (path: string, init: { body: unknown }) => {
+      PUT: vi.fn(async (path: string, init: { body: unknown; params?: { path?: { agencyId?: string } } }) => {
         writes.push({ method: "PUT", path, body: init.body });
+        // As the server: the rename is the agency's new name on the next read.
+        const id = init.params?.path?.agencyId;
+        const name = (init.body as { name?: string }).name;
+        if (path === "/agencies/{agencyId}" && id && name) AGENCIES = AGENCIES.map((a) => (a.id === id ? { ...a, name } : a));
         return { data: {} };
       }),
       POST: vi.fn(async (path: string, init: { body: unknown; headers?: unknown }) => {
@@ -165,6 +169,11 @@ describe("Create your first agency", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save Agency" }));
     expect(await screen.findByText(/Platform was created, but the administrators' group was not added: unknown group/)).toBeTruthy();
     expect(assign).not.toHaveBeenCalled();
+    // Created: no second Save (it would create it again), only the way in.
+    expect(screen.queryByRole("button", { name: "Save Agency" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open Platform" }));
+    expect(assign).toHaveBeenCalledWith("/?agency=ag-new");
+    expect(writes.filter((w) => w.path === "/agencies")).toHaveLength(1);
   });
 
   it("is not offered while an agency exists", async () => {

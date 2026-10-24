@@ -65,28 +65,31 @@ export function NameYourAgencyCard() {
 
 function NameYourAgency({ agency }: { agency: string }) {
   const admin = useGlobalAdmin();
-  const [dep, setDep] = useState(0);
   const none = () => Promise.resolve({ data: [] });
-  const agencyQ = useGet<unknown>(() => (admin ? api.GET("/agencies") : none()), [admin, dep]);
-  const grantsQ = useGet<unknown>(() => (admin ? api.GET("/access-grants") : none()), [admin, dep]);
+  const agencyQ = useGet<unknown>(() => (admin ? api.GET("/agencies") : none()), [admin]);
+  const grantsQ = useGet<unknown>(() => (admin ? api.GET("/access-grants") : none()), [admin]);
   const [dismissed, setDismissed] = useState(() => isDismissed(agency));
   const [name, setName] = useState(FIRST_AGENCY_NAME);
   const [group, setGroup] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // Once saved, the card stays until its outcome is read: a rename that went
+  // through leaves the agency no longer "first", and a refused group must
+  // still be said.
+  const [started, setStarted] = useState(false);
 
   const me = rows<AgencyRow>(agencyQ.data).find((a) => a.id === agency);
   const granted = rows<Grant>(grantsQ.data).some((g) => g.agencyId === agency);
   const first = !!me && me.name === FIRST_AGENCY_NAME && me.createdBy === FIRST_AGENCY_ACTOR;
   if (done) {
     return (
-      <Card title="Your agency">
+      <Card title="Your agency" style={{ marginBottom: 16 }}>
         <div role="status" style={{ fontSize: c.fontSm, color: c.success }}>{done}</div>
       </Card>
     );
   }
-  if (!admin || dismissed || !first || grantsQ.loading || granted) return null;
+  if (!admin || dismissed || (!started && (grantsQ.loading || !first || granted))) return null;
 
   const save = async () => {
     if (!me) return;
@@ -95,6 +98,7 @@ function NameYourAgency({ agency }: { agency: string }) {
       return;
     }
     setBusy(true);
+    setStarted(true);
     setErr(null);
     const said: string[] = [];
     if (name.trim() !== me.name) {
@@ -115,7 +119,6 @@ function NameYourAgency({ agency }: { agency: string }) {
       if (refused) {
         setBusy(false);
         setErr(`${said.join(" ")} The administrators' group was not added: ${refused}`.trim());
-        setDep((n) => n + 1);
         return;
       }
       said.push(`${group.trim()} administers it.`);
@@ -133,9 +136,9 @@ function NameYourAgency({ agency }: { agency: string }) {
   };
 
   return (
-    <Card title="Name your agency" action={<Btn small onClick={dismiss}>Dismiss</Btn>}>
+    <Card title="Name your agency" action={<Btn small onClick={dismiss}>Dismiss</Btn>} style={{ marginBottom: 16 }}>
       <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6, marginBottom: 10 }}>
-        This installation's work happens here, in <strong style={{ color: c.text }}>{me.name}</strong>, made at its first
+        This installation's work happens here, in <strong style={{ color: c.text }}>{me?.name ?? FIRST_AGENCY_NAME}</strong>, made at its first
         start. Give it your team's name, and optionally the AD group whose members administer it. A second agency later is
         made under Scopes → Agencies; nothing here moves.
       </div>
@@ -181,7 +184,7 @@ function CreateFirstAgency({ globalName, onCreated }: { globalName: string; onCr
   const none = !!agencyQ.data && rows<AgencyRow>(agencyQ.data).every((a) => a.id === GLOBAL_AGENCY);
   if (!admin || !none) return null;
   return (
-    <Card title="Create your first agency">
+    <Card title="Create your first agency" style={{ marginBottom: 16 }}>
       <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6, marginBottom: 10 }}>
         {globalName} is the installation's administration and runs nothing: jobs, scripts, schedules, runners and
         variables belong to an agency. Create the agency your work happens in, with the AD group that administers it if you

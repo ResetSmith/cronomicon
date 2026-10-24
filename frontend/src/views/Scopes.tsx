@@ -38,6 +38,13 @@ export function Scopes() {
     else next.set("tab", SLUGS[i]);
     setParams(next, { replace: true });
   };
+  // Switched into (or out of) Central on this page: Agencies there, Scopes
+  // elsewhere, unless the address names a tab.
+  useEffect(() => {
+    if (params.get("tab")) return;
+    setTab(inCentral ? 1 : 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inCentral]);
   // Scope + agency writes require ConfigureApp (matching the server requirePerm
   // gates). Mutation controls are hidden when the caller lacks the permission.
   //

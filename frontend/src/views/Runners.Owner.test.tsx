@@ -556,6 +556,19 @@ describe("Runners — a registration token names the owner (LR-61)", () => {
     );
   });
 
+  // 2.5.3 CA-12, CA-17: working in Central (its leftover agents listed for
+  // their way out), no token is minted there: an agent of Central's takes no work.
+  it("mints no token while working in Central, and says where to", async () => {
+    inUse.current = { agency: "global", agencyName: "Central" };
+    renderRunners();
+    await screen.findByText("fin-agent");
+    const mint = screen.getByRole("button", { name: "Mint token" }) as HTMLButtonElement;
+    expect(mint.disabled).toBe(true);
+    expect(mint.title).toBe("Central runs nothing: mint the token working in the agency the runner is for");
+    expect(screen.queryByRole("button", { name: "+ Add Runner" })).toBeNull();
+    inUse.current = null;
+  });
+
   // 2.5.3 CA-14: Central's agents take no work, so no token is minted for it.
   it("offers a global administrator every agency, never Global, and sends the one chosen", async () => {
     renderRunners();

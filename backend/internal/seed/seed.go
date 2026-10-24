@@ -532,9 +532,6 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			s.by, nullStr(s.sha), s.status, s.jobs, s.wfs, s.scopes, nullStr(s.errMsg), iso(start), iso(start.Add(8*time.Second)))
 	}
-	// What the last sync saw, on Global's repository row (migration 1310 writes
-	// that row on every installation; this was the singleton git_sync_state).
-	exec(`UPDATE git_repos SET last_sha = ?, last_synced_at = ?, last_status = 'success' WHERE id = 'global'`, "a1b2c3d", ago(90*minute))
 
 	// ── Runners ────────────────────────────────────────────────────────────────
 	runners := []struct {
@@ -803,6 +800,11 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		exec(`INSERT INTO git_repos (id, agency_id, url, branch, last_modified_by, last_modified_at) VALUES (?, ?, '', 'main', ?, ?)`,
 			"repo-"+a.name, a.id, dev, ago(9*day))
 	}
+	// What the last sync saw, on the first agency's repository row. Not
+	// Central's: since 2.5.3 a sync recorded on Central's row is a leftover
+	// (CA-6), and the demo would raise central_holds_work for it.
+	exec(`UPDATE git_repos SET last_sha = ?, last_synced_at = ?, last_status = 'success' WHERE id = ?`,
+		"a1b2c3d", ago(90*minute), "repo-"+agencies[0].name)
 	const scopeRepo = `(SELECT g.id FROM git_repos g JOIN scope_agencies sa ON sa.agency_id = g.agency_id
 	                     JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = %s AND g.agency_id <> 'global')`
 	exec(`UPDATE scopes SET repo_id = COALESCE(` + fmt.Sprintf(scopeRepo, "scopes.name") + `, repo_id) WHERE source = 'git'`)

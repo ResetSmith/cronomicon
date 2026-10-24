@@ -1622,8 +1622,10 @@ export function Runners() {
       : tokenOwners.length === 1
         ? tokenOwners[0].id
         : "";
-  const mintBlocked =
-    here && !canConfigGlobal && access != null && !mayMintFor.some((a) => a.id === here.id)
+  const mintBlocked = inCentral
+    ? // 2.5.3 CA-1, CA-17: an agent of Central's takes no work.
+      "Central runs nothing: mint the token working in the agency the runner is for"
+    : here && !canConfigGlobal && access != null && !mayMintFor.some((a) => a.id === here.id)
       ? `You do not administer ${here.name}: switch to an agency you administer to mint a token there`
       : !here && tokenOwners.length > 1 && !mintAgency
         ? "Choose the agency this runner is for"
@@ -1912,14 +1914,18 @@ export function Runners() {
                           colSpan={cols.visible.length}
                           style={{ color: c.textSec, padding: "20px 14px", textAlign: "center", fontSize: c.fontSm }}
                         >
-                          No runners registered —{" "}
-                          <button
-                            onClick={openAddRunner}
-                            style={{ background: "none", border: "none", padding: 0, color: c.primary, cursor: "pointer", fontSize: c.fontSm, textDecoration: "underline", fontFamily: "inherit" }}
-                          >
-                            Add Runner
-                          </button>{" "}
-                          to install one.
+                          No runners registered{inCentral ? "." : " — "}
+                          {!inCentral && (
+                            <>
+                              <button
+                                onClick={openAddRunner}
+                                style={{ background: "none", border: "none", padding: 0, color: c.primary, cursor: "pointer", fontSize: c.fontSm, textDecoration: "underline", fontFamily: "inherit" }}
+                              >
+                                Add Runner
+                              </button>{" "}
+                              to install one.
+                            </>
+                          )}
                         </td>
                       </tr>
                     ) : (
@@ -2057,7 +2063,7 @@ export function Runners() {
                         empty; what can be empty is the set of things that run
                         jobs. With no agent and the local runner off, say so and
                         point at both ways out (LR-38). */}
-                    {nothingRuns && (
+                    {nothingRuns && !inCentral && (
                       <tr>
                         <td
                           colSpan={cols.visible.length}

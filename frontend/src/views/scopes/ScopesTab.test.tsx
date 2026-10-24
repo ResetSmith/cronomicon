@@ -403,7 +403,7 @@ describe("ScopesTab — global-administrator controls (GC)", () => {
   it("follows the row's canRepair over the global flag", async () => {
     agencies = [{ id: "global", name: "Global" }, TAX, FIN];
     const select = await selectFor({ ...LOCAL, agencies: [TAX], canRepair: true }, false);
-    expect(texts(select)).toEqual(["Global", "Tax", "Finance"]);
+    expect(texts(select)).toEqual(["Tax", "Finance"]);
     cleanup();
     const { container } = renderTab([{ ...LOCAL, agencies: [TAX], canRepair: false }], true, true);
     const q = within(container);
@@ -431,22 +431,24 @@ describe("ScopesTab — global-administrator controls (GC)", () => {
     const select = await selectFor({ ...LOCAL, agencies: [TAX] }, true);
     expect(select.value).toBe("ag-tax");
     expect(select.disabled).toBe(false);
-    expect(texts(select)).toEqual(["Global", "Tax"]);
+    expect(texts(select)).toEqual(["Tax"]);
   });
 
   it("asks a global administrator for the one agency of a scope still in several, and says why", async () => {
     agencies = [{ id: "global", name: "Global" }, TAX, FIN];
     const select = await selectFor({ ...LOCAL, agencies: [TAX, FIN] }, true);
     expect(select.value).toBe("");
-    expect(texts(select)).toEqual(["Choose its one agency…", "Global", "Tax", "Finance"]);
+    expect(texts(select)).toEqual(["Choose its one agency…", "Tax", "Finance"]);
     expect(screen.getByText(/still in several agencies, from before 2\.3\.0/)).toBeTruthy();
   });
 
-  it("offers a global administrator Global and every agency", async () => {
+  // 2.5.3 CA-1, CA-17: Central is never a target; a scope it still holds shows
+  // it as its agency, and every agency to give the scope to.
+  it("offers a global administrator every agency, never Global, and shows a scope Global still holds as Global's", async () => {
     agencies = [{ id: "global", name: "Global" }, TAX, FIN];
     const select = await selectFor({ ...LOCAL, agencies: [{ id: "global", name: "Global" }] }, true);
     expect(select.value).toBe("global");
-    expect(texts(select)).toEqual(["Global", "Tax", "Finance"]);
+    expect(texts(select)).toEqual(["Tax", "Finance", "Global"]);
     expect(select.disabled).toBe(false);
   });
 

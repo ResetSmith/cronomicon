@@ -329,7 +329,7 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
                 No SSH key credentials yet. Once one exists, attach it to a host or bastion under Settings → SSH
                 Targets.
               </div>
-              {canEdit && (
+              {canEdit && !inCentral && (
                 <div style={{ marginTop: 12 }}>
                   <Btn small onClick={() => setAdding(true)}>
                     Add an SSH key

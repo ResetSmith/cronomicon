@@ -99,7 +99,11 @@ export function AgenciesTab({
     setDep((n) => n + 1);
   };
 
-  const filtered = items.filter(
+  // 2.5.3 CA-16: the catalog lists the agencies; Central, the installation's
+  // administration, is shown apart (renamed there, never deleted).
+  const central = items.find((a) => a.id === GLOBAL_AGENCY);
+  const ordinary = items.filter((a) => a.id !== GLOBAL_AGENCY);
+  const filtered = ordinary.filter(
     (a) =>
       !search ||
       a.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -134,13 +138,29 @@ export function AgenciesTab({
       )}
       <div style={{ marginBottom: 12, color: c.textSec, fontSize: c.fontSm, lineHeight: 1.55 }}>
         An agency is a department&rsquo;s isolation zone. Every scope, secret, variable, SSH key, host record and
-        runner belongs to exactly one, and <strong>Global</strong> is the global administrators&rsquo; own agency:
-        its rows are Global&rsquo;s runs&rsquo; to use and a global administrator&rsquo;s to change. A run goes only to a
-        runner that serves its scope&rsquo;s agency, and receives only that agency&rsquo;s secrets and keys.{" "}
+        runner belongs to exactly one. A run goes only to a runner that serves its agency, and receives only that
+        agency&rsquo;s secrets and keys.{" "}
         <strong>Expand a row to see and edit what it contains.</strong> To go the other way — which agency one secret,
         variable, key, scope or runner belongs to — that row&rsquo;s own catalog carries an Agency column.{" "}
         <DocLink href={DOC_LINKS.agencies}>How membership and ownership work</DocLink>
       </div>
+      {central && (
+        <div
+          data-testid="central-apart"
+          style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, padding: "10px 14px", border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, background: c.panel }}
+        >
+          <div style={{ flex: 1, fontSize: c.fontSm, color: c.textSec, lineHeight: 1.5 }}>
+            <strong style={{ color: c.text }}>{central.name} · administration</strong> — the installation&rsquo;s own: it
+            runs nothing, and holds the installation&rsquo;s notices, change log, alert rules and calendar catalogue. It
+            may be renamed, never deleted.
+          </div>
+          {canEdit && (
+            <Btn small onClick={() => setEditing(central)} disabled={!!rowWhy(central, central.canEdit)} title={rowWhy(central, central.canEdit) || undefined}>
+              Rename
+            </Btn>
+          )}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <div style={{ flex: 1 }}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search agencies by name or description..." />
@@ -160,9 +180,9 @@ export function AgenciesTab({
           or the search back. */}
       {!loading && !error && filtered.length === 0 && (
         <div style={{ color: c.textSec }}>
-          {items.length === 0 ? (
+          {ordinary.length === 0 ? (
             <>
-              <div>No agencies yet. Until one exists, every scope, credential and runner is unrestricted.</div>
+              <div>No agencies yet. Work happens in an agency: create the first one.</div>
               {canEdit && (
                 <div style={{ marginTop: 12 }}>
                   <Btn small onClick={() => setAdding(true)} disabled={!!globalWhy} title={globalWhy || undefined}>
@@ -347,6 +367,7 @@ export function AgencyFormModal({
   const [pat, setPat] = useState("");
   const [branch, setBranch] = useState("main");
   const [adminGroup, setAdminGroup] = useState("");
+  const [createdId, setCreatedId] = useState<string | null>(null);
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -379,7 +400,9 @@ export function AgencyFormModal({
       const refused = adminGroup.trim() && id ? await grantAgencyAdmins(id, adminGroup) : null;
       setBusy(false);
       if (refused) {
-        setFormError(`${name.trim()} was created, but the administrators' group was not added: ${refused}`);
+        // Created: a second Save would create it again. The form only opens it.
+        setCreatedId(id);
+        setFormError(`${name.trim()} was created, but the administrators' group was not added: ${refused}. Add it in Settings → Users & Access.`);
         return;
       }
       onCreated?.(id);
@@ -406,14 +429,20 @@ export function AgencyFormModal({
       footer={
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {formError && <div style={{ fontSize: c.fontSm, color: c.danger }}>{formError}</div>}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <Btn onClick={onClose} disabled={busy}>
-              Cancel
-            </Btn>
-            <Btn primary onClick={save} disabled={busy}>
-              {busy ? "Saving…" : isEdit ? "Save Changes" : "Save Agency"}
-            </Btn>
-          </div>
+          {createdId ? (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn primary onClick={() => onCreated?.(createdId)}>Open {name.trim()}</Btn>
+            </div>
+          ) : (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn onClick={onClose} disabled={busy}>
+                Cancel
+              </Btn>
+              <Btn primary onClick={save} disabled={busy}>
+                {busy ? "Saving…" : isEdit ? "Save Changes" : "Save Agency"}
+              </Btn>
+            </div>
+          )}
         </div>
       }
     >

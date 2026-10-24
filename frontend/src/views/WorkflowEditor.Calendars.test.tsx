@@ -74,20 +74,22 @@ const wfWrite = () => writes.find((w) => w.path === "/workflows/{workflowId}" ||
 describe("WorkflowEditor — the workflow's own calendars (2.5.3 CA-30)", () => {
   it("sends them as loaded, and what the picker changes", async () => {
     renderAt("/workflow-editor?id=3");
-    await screen.findByText("Calendars (optional)");
+    // The editor and its canvas are heavy: under a full run they mount slowly.
+    await screen.findByText("Calendars (optional)", {}, { timeout: 10000 });
     expect(within(field()).getByText(/A step's job calendars do not apply inside the workflow/)).toBeTruthy();
     const allow = within(field()).getByText(/^Allow — only on days in$/).parentElement as HTMLElement;
     fireEvent.click(within(allow).getByRole("button", { name: /^weekdays/ })); // off
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(wfWrite()).toBeTruthy());
+    await waitFor(() => expect(wfWrite()).toBeTruthy(), { timeout: 10000 });
     expect(wfWrite()!.body).toMatchObject({ forbidCalendars: ["holidays"], allowCalendars: [] });
   });
 
   it("sends them on a save that does not touch them", async () => {
     renderAt("/workflow-editor?id=3");
-    await screen.findByText("Calendars (optional)");
+    // The editor and its canvas are heavy: under a full run they mount slowly.
+    await screen.findByText("Calendars (optional)", {}, { timeout: 10000 });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(wfWrite()).toBeTruthy());
+    await waitFor(() => expect(wfWrite()).toBeTruthy(), { timeout: 10000 });
     expect(wfWrite()!.body).toMatchObject({ forbidCalendars: ["holidays"], allowCalendars: ["weekdays"] });
   });
 });

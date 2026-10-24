@@ -51,11 +51,13 @@ describe("Agencies — the row's own flags (R8)", () => {
     for (const label of ["Edit", "Delete"]) {
       expect((rowOf("Finance").getByRole("button", { name: label }) as HTMLButtonElement).disabled, label).toBe(false);
     }
-    // Renamed since 2.5.2 (GR), never deleted.
-    expect((rowOf("Global").getByRole("button", { name: "Edit" }) as HTMLButtonElement).disabled).toBe(false);
-    const del = rowOf("Global").getByRole("button", { name: "Delete" }) as HTMLButtonElement;
-    expect(del.disabled).toBe(true);
-    expect(del.title).toBe("Global is built in: it may be renamed, never deleted.");
+    // 2.5.3 CA-16: the built-in agency is shown apart as the administration, not
+    // as an agency row; renamed there since 2.5.2 (GR), never deleted (no Delete).
+    expect(screen.getAllByRole("row").some((tr) => within(tr).queryByText("Global"))).toBe(false);
+    const apart = within(screen.getByTestId("central-apart"));
+    expect(apart.getByText("Global · administration")).toBeTruthy();
+    expect((apart.getByRole("button", { name: "Rename" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(apart.queryByRole("button", { name: "Delete" })).toBeNull();
   });
 });
 

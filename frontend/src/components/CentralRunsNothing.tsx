@@ -102,7 +102,11 @@ export function CentralLeftovers() {
     <AlertBanner type="warning">
       <span data-testid="central-leftovers">
         {name} runs nothing. What is listed here is left from before 2.5.3 and no longer runs: move each to the agency whose
-        work it is, or delete it. <Link to="/notices">Notices</Link> lists each and its way out.
+        work it is, or delete it.{" "}
+        <Link to="/notices" style={{ color: c.primary, fontWeight: 600 }}>
+          Notices
+        </Link>{" "}
+        lists each and its way out.
       </span>
     </AlertBanner>
   );

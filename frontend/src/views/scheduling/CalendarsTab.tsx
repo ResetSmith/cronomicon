@@ -210,7 +210,25 @@ export function CalendarsTab() {
       {loading && <div style={{ padding: 16 }}><SkeletonRows rows={4} /></div>}
       {error && <div style={{ color: c.danger }}>Error: {error}</div>}
 
-      {!loading && !error && calendars.length === 0 && (
+      {!loading && !error && calendars.length === 0 && inCentral && (
+        // 2.5.3 CA-25: the catalogue binds nothing, so it does not teach binding.
+        <div style={{ border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, background: c.panel, padding: 20, maxWidth: 680 }}>
+          <div style={{ fontSize: c.fontSm, color: c.text, fontWeight: 600, marginBottom: 8 }}>The catalogue has no calendars yet.</div>
+          <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
+            A calendar here is offered to the agencies: a holiday list, a change freeze. An agency takes a copy with Add from
+            Central, or you add one to chosen agencies; each copy is that agency's own, and changes when this one does. No
+            run reads a calendar here. <strong>Cronomicon ships no holiday dates</strong>: the editor takes a pasted block of{" "}
+            <code>YYYY-MM-DD,label</code> lines, or a CSV or .ics file.
+          </div>
+          {canCompose && (
+            <div style={{ marginTop: 14 }}>
+              <Btn small onClick={() => setEditing({ name: "" })}>New calendar</Btn>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!loading && !error && calendars.length === 0 && !inCentral && (
         // The teaching empty state (CAL-19): this is the only place a first-time
         // operator learns what a calendar is for, and that the dates are theirs.
         <div style={{ border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, background: c.panel, padding: 20, maxWidth: 680 }}>

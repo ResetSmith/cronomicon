@@ -295,7 +295,7 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
           {items.length === 0 ? (
             <>
               <div>No variables yet. A variable is plaintext configuration a run can read as CRONOMICON_VAR_&lt;key&gt;.</div>
-              {canEdit && (
+              {canEdit && !inCentral && (
                 <div style={{ marginTop: 12 }}>
                   <Btn small onClick={() => setAdding(true)}>
                     Add a variable

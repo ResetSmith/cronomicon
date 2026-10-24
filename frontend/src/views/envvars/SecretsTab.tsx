@@ -413,7 +413,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
           {items.length === 0 ? (
             <>
               <div>No secrets yet. A secret is injected as CRONOMICON_SECRET_&lt;key&gt; and always redacted in logs.</div>
-              {canEdit && (
+              {canEdit && !inCentral && (
                 <div style={{ marginTop: 12 }}>
                   <Btn small onClick={() => setAdding(true)}>
                     Add a secret

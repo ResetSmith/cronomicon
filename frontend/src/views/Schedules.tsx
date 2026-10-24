@@ -101,6 +101,14 @@ export function Schedules() {
     else next.set("tab", SLUGS[i]);
     setParams(next, { replace: true });
   };
+  // Switched into (or out of) Central on this page: its landing tab, unless
+  // the address names one.
+  useEffect(() => {
+    if (params.get("tab")) return;
+    setTab(landing);
+    setSeen((cur) => (cur.includes(landing) ? cur : [...cur, landing]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inCentral]);
 
   return (
     <div>
