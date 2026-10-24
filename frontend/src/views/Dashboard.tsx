@@ -5,6 +5,7 @@ import { useGet, useLiveGet, rows, paged } from "../hooks";
 import { ambiguousNames, disambiguate, useNameDisambiguator, type NamedRef } from "../utils/disambiguate";
 import { c } from "../theme";
 import { NameYourAgencyCard } from "./dashboard/FirstAgency";
+import { CentralHoldsBanner } from "../components/CentralRunsNothing";
 import { DOC_LINKS } from "../components/docLinks";
 import { SkeletonRows, StatTile, statusLabel, statusTone, DocLink } from "../components/ui";
 import { Score } from "../components/Score";
@@ -414,6 +415,8 @@ function AgencyDashboard() {
           {/* 2.5.3 CA-16: the first agency, as its first start made it, is
               offered a name and its administrators' group. */}
           <NameYourAgencyCard />
+          {/* Question 214: what Central still holds, said where work starts. */}
+          <CentralHoldsBanner />
 
           {/* CAL-28 — a fleet-wide holiday or change freeze is the explanation for
               an otherwise alarming quiet dashboard, so it is stated here as well

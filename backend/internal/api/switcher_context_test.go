@@ -51,8 +51,9 @@ func TestSwitcherWhereEachKindOfPersonStarts(t *testing.T) {
 		// SW-6).
 		{"root", gRoot, "overview,global,ag:FIN,ag:TAX", "overview", "ag:FIN", true},
 		// A viewer of every agency, the operations team: the overview (SW-13),
-		// with Global for the lists.
-		{"all-viewer", gAllViewer, "overview,global,ag:FIN,ag:TAX", "overview", "global", true},
+		// with the first agency for the lists, as Global runs nothing (2.5.3
+		// question 216; was Global).
+		{"all-viewer", gAllViewer, "overview,global,ag:FIN,ag:TAX", "overview", "ag:FIN", true},
 		// One agency's people: their agency, and Global to read (SW-5).
 		{"fin-admin", gFinAdmin, "ag:FIN", "ag:FIN", "ag:FIN", false},
 		{"fin-viewer", gFinViewer, "ag:FIN", "ag:FIN", "ag:FIN", false},

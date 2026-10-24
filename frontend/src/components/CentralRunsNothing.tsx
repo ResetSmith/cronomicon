@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useAgencyOptional } from "../agency";
 import { GLOBAL_AGENCY } from "../api/access";
-import { api } from "../api/client";
+import { allReadable, api } from "../api/client";
 import { useGet } from "../hooks";
 import { AlertBanner } from "./ui";
 import { c } from "../theme";
@@ -24,7 +24,7 @@ export function useInCentral(): boolean {
   return !!ag && !ag.onOverview && ag.agency === GLOBAL_AGENCY;
 }
 
-type Notice = { kind: string; subject: string; resolvedAt?: string | null };
+type Notice = { kind: string; subject: string; agencyId?: string; resolvedAt?: string | null };
 
 /** useCentralHolds answers which of the kinds Central still holds (the open
  * central_holds_work findings, `central:<kind>`), and whether that is known
@@ -107,6 +107,53 @@ export function CentralLeftovers() {
           Notices
         </Link>{" "}
         lists each and its way out.
+      </span>
+    </AlertBanner>
+  );
+}
+
+// What each held kind is called, for the Dashboard's banner.
+const HELD_NOUN: Record<string, string> = {
+  job: "jobs",
+  workflow: "workflows",
+  schedule: "schedules",
+  scope: "scopes",
+  secret: "secrets",
+  "env-var": "variables",
+  "ssh-credential": "SSH keys",
+  host: "host records",
+  bastion: "bastions",
+  runner: "agents",
+  repository: "its old repository",
+};
+
+/**
+ * CentralHoldsBanner is on every Dashboard while Central still holds work from
+ * before 2.5.3 (question 214): with one agency a global administrator starts
+ * in it, and Central's own notice, which says what stopped and how to move it
+ * out, is listed only while working in Central. Read naming no agency, so the
+ * server answers every notice the caller administers: Central's reach global
+ * administrators only, so nobody else sees the banner.
+ */
+export function CentralHoldsBanner() {
+  const ag = useAgencyOptional();
+  const q = useGet<Notice[]>(
+    () => (ag ? api.GET("/notices", { headers: allReadable }) : Promise.resolve({ data: [] as Notice[] })) as never,
+    [!!ag],
+  );
+  const held = (Array.isArray(q.data) ? q.data : [])
+    .filter((n) => n.kind === "central_holds_work" && n.agencyId === GLOBAL_AGENCY && !n.resolvedAt)
+    .map((n) => HELD_NOUN[n.subject.replace(/^central:/, "")] ?? "work");
+  if (!ag || held.length === 0) return null;
+  const name = ag.globalName ?? "Central";
+  const list = held.length === 1 ? held[0] : `${held.slice(0, -1).join(", ")} and ${held[held.length - 1]}`;
+  return (
+    <AlertBanner type="warning">
+      <span data-testid="central-holds-banner">
+        {name} still holds {list}, which stopped running in 2.5.3.{" "}
+        <Link to={`/notices?agency=${GLOBAL_AGENCY}`} style={{ color: c.primary, fontWeight: 600 }}>
+          Review them →
+        </Link>
       </span>
     </AlertBanner>
   );

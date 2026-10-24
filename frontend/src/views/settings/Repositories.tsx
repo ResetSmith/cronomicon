@@ -7,6 +7,7 @@ import { Btn, Card, SettingRow, Toggle, csrfHeader, errMsg, fmtDateTime, inputSt
 import { globalAgencyName } from "../../globalName";
 import { useInCentral } from "../../components/CentralRunsNothing";
 import { RepairDialog, type RepairBody } from "../../components/RepairDialog";
+import { useAgencyOptional } from "../../agency";
 
 type GitRepo = components["schemas"]["GitRepo"];
 type GitlabConfig = components["schemas"]["GitlabConfig"];
@@ -57,8 +58,14 @@ export function RepositoriesSection({ isGlobal }: { isGlobal: boolean }) {
   // The agencies the caller may connect a repository for and has none: from
   // before 2.4.0 (agency_no_repository says which). A global administrator,
   // every agency; anyone else, those they administer.
-  // Never Central, which has no repository since 2.5.3 (CA-6, CA-15).
-  const mine = (isGlobal ? agencies : agenciesFor(access ?? null, "configureApp")).filter((a) => a.id !== "global");
+  // Never Central, which has no repository since 2.5.3 (CA-6, CA-15); and,
+  // working in an agency, that agency alone (question 215): the list is
+  // narrowed to it, so another agency's repository would read as missing.
+  const here = useAgencyOptional();
+  const inAgency = here && !here.onOverview ? here.agency : null;
+  const mine = (isGlobal ? agencies : agenciesFor(access ?? null, "configureApp")).filter(
+    (a) => a.id !== "global" && (!inAgency || a.id === inAgency),
+  );
   // An agency with a row (Global's has one even unconfigured) is edited on
   // that row's card; only one with none gets a Connect card (from R8's review).
   const connected = new Set((repos ?? []).map((r) => r.agencyId));

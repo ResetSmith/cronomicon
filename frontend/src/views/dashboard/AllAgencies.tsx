@@ -15,6 +15,7 @@ import { RunContact } from "../history/shared";
 import { relationLabel } from "../history/RunNotes";
 import { c } from "../../theme";
 import { CreateFirstAgencyCard } from "./FirstAgency";
+import { CentralHoldsBanner } from "../../components/CentralRunsNothing";
 
 // The Dashboard with All agencies chosen (2.5.2 OP5, OP-21 to OP-26; the
 // Operations overview of 2.4.4 F3 until then). One page across every agency,
@@ -436,6 +437,8 @@ export function AllAgenciesDashboard() {
     <div data-testid="overview">
       {/* 2.5.3 CA-16: with every agency deleted, the way to make one. */}
       <CreateFirstAgencyCard />
+      {/* Question 214: what Central still holds, said where work starts. */}
+      <CentralHoldsBanner />
       <AllAgenciesStrip
         total={data.attentionTotal}
         unacked={data.attention.length - ackedCount}

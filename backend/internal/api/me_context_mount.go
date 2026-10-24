@@ -116,13 +116,13 @@ func ordinaryAgencies(choices []agencyChoice) []string {
 }
 
 // workingAgencyFor is the rule for the agency the lists start in, without the
-// stored default and without the overview: for a global administrator the
-// first ordinary agency by name, as Global runs nothing (2.5.3 CA-13), else
-// Global (before the first agency exists); else the first, by name, of the
-// agencies the caller holds a grant on; else Global. choices is agencyChoices'
-// answer (sorted by name).
+// stored default and without the overview: for a global administrator, and
+// for a reader of every agency (2.5.3 question 216), the first ordinary agency
+// by name, as Global runs nothing (CA-13), else Global (before the first
+// agency exists); else the first, by name, of the agencies the caller holds a
+// grant on; else Global. choices is agencyChoices' answer (sorted by name).
 func workingAgencyFor(id auth.Identity, choices []agencyChoice) string {
-	if id.GlobalAdmin(auth.PermConfigureApp) {
+	if id.GlobalAdmin(auth.PermConfigureApp) || canSeeOverview(id) {
 		if ordinary := ordinaryAgencies(choices); len(ordinary) > 0 {
 			return ordinary[0]
 		}
@@ -161,10 +161,11 @@ func (s *Server) myAgencyContextFor(ctx context.Context, id auth.Identity) (myAg
 	switch {
 	case out.StoredDefault != nil && isChoice(choices, *out.StoredDefault):
 		out.EffectiveDefault = *out.StoredDefault
-	// A global administrator starts where the work is (2.5.3 CA-13): in the one
-	// agency there is, else on the overview (which holds the first-agency card
-	// while there is none, CA-16).
-	case id.GlobalAdmin(auth.PermConfigureApp) && len(ordinaryAgencies(choices)) == 1:
+	// A global administrator, and a reader of every agency (question 216),
+	// starts where the work is (2.5.3 CA-13): in the one agency there is, else
+	// on the overview (which holds the first-agency card while there is none,
+	// CA-16).
+	case (id.GlobalAdmin(auth.PermConfigureApp) || out.CanOverview) && len(ordinaryAgencies(choices)) == 1:
 		out.EffectiveDefault = ordinaryAgencies(choices)[0]
 	case out.CanOverview:
 		out.EffectiveDefault = overviewChoice

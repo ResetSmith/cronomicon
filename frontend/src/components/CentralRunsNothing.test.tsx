@@ -15,7 +15,7 @@ vi.mock("../agency", async (importOriginal) => {
   return { ...actual, useAgencyOptional: () => inUse.current };
 });
 
-let NOTICES: { kind: string; subject: string; resolvedAt?: string }[] = [];
+let NOTICES: { kind: string; subject: string; agencyId?: string; resolvedAt?: string }[] = [];
 const gets: string[] = [];
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
@@ -30,7 +30,7 @@ vi.mock("../api/client", async (importOriginal) => {
   };
 });
 
-import { CentralGate } from "./CentralRunsNothing";
+import { CentralGate, CentralHoldsBanner } from "./CentralRunsNothing";
 
 const CHOICES = [
   { id: "overview", name: "All agencies", kind: "overview" },
@@ -112,3 +112,34 @@ describe("CentralGate", () => {
   });
 });
 
+// Question 214: with one agency a global administrator starts in it, so what
+// Central still holds is said on the Dashboard, wherever they work.
+describe("CentralHoldsBanner", () => {
+  const showBanner = () =>
+    render(
+      <MemoryRouter>
+        <CentralHoldsBanner />
+      </MemoryRouter>,
+    );
+
+  it("names what Central still holds, and links to Central's notices", async () => {
+    inUse.current = { agency: "ag-ops", agencyName: "Operations", onOverview: false, choices: CHOICES };
+    NOTICES = [
+      { kind: "central_holds_work", subject: "central:host", agencyId: "global" },
+      { kind: "central_holds_work", subject: "central:env-var", agencyId: "global" },
+      { kind: "central_holds_work", subject: "central:job", agencyId: "global", resolvedAt: "2026-10-24T00:00:00Z" },
+    ];
+    showBanner();
+    const banner = await screen.findByTestId("central-holds-banner");
+    expect(banner.textContent).toMatch(/still holds host records and variables, which stopped running in 2\.5\.3\./);
+    expect(screen.getByRole("link", { name: "Review them →" }).getAttribute("href")).toBe("/notices?agency=global");
+  });
+
+  it("says nothing when Central holds nothing, or the notice is another agency's", async () => {
+    inUse.current = { agency: "ag-ops", agencyName: "Operations", onOverview: false, choices: CHOICES };
+    NOTICES = [{ kind: "agency_no_repository", subject: "ag-ops", agencyId: "ag-ops" }];
+    showBanner();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId("central-holds-banner")).toBeNull();
+  });
+});
