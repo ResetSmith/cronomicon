@@ -112,7 +112,11 @@ type AssignError struct {
 	Message   string
 	Paths     []string
 	Calendars []string // calendar_missing, calendar_not_bindable: the calendars
-	Upstreams []string // upstream_missing: kind:name of each reaction's upstream
+	// CatalogueCalendars are those of Calendars (calendar_missing) that
+	// Central's catalogue offers: Add from Central gives the target them
+	// (2.5.3 CA-19, CA-26).
+	CatalogueCalendars []string
+	Upstreams          []string // upstream_missing: kind:name of each reaction's upstream
 }
 
 func (e *AssignError) Error() string { return e.Message }
@@ -302,10 +306,20 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 		return nil, err
 	}
 	if len(st.missingCalendars) > 0 {
+		offered, err := st.catalogueOffers(st.missingCalendars)
+		if err != nil {
+			return nil, err
+		}
+		how := "Create the calendars in " + st.targetName + " and assign again"
+		if len(offered) > 0 {
+			how = "Central's catalogue offers " + strings.Join(offered, ", ") + ": add them to " + st.targetName +
+				" from Central (Schedules → Calendars), create the others there, and assign again"
+		}
 		e := refuse(http.StatusUnprocessableEntity, "calendar_missing",
-			"%s has no calendar named %s, which the copy's schedules name: its sync would refuse them, and what names them. Create the calendars in %s and assign again",
-			st.targetName, strings.Join(st.missingCalendars, ", "), st.targetName)
+			"%s has no calendar named %s, which the copy's schedules name: its sync would refuse them, and what names them. %s",
+			st.targetName, strings.Join(st.missingCalendars, ", "), how)
 		e.Calendars = st.missingCalendars
+		e.CatalogueCalendars = offered
 		return nil, e
 	}
 	if len(st.unbindableCalendars) > 0 {
@@ -375,6 +389,22 @@ func (r *Registry) defRowWhere(ctx context.Context, table, where string, args ..
 		  FROM `+table+` WHERE `+where+` AND deleted_at IS NULL`, args...).
 		Scan(&d.uid, &d.name, &d.source, &d.owner, &d.repo, &d.path)
 	return d, err
+}
+
+// catalogueOffers are the names among names that Central's catalogue has a
+// calendar of (the built-in agency's calendars, 2.5.3 CA-25).
+func (st *assignState) catalogueOffers(names []string) ([]string, error) {
+	var out []string
+	for _, n := range names {
+		c, err := st.count(`SELECT COUNT(*) FROM calendars WHERE owner_agency = 'global' AND name = ?`, n)
+		if err != nil {
+			return nil, err
+		}
+		if c > 0 {
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }
 
 func (st *assignState) count(query string, args ...any) (int, error) {

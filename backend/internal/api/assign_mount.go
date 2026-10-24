@@ -65,6 +65,9 @@ func (s *Server) handleAssign(w http.ResponseWriter, r *http.Request) {
 		if len(refusal.Calendars) > 0 {
 			out["calendars"] = refusal.Calendars
 		}
+		if len(refusal.CatalogueCalendars) > 0 {
+			out["catalogueCalendars"] = refusal.CatalogueCalendars // 2.5.3 CA-19
+		}
 		if len(refusal.Upstreams) > 0 {
 			out["upstreams"] = refusal.Upstreams // upstream_missing (C11)
 		}

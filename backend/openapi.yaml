@@ -2303,6 +2303,211 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/Validation' }
 
+  /calendars/catalogue:
+    get:
+      tags: [Schedules]
+      operationId: listCalendarCatalogue
+      summary: What Central's calendar catalogue offers (v2.5.3)
+      description: |
+        The catalogue is the built-in agency's calendars, which global
+        administrators write with the ordinary calendar routes while working in
+        it; no run reads them. Any agency's calendar editor (compose on some
+        agency) reads it here (403 otherwise), to add a copy to an agency
+        (POST /calendars/from-central). Each item carries the hash of its
+        content; `copiedAs` names the copies of it that the agency the request
+        works in holds. The name `catalogue` is reserved for this route: no
+        calendar is created with it.
+      responses:
+        '200':
+          description: The catalogue.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CatalogueCalendar' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /calendars/from-central:
+    post:
+      tags: [Schedules]
+      operationId: addCalendarFromCentral
+      summary: Add a calendar from Central's catalogue to an agency (v2.5.3)
+      description: |
+        A copy of a catalogue calendar: the agency's own row with its days,
+        description and flags, linked to it, and read-only in the agency until
+        it is made the agency's own (POST /calendars/{name}/detach). In the
+        agency the request works in (compose on it; 422 `agency_required` when
+        the request names none), or, for a global administrator, in each of
+        `agencyIds` (recorded as acting in each). The copy is named as the
+        catalogue calendar unless `name` says otherwise; a name the agency
+        holds is 409, and a global (freeze) calendar under a name an entry of
+        the agency keeps to is 422. The built-in agency takes no copy (422
+        `catalogue_copies_nothing`). Judged whole: one refusal, nothing added.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [catalogueUid]
+              properties:
+                catalogueUid: { type: string }
+                name: { type: string, description: "The copy's name; the catalogue calendar's when empty." }
+                updateMode: { type: string, enum: [ask, auto], description: "ask (the default) or auto." }
+                agencyIds: { type: array, items: { type: string }, description: "A global administrator's: the agencies to add it to." }
+      responses:
+        '201':
+          description: The copies made.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Calendar' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /calendars/{name}/update:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+      - { name: agencyId, in: query, required: false, schema: { type: string },
+          description: "Whose calendar of the name: required when more than one agency has one." }
+    post:
+      tags: [Schedules]
+      operationId: updateCalendarFromCentral
+      summary: Update a copy from Central's catalogue (v2.5.3)
+      description: |
+        The copy takes the catalogue calendar's content as it is now: several
+        changes made while it was behind are one update. Compose on the copy's
+        agency. Answered as it is when up to date. 409 `not_from_central` for a
+        calendar that is no copy, `calendar_no_longer_offered` when the
+        catalogue calendar was deleted, and `calendar_update_blocked` when the
+        update would make it global (a freeze calendar) while an entry of the
+        agency keeps to it (CAL-27): the reason names the entry.
+      responses:
+        '200':
+          description: The copy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Calendar' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /calendars/{name}/update-mode:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+      - { name: agencyId, in: query, required: false, schema: { type: string },
+          description: "Whose calendar of the name: required when more than one agency has one." }
+    put:
+      tags: [Schedules]
+      operationId: setCalendarUpdateMode
+      summary: How a copy takes Central's changes (v2.5.3)
+      description: |
+        `ask`: a change to the catalogue calendar puts the copy behind, with the
+        notice `calendar_update_available` and the alert event
+        `calendar-update-available`, until its agency updates it. `auto`: the
+        copy is updated in the catalogue save's own transaction, with a
+        change-log row and the event `calendar-updated` in its agency; one its
+        agency's bindings forbid (CAL-27) stays behind and the notice says why.
+        Set to `auto` while behind, the copy takes the pending update at once
+        when its bindings allow. Compose on the copy's agency; 409 as for an
+        update.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [updateMode]
+              properties:
+                updateMode: { type: string, enum: [ask, auto] }
+      responses:
+        '200':
+          description: The copy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Calendar' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /calendars/{name}/detach:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+      - { name: agencyId, in: query, required: false, schema: { type: string },
+          description: "Whose calendar of the name: required when more than one agency has one." }
+    post:
+      tags: [Schedules]
+      operationId: detachCalendar
+      summary: Make a copy the agency's own (v2.5.3)
+      description: |
+        The copy becomes an ordinary calendar of its agency, editable, with no
+        link to the catalogue and no updates; its notices resolve. A copy whose
+        catalogue calendar was deleted is made its own the same way. Compose on
+        its agency; 409 `not_from_central` for a calendar that is no copy.
+      responses:
+        '200':
+          description: The calendar.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Calendar' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /calendars/catalogue/{uid}/push:
+    parameters:
+      - { name: uid, in: path, required: true, schema: { type: string }, description: "The catalogue calendar's uid." }
+    post:
+      tags: [Schedules]
+      operationId: pushCatalogueCalendar
+      summary: Push a catalogue calendar's update to agencies (v2.5.3)
+      description: |
+        A global administrator's (403 otherwise): each named agency's copies of
+        the catalogue calendar take its content, acting in each agency, with
+        the event `calendar-updated` there. A copy up to date is left as it is,
+        one its agency's bindings forbid (CAL-27) is listed in `blocked` with
+        the reason, and an agency with no copy is listed in `noCopy`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agencyIds]
+              properties:
+                agencyIds: { type: array, items: { type: string }, minItems: 1 }
+      responses:
+        '200':
+          description: What was done.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated: { type: array, items: { $ref: '#/components/schemas/CalendarPushResult' } }
+                  upToDate: { type: array, items: { $ref: '#/components/schemas/CalendarPushResult' } }
+                  blocked: { type: array, items: { $ref: '#/components/schemas/CalendarPushResult' } }
+                  noCopy: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+
   # ── Schedules (inventory + projected upcoming runs) ──────────────────────────
   /schedules:
     get:
@@ -7709,7 +7914,9 @@ paths:
         refuses the assignment (422 `calendar_missing`, `calendars`; question
         94): calendars are not files before 2.6.0, and the agency's sync would
         refuse the schedule naming it, and the definition with it. Create the
-        calendars in the agency and assign again. So does, for the same reason
+        calendars in the agency and assign again; since v2.5.3
+        `catalogueCalendars` lists those of them Central's catalogue offers,
+        which the agency adds from Central. So does, for the same reason
         (2.5.0 C11), a schedule that keeps to (`onlyCalendars`) a calendar the
         agency has as global (422 `calendar_not_bindable`, `calendars`), and a
         reaction whose upstream the agency would not have: a Git one not in its
@@ -11128,8 +11335,24 @@ components:
         `ambiguous_calendar` when several do. The upgrade to v2.4.0 gave each
         agency a copy of every global calendar of Global's, and of each
         calendar its entries named of another agency's, under the same name.
+
+        Since v2.5.3 the built-in agency's calendars are Central's catalogue:
+        global administrators write them, no run reads them, and an agency
+        adds a copy (POST /calendars/from-central). A copy carries
+        `fromCentral`; it is read-only in its agency (409
+        `calendar_from_central` on PUT and PUT .../days; `canEdit` false) until
+        made the agency's own, and may be deleted. A catalogue calendar
+        carries `copies`. Saving one updates the copies set to update
+        automatically, in the same transaction; deleting one leaves its copies,
+        no longer offered.
       properties:
         name: { type: string }
+        uid: { type: string, readOnly: true, description: "v2.5.3: the calendar's identity, never changed." }
+        fromCentral: { $ref: '#/components/schemas/CalendarOrigin' }
+        copies:
+          type: array
+          readOnly: true
+          items: { $ref: '#/components/schemas/CalendarCopyRef' }
         ownerAgency: { type: string, description: "The agency id the calendar belongs to (v2.4.0)." }
         canEdit: { type: boolean, description: "v2.4.2, on the list. The caller's writes to this calendar would pass: compose on its agency." }
         canDelete: { type: boolean, description: "v2.4.2, on the list. As canEdit." }
@@ -11173,6 +11396,61 @@ components:
           items: { $ref: '#/components/schemas/CalendarDay' }
         createdBy: { type: string, readOnly: true }
         createdAt: { type: string, format: date-time, readOnly: true }
+
+    CalendarOrigin:
+      type: object
+      description: |
+        A copy's link to Central's catalogue (v2.5.3). `state`: `up_to_date`;
+        `update_available`, with `pending` (what an update would change) and,
+        when the agency's bindings forbid it (CAL-27), `blocked`;
+        `no_longer_offered`, once the catalogue calendar was deleted.
+      properties:
+        catalogueUid: { type: string }
+        catalogueName: { type: string, description: "The catalogue calendar's name now; absent once it is gone." }
+        updateMode: { type: string, enum: [ask, auto] }
+        state: { type: string, enum: [up_to_date, update_available, no_longer_offered] }
+        blocked: { type: string }
+        pending:
+          type: object
+          properties:
+            daysAdded: { type: array, items: { type: string } }
+            daysRemoved: { type: array, items: { type: string } }
+            daysRelabelled: { type: array, items: { type: string } }
+            descriptionChanged: { type: boolean }
+            global: { type: boolean, description: "The catalogue's value, when the update changes it." }
+            recordSuppressed: { type: boolean, description: "The catalogue's value, when the update changes it." }
+
+    CalendarCopyRef:
+      type: object
+      description: One agency's copy of a catalogue calendar (v2.5.3).
+      properties:
+        agencyId: { type: string }
+        agencyName: { type: string }
+        name: { type: string }
+        updateMode: { type: string, enum: [ask, auto] }
+        state: { type: string, enum: [up_to_date, update_available, no_longer_offered] }
+        blocked: { type: string }
+
+    CatalogueCalendar:
+      type: object
+      description: One calendar Central's catalogue offers (v2.5.3).
+      properties:
+        uid: { type: string }
+        name: { type: string }
+        description: { type: string }
+        global: { type: boolean }
+        recordSuppressed: { type: boolean }
+        dayCount: { type: integer }
+        lastDay: { type: [string, 'null'] }
+        hash: { type: string, description: "The hash of its content (description, flags, days and labels; not the name)." }
+        copiedAs: { type: array, items: { type: string }, description: "The copies of it the agency the request works in holds." }
+
+    CalendarPushResult:
+      type: object
+      properties:
+        agencyId: { type: string }
+        name: { type: string }
+        reason: { type: string }
 
     CalendarDay:
       type: object
@@ -12490,6 +12768,17 @@ components:
               with `CRONOMICON_GITLAB_*` or `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN`,
               which it no longer reads. Subject `environment`. Filed under the
               built-in agency. It clears at a start without them.
+            - `calendar_update_available` — v2.5.3: a calendar an agency copied
+              from Central's catalogue is behind it: the agency's Update applies
+              it, or an automatic update was refused by the agency's bindings
+              (the detail says why). Subject `calendar:<the copy's uid>`. Filed
+              under the copy's agency. It clears when the copy is up to date,
+              made the agency's own, or deleted.
+            - `calendar_no_longer_offered` — v2.5.3: the catalogue calendar a
+              copy was taken from was deleted; the copy stays, read-only.
+              Subject `calendar:<the copy's uid>`. Filed under the copy's
+              agency. It clears when the copy is made the agency's own or
+              deleted.
             - `central_holds_work` — v2.5.3: the built-in agency still owns
               something that runs or that runs use, from before v2.5.3. The
               built-in agency runs nothing: none of it runs, and nothing is
@@ -15104,7 +15393,14 @@ components:
             hears of its own agency's secrets, Global's of every agency's, and
             `backup-key-changed` is Global's alone. The message names the actor
             and says when they are outside the agency.
-          enum: [failure, success, warning, killed, skipped, any, sla-breach, missed-run, secret-revealed, secret-changed, backup-key-changed]
+
+            `calendar-update-available` and `calendar-updated` (v2.5.3) are an
+            agency's copy of a calendar from Central's catalogue falling behind
+            it (update mode ask, or an automatic update its bindings refused),
+            and being updated from it (automatically, or pushed by a global
+            administrator). Matched by a rule whose target is `all`; an agency's
+            rule hears of its own copies, the built-in agency's of every agency's.
+          enum: [failure, success, warning, killed, skipped, any, sla-breach, missed-run, secret-revealed, secret-changed, backup-key-changed, calendar-update-available, calendar-updated]
         channels:
           type: array
           items:

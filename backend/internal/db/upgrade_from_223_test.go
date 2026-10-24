@@ -150,8 +150,8 @@ func TestC11_TheUpgradeFrom223(t *testing.T) {
 	if err := db.Migrate(pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if v, dirty, err := db.Status(pool); err != nil || dirty || v != 1670 {
-		t.Errorf("schema %d dirty %v (%v), want 1670 clean", v, dirty, err)
+	if v, dirty, err := db.Status(pool); err != nil || dirty || v != 1700 {
+		t.Errorf("schema %d dirty %v (%v), want 1700 clean", v, dirty, err)
 	}
 	var fk int
 	if err := pool.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&fk); err != nil || fk != 0 {

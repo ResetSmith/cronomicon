@@ -143,6 +143,19 @@ func TestAnAssignmentIsOneCommitCarryingTheWholeSet(t *testing.T) {
 	if f.head() != before {
 		t.Fatal("a refused assignment pushed")
 	}
+	if len(refusal.CatalogueCalendars) != 0 {
+		t.Errorf("the refusal offers %v from Central's catalogue, which has none", refusal.CatalogueCalendars)
+	}
+	// 2.5.3 CA-19: where Central's catalogue has the calendar, the refusal
+	// says so, for Add from Central.
+	if _, err := f.origin.db.Exec(`INSERT INTO calendars (source, name, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 't', 't', 'global')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.assign()
+	if !errors.As(err, &refusal) || refusal.Code != "calendar_missing" || strings.Join(refusal.CatalogueCalendars, ",") != "holidays" ||
+		!strings.Contains(refusal.Message, "from Central") {
+		t.Fatalf("with the catalogue's holidays: want calendar_missing offering it from Central, got %v (%v)", err, refusal)
+	}
 	f.finHasCalendar()
 
 	res, err := f.assign()

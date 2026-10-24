@@ -2068,7 +2068,8 @@ func validateAlertRuleInput(inp settings.AlertRuleInput) (code, msg string) {
 // (2.5.1 SG-17).
 func notJobTrigger(trigger string) bool {
 	switch strings.ToLower(trigger) {
-	case notify.TriggerSecretRevealed, notify.TriggerSecretChanged, notify.TriggerBackupKeyChanged:
+	case notify.TriggerSecretRevealed, notify.TriggerSecretChanged, notify.TriggerBackupKeyChanged,
+		notify.TriggerCalendarUpdateAvailable, notify.TriggerCalendarUpdated: // 2.5.3 CA-28
 		return true
 	}
 	return false
