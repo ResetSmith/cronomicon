@@ -56,6 +56,10 @@ interface Preserved {
   // ansible/terraform child process. Here (rather than its own state) for the
   // promptEnforcement reason: the full-replace PUT must always re-send it.
   envPassthrough: string[];
+  // 2.5.3 CA-30 — the job's own calendars. Here for the same reason: the
+  // full-replace PUT clears them when they are left out.
+  forbidCalendars: string[];
+  allowCalendars: string[];
 }
 const DEFAULT_PRESERVED: Preserved = {
   timeoutSeconds: 0,
@@ -71,6 +75,8 @@ const DEFAULT_PRESERVED: Preserved = {
   mustFinishBy: "",
   watch: [],
   promptEnforcement: "warn",
+  forbidCalendars: [],
+  allowCalendars: [],
 };
 
 // JC-P3 — an inline (job-local) schedule authored directly in the composer: name +
@@ -408,6 +414,8 @@ export function JobComposer() {
         mustFinishBy: j.mustFinishBy ?? "",
         watch: j.watch ?? [],
         envPassthrough: j.envPassthrough ?? [],
+        forbidCalendars: j.forbidCalendars ?? [],
+        allowCalendars: j.allowCalendars ?? [],
       });
       setTagsInput((j.tags ?? []).join(", "));
       // EV-6 parity — prefill the declared key bindings (labels only; the derived
@@ -678,6 +686,8 @@ export function JobComposer() {
     }
     const inlineNames = inlineEntries.map((s) => s.name.toLowerCase());
     if (new Set(inlineNames).size !== inlineNames.length) return setErr("Inline schedule names must be unique.");
+    const jobCalErr = bindingError({ skipCalendars: preserved.forbidCalendars, onlyCalendars: preserved.allowCalendars }, "job");
+    if (jobCalErr) return setErr(`Calendars: ${jobCalErr}`);
     // AF-1 — the choice must be made, and only silence is refused. Client-side so
     // the author is told in the form rather than by a 422 after a full round-trip;
     // the server enforces the same rule for every other client.
@@ -730,6 +740,9 @@ export function JobComposer() {
       // RP-14 — only sent for local-toolchain types; the server 422s it on an
       // ssh-family job, whose remote env is built entirely from the manifest.
       envPassthrough: runnerOnly ? preserved.envPassthrough : [],
+      // 2.5.3 CA-30 — always sent: one left out is cleared.
+      forbidCalendars: preserved.forbidCalendars,
+      allowCalendars: preserved.allowCalendars,
     };
     setKeyErr(null);
     // PUT/DELETE /jobs/{jobId} declare `header?: never` — the csrf middleware
@@ -1392,6 +1405,18 @@ export function JobComposer() {
             ? "No schedules bound — the job will run manually only."
             : `Bound: ${scheduleRefs.length} reusable + ${nInlineValid} inline.`}
         </div>
+      </Field>
+
+      {/* 2.5.3 CA-30 to CA-32 — the job's own Forbid and Allow calendars, from
+          its agency's calendars: they gate every automatic start of the job. */}
+      <Field label="Calendars (optional)">
+        <CalendarPicker
+          level="definition"
+          of="job"
+          value={{ skipCalendars: preserved.forbidCalendars, onlyCalendars: preserved.allowCalendars }}
+          onChange={(b) => setPreserved((p) => ({ ...p, forbidCalendars: b.skipCalendars, allowCalendars: b.onlyCalendars }))}
+          agency={jobAgency}
+        />
       </Field>
 
       {/* JC-P4 — scope env context: what is actually injected (the firing schedule's

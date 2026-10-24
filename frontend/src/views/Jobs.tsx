@@ -28,6 +28,7 @@ import { RunInputsPanel, type InputState, type Provenance } from "./jobs/RunInpu
 import { buildRunSummary, type SummaryAccent, type SummaryRow } from "./jobs/runSummary";
 import { fmtDuration, fmtInAppZone } from "../utils/datetime";
 import { RunCalendarNote } from "./scheduling/RunCalendarNote";
+import { TodayForbiddenNote } from "./scheduling/TodayForbiddenNote";
 import { calendarRollup } from "./scheduling/calendars";
 import { reactionsWatchingRefusal, useReactionEdges } from "./scheduling/reactions";
 import { ReactionPanels } from "./scheduling/ReactionPanels";
@@ -2939,6 +2940,10 @@ export function RunDialog({
 
         </Disclosure>
       </div>
+
+      {/* 2.5.3 CA-32 — the job's own calendars do not stop a person's Run; the
+          dialog says when they would stop an automatic start today. */}
+      {runAt === null && <TodayForbiddenNote today={jobDetail.calendarToday} allow={jobDetail.allowCalendars} />}
 
       {/* AR — When to run: now (default) or a deferred instant. A deferred run
           is parked as a pending run — visible on Schedules → Upcoming (with a
