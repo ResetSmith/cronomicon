@@ -70,7 +70,10 @@ Then, because Central runs nothing from this release on:
   `central_runs_nothing`, also for an agency's administrator who names Central
   (until now 403). A global administrator's Vault-backed secret or key is made
   in an agency, inside that agency's Vault paths.
-- `cronomicon validate` without `-agency` refuses a job with no scope.
+- `cronomicon validate` without `-agency` refuses a job with no scope. The CI
+  template (`deploy/ci-validate-template.yml`) now defaults
+  `CRONOMICON_REPO_KIND` to `agency`; a pipeline copied from it earlier still
+  says `global`: change it to `agency`.
 - A global administrator, and a reader of every agency, starts in the one
   agency there is, or on the All-agencies Dashboard when there are several
   (until now in Central); a stored default still wins.
