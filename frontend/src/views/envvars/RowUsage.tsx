@@ -77,8 +77,8 @@ type HeldItem = { kind: "secret" | "key"; id: string; name: string; scope?: stri
 
 // Held by Global (2.5.1 SG2.6, SG-16): the agency in use's former secrets or
 // keys that several agencies shared before 2.3.0 and Global still holds. Since
-// 2.4.0 only Global's runs use them, so the agency's runs do not; the agency
-// sees them, and their Usage, read only. Nothing renders when there are none,
+// 2.4.0 only Global's runs used them, and since 2.5.3 the built-in agency runs
+// nothing, so no run does; the agency sees them, and their Usage, read only. Nothing renders when there are none,
 // on the overview, or outside the switcher.
 export function HeldByGlobal({ kind }: { kind: "secret" | "key" }) {
   const ctx = useAgencyOptional();

@@ -21,16 +21,18 @@
 #     docker build -f backend/Dockerfile --target validate -t cronomicon-validate:<version> .
 #
 # ── Which repository this is ─────────────────────────────────────────────────
-# A checkout cannot say whether it is Global's repository or an agency's, and
-# one rule differs (2.4.0). In both, a script_ref, scheduleRef or reaction that
-# names nothing in this repository is an error: a repository takes nothing
-# from another.
+# Since 2.5.3 every repository of definitions is an agency's: the built-in
+# administration agency (Central) has none and runs nothing. A script_ref,
+# scheduleRef or reaction that names nothing in this repository is an error: a
+# repository takes nothing from another.
 #
-#   CRONOMICON_REPO_KIND: "global"  — Global's repository. A job may name no
-#       scope (it is Global's then); a scope it names must be one of Global's,
-#       which sync checks and this cannot see.
-#   CRONOMICON_REPO_KIND: "agency"  — an agency's repository. A job must name a
-#       scope (sync refuses one that does not), one of the agency's.
+#   CRONOMICON_REPO_KIND: "agency"  — the setting to use. A job must name a scope
+#       (sync refuses one that does not), one of the agency's; a scope the
+#       checkout does not define is a warning (the agency may have built it in
+#       the app, which this cannot see).
+#   CRONOMICON_REPO_KIND: "global"  — kept for a pipeline written before 2.5.3,
+#       when the built-in agency had a repository. It runs the validator
+#       without -agency, which also refuses a job that names no scope.
 #
 # ── Optional: the errors as a comment on the merge request ───────────────────
 # Set GITLAB_MR_TOKEN, a MASKED CI/CD variable holding a Project or Group Access
@@ -41,7 +43,7 @@
 
 variables:
   CRONOMICON_VALIDATE_IMAGE: "ghcr.io/resetsmith/cronomicon-validate:2.5.0"
-  CRONOMICON_REPO_KIND: "global"
+  CRONOMICON_REPO_KIND: "agency"
 
 validate-job-definitions:
   stage: test
