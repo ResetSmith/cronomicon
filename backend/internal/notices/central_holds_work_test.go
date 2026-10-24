@@ -62,7 +62,7 @@ func TestCA4WhatCentralHoldsIsListedAndClearsWhenItIsGone(t *testing.T) {
 		"central:workflow":       {"left-flow"},
 		"central:schedule":       {"left-sched"},
 		"central:scope":          {"left-hosts", "a repair"},
-		"central:secret":         {"LEFT_SECRET", "Move agency"},
+		"central:secret":         {"LEFT_SECRET", "Repair: move to another agency"},
 		"central:env-var":        {"LEFT_VAR"},
 		"central:ssh-credential": {"left_key"},
 		"central:host":           {"left-host"},

@@ -7,11 +7,11 @@ cloned on the volume (since 2.4.0, one clone per repository); the clones are not
 in the snapshot, because the repositories are their source and the server
 rebuilds them (see [After a restore: runs and repositories](#after-a-restore-runs-and-repositories)).
 
-> **The upgrade to 2.5.2 is one-way: back up before you start it.** At its
-> first start 2.5.2 (by 2.5.1's migrations, which it carries) binds every
-> sealed value (stored secrets, SSH keys, repository tokens, Vault and other
+> **The upgrade to 2.5.2 or 2.5.3 is one-way: back up before you start it.** At
+> its first start the release (by 2.5.1's migrations, which both carry) binds
+> every sealed value (stored secrets, SSH keys, repository tokens, Vault and other
 > credentials) to its own row. After that **the release you came from cannot
-> open them** (2.2.3, from which production goes to 2.5.2 in one step, or a
+> open them** (2.2.3, from which production goes to 2.5.3 in one step, or a
 > build of the unpublished 2.5.0), and the down of
 > migration 1620 does not undo it. The backup taken before the upgrade is the
 > only way back to that release; anything changed since is lost. Restoring
@@ -238,7 +238,8 @@ and never by its name:
   it is refused (`bootstrap_token_retired`). An agent that came back that way
   before takes no work (the built-in agency runs nothing) and nothing moves it:
   deregister it, mint a token for its agency, and enrol it again. The
-  *Central still holds work* notice lists such agents.
+  *The administration still holds work that no longer runs* notice lists such
+  agents.
 
 Either way the new id has no tags, no scope bindings and no approved host keys —
 those are keyed to the id that was just deleted, and they are operator-owned,
@@ -288,7 +289,7 @@ automatically: the runner name is self-declared by the agent. The observed
 client IP of the runner's last contact is recorded beside the snapshot as the
 one signal the agent cannot assert, and the offer says whether it matches.
 Accepting or dismissing needs `configureApp` on the agency that owns the agent
-(a global administrator for a Global agent) — the same authority that could
+(a global administrator for an agent left with Central) — the same authority that could
 bind those scopes to it by hand.
 
 > The snapshot only exists in the database you restored: a runner reaped or

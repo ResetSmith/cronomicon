@@ -129,23 +129,20 @@ func TestUnclaimableReasonExplainsTheUnboundTrap(t *testing.T) {
 	f.seedRun("run-unbound", "ansible", `[]`, "")
 	f.runner("r-dept", "online", `["ansible"]`, "a1", 1) // every runner is departmental
 
-	// Since 2.4.0 (§0a) such a run is Global's and only Global's runners take
-	// it; binding it to an agency's scope is refused (2.5.0 C2), so the remedy
-	// named is a runner for Global.
+	// Such a run is the built-in agency's (one queued before 2.5.3). Since
+	// 2.5.3 (CA-1) it runs nothing, so no runner — an agent or the local runner,
+	// whatever its type — is a remedy: the reason says to run the job in its
+	// agency.
 	got := f.reason(t, "run-unbound")
-	if !strings.Contains(got, "no scope") || !strings.Contains(got, "enrol a runner for Global") {
-		t.Errorf("unbound run on a departmentalised fleet = %q, want it to explain that "+
-			"it is Global's and name the remedy", got)
-	}
-	// 2.5.0 C11, defect 90: the local runner runs shell types only, so it is
-	// not offered to an Ansible run, and is to a shell one.
-	if strings.Contains(got, "local runner") {
-		t.Errorf("an Ansible run of Global's is offered the local runner, which cannot run it: %q", got)
+	if !strings.Contains(got, "runs nothing since 2.5.3") || !strings.Contains(got, "run the job in the agency whose work it is") {
+		t.Errorf("a run of Global's = %q, want it to say Global runs nothing and name the agency as the remedy", got)
 	}
 	f.runner("r-dept-sh", "online", `["bash"]`, "a1", 1) // a shell runner, departmental too
 	f.seedRun("run-unbound-bash", "bash", `[]`, "")
-	if got := f.reason(t, "run-unbound-bash"); !strings.Contains(got, "turn on the local runner") {
-		t.Errorf("a shell run of Global's is not offered the local runner: %q", got)
+	for _, id := range []string{"run-unbound", "run-unbound-bash"} {
+		if got := f.reason(t, id); strings.Contains(got, "local runner") || strings.Contains(got, "enrol a runner") {
+			t.Errorf("a run of Global's (%s) is offered a runner, which cannot take it: %q", id, got)
+		}
 	}
 }
 

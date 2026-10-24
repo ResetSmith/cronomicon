@@ -60,12 +60,12 @@ var centralHeld = []struct {
 	{"scope", "scopes built in the app", `SELECT name FROM scopes WHERE source <> 'git' AND owner_agency = 'global' ORDER BY name`,
 		"Give each to the agency whose hosts they are (Scopes → the scope's agency: a repair, with a reason), or clone it into each agency that needs it."},
 	{"secret", "secrets", `SELECT key FROM secrets WHERE owner_agency = 'global' ORDER BY key`,
-		"Give each to the agency whose runs use it (Env Vars → Move agency: a repair, with a reason). A secret two agencies " +
+		"Give each to the agency whose runs use it (Env Vars → Secrets → the row → Repair: move to another agency…, with a reason). A secret two agencies " +
 			"need is shared through a common Vault path, with a row in each agency."},
 	{"env-var", "variables", `SELECT key FROM env_vars WHERE owner_agency = 'global' ORDER BY key`,
-		"Give each to the agency whose runs use it (Env Vars → Move agency: a repair), or make it again in each agency that needs it."},
+		"Give each to the agency whose runs use it (Env Vars → Variables → the row → Repair: move to another agency…, with a reason), or make it again in each agency that needs it."},
 	{"ssh-credential", "SSH keys", `SELECT label FROM ssh_credentials WHERE owner_agency = 'global' ORDER BY label`,
-		"Give each to the agency whose hosts it opens (SSH Targets → Move agency: a repair, with a reason)."},
+		"Give each to the agency whose hosts it opens (Env Vars → SSH Keys → the row → Repair: move to another agency…, with a reason)."},
 	{"host", "host records", `SELECT hostname FROM ssh_hosts WHERE scope_id IS NULL AND owner_agency = 'global' ORDER BY hostname`,
 		"Give each to the agency whose scope reaches the host (a repair, with a reason), or make it again there."},
 	{"bastion", "bastions", `SELECT COALESCE(NULLIF(name, ''), hostname) AS n FROM bastions WHERE owner_agency = 'global' ORDER BY n`,
@@ -77,7 +77,7 @@ var centralHeld = []struct {
 		 ORDER BY rn.name`,
 		"An agent serving the built-in agency alone takes no work (one enrolled with the environment's bootstrap token " +
 			"before 2.5.3 is one). Deregister each and enrol it again with a registration token minted in its agency " +
-			"(Runners → Add runner, working in that agency)."},
+			"(Runners → + Add Runner, working in that agency)."},
 }
 
 func checkCentralHoldsWork(ctx context.Context, database *sql.DB) error {

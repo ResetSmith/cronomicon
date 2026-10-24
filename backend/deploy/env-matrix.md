@@ -31,8 +31,8 @@ configuration knob may live under a reserved prefix.
 takes it; not
 bindable, never from a store row — a run's own metadata, always log-safe):
 `CRONOMICON_RUN_ID` (run/trace id), `CRONOMICON_RUN_JOB` (job name), `CRONOMICON_RUN_JOB_SOURCE`
-(`git`|`cronomicon`), `CRONOMICON_RUN_SCOPE` (`""` = no scope: the run is the Global
-agency's), `CRONOMICON_RUN_TYPE` (run type),
+(`git`|`cronomicon`), `CRONOMICON_RUN_SCOPE` (`""` = the job names no scope; since 2.5.3 the run is
+its job's agency's), `CRONOMICON_RUN_TYPE` (run type),
 `CRONOMICON_RUN_TRIGGERED_BY` (actor), `CRONOMICON_RUN_EXECUTOR` (`ssh`|`runner`). An agent
 and the local runner both inject them. `CRONOMICON_RUN_EXECUTOR` is `ssh` when the
 local runner (this server) runs the job and `runner` when an agent does. Since
@@ -112,7 +112,7 @@ A write failure is reported (rate-limited) to the process log and never stops th
 | Var | Default | Notes |
 |---|---|---|
 | `CRONOMICON_DB_PATH` | `/var/lib/cronomicon/cronomicon.db` | SQLite file on the mounted volume. |
-| `CRONOMICON_GIT_CACHE_DIR` | `/var/lib/cronomicon/git-cache/job-definitions` | The clone of Global's repository: the directory itself, not a parent. Keep on the volume so it survives restarts. Any other repository is cloned into a directory named by its id **beside** this one (by default `/var/lib/cronomicon/git-cache/<repo id>`), so the directory that holds this one must be writable and on the volume too. |
+| `CRONOMICON_GIT_CACHE_DIR` | `/var/lib/cronomicon/git-cache/job-definitions` | The clone of the built-in agency's repository until 2.5.3 (Central has none since, and a leftover no longer syncs): the directory itself, not a parent. Each agency's repository is cloned into a directory named by its id **beside** this one (by default `/var/lib/cronomicon/git-cache/<repo id>`), so the directory that holds this one must be writable and on the volume. Keep it on the volume so the clones survive restarts. |
 
 ## Auth — Trusted Header SSO (primary)
 
@@ -217,7 +217,7 @@ per job; the three `CRONOMICON_SSH_EXECUTOR_*` names keep that spelling.)
 
 | Var | Default | Notes |
 |---|---|---|
-| `CRONOMICON_LOCAL_RUNNER` | _(unset)_ | Set to `forbid` to keep this server from ever running jobs itself: the **local runner** (the in-process SSH engine) then reads as off and cannot be turned on from the app. Unset (or `allow`), the decision is made under **Settings → Local runner**, which is where it is turned on and off since v2.3.0. Any other value refuses to start: a switch that keeps SSH keys off a host must not read a typo as "allowed". |
+| `CRONOMICON_LOCAL_RUNNER` | _(unset)_ | Set to `forbid` to keep this server from ever running jobs itself: the **local runner** (the in-process SSH engine) then reads as off and cannot be turned on from the app. Unset (or `allow`), the decision is made under **Settings → Local runner**, which is where it is turned on and off since v2.3.0, and where its agency is chosen since 2.5.3: with no agency it is off. Any other value refuses to start: a switch that keeps SSH keys off a host must not read a typo as "allowed". |
 | `CRONOMICON_SSH_EXECUTOR_ENABLED` | `false` | **A seed since v2.3.0, read once.** The first time v2.3.0 or later starts against a database from before 2.3.0, this becomes the initial value of the local runner's on/off setting, so an upgrade arrives in the state it was running in. After that the setting in the app is the truth and this is ignored. Note the **startup orphan sweep runs either way**: a run the local runner had claimed and a crash left `running` holds a global concurrency slot until it is reconciled, so it is reconciled to `executor_lost` at boot whether or not the local runner is on. |
 | `CRONOMICON_SSH_EXECUTOR_CONCURRENCY` | `4` | **A seed since v2.3.0, read once**, with the switch above: the initial number of runs the local runner executes at the same time (`≤ 0` is treated as the default). It is changed afterwards under Settings → Local runner. Within a single run, fan-out across targets is separately bounded. |
 | `CRONOMICON_SSH_EXECUTOR_STALE_AFTER` | `24h` | Go duration bounding the **periodic** orphan reaper, which runs once a minute whether or not the local runner is on (a run it started can outlive the switch being turned off): a run the local runner claimed that is still `running` longer than this is reconciled to failure (`executor_lost`). Keep it safely **above the longest plausible job** (its configured timeout) — this window is a safety net, not the crash-recovery path, and a value below a real job's runtime will kill live runs. `≤ 0` falls back to the default. |
@@ -406,7 +406,7 @@ whenever the connection is saved. The rest are re-read closer to use.
 | GitLab repo URL / PAT | none since 2.5.3 (`CRONOMICON_GITLAB_BASE_URL` / `CRONOMICON_GITLAB_TOKEN` are no longer read) | `git_repos` (an agency's row) | when the connection is saved (its sync service is rebuilt and syncs) |
 | GitLab webhook secret | none since 2.5.3 (`CRONOMICON_GITLAB_WEBHOOK_SECRET` is no longer read) | `git_repos` (+ rotation overlap pair) | at once (read per delivery) |
 | GitLab write branch | none since 2.5.3 (`CRONOMICON_GITLAB_WRITE_BRANCH` is no longer read) | `git_repos.branch` | next sync/publish (read per operation) |
-| Vault addr / AppRole (the installation's, also Global's) | `CRONOMICON_VAULT_ADDR` / `CRONOMICON_VAULT_ROLE_ID[_FILE]` / `CRONOMICON_VAULT_SECRET_ID[_FILE]` | `vault_config` | next Vault operation (the client is keyed on the resolved config) |
+| Vault addr / AppRole (the installation's, used by every agency without a Vault of its own) | `CRONOMICON_VAULT_ADDR` / `CRONOMICON_VAULT_ROLE_ID[_FILE]` / `CRONOMICON_VAULT_SECRET_ID[_FILE]` | `vault_config` | next Vault operation (the client is keyed on the resolved config) |
 | Vault namespace | `CRONOMICON_VAULT_NAMESPACE` | `vault_config.namespace` | next Vault operation |
 | An agency's own Vault (2.5.1) | — (no env; an agency cannot set the server's environment) | `agency_vaults` (one row per agency; AppRole credentials sealed) | next Vault operation of that agency's rows |
 | Allowed hosts for an agency's own Vault (2.5.1) | — (no env) | settings KV `vaultAllowedHosts` | at once: asked on every save, test and client build |

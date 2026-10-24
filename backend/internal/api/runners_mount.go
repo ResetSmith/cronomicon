@@ -142,7 +142,7 @@ func (s *Server) requireRunnerOwner(w http.ResponseWriter, r *http.Request, id a
 	}
 	if owner == agencyid.Global {
 		s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
-			"this runner is Global's, so only a global administrator may manage it")
+			"this runner is the built-in administration agency's, so only a global administrator may manage it")
 		return false
 	}
 	s.denyEntityAgency(w, r, id, auth.PermConfigureApp, owner,
@@ -260,7 +260,7 @@ func (s *Server) requireRunnerOwnerOrHostKeyGuest(pathVar string, next http.Hand
 		// disagree with the first, and then nothing would be written at all.
 		if owner == agencyid.Global {
 			s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
-				"this runner is Global's, so only a global administrator may manage it")
+				"this runner is the built-in administration agency's, so only a global administrator may manage it")
 			return
 		}
 		s.denyEntityAgency(w, r, id, auth.PermConfigureApp, owner,
@@ -780,7 +780,7 @@ func (s *Server) requireRegistrationTokenAgency(next http.Handler) http.Handler 
 		if found && !id.CanAgency(auth.PermConfigureApp, agency) {
 			if agency == agencyid.Global {
 				s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
-					"this token enrols a runner for Global, so only a global administrator may revoke it")
+					"this token enrols a runner for the built-in administration agency, so only a global administrator may revoke it")
 				return
 			}
 			s.denyEntityAgency(w, r, id, auth.PermConfigureApp, agency,
