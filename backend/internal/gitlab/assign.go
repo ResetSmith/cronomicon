@@ -610,6 +610,7 @@ func (st *assignState) addJob(row defRow, role string) error {
 		}
 		st.add(files[0], "script", files[0].Content, nil)
 	}
+	st.addDefinitionCalendars(spec.Spec.ForbidCalendars, spec.Spec.AllowCalendars)
 	return st.addSchedules(spec.Spec.ScheduleRefs, spec.Spec.Schedules)
 }
 
@@ -677,6 +678,18 @@ func (st *assignState) addScript(ref string) error {
 		}
 	}
 	return nil
+}
+
+// addDefinitionCalendars notes a definition's own Forbid and Allow calendars
+// (2.5.3, CA-30), which the target must have as its entries' (an Allow as an
+// only: never a freeze calendar there).
+func (st *assignState) addDefinitionCalendars(forbid, allow []string) {
+	for _, c := range append(append([]string{}, forbid...), allow...) {
+		st.calendars[c] = true
+	}
+	for _, c := range allow {
+		st.onlyCalendars[strings.TrimSpace(c)] = true
+	}
 }
 
 // addSchedules plans the reusable schedules a definition names, and notes the
@@ -758,6 +771,7 @@ func (st *assignState) addWorkflow(row defRow, role string) error {
 		return err
 	}
 	st.reactions = append(st.reactions, spec.Spec.Reactions...)
+	st.addDefinitionCalendars(spec.Spec.ForbidCalendars, spec.Spec.AllowCalendars)
 	if err := st.addSchedules(spec.Spec.ScheduleRefs, spec.Spec.Schedules); err != nil {
 		return err
 	}

@@ -18,12 +18,14 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
+	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/envmerge"
 	"github.com/ResetSmith/cronomicon/internal/envref"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/notify"
 	"github.com/ResetSmith/cronomicon/internal/runcap"
 	"github.com/ResetSmith/cronomicon/internal/runner"
 	"github.com/ResetSmith/cronomicon/internal/runref"
@@ -192,6 +194,12 @@ type jobRow struct {
 	LastModifiedAt *string  `json:"lastModifiedAt"`
 	Tags           []string `json:"tags"`
 	Requestable    bool     `json:"requestable"`
+	// ForbidCalendars and AllowCalendars are the job's own calendars (2.5.3,
+	// CA-30), and CalendarToday what they say of today (the Run dialog's
+	// warning, CA-32). Detail only.
+	ForbidCalendars []string       `json:"forbidCalendars,omitempty"`
+	AllowCalendars  []string       `json:"allowCalendars,omitempty"`
+	CalendarToday   *calendarToday `json:"calendarToday,omitempty"`
 	// DeletedAt is the recycle-bin stamp (RH). Non-nil means the definition is
 	// binned: hidden from the catalog, never fired, and refused by the run and
 	// edit paths until it is restored.
@@ -702,6 +710,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		sshUser, sshCredential                sql.NullString
 		uid                                   sql.NullString
 		ownerAgency                           string
+		forbidCals, allowCals                 sql.NullString
 	}
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT rowid, name, source, run_type, description, target_host, scope, schedule, enabled,
@@ -712,7 +721,8 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		       created_at, last_modified_at, env_json, source_path, prompts_json, requires_json,
 		       COALESCE(prompt_enforcement,'warn'), ssh_user, ssh_credential, env_passthrough,
 		       COALESCE(requestable,0), deleted_at, warn_after_seconds, must_finish_by, watch_json,
-		       uid, COALESCE(`+agencyid.JobSQL("jobs")+`, '`+agencyid.Global+`'), repo_id
+		       uid, COALESCE(`+agencyid.JobSQL("jobs")+`, '`+agencyid.Global+`'), repo_id,
+		       forbid_calendars, allow_calendars
 		FROM jobs WHERE `+whereCol+` = ?
 	`, arg).Scan(&j.rowid, &j.name, &j.source, &j.runType, &j.description, &j.targetHost, &j.scope, &j.schedule,
 		&j.enabled, &j.concPolicy, &j.concKey, &j.tags,
@@ -722,7 +732,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		&j.createdAt, &j.lastModifiedAt, &j.envJSON, &j.sourcePath, &j.promptsJSON, &j.requiresJSON,
 		&j.promptEnforcement, &j.sshUser, &j.sshCredential, &j.envPassthroughJSON,
 		&j.requestable, &j.deletedAt, &j.warnAfterSeconds, &j.mustFinishBy, &j.watchJSON,
-		&j.uid, &j.ownerAgency, &j.repoID)
+		&j.uid, &j.ownerAgency, &j.repoID, &j.forbidCals, &j.allowCals)
 	if err != nil {
 		return nil
 	}
@@ -747,6 +757,8 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		UID:         j.uid.String,
 		OwnerAgency: j.ownerAgency,
 	}
+	jr.ForbidCalendars, jr.AllowCalendars = calendar.ParseNames(j.forbidCals.String), calendar.ParseNames(j.allowCals.String)
+	jr.CalendarToday = s.calendarTodayOf(r, "job", j.source, j.name, j.uid.String)
 	// AN-2 — the FULL annotation on the detail path, where the expanded view
 	// renders the notes. A follow-up query rather than a join: the row above is
 	// read with QueryRowContext, which consumes and closes its result set before
@@ -1623,6 +1635,11 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 				if g.Gate == "cap" {
 					httpx.Fail(w, http.StatusConflict, "concurrency_cap", capMessage(g.CapAgency))
 				} else {
+					// The job's own calendars refused a service account's start
+					// (2.5.3, CA-32): dropped and recorded, an Allow miss included.
+					if g.Level != "" {
+						s.recordRefusedTokenStart(r, jr, jobSrc, scope, id.Email, g)
+					}
 					httpx.Fail(w, http.StatusConflict, "suppressed_by_calendar", g.Reason)
 				}
 				return
@@ -1635,6 +1652,22 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 			// disabled, or any gate added later: refuse, deferred or not. These are
 			// catalog facts rather than moments in time, so parking does not help.
 			httpx.Fail(w, http.StatusConflict, "run_refused", g.Reason)
+			return
+		}
+	}
+
+	// A service account's DEFERRED start is judged by the job's own calendars
+	// on the day it would start (2.5.3, CA-32): its promotion is a hand
+	// deferral's, which they do not gate, and a start they forbid is dropped
+	// now, never parked for a day nobody chose.
+	if deferred && origin == scheduler.OriginToken {
+		at, _ := time.Parse(time.RFC3339, runAt)
+		if v, _, err := scheduler.DefinitionVerdictAt(r.Context(), s.db, "job", jobSrc, jr.Name, jr.UID, at, s.appLocation()); err != nil {
+			s.log.Error("run: read the job's calendars for a deferred start — parked without them", "job", jr.Name, "err", err)
+		} else if v.Suppressed && v.Level != "" {
+			g := scheduler.GateOutcome{Gate: "calendar", Reason: calendar.Reason(v), Calendar: v.Calendar, Level: v.Level}
+			s.recordRefusedTokenStart(r, jr, jobSrc, scope, id.Email, g)
+			httpx.Fail(w, http.StatusConflict, "suppressed_by_calendar", g.Reason+" (on "+runAt+")")
 			return
 		}
 	}
@@ -2413,7 +2446,12 @@ type workflowRow struct {
 	Status      string   `json:"status"`
 	Schedule    *string  `json:"schedule"`
 	Disabled    bool     `json:"disabled"`
-	LastRunAt   *string  `json:"lastRunAt"`
+	// ForbidCalendars, AllowCalendars and CalendarToday: the workflow's own
+	// calendars (2.5.3, CA-30), as a job's. Detail only.
+	ForbidCalendars []string       `json:"forbidCalendars,omitempty"`
+	AllowCalendars  []string       `json:"allowCalendars,omitempty"`
+	CalendarToday   *calendarToday `json:"calendarToday,omitempty"`
+	LastRunAt       *string        `json:"lastRunAt"`
 	// LastSkippedAt / LastSkipReason — the workflow twin of the job fields
 	// (FX-D1). Written at the same time deliberately: the last three defects in
 	// this area were all a guard applied to one twin and not the other.
@@ -3057,11 +3095,31 @@ func (s *Server) triggerWorkflow(eng *workflow.Engine) http.HandlerFunc {
 				"this workflow belongs to the built-in administration agency, which runs nothing: move it to an agency to run it")
 			return
 		}
+		// A service account's start is the token origin (2.5.3, CA-32): the
+		// workflow's own Forbid and Allow calendars gate it, and a start they
+		// stop is recorded; a deferred one is judged on its day and refused now.
+		origin := scheduler.OriginManual
+		if isTokenStart(r) {
+			origin = scheduler.OriginToken
+		}
 		if runAt == "" {
 			if g := scheduler.Evaluate(r.Context(), s.db, s.log, scheduler.GateRequest{
-				Origin: scheduler.OriginManual, Source: wr.Source, OwnerKind: "workflow", Name: wr.Name, UID: wr.UID,
+				Origin: origin, Source: wr.Source, OwnerKind: "workflow", Name: wr.Name, UID: wr.UID,
 			}, s.appLocation()); !g.Allowed && g.Gate == "calendar" {
+				if g.Level != "" {
+					s.recordRefusedWorkflowTokenStart(r, wr, id.Email, g)
+				}
 				httpx.Fail(w, http.StatusConflict, "suppressed_by_calendar", g.Reason)
+				return
+			}
+		} else if origin == scheduler.OriginToken {
+			at, _ := time.Parse(time.RFC3339, runAt)
+			if v, _, err := scheduler.DefinitionVerdictAt(r.Context(), s.db, "workflow", wr.Source, wr.Name, wr.UID, at, s.appLocation()); err != nil {
+				s.log.Error("trigger: read the workflow's calendars for a deferred start — parked without them", "workflow", wr.Name, "err", err)
+			} else if v.Suppressed && v.Level != "" {
+				g := scheduler.GateOutcome{Gate: "calendar", Reason: calendar.Reason(v), Calendar: v.Calendar, Level: v.Level}
+				s.recordRefusedWorkflowTokenStart(r, wr, id.Email, g)
+				httpx.Fail(w, http.StatusConflict, "suppressed_by_calendar", g.Reason+" (on "+runAt+")")
 				return
 			}
 		}
@@ -3159,14 +3217,15 @@ func (s *Server) fetchWorkflowByID(r *http.Request, wfID string) *workflowRow {
 		deletedAt                 sql.NullString
 		uid                       sql.NullString
 		repoID, ownerAgency       string
+		forbidCals, allowCals     sql.NullString
 	}
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT rowid, name, source, COALESCE(description,''), steps, schedule, enabled, created_at, last_modified_at, source_path, tags, layout_json, deleted_at, uid,
-		       COALESCE(repo_id, ''), COALESCE(owner_agency, 'global')
+		       COALESCE(repo_id, ''), COALESCE(owner_agency, 'global'), forbid_calendars, allow_calendars
 		FROM workflows WHERE rowid = ?
 	`, wfID).Scan(&wf.rowid, &wf.name, &wf.source, &wf.desc, &wf.stepsJSON, &wf.schedule, &wf.enabled,
 		&wf.createdAt, &wf.lastModifiedAt, &wf.sourcePath, &wf.tagsJSON, &wf.layoutJSON, &wf.deletedAt, &wf.uid,
-		&wf.repoID, &wf.ownerAgency)
+		&wf.repoID, &wf.ownerAgency, &wf.forbidCals, &wf.allowCals)
 	if err != nil {
 		return nil
 	}
@@ -3184,6 +3243,8 @@ func (s *Server) fetchWorkflowByID(r *http.Request, wfID string) *workflowRow {
 		Status:      "idle",
 		Disabled:    s.isWorkflowDisabled(r, wf.source, wf.name, wf.uid.String),
 	}
+	wr.ForbidCalendars, wr.AllowCalendars = calendar.ParseNames(wf.forbidCals.String), calendar.ParseNames(wf.allowCals.String)
+	wr.CalendarToday = s.calendarTodayOf(r, "workflow", wf.source, wf.name, wf.uid.String)
 	// AN-2 — the full annotation on the detail path; see fetchJobDetail's twin
 	// for why this is a follow-up query rather than a join.
 	wr.annotationFields = s.loadAnnotation(r.Context(), "workflow", wf.uid.String).fields()
@@ -5555,4 +5616,55 @@ func splitAgencies(raw sql.NullString) []string {
 		return []string{}
 	}
 	return strings.Split(raw.String, "\x1f")
+}
+
+// recordRefusedTokenStart records a service account's start the job's own
+// calendars refused (2.5.3, CA-32): a skipped run, so nothing an outside
+// system sent disappears without a trace.
+func (s *Server) recordRefusedTokenStart(r *http.Request, jr *jobRow, source, scope, by string, g scheduler.GateOutcome) {
+	wrote, err := scheduler.RecordRefusedStart(r.Context(), s.db, scheduler.EnqueueParams{
+		JobName: jr.Name, JobSource: source, JobUID: jr.UID, RunType: jr.Type, Scope: scope,
+	}, triggerKindAPI, by, g)
+	if err != nil {
+		s.log.Error("run: record a start the job's calendars refused", "job", jr.Name, "err", err)
+		return
+	}
+	if wrote { // a "skipped" rule hears it, as it hears a schedule's suppression
+		notify.New(s.db, s.cfg, s.log).RunEnded(notify.RunEvent{JobName: jr.Name, Scope: scope, OwnerKind: "job", Status: "skipped", Reason: g.Reason})
+	}
+}
+
+// calendarToday is what a definition's own calendars say of today (2.5.3,
+// CA-32): the Run dialog's "Today is forbidden by …" or "Today is not in …".
+// A person's Run is not stopped by them; the dialog warns.
+type calendarToday struct {
+	Day string `json:"day"`
+	// Polarity is "skip" (a Forbid calendar lists today) or "only" (no Allow
+	// calendar does).
+	Polarity string `json:"polarity"`
+	Calendar string `json:"calendar"`
+	Label    string `json:"label,omitempty"`
+	Reason   string `json:"reason"`
+}
+
+// calendarTodayOf is a definition's calendarToday: nil when its own calendars
+// do not stop today, or cannot be read.
+func (s *Server) calendarTodayOf(r *http.Request, kind, source, name, uid string) *calendarToday {
+	v, day, err := scheduler.DefinitionVerdictAt(r.Context(), s.db, kind, source, name, uid, time.Now(), s.appLocation())
+	if err != nil || !v.Suppressed || v.Level == "" {
+		return nil
+	}
+	return &calendarToday{Day: day, Polarity: v.Polarity, Calendar: v.Calendar, Label: v.Label, Reason: calendar.Reason(v)}
+}
+
+// recordRefusedWorkflowTokenStart is recordRefusedTokenStart for a workflow.
+func (s *Server) recordRefusedWorkflowTokenStart(r *http.Request, wr *workflowRow, by string, g scheduler.GateOutcome) {
+	wrote, err := scheduler.RecordRefusedWorkflowStart(r.Context(), s.db, wr.UID, wr.Source, wr.Name, triggerKindAPI, by, g)
+	if err != nil {
+		s.log.Error("trigger: record a start the workflow's calendars refused", "workflow", wr.Name, "err", err)
+		return
+	}
+	if wrote {
+		notify.New(s.db, s.cfg, s.log).RunEnded(notify.RunEvent{JobName: wr.Name, OwnerKind: "workflow", Status: "skipped", Reason: g.Reason})
+	}
 }

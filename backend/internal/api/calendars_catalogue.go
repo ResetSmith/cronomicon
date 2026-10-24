@@ -254,7 +254,7 @@ func onlyBindingReason(bindings map[string][]calendarBinding, owner, name string
 	}
 	for _, b := range bindings[calKey(owner, name)] {
 		if b.Polarity == "only" {
-			where := b.OwnerKind + ":" + b.OwnerName + "/" + b.ScheduleName
+			where := bindingRef(b)
 			if b.BinnedOwner {
 				where += " (in recycle bin)"
 			}
@@ -999,4 +999,13 @@ func (s *Server) writeAnnotatedCalendar(w http.ResponseWriter, r *http.Request, 
 	}
 	v.annotate(c)
 	httpx.JSON(w, status, *c)
+}
+
+// bindingRef names a binding in a refusal: kind:owner/entry, or kind:owner
+// (its own Allow or Forbid) for a definition's own calendar.
+func bindingRef(b calendarBinding) string {
+	if b.Level == "definition" {
+		return b.OwnerKind + ":" + b.OwnerName + " (its own " + map[string]string{"skip": "Forbid", "only": "Allow"}[b.Polarity] + ")"
+	}
+	return b.OwnerKind + ":" + b.OwnerName + "/" + b.ScheduleName
 }

@@ -1242,6 +1242,11 @@ type skipRecord struct {
 	// is the correct degradation for callers that do not use dedupeDay.
 	// Under dedupeEpisodeReason it is optional and bounds the episode by the day.
 	Day string
+	// TriggerKind and TriggeredBy are the start the record stands for, when it
+	// was not the schedule's (2.5.3, CA-32: a service account's trigger, a
+	// promotion its definition's calendars dropped). Empty: scheduled, by the
+	// scheduler.
+	TriggerKind, TriggeredBy string
 	// Loc is the zone Day was rendered in, so stored UTC timestamps can be
 	// re-rendered the same way when comparing. Nil degrades to time.Local, never
 	// to UTC — a day comparison in UTC is the bug this feature exists to avoid.
@@ -1357,8 +1362,8 @@ func recordSkippedFire(ctx context.Context, database *sql.DB, p EnqueueParams, r
 			RunType:        p.RunType,
 			Scope:          p.Scope,
 			TargetHost:     p.TargetHost,
-			TriggerKind:    "scheduled",
-			TriggeredBy:    "scheduler",
+			TriggerKind:    orDefault(rec.TriggerKind, "scheduled"),
+			TriggeredBy:    orDefault(rec.TriggeredBy, "scheduler"),
 			ConcurrencyKey: p.ConcurrencyKey,
 			Executor:       p.Executor,
 			ScheduleName:   p.ScheduleName,
@@ -1524,7 +1529,7 @@ func recordSkippedWorkflowFire(ctx context.Context, database *sql.DB, uid, sourc
 			(id, workflow_name, workflow_source, status, queued_reason,
 			 triggered_by, trigger_kind, schedule_name, suppressed_by_calendar,
 			 started_at, completed_at, created_at, workflow_uid)
-		VALUES (?, ?, ?, 'skipped', ?, 'scheduler', 'scheduled', ?, ?, ?, ?, ?,
+		VALUES (?, ?, ?, 'skipped', ?, ?, ?, ?, ?, ?, ?, ?,
 			-- The workflow whose fire this was, when the caller knows (the clock
 			-- does: present defect 34). A caller that has only the name (the
 			-- missed-fire detector) gets the uid when one workflow holds the name
@@ -1532,6 +1537,7 @@ func recordSkippedWorkflowFire(ctx context.Context, database *sql.DB, uid, sourc
 			COALESCE(NULLIF(?, ''),
 			         (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)))`,
 		traceID, workflowName, source, rec.Reason,
+		orDefault(rec.TriggeredBy, "scheduler"), orDefault(rec.TriggerKind, "scheduled"),
 		nullStr(scheduleName), nullStr(rec.Calendar), now, now, now,
 		uid, workflowName, source)
 	if err != nil {
@@ -1690,4 +1696,12 @@ type cronLogger struct{ log *slog.Logger }
 func newCronLogger(log *slog.Logger) *cronLogger { return &cronLogger{log: log} }
 func (l *cronLogger) Printf(format string, args ...any) {
 	l.log.Debug(fmt.Sprintf(format, args...))
+}
+
+// orDefault is s, or def when s is empty.
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }

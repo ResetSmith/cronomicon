@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
@@ -510,7 +511,8 @@ func (s *Scheduler) reactionVerdict(ctx context.Context, ev srcEvent, r reaction
 		// definition not reacting is not arguable.
 		return "suppressed_paused", "the reacting definition is paused"
 	}
-	if v, day, ok := s.globalCalendarVerdict(ctx, definitionAgency(ctx, s.db, r.ownerUID, r.ownerKind)); ok && v.Suppressed {
+	if v, day, ok := s.globalCalendarVerdict(ctx, definitionAgency(ctx, s.db, r.ownerUID, r.ownerKind),
+		DefinitionBindings(ctx, s.db, r.ownerKind, r.ownerSource, r.ownerName, r.ownerUID)); ok && v.Suppressed {
 		// RX-20 — GLOBAL tier only. A fleet-wide freeze must stop a cascade: a
 		// chain that runs THROUGH a freeze day is worse than a schedule that
 		// does, because nobody authored it to happen today. Entry-level bindings
@@ -521,9 +523,15 @@ func (s *Scheduler) reactionVerdict(ctx context.Context, ev srcEvent, r reaction
 		// would invent an instant nobody authored, detached by days from the
 		// event it reacts to, and a reaction is edge-triggered — a stale edge is
 		// worse than a missed one.
+		//
+		// Since 2.5.3 (CA-32) the reacting definition's own Forbid and Allow
+		// calendars too: they were written for it. Dropped and recorded alike.
 		d := fmt.Sprintf("global calendar %q covers %s", v.Calendar, day)
 		if v.Label != "" {
 			d = fmt.Sprintf("global calendar %q covers %s (%s)", v.Calendar, day, v.Label)
+		}
+		if v.Level != "" {
+			d = strings.TrimPrefix(calendar.Reason(v), "Skipped: ") + " on " + day
 		}
 		return "suppressed_calendar", d
 	}
@@ -844,11 +852,11 @@ func (s *Scheduler) definitionEnabled(ctx context.Context, source, kind, name, u
 //
 // Since §0a (2.4.0): the installation-wide freeze first, then the global
 // calendars of the reacting definition's own agency.
-func (s *Scheduler) globalCalendarVerdict(ctx context.Context, agency string) (calendar.Verdict, string, bool) {
+func (s *Scheduler) globalCalendarVerdict(ctx context.Context, agency string, b calendar.Bindings) (calendar.Verdict, string, bool) {
 	loc := s.location()
 	now := time.Now()
 	day := calendar.DayOf(now, loc)
-	v, err := freezeTier(ctx, s.db, agency, nil, nil, day, now)
+	v, err := freezeTier(ctx, s.db, agency, b, day, now)
 	if err != nil {
 		s.log.Error("reactor: load calendars — reacting without calendar suppression", "err", err)
 		return calendar.Verdict{}, day, false

@@ -218,6 +218,11 @@ type jobComposeInput struct {
 	// Meaningless for ssh-family runs — their remote env is built entirely from
 	// the manifest, so there is no server-side environment to pass through.
 	EnvPassthrough []string `json:"envPassthrough,omitempty"`
+	// ForbidCalendars and AllowCalendars are the job's own calendars (2.5.3,
+	// CA-30): it does not start automatically on a day a Forbid one lists, and
+	// only on a day an Allow one lists. Its own agency's calendars.
+	ForbidCalendars []string `json:"forbidCalendars,omitempty"`
+	AllowCalendars  []string `json:"allowCalendars,omitempty"`
 }
 
 // resolvedScript carries the denormalized executable fields (Decision 7) copied
@@ -801,6 +806,11 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
 		return
 	}
+	// The job's own calendars, as its entries' are (2.5.3, CA-30).
+	if in.ForbidCalendars, in.AllowCalendars, verr = s.validateDefinitionCalendars(r.Context(), owner, in.ForbidCalendars, in.AllowCalendars); verr != "" {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
+		return
+	}
 
 	// Reserved-namespace guard (W4, N-D1): operator-authored env may not define any
 	// CRONOMICON_* key — neither the job-level env nor any (inline or reusable)
@@ -876,8 +886,9 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		                 command, script, script_path, executor, script_ref, content_hash,
 		                 created_by, created_at, last_modified_by, last_modified_at, env_json, prompts_json,
 		                 requires_json, prompt_enforcement, ssh_user, ssh_credential, env_passthrough,
-		                 become_password_secret, uid, script_uid, project_root, owner_agency)
-		VALUES(?, 'cronomicon', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		                 become_password_secret, uid, script_uid, project_root, owner_agency,
+		                 forbid_calendars, allow_calendars)
+		VALUES(?, 'cronomicon', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(uid) DO UPDATE SET
 			owner_agency=excluded.owner_agency,
 			run_type=excluded.run_type, description=excluded.description, scope=excluded.scope,
@@ -896,7 +907,8 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 			requires_json=excluded.requires_json, prompt_enforcement=excluded.prompt_enforcement,
 			ssh_user=excluded.ssh_user, ssh_credential=excluded.ssh_credential,
 			become_password_secret=excluded.become_password_secret,
-			env_passthrough=excluded.env_passthrough`,
+			env_passthrough=excluded.env_passthrough,
+			forbid_calendars=excluded.forbid_calendars, allow_calendars=excluded.allow_calendars`,
 		in.Name, sc.runType, nullStrIf(in.Description), nullStrIf(in.scopeOf()), nullStrIf(in.TargetHost),
 		nullStrIf(legacyMirror), string(tagsJSON), enabled, in.TimeoutSeconds, in.Retries, in.BackoffSeconds, continueOnErr, requestable,
 		nullIfZeroInt(in.WarnAfterSeconds), nullStrIf(strings.TrimSpace(in.MustFinishBy)), watchspec.Marshal(watches),
@@ -910,7 +922,8 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		// fresh uid, an edit collides on the existing one and lands in the DO
 		// UPDATE arm. (source, name) stopped being unique for cronomicon rows, so
 		// it can no longer be what an edit converges on.
-		uid, nullStrIf(sc.uid), nullStrIf(sc.projectRoot), owner)
+		uid, nullStrIf(sc.uid), nullStrIf(sc.projectRoot), owner,
+		nullStrIf(calendar.MarshalNames(in.ForbidCalendars)), nullStrIf(calendar.MarshalNames(in.AllowCalendars)))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return

@@ -3948,6 +3948,13 @@ paths:
             `suppressed_by_calendar` is not raised when the request defers the
             run (`runAt`): the freeze is re-judged at the promotion instant, so
             parking a run for after the freeze is allowed.
+
+            v2.5.3 (CA-32): on the TOKEN route the job's own Forbid and Allow
+            calendars gate the start too (a person's Run is not gated by them;
+            the job's `calendarToday` warns instead). A start they refuse is
+            `suppressed_by_calendar`, and recorded as a skipped run; a deferred
+            one is judged on the day of `runAt` and refused now, never parked
+            for a day they forbid.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -9959,6 +9966,21 @@ components:
       properties:
         id: { type: integer, readOnly: true }
         ownerAgency: { type: string, readOnly: true, description: "v2.4.2, on GET /jobs/{jobId}. The id of the agency the job is (its owner since 1400): whose calendars its schedule entries are judged by." }
+        forbidCalendars:
+          type: array
+          items: { type: string }
+          description: |
+            v2.5.3, on the detail. Its own Forbid calendars (CA-30): it does
+            not start automatically on a day one lists. Its agency's calendars.
+        allowCalendars:
+          type: array
+          items: { type: string }
+          description: |
+            v2.5.3, on the detail. Its own Allow calendars: it starts
+            automatically only on a day one lists (any of them). With an
+            entry's onlyCalendars, both levels must list the day; a Forbid one
+            (its own, the entry's, or the agency's freeze calendars) prevails.
+        calendarToday: { $ref: '#/components/schemas/CalendarToday' }
         uid:
           type: string
           readOnly: true
@@ -10454,6 +10476,14 @@ components:
                 description: Working calendars whose days are the only days this entry may fire on (CAL).
         enabled: { type: boolean }
         requestable: { type: boolean }
+        forbidCalendars:
+          type: array
+          items: { type: string }
+          description: "v2.5.3: its own Forbid calendars (CA-30), of its agency; validated as an entry's skipCalendars (422 for a name the agency lacks)."
+        allowCalendars:
+          type: array
+          items: { type: string }
+          description: "v2.5.3: its own Allow calendars, of its agency; a global (freeze) calendar is refused (422), as for an entry's onlyCalendars, and so is a name in both lists."
         timeoutSeconds: { type: integer }
         retries: { type: integer }
         backoffSeconds: { type: integer, description: WB-R1 job-level default backoff between retry attempts. }
@@ -10936,6 +10966,23 @@ components:
       type: object
       properties:
         id: { type: integer, readOnly: true }
+        forbidCalendars:
+          type: array
+          items: { type: string }
+          description: |
+            v2.5.3, on the detail. The workflow's own Forbid calendars (CA-30): it does
+            not start automatically on a day one lists. Its agency's calendars.
+        allowCalendars:
+          type: array
+          items: { type: string }
+          description: |
+            v2.5.3, on the detail. Its own Allow calendars: it starts
+            automatically only on a day one lists (any of them). With an
+            entry's onlyCalendars, both levels must list the day; a Forbid one
+            (its own, the entry's, or the agency's freeze calendars) prevails.
+        calendarToday: { $ref: '#/components/schemas/CalendarToday' }
+        # A workflow's calendars decide whether it starts; its steps' jobs'
+        # calendars do not apply to the steps (CA-33).
         repoId:
           type: string
           readOnly: true
@@ -11070,6 +11117,14 @@ components:
       required: [steps]
       properties:
         name: { type: string, description: "Workflow name (slug). Immutable on edit." }
+        forbidCalendars:
+          type: array
+          items: { type: string }
+          description: "v2.5.3: its own Forbid calendars (CA-30), of its agency; validated as an entry's skipCalendars (422 for a name the agency lacks)."
+        allowCalendars:
+          type: array
+          items: { type: string }
+          description: "v2.5.3: its own Allow calendars, of its agency; a global (freeze) calendar is refused (422), as for an entry's onlyCalendars, and so is a name in both lists."
         description: { type: string }
         enabled: { type: boolean }
         steps:
@@ -11459,9 +11514,26 @@ components:
         day: { type: string, description: "Wall-clock date, strict YYYY-MM-DD. Matched in the effective app timezone, never UTC." }
         label: { type: string, description: "Human label shown as the suppression reason (e.g. \"Independence Day (observed)\")." }
 
+    CalendarToday:
+      type: object
+      description: |
+        v2.5.3 (CA-32): what a definition's own calendars say of today, when
+        they would stop an automatic start: the Run dialog's "Today is
+        forbidden by …" (`polarity` skip) or "Today is not in …" (only). A
+        person's Run is not stopped by them. Absent when they allow today.
+      properties:
+        day: { type: string }
+        polarity: { type: string, enum: [skip, only] }
+        calendar: { type: string }
+        label: { type: string }
+        reason: { type: string }
+
     CalendarBinding:
       type: object
-      description: One schedule entry that names a calendar.
+      description: |
+        One schedule entry that names a calendar, or (v2.5.3, `level`
+        `definition`, no `scheduleName`) a job's or a workflow's own Forbid
+        (`skip`) or Allow (`only`) calendar.
       properties:
         ownerKind: { type: string, enum: [job, workflow] }
         ownerName: { type: string }
@@ -11475,6 +11547,7 @@ components:
           description: R2F-3 — the derived agency set behind this row's disambiguation badge. A name is suffixed with its agency ONLY when it is ambiguous within the set the viewer received, so the common single-agency install shows plain names.
         scheduleName: { type: string }
         polarity: { type: string, enum: [skip, only] }
+        level: { type: string, enum: [definition], description: "v2.5.3: the definition's own calendar, which no entry carries." }
 
     BackupRecipient:
       type: object

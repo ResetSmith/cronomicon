@@ -80,6 +80,12 @@ type originPolicy struct {
 	// Evaluate, TestGateMatrix_EntryCalendarsAreCronOnly fails, which is the
 	// intended way to discover that this needs implementing.
 	entryCalendars bool
+	// definitionCalendars — do the definition's own Forbid and Allow calendars
+	// apply (2.5.3, CA-32)? Every automatic start: yes. A person's Run, and the
+	// promotion of a run a person deferred: no (the Run dialog warns instead).
+	// The cron path reads them in calendarVerdict beside its entry's; every
+	// other producer through Evaluate.
+	definitionCalendars bool
 	// fleetCap — is it subject to settings.maxConcurrent?
 	fleetCap bool
 	// enabledCheck — must the definition still be enabled in the catalog?
@@ -96,7 +102,7 @@ type originPolicy struct {
 // originPolicies is the table. FX-Q1 and FX-Q2 are the decisions it encodes.
 var originPolicies = map[RunOrigin]originPolicy{
 	OriginCron: {
-		pause: true, enabledCheck: true, globalFreeze: true, entryCalendars: true, fleetCap: true,
+		pause: true, enabledCheck: true, globalFreeze: true, entryCalendars: true, definitionCalendars: true, fleetCap: true,
 		why: "The reference producer: every gate applies. A cron fire is the case all the others are compared against.",
 	},
 	OriginManual: {
@@ -113,7 +119,7 @@ var originPolicies = map[RunOrigin]originPolicy{
 			"down now, which is the point, and can be decided on its own.",
 	},
 	OriginToken: {
-		pause: true, enabledCheck: false, globalFreeze: true, entryCalendars: false, fleetCap: true,
+		pause: true, enabledCheck: false, globalFreeze: true, entryCalendars: false, definitionCalendars: true, fleetCap: true,
 		why: "FX-Q1: the machine half of the manual path, and the one that must NOT " +
 			"inherit the click's pause override — a service account cannot see the " +
 			"confirmation dialog that makes the override deliberate, so for it a pause " +
@@ -121,14 +127,15 @@ var originPolicies = map[RunOrigin]originPolicy{
 			"handler as the UI and silently inherited its exemption.",
 	},
 	OriginReaction: {
-		pause: true, enabledCheck: true, globalFreeze: true, entryCalendars: false, fleetCap: true,
+		pause: true, enabledCheck: true, globalFreeze: true, entryCalendars: false, definitionCalendars: true, fleetCap: true,
 		why: "Entry calendars deliberately do not apply (RX): a reaction has no schedule " +
 			"entry of its own, and inheriting the upstream job's would bind the " +
-			"downstream to a calendar nobody wrote for it. The fleet cap is applied at " +
+			"downstream to a calendar nobody wrote for it. The reacting definition's OWN " +
+			"calendars do (2.5.3, CA-32): they were written for it. The fleet cap is applied at " +
 			"promotion rather than delivery, since a reaction parks first.",
 	},
 	OriginPromotion: {
-		pause: true, enabledCheck: true, globalFreeze: true, entryCalendars: false, fleetCap: true,
+		pause: true, enabledCheck: true, globalFreeze: true, entryCalendars: false, definitionCalendars: true, fleetCap: true,
 		why: "Judged at the PROMOTION instant, not when the row was parked. 'The system " +
 			"is busy now' says nothing about tomorrow at 5pm, and neither does 'nobody " +
 			"had declared a freeze yet'. A pause or a freeze applied AFTER a row was " +
@@ -150,7 +157,7 @@ var originPolicies = map[RunOrigin]originPolicy{
 			"hand already chose to override when it parked the row.",
 	},
 	OriginFileArrival: {
-		pause: true, enabledCheck: true, globalFreeze: true, entryCalendars: false, fleetCap: true,
+		pause: true, enabledCheck: true, globalFreeze: true, entryCalendars: false, definitionCalendars: true, fleetCap: true,
 		why: "An external event is still subject to the operator's controls. A watch has " +
 			"no schedule entry, so entry calendars cannot apply; everything else does, " +
 			"including the freeze this producer was missing.",
@@ -164,7 +171,7 @@ func PolicyFor(o RunOrigin) originPolicy {
 	if p, ok := originPolicies[o]; ok {
 		return p
 	}
-	return originPolicy{pause: true, globalFreeze: true, entryCalendars: true, fleetCap: true, enabledCheck: true,
+	return originPolicy{pause: true, globalFreeze: true, entryCalendars: true, definitionCalendars: true, fleetCap: true, enabledCheck: true,
 		why: "unknown origin — every gate applied, deliberately"}
 }
 
@@ -179,6 +186,11 @@ type GateRequest struct {
 	// held by a definition in each agency, and by the name one's pause, or its
 	// being switched off, was the other's too.
 	UID string
+	// Hand marks a start a person asked for that the origin does not say: a
+	// person's Run parked behind an active one (gate_kind concurrency) is
+	// promoted under OriginPromotion, and the definition's own calendars do
+	// not gate a person's start (2.5.3, CA-32; the review of CA4b).
+	Hand bool
 }
 
 // GateOutcome is what the gates decided.
@@ -197,6 +209,10 @@ type GateOutcome struct {
 	// CapAgency names the agency whose own cap refused the run, when Gate ==
 	// "cap" and it was not the installation's (2.5.0 C6).
 	CapAgency string
+	// Level is "job" or "workflow" when the definition's own calendars
+	// refused it (2.5.3, CA-31): a start they stop is dropped, never held for
+	// another day (CA-32), where a freeze is held and re-judged.
+	Level string
 }
 
 func allowed() GateOutcome { return GateOutcome{Allowed: true} }
@@ -240,12 +256,22 @@ func Evaluate(ctx context.Context, database *sql.DB, log logger, req GateRequest
 	}
 
 	if pol.globalFreeze {
-		if v, day, ok := globalFreezeVerdict(ctx, database, log, appLoc, definitionAgency(ctx, database, req.UID, kind)); ok && v.Suppressed {
+		var b calendar.Bindings
+		uid := req.UID
+		if pol.definitionCalendars && !req.Hand {
+			b, uid = definitionBindings(ctx, database, kind, req.Source, req.Name, req.UID)
+		}
+		if v, day, ok := globalFreezeVerdict(ctx, database, log, appLoc, definitionAgency(ctx, database, uid, kind), b); ok && v.Suppressed {
+			reason := calendarReason(v)
+			if v.Level != "" || v.AlsoAllowedBy != "" {
+				reason = calendar.Reason(v) // the definition's own, said as such
+			}
 			return GateOutcome{
 				Gate:     "calendar",
-				Reason:   calendarReason(v),
+				Reason:   reason,
 				Calendar: v.Calendar,
 				Day:      day,
+				Level:    v.Level,
 			}
 		}
 	}
@@ -395,10 +421,13 @@ func appLocationOrDB(ctx context.Context, database *sql.DB, loc *time.Location) 
 // Since §0a (2.4.0) it is the installation-wide freeze first, then the global
 // calendars of the definition's OWN agency (until then every global calendar,
 // whoever's).
-func globalFreezeVerdict(ctx context.Context, database *sql.DB, log logger, loc *time.Location, agency string) (calendar.Verdict, string, bool) {
+//
+// Since 2.5.3 (CA-32) with the definition's own Forbid and Allow calendars,
+// for an origin they gate (b; empty for one they do not).
+func globalFreezeVerdict(ctx context.Context, database *sql.DB, log logger, loc *time.Location, agency string, b calendar.Bindings) (calendar.Verdict, string, bool) {
 	now := time.Now()
 	day := calendar.DayOf(now, appLocationOrDB(ctx, database, loc))
-	v, err := freezeTier(ctx, database, agency, nil, nil, day, now)
+	v, err := freezeTier(ctx, database, agency, b, day, now)
 	if err != nil {
 		logErr(log, "gate: load calendars — admitting the run without calendar suppression", "err", err)
 		return calendar.Verdict{}, day, false
@@ -408,9 +437,10 @@ func globalFreezeVerdict(ctx context.Context, database *sql.DB, log logger, loc 
 
 // freezeTier is the verdict for a fire of an agency's definition at a moment
 // (on its day): the installation-wide freeze when it is in effect then (2.5.2
-// FZ-2: a freeze may carry a window), else the calendars (the entry's own,
-// skip and only, and its agency's global ones).
-func freezeTier(ctx context.Context, database *sql.DB, agency string, skip, only []string, day string, at time.Time) (calendar.Verdict, error) {
+// FZ-2: a freeze may carry a window), else the calendars (the definition's
+// own Forbid and Allow since 2.5.3, the entry's skip and only, and its
+// agency's global ones), by one rule (calendar.EvaluateBindings).
+func freezeTier(ctx context.Context, database *sql.DB, agency string, b calendar.Bindings, day string, at time.Time) (calendar.Verdict, error) {
 	f, err := calendar.ReadFreeze(ctx, database)
 	if err != nil {
 		return calendar.Verdict{}, err
@@ -418,11 +448,11 @@ func freezeTier(ctx context.Context, database *sql.DB, agency string, skip, only
 	if v, on := calendar.FreezeVerdictAt(f, at); on {
 		return v, nil
 	}
-	sets, err := calendar.Load(ctx, database, agency, append(append([]string{}, skip...), only...))
+	sets, err := calendar.Load(ctx, database, agency, b.Names())
 	if err != nil {
 		return calendar.Verdict{}, err
 	}
-	return calendar.EvaluateFor(sets, agency, skip, only, day), nil
+	return calendar.EvaluateBindings(sets, agency, b, day), nil
 }
 
 // jobAgencyFor is the agency of the job a fire runs, found as the fire finds

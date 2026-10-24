@@ -223,6 +223,7 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 	}
 	if g := Evaluate(ctx, s.db, s.log, GateRequest{
 		Origin: origin, Source: p.source, OwnerKind: p.kind, Name: p.name, UID: p.ownerUID,
+		Hand: p.byHand(),
 	}, s.location()); !g.Allowed {
 		// STAMPED, not just logged. A held row's run_at is already in the past, and
 		// /schedules/upcoming admits a past-dated row only when a gate names it —
@@ -236,6 +237,13 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 		// 24h later as "never started: past the catch-up grace" — which pages
 		// on-call about an outage that never happened, for a pause they applied
 		// themselves. FX-A3 learned this for the bin; the same holds here.
+		//
+		// Except the definition's own calendars (2.5.3, CA-32): a start they stop
+		// is dropped, never postponed to a day they allow, and recorded.
+		if g.Gate == "calendar" && g.Level != "" {
+			s.dropForCalendars(ctx, p, g)
+			return
+		}
 		s.holdForGate(ctx, p, g)
 		return
 	}
@@ -743,4 +751,68 @@ func InsertPendingRun(ctx context.Context, database *sql.DB, kind, name, source,
 		return "", err
 	}
 	return id, nil
+}
+
+// dropForCalendars ends a parked row its definition's own calendars refuse at
+// promotion (2.5.3, CA-32): the row goes, as a promoted one does, and the
+// refusal is recorded as a skipped run, an Allow miss included. Not "missed":
+// nothing failed to happen that should have, and a miss pages.
+func (s *Scheduler) dropForCalendars(ctx context.Context, p pendingRow, g GateOutcome) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM pending_runs WHERE id = ? AND status = 'pending'`, p.id)
+	if err != nil {
+		s.log.Error("pending: drop a row its calendars refuse", "id", p.id, "err", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return // promoted, cancelled or ended elsewhere meanwhile
+	}
+	// Recorded as the start it was (the review of CA4b: not "the scheduler"
+	// for a reaction's or a service account's), at the instant it was due, so
+	// the missed-fire detector reads it on the day of the fire it explains;
+	// and through the seam that notifies, as a schedule's suppression does.
+	var params EnqueueParams
+	if p.paramsJSON.Valid {
+		_ = json.Unmarshal([]byte(p.paramsJSON.String), &params)
+	}
+	rec := skipRecord{Reason: g.Reason, Mode: dedupeDay, Calendar: g.Calendar,
+		TriggerKind: params.TriggerKind, TriggeredBy: params.TriggeredBy, At: p.runAt}
+	if p.originKind.String == "reaction" {
+		rec.TriggerKind, rec.TriggeredBy = "reaction", "reactor"
+	}
+	if p.kind == "workflow" {
+		if rec.TriggeredBy == "" {
+			rec.TriggeredBy = p.scheduledBy
+		}
+		if err := s.recordWorkflowSuppression(ctx, p.ownerUID, p.source, p.name, "", rec); err != nil {
+			s.log.Error("pending: record a dropped workflow start", "workflow", p.name, "err", err)
+		}
+		return
+	}
+	if params.JobName == "" {
+		params.JobName, params.JobSource = p.name, p.source
+	}
+	if params.JobUID == "" {
+		params.JobUID = p.ownerUID
+	}
+	if err := s.recordSuppression(ctx, params, rec); err != nil {
+		s.log.Error("pending: record a dropped start", "job", p.name, "err", err)
+	}
+}
+
+// byHand reports whether a parked row is a person's start: a Run-dialog
+// deferral (isAdHoc), or a person's Run the queue parked behind an active one
+// (its frozen params say manual). The definition's own calendars gate
+// neither (2.5.3, CA-32).
+func (p pendingRow) byHand() bool {
+	if p.isAdHoc() {
+		return true
+	}
+	if p.originKind.String == "reaction" || !p.paramsJSON.Valid {
+		return false
+	}
+	var params EnqueueParams
+	if json.Unmarshal([]byte(p.paramsJSON.String), &params) != nil {
+		return false
+	}
+	return params.TriggerKind == "manual"
 }

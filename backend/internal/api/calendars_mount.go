@@ -219,6 +219,10 @@ type calendarBinding struct {
 	// bindings list can qualify an owner name two departments share. Additive.
 	OwnerUID      string   `json:"ownerUid,omitempty"`
 	OwnerAgencies []string `json:"ownerAgencies,omitempty"`
+	// Level is "definition" for a job's or a workflow's own Forbid (skip) or
+	// Allow (only) calendar (2.5.3, CA-30), which no schedule entry carries
+	// (ScheduleName empty); absent for an entry's.
+	Level string `json:"level,omitempty"`
 }
 
 // calendarExpiryWarningDays is CAL-16's threshold: warn while there is still
@@ -570,7 +574,7 @@ func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request) {
 	if len(used) > 0 && r.URL.Query().Get("force") != "true" {
 		refs := make([]string, 0, len(used))
 		for _, b := range used {
-			ref := b.Polarity + ":" + b.OwnerKind + ":" + b.OwnerName + "/" + b.ScheduleName
+			ref := b.Polarity + ":" + bindingRef(b)
 			if b.BinnedOwner {
 				ref += " (in recycle bin)"
 			}
@@ -829,6 +833,51 @@ func allCalendarBindings(ctx context.Context, database *sql.DB) (map[string][]ca
 		return nil, err
 	}
 	rows.Close()
+
+	// A job's and a workflow's OWN calendars (2.5.3, CA-30): Forbid as skip and
+	// Allow as only, so the delete guard and CAL-27 (a global calendar is never
+	// kept to) count them as an entry's. Of the definition's agency.
+	for _, d := range []struct{ kind, q string }{
+		{"job", `SELECT j.source, j.name, COALESCE(j.uid, ''), j.deleted_at IS NOT NULL,
+		                COALESCE(j.forbid_calendars, ''), COALESCE(j.allow_calendars, ''),
+		                COALESCE(` + agencyid.JobSQL("j") + `, '` + agencyid.Global + `')
+		           FROM jobs j WHERE j.forbid_calendars IS NOT NULL OR j.allow_calendars IS NOT NULL`},
+		{"workflow", `SELECT w.source, w.name, COALESCE(w.uid, ''), w.deleted_at IS NOT NULL,
+		                COALESCE(w.forbid_calendars, ''), COALESCE(w.allow_calendars, ''),
+		                COALESCE(` + agencyid.WorkflowSQL + `, '` + agencyid.Global + `')
+		           FROM workflows w WHERE w.forbid_calendars IS NOT NULL OR w.allow_calendars IS NOT NULL`},
+	} {
+		drows, err := database.QueryContext(ctx, d.q)
+		if err != nil {
+			return nil, err
+		}
+		for drows.Next() {
+			var src, name, uid, forbidRaw, allowRaw, agencyID string
+			var binned bool
+			if err := drows.Scan(&src, &name, &uid, &binned, &forbidRaw, &allowRaw, &agencyID); err != nil {
+				drows.Close()
+				return nil, err
+			}
+			for _, pl := range []struct {
+				polarity string
+				names    []string
+			}{{"skip", calendar.ParseNames(forbidRaw)}, {"only", calendar.ParseNames(allowRaw)}} {
+				polarity := pl.polarity
+				for _, n := range pl.names {
+					k := calKey(agencyID, n)
+					out[k] = append(out[k], calendarBinding{
+						OwnerKind: d.kind, OwnerName: name, OwnerSource: src, Polarity: polarity,
+						BinnedOwner: binned, OwnerUID: uid, Level: "definition",
+					})
+				}
+			}
+		}
+		if err := drows.Err(); err != nil {
+			drows.Close()
+			return nil, err
+		}
+		drows.Close()
+	}
 
 	// FIRST-CLASS schedules — a reusable policy object that no job references YET
 	// is still a binding. Omitting these would let a calendar be deleted (or
