@@ -84,6 +84,26 @@ describe("the run note, per agency", () => {
     unmount();
     gets.length = 0;
     render(<RunCalendarNote entries={[{ scheduleName: "nightly" }]} at={null} agency="ag-fin" />);
-    expect(await screen.findByText(/Schedule "nightly" would be suppressed today by close \(freeze\)\./)).toBeTruthy();
+    // A freeze stops a person's Run too (FX-Q2): the note says the run is
+    // refused, and never that it "will still happen" (until 2.5.3 it did).
+    const frozen = await screen.findByTestId("run-frozen");
+    expect(frozen.textContent).toMatch(/Today is frozen by close \(freeze\): a freeze stops every start of this agency, a person.s Run included, so this run will be refused\./);
+    expect(screen.queryByText(/will still happen/)).toBeNull();
+  });
+
+  it("judges the freeze on its own: an entry's calendar does not mask it", async () => {
+    render(<RunCalendarNote entries={[{ scheduleName: "nightly", skipCalendars: ["holidays"] }]} at={null} agency="ag-fin" />);
+    expect(await screen.findByText(/Schedule "nightly" would be suppressed today by holiday \(holidays\)\./)).toBeTruthy();
+    expect((await screen.findByTestId("run-frozen")).textContent).toMatch(/will be refused/);
+    expect(screen.queryByText(/will still happen/)).toBeNull();
+  });
+
+  it("says a Run still happens when only an entry's own calendar covers today", async () => {
+    render(<RunCalendarNote entries={[{ scheduleName: "nightly", skipCalendars: ["holidays"] }]} at={null} agency="ag-tax" />);
+    await waitFor(() => expect(gets.some((g) => g.name === "holidays")).toBe(true));
+    await new Promise((r) => setTimeout(r, 20));
+    // Tax's calendars list no day: nothing to say.
+    expect(screen.queryByTestId("run-frozen")).toBeNull();
+    expect(screen.queryByText(/would be suppressed/)).toBeNull();
   });
 });
