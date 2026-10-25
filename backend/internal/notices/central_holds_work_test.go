@@ -57,9 +57,9 @@ func TestCA4WhatCentralHoldsIsListedAndClearsWhenItIsGone(t *testing.T) {
 	}
 	got := check()
 	for subject, says := range map[string][]string{
-		"central:repository":     {"remove the leftover", "connect the same"},
-		"central:job":            {"left-job", "Make each again"},
-		"central:workflow":       {"left-flow"},
+		"central:repository":     {"remove the leftover", "connect the same", "a job with no scope"},
+		"central:job":            {"left-job", "Delete forever", "then make it again"},
+		"central:workflow":       {"left-flow", "Delete forever", "then make it again"},
 		"central:schedule":       {"left-sched"},
 		"central:scope":          {"left-hosts", "a repair"},
 		"central:secret":         {"LEFT_SECRET", "Repair: move to another agency"},

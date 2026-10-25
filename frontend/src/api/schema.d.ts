@@ -4742,7 +4742,10 @@ export interface paths {
          *     Git scopes and their imported host records, its sync problems), as an
          *     agency's deletion removes its repository's. Its run history stays. To
          *     keep the definitions, connect the same URL and branch to an ordinary
-         *     agency afterwards: its sync brings them in as that agency's.
+         *     agency afterwards: its sync brings them in as that agency's, except a
+         *     job with no scope, which an agency's sync refuses (give each one of
+         *     that agency's scopes first; `cronomicon validate -agency` on a
+         *     checkout lists them).
          *
          *     A global administrator's repair: `repair: true` and a `reason` (at most
          *     500 characters, written to the audit log). 403 for anyone else; 409

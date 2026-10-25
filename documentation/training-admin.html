@@ -838,12 +838,16 @@
                 another agency…</strong>;</li>
             <li>agents that serve Central alone — deregister each and enrol it again with a token minted in
                 its agency (A3);</li>
-            <li>jobs, workflows and schedules built in the app — made again in the agency, or published
-                into its repository, then deleted in Central;</li>
+            <li>jobs and workflows built in the app — their names are the installation's, so Central's
+                copy is noted, deleted and then deleted for good (Settings &rarr; Recycle Bin &rarr;
+                <strong>Delete forever</strong>) before it is made again in the agency, or published into
+                its repository;</li>
+            <li>schedules built in the app — made again in the agency, then deleted in Central;</li>
             <li>Central's old repository connection — Settings &rarr; Repositories, working in Central,
                 <strong>Remove the leftover repository</strong> (a repair, with a reason); then connect the
                 same URL and branch to the agency whose work it is, and its sync brings the definitions in
-                as that agency's.</li>
+                as that agency's, except a job with no scope, which an agency's sync refuses: give each one
+                of that agency's scopes first (<code>cronomicon validate -agency</code> lists them).</li>
         </ul>
         <p>Working in Central, each of those pages lists what is left under a banner that says it no
             longer runs, with only the actions that clear it. Every Dashboard tells global administrators

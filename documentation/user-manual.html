@@ -7840,7 +7840,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                     one from before, a global administrator working in Central sees it with
                                     <strong>Remove the leftover repository</strong> (a repair, with a reason, recorded):
                                     then connect the same URL and branch to the agency whose work it is, and its sync
-                                    brings the definitions in as that agency's.</td>
+                                    brings the definitions in as that agency's, except a job with no scope, which an
+                                    agency's sync refuses: give each one of that agency's scopes first
+                                    (<code>cronomicon validate -agency</code> on a checkout lists them).</td>
                             </tr>
                             <tr>
                                 <td><strong>Agency →</strong> SSH Targets</td>
@@ -8232,9 +8234,12 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 <td>The notice names the rows and the way out for the kind, on that kind's page
                                     working in Central: move a secret, variable, key, scope, host record or bastion to
                                     its agency (a repair, with a reason); deregister an agent and enrol it again with a
-                                    token minted in its agency; make a job, workflow or schedule again in its agency (or
-                                    publish it into that agency's repository), then delete it here; remove the leftover
-                                    repository and connect it to the agency (<a href="#recipe-repository">§15.4</a>).
+                                    token minted in its agency; for a job or workflow, whose name Central's copy keeps
+                                    until it is deleted for good, note its settings, delete it here and in the <a
+                                        href="#recycle-bin">Recycle Bin</a> (<strong>Delete forever</strong>), then make
+                                    it again in its agency (or publish it into that agency's repository); make a
+                                    schedule again in its agency, then delete it here; remove the leftover repository
+                                    and connect it to the agency (<a href="#recipe-repository">§15.4</a>).
                                     Each finding clears when Central holds none of its kind.</td>
                             </tr>
                             <tr>
@@ -8457,7 +8462,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             leftover repository</strong> (a repair: it asks for a reason, and is recorded; it removes the
                         connection and what it synced, and leaves the repository itself untouched), then
                         connects the same URL and branch to the agency whose work it is, as above. That agency's sync
-                        brings the definitions in as its own; each job must name one of that agency's scopes.</p>
+                        brings the definitions in as its own; each job must name one of that agency's scopes, and a job
+                        with no scope is refused: give each one first (<code>cronomicon validate -agency</code> on a
+                        checkout lists them, <a href="#validate">below</a>).</p>
                 </div>
                 <div class="callout tip" id="validate">
                     <div class="ct"><span class="em">✅</span> <code>cronomicon validate</code> and the CI template</div>
@@ -8744,10 +8751,13 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 there</em>).</p>
                         <p><strong>Fix:</strong> make the work an agency's. A global administrator reads the notice
                             <em>The administration still holds work that no longer runs</em> (<a
-                                href="#notices">§14.2</a>), which names each row and its way out: make a job, workflow
-                            or schedule again in its agency, or publish it into the agency's repository, then delete it
-                            in Central; for Central's old repository, remove the leftover and connect the same URL and
-                            branch to the agency (<a href="#recipe-repository">§15.4</a>). If there is no agency yet,
+                                href="#notices">§14.2</a>), which names each row and its way out: a job or workflow
+                            keeps its name while Central's copy exists, in the <a href="#recycle-bin">Recycle Bin</a>
+                            too, so delete it in Central and then for good (<strong>Delete forever</strong>), having
+                            noted its settings, and make it again in its agency or publish it into the agency's
+                            repository; make a schedule again in its agency, then delete it in Central; for Central's
+                            old repository, remove the leftover and connect the same URL and branch to the agency, with
+                            a scope on every job (<a href="#recipe-repository">§15.4</a>). If there is no agency yet,
                             the first start made one, <strong>Operations</strong>; rename it and work there.</p>
                         <p>A run that was already queued at the upgrade and is stamped with Central waits, with the
                             reason <em>this run belongs to Central, which runs nothing since 2.5.3, so no runner takes

@@ -44,12 +44,20 @@ Then, because Central runs nothing from this release on:
     to another agency*;
   - agents that serve Central alone: deregister them and enrol them again with
     a registration token minted in their agency;
-  - jobs, workflows and schedules built in the app: make them again in their
-    agency (or publish them into its repository), then delete them in Central;
+  - jobs and workflows built in the app: their names are the installation's,
+    and Central's copy keeps the name, in the recycle bin too. Note each one's
+    settings, delete it in Central and then for good (Settings → Recycle Bin →
+    *Delete forever*), then make it again in its agency (or publish it into
+    its repository);
+  - schedules built in the app: make them again in their agency, then delete
+    them in Central;
   - Central's repository: Settings → Repositories, working in Central →
     *Remove the leftover repository* (a repair), then connect the same URL and
     branch to the agency whose work it is; its next sync brings the
-    definitions in as that agency's. Their run history stays Central's.
+    definitions in as that agency's, except a job with no scope, which an
+    agency's sync refuses: give each one of that agency's scopes first
+    (`cronomicon validate -agency` on a checkout lists them). Their run
+    history stays Central's.
 - **An installation with no agency but Central gets one**, *Operations*, at
   the first start. Rename it, or make your own and delete it.
 - **The local runner belongs to no agency and is off.** Choose its agency in
@@ -80,7 +88,8 @@ Then, because Central runs nothing from this release on:
 - Central's existing calendars become its **catalogue**: no run reads them.
   The copies 2.4.0 made in the agencies stay theirs, unlinked. A calendar named
   `catalogue` can no longer be opened by name (the name is now the
-  catalogue's): rename it.
+  catalogue's), and a calendar cannot be renamed: make one with its days under
+  another name, bind it where the old one was bound, and delete the old one.
 - The calendar flag *global* is called **freeze** on screen; the API field and
   the YAML key stay `global`.
 

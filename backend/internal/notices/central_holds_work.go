@@ -51,10 +51,14 @@ var centralHeld = []struct {
 	kind, noun, query, remedy string
 }{
 	{"job", "jobs built in the app", `SELECT name FROM jobs WHERE source <> 'git' AND owner_agency = 'global' AND deleted_at IS NULL ORDER BY name`,
-		"Make each again in the agency whose work it is (Jobs, working in that agency), or publish it into that agency's " +
-			"repository, then delete it here. Jobs built in the app are not moved: 2.6.0 keeps definitions in Git only."},
+		"A job's name is the installation's, and this one keeps it here and in the recycle bin: note its settings, delete it " +
+			"here and then for good (Settings → Recycle Bin → Delete forever), then make it again in the agency whose work it is " +
+			"(Jobs, working in that agency) or publish it into that agency's repository. Jobs built in the app are not moved: " +
+			"2.6.0 keeps definitions in Git only."},
 	{"workflow", "workflows built in the app", `SELECT name FROM workflows WHERE source <> 'git' AND owner_agency = 'global' AND deleted_at IS NULL ORDER BY name`,
-		"Make each again in its agency, or publish it into that agency's repository, then delete it here."},
+		"A workflow's name is the installation's, and this one keeps it here and in the recycle bin: note its steps, delete " +
+			"it here and then for good (Settings → Recycle Bin → Delete forever), then make it again in its agency or publish " +
+			"it into that agency's repository."},
 	{"schedule", "schedules built in the app", `SELECT name FROM schedules WHERE source <> 'git' AND owner_agency = 'global' AND deleted_at IS NULL ORDER BY name`,
 		"Make each again in the agency whose definitions use it, then delete it here."},
 	{"scope", "scopes built in the app", `SELECT name FROM scopes WHERE source <> 'git' AND owner_agency = 'global' ORDER BY name`,
@@ -117,8 +121,9 @@ func checkCentralHoldsWork(ctx context.Context, database *sql.DB) error {
 					"(%d jobs, %d workflows, %d schedules, %d scripts and %d scopes from it). It no longer syncs, and nothing of it runs. "+
 					"To keep those definitions, remove the leftover (Settings → Repositories, the built-in agency's: a "+
 					"repair, with a reason; it is refused while one of its scopes has work queued), then connect the same "+
-					"URL and branch to the agency whose work they are: its sync brings them in as that agency's. Their run "+
-					"history stays.", jobs, workflows, schedules, scripts, scopes),
+					"URL and branch to the agency whose work they are: its sync brings them in as that agency's, except a job "+
+					"with no scope, which an agency's sync refuses: give each one of that agency's scopes first (cronomicon "+
+					"validate -agency on a checkout lists them). Their run history stays.", jobs, workflows, schedules, scripts, scopes),
 			})
 		}
 	}

@@ -3558,8 +3558,9 @@
                     under the same name is another calendar: the old copies stay no longer offered. Bindings are by
                     name, so neither a deletion nor <strong>Make it our own</strong> changes them.</p>
                 <p class="muted">The name <code>catalogue</code> is reserved for calendars since 2.5.3: a calendar of
-                    that name made before cannot be read by name (the list, an edit and a delete still reach it);
-                    rename it. The routes are in Appendix B.</p>
+                    that name made before cannot be read by name (the list, an edit and a delete still reach it).
+                    A calendar cannot be renamed: make one with its days under another name, bind it where the old
+                    one was bound, and delete the old one. The routes are in Appendix B.</p>
 
                 <h4 id="definition-calendars">4.4c Forbid and Allow on jobs and workflows (since 2.5.3)</h4>
                 <p>A job and a workflow may name calendars to <strong>Forbid</strong> (do not start on these
@@ -4256,8 +4257,10 @@ cronomicon validate .                # any checkout, without the -agency checks
                         synced (its definitions, scripts and Git scopes; their run history stays); the repository
                         itself is not touched. Then connect the same URL and branch to the agency whose work it
                         is, working in that agency: its sync brings the definitions in as that agency's, under that
-                        agency's rules (a job with no scope, or on another agency's scope, is refused). This is the
-                        one repository that can be removed without deleting its agency.</li>
+                        agency's rules (a job with no scope, or on another agency's scope, is refused): give each
+                        such job one of that agency's scopes first (<code>cronomicon validate -agency</code> on a
+                        checkout lists them). This is the one repository that can be removed without deleting its
+                        agency.</li>
                 </ul>
                 <p><strong>Settings &rarr; Repositories</strong> (the Agency group) shows the repository of the
                     agency in use: its card, or a Connect card when it has none (since 2.5.3; before, a global
@@ -7276,9 +7279,14 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 bootstrap token is one): they take no work. Deregister each and enrol it again with
                                 a registration token minted in its agency (Runners &rarr; <strong>+ Add
                                     Runner</strong>, working in that agency).</li>
-                            <li><strong>Jobs, workflows and schedules built in the app:</strong> they are not
-                                moved. Make each again in its agency (or publish it into that agency's repository),
-                                then delete it in Central. Their run history stays Central's.</li>
+                            <li><strong>Jobs and workflows built in the app:</strong> they are not moved, and
+                                their names are the installation's: Central's copy keeps the name, in the recycle bin
+                                too. Note each one's settings, delete it in Central and then for good (Settings
+                                &rarr; Recycle Bin &rarr; <strong>Delete forever</strong>), then make it again in its
+                                agency (or publish it into that agency's repository). Their run history stays
+                                Central's.</li>
+                            <li><strong>Schedules built in the app:</strong> make each again in its agency, then
+                                delete it in Central.</li>
                             <li><strong>Central's repository:</strong> Central has no repository since 2.5.3. A
                                 connection left from before no longer syncs, and nothing it supplied runs. Working
                                 in Central, Settings &rarr; Repositories shows it with <strong>Remove the leftover
@@ -7287,7 +7295,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 their run history stays). Then connect the same URL and branch to the agency whose
                                 work it is: its sync brings the definitions in as that agency's, under that
                                 agency's rules (a job with no scope, or on another agency's scope, is refused,
-                                &sect;5.6).</li>
+                                &sect;5.6): give each such job one of that agency's scopes first (<code>cronomicon
+                                    validate -agency</code> on a checkout lists them).</li>
                         </ul>
                         A finding clears when Central holds none of its kind. Central's calendars are not
                         leftovers: they are the calendar catalogue as they stand (&sect;4.4b).</li>

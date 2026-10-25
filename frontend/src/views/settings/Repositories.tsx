@@ -362,7 +362,8 @@ function LeftoverRepoCard() {
         <div role="note" style={{ color: c.warning, marginTop: 6 }}>
           {globalAgencyName()} runs nothing, so this repository no longer syncs and what it supplied runs nowhere. Remove it, then
           connect the same URL and branch to the agency whose work it is: its next sync brings the definitions in as that
-          agency's.
+          agency's, except a job with no scope, which an agency's sync refuses: give each one of that agency's scopes first
+          (<code style={{ fontFamily: c.mono }}>cronomicon validate -agency</code> on a checkout lists them).
         </div>
         <div style={{ marginTop: 8 }}>
           <Btn small onClick={() => setAsking(true)}>Remove the leftover repository</Btn>
