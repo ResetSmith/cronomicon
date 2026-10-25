@@ -2349,9 +2349,9 @@
                     <code>publishSchedule</code>, and, <code>triggerJobs</code> and <code>killJobs</code>. The response
                     also contains <code>unrestricted</code>. That flag is not a permission. It is <strong>scope
                         reach</strong>: it tells you if the caller has an <em>All scopes</em> grant. A sibling flag,
-                    <code>composeUnbound</code>, says whether the caller may author an <em>All-scoped</em> (global)
-                    definition &mdash; only an unrestricted compose grant qualifies, and the Job Composer reads it to
-                    withhold the &ldquo;No scope&rdquo; option from everyone else.</p>
+                    <code>composeUnbound</code>, says whether the caller may author a job with no scope (its
+                    agency's, since 2.5.3) &mdash; only an unrestricted compose grant qualifies, and the Job Composer
+                    reads it to withhold the &ldquo;No scope&rdquo; option from everyone else.</p>
                 <p>From v2.2.2 the response also contains five flags that answer a different question: not
                     &ldquo;can the caller do this <em>somewhere</em>&rdquo; but &ldquo;can the caller do this to the
                     <em>installation</em>&rdquo;. They are <code>configureAppGlobal</code>,
@@ -2430,7 +2430,7 @@
                     restricted.</p>
                 <p><strong>Composing follows the same rule, per object.</strong> An Cronomicon-composed job must name a
                     scope, one of its own agency's. &ldquo;No scope&rdquo; in the scope picker makes the job the
-                    agency's it is created in, each run given one of that agency's scopes when it starts (until
+                    agency's it is created in, and its runs that agency's, on no scope (until
                     2.5.0 the option read &ldquo;All agencies (global)&rdquo;; since 2.5.3 no job is created in
                     Central); it is an explicit choice (the API takes <code>""</code>), not a default, and an
                     omitted scope is refused with <code>422 validation_failed</code>. Only a grant that reaches
@@ -2715,7 +2715,7 @@
                     roles, and <strong>Create jobs &amp; workflows</strong> &mdash; the authoring
                     permission, which lets a role author jobs, workflows, schedule definitions, calendars and
                     reactions within the agencies it is granted, and use their revisions and recycle bin, while
-                    global (All) definitions stay with a global administrator. There is
+                    a job with no scope needs a compose grant that reaches every agency. There is
                     no &ldquo;view&rdquo; permission, because no enforcement point for one is possible. Thus <code>viewer</code> has no permissions at
                     all. This is correct, not an error: a viewer's access is visibility, which comes from its granted
                     scopes, and visibility is not a verb.</p>
@@ -3670,7 +3670,9 @@
                     <em>replaced</em> at the same path fires again (the nightly-drop case); an unchanged file does not
                     re-fire on every scan. Arrivals meet the ordinary gates: pause and the fleet cap are honoured, a
                     <em>Forbid</em> job does not start twice because two files landed, and a <em>Queue</em> job parks
-                    the second. Every arrival &mdash; including one that started nothing &mdash; leaves a row in the
+                    the second. On a day that the job's Forbid or Allow calendars, a freeze calendar of its agency
+                    or the installation-wide freeze rule out, the arrival starts nothing and is not kept for later
+                    (since 2.5.3, &sect;4.4c, &sect;7.11). Every arrival &mdash; including one that started nothing &mdash; leaves a row in the
                     job's <strong>file-sightings ledger</strong> (<code>GET /jobs/{jobId}/file-sightings</code>; a
                     sighting with no run carries its <code>refusedReason</code>), aged out on the runs retention
                     window. A file-arrival run records <code>trigger_kind = 'webhook'</code>, the external-event kind
@@ -3898,7 +3900,11 @@
                                     (the service-account opt-in, &sect;3), <code>warn_after_seconds</code> /
                                     <code>must_finish_by</code> (the soft deadlines, &sect;4.4), and
                                     <code>watch</code> (file-arrival triggers, &sect;4.4). An unusable value in these
-                                    is warned about and ignored, never a sync failure. Two keys are
+                                    is warned about and ignored, never a sync failure. Since 2.5.3,
+                                    <code>forbidCalendars</code> and <code>allowCalendars</code> (&sect;4.4c): a
+                                    name that the agency lacks, a freeze calendar as an Allow, or one calendar in
+                                    both lists refuses the job at sync. A job must name one of its agency's scopes
+                                    (<code>spec.scope</code>); a job with none is refused. Two keys are
                                     <strong>retired</strong>: <code>runner_tag</code> (since 2.2.0) and
                                     <code>executor</code> (since 2.3.0). The parser still recognises each one, the
                                     job still syncs, and the value is ignored, whatever it is. <code>cronomicon validate</code> gives a warning for it, with the line number; the sync log gives one too, naming the file.
@@ -3926,7 +3932,9 @@
                                 <td>A multi-step pipeline. A step may be another workflow
                                     (<code>type: workflow</code>, &sect;4.6). Git workflows identify their step jobs
                                     <strong>by name</strong>: a hand-written <code>jobUid</code> in git YAML is
-                                    ignored, and the repository validator says so.</td>
+                                    ignored, and the repository validator says so. Since 2.5.3 a workflow may name
+                                    <code>forbidCalendars</code> and <code>allowCalendars</code> too
+                                    (&sect;4.4c).</td>
                             </tr>
                             <tr>
                                 <td><code>inventory/*.ini</code> (+ <code>.cronomicon.yaml</code> sidecar)</td>
@@ -4148,8 +4156,9 @@ cronomicon validate .                # any checkout, without the -agency checks
                     <li><strong>The CI template</strong> (<code>backend/deploy/ci-validate-template.yml</code> in the
                         source tree) runs the validator over the whole checkout on each merge request. Set
                         <code>CRONOMICON_REPO_KIND</code> to <code>agency</code> (it then passes
-                        <code>-agency</code>); <code>global</code>, the template's default, runs it without
-                        <code>-agency</code>, which since 2.5.3 refuses a scopeless job too. An optional masked
+                        <code>-agency</code>), the template's default since 2.5.3; <code>global</code>, kept for a
+                        pipeline written before, runs it without <code>-agency</code>, which refuses a scopeless job
+                        too. An optional masked
                         <code>GITLAB_MR_TOKEN</code> posts the errors as a note on the merge request.</li>
                     <li><strong>The validation image.</strong> The server image has no shell, and a CI job's
                         <code>script:</code> needs one. Each release from 2.5.0 publishes
@@ -4485,8 +4494,8 @@ cronomicon validate .                # any checkout, without the -agency checks
                     agency's people: a secret's or key's <strong>Usage</strong> (Env Vars, in the row's detail: what
                     refers to it, which runs used it, every change and reveal and who made it), the agency's
                     <strong>secrets report</strong> (a CSV or JSON download with no values), and <strong>Held by
-                        Central</strong> (an agency's former secrets that the built-in agency holds since 2.4.0, and
-                    that no run uses). Three alert
+                        Central</strong> (the secrets and keys shared with an agency before 2.3.0 that Central still
+                    holds, and that no run uses). Three alert
                     triggers act on it (&sect;8.11).</p>
                 <div class="callout note">
                     <div class="ct"><span class="em">🔑</span> SSH key credentials are sealed and redacted, the same as
@@ -4640,7 +4649,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                     &mdash; identifies the job by the <em>uid</em> frozen onto the run. Since two departments may hold
                     same-named jobs (&sect;6.1h), a name lookup could hand one twin the other's credentials; the uid
                     cannot. A script is its repository's: a job takes a script of its own agency's repository only
-                    (since 2.4.0), and a job that is still built on a script of the built-in agency's old repository is refused at
+                    (since 2.4.0), and a job that is still built on a script of Central's leftover repository (&sect;5.6) is refused at
                     run time and listed in a notice (<code>global_script_job</code>, &sect;8.10).</p>
 
                 <p><strong>The alias &mdash; injecting under a different name.</strong> A binding can name the
@@ -4668,8 +4677,9 @@ cronomicon validate .                # any checkout, without the -agency checks
                     It is the built-in agency (id <code>global</code>), and you cannot delete it. Since 2.5.2 a
                     global administrator can rename it (Scopes &rarr; Agencies, the row <em>&lt;name&gt; &middot;
                         administration</em> &rarr; <strong>Rename</strong>), and an installation made with 2.5.2 or
-                    later calls it <em>Central</em>; an installation upgraded from an earlier version keeps the name
-                    <em>Global</em> until someone changes it. The id stays <code>global</code>. A run still waiting
+                    later calls it <em>Central</em>; an installation upgraded from an earlier version keeps its
+                    earlier name until a global administrator renames it (&sect;1). The id stays
+                    <code>global</code>. A run still waiting
                     for a runner follows the rename; a run that has started keeps the name it was started with.
                     <strong>This manual says &ldquo;Central&rdquo; for the built-in agency, whatever it is
                         called.</strong> It has no members: authority over it is a global administrator's, a grant
@@ -4690,8 +4700,8 @@ cronomicon validate .                # any checkout, without the -agency checks
                         no run reads.</li>
                 </ul>
                 <p><strong>A run's agency comes from its definition.</strong> A job with no scope is its own
-                    agency's, and each run is given one of that agency's scopes when it starts; only a runner of that
-                    agency takes it (&sect;4.1). Before 2.5.3 such a job and its run were the built-in agency's.</p>
+                    agency's, and so are its runs, which keep no scope; only a runner that serves that agency takes
+                    one (&sect;4.1). Before 2.5.3 such a job and its run were the built-in agency's.</p>
                 <p><strong>What Central held before 2.5.3 stays, and does not run.</strong> The upgrade moves
                     nothing (<a href="#upgrade-2-5-3">&sect;8.7</a>). A schedule of Central's does not fire, a Run
                     of Central's job is refused, and an agency's job that binds a row only Central holds fails, with
@@ -7225,7 +7235,11 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         2.5.3. Review them &rarr;&rdquo;</em>. A schedule of Central's does not fire (its fire is
                     recorded as skipped: <em>the built-in administration agency runs nothing; move this definition
                         to an agency</em>), a person's Run or a token's start of Central's definition is refused
-                    (<code>409 run_refused</code>), and a reaction of Central's does not fire.</p>
+                    (<code>409 run_refused</code>), and a reaction of Central's does not fire. A run of Central's
+                    still queued at the upgrade is taken by no runner, and its reason says so: <em>&ldquo;this run
+                        belongs to Central, which runs nothing since 2.5.3, so no runner takes it &mdash; cancel it
+                        and run the job in the agency whose work it is (Notices lists what Central still
+                        holds)&rdquo;</em>.</p>
                 <ol class="steps">
                     <li><strong>Before you start 2.5.3, remove the environment settings that no longer
                             apply.</strong> <code>CRONOMICON_GITLAB_BASE_URL</code>, <code>_TOKEN</code>,
@@ -7248,10 +7262,11 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             each to the agency whose work it is, or delete it.&rdquo;</em>, with only the actions
                         that clear them:
                         <ul>
-                            <li><strong>Secrets, variables and SSH keys:</strong> Env Vars &rarr; the row's
-                                <em>Repair: move to another agency&hellip;</em> (a repair, with a reason). A secret
-                                that two agencies need is shared through a common Vault path, with a row in each
-                                agency.</li>
+                            <li><strong>Secrets, variables and SSH keys:</strong> Env Vars &rarr; Secrets /
+                                Variables / SSH Keys &rarr; the row &rarr; <em>Repair: move to another
+                                    agency&hellip;</em>, with a reason. A secret that two agencies need is shared
+                                through a common Vault path, with a row in each agency; a variable may be made
+                                again in each agency that needs it.</li>
                             <li><strong>Scopes built in the app:</strong> Scopes &rarr; the scope's agency (a
                                 repair, with a reason), or clone it into each agency that needs it.</li>
                             <li><strong>Hand-written host records and bastions:</strong> SSH Targets &rarr;
@@ -7259,7 +7274,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 make them again in the agency. A record imported for a scope follows its scope.</li>
                             <li><strong>Agents that serve Central alone</strong> (an agent enrolled with the
                                 bootstrap token is one): they take no work. Deregister each and enrol it again with
-                                a token minted in its agency.</li>
+                                a registration token minted in its agency (Runners &rarr; <strong>+ Add
+                                    Runner</strong>, working in that agency).</li>
                             <li><strong>Jobs, workflows and schedules built in the app:</strong> they are not
                                 moved. Make each again in its agency (or publish it into that agency's repository),
                                 then delete it in Central. Their run history stays Central's.</li>
@@ -7289,8 +7305,12 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         agencies</em> as <em>Central &middot; administration</em> (&sect;3). Its work pages show
                     <em>&ldquo;Central runs nothing. Switch to an agency to work.&rdquo;</em>; its change log,
                     Activity, Notices and Settings are the installation's. A job with no scope is its own agency's,
-                    and each of its runs is given one of that agency's scopes. A calendar's <code>global</code> flag
-                    is called <strong>freeze</strong> on screen. A job's run that binds a secret of Central's no
+                    and so are its runs, which any runner that serves that agency may take. A calendar's <code>global</code> flag
+                    is called <strong>freeze</strong> on screen, and the freeze banner says that a freeze stops a
+                    person's Run too, as it did before 2.5.3 (the banner of earlier releases said, wrongly, that a
+                    person's Run was not affected). Central's calendars are the calendar catalogue, which agencies take copies
+                    of (&sect;4.4b), and a job or workflow may name Forbid and Allow calendars of its own
+                    (&sect;4.4c). A job's run that binds a secret of Central's no
                     longer resolves it: the secret must be the job's agency's (move it, above). Retired notices clear
                     at their first check (&sect;8.10).</p>
                 <p><strong>API clients.</strong> Creating a runnable row in Central is <code>422
@@ -8491,7 +8511,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> the <code>X-Gitlab-Token</code> does not match
                             Cronomicon's webhook secret.</p>
-                        <p><strong>Correction:</strong> copy the exact secret into the GitLab webhook again. If
+                        <p><strong>Correction:</strong> copy the exact secret into the GitLab webhook again.
                             Each repository has its own secret and its own webhook URL (&sect;5.6): check that the
                             hook points at that repository's URL. Since 2.5.3 a hook that still points at the old
                             URL with no repository id (<code>/api/v1/webhooks/gitlab</code>, which was the built-in
@@ -8543,8 +8563,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             scope, and none was given at trigger) declares a binding to a row that its agency cannot
                             use. Since 2.5.3 a run with no scope belongs to its <strong>job's agency</strong>, and
                             resolves that agency's rows only. A row of another agency, a leftover of Central's, or a
-                            row of a scope the run is not on resolves for <strong>nobody</strong>. The message
-                            names the first such binding: <em>&ldquo;&hellip; is not one its agency can use when the
+                            row of a scope the run is not on resolves for <strong>nobody</strong>. The refusal is
+                            <code>422 scope_required</code>, and its message names the first such binding: <em>&ldquo;&hellip; is not one its agency can use when the
                                 run has no scope: create it in the job's agency, or bind the job to the scope it
                                 belongs to&rdquo;</em>. Without this refusal the failure would come late and without
                             clear data, at dispatch.</p>
@@ -8578,12 +8598,12 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 no agent of its own is online, and the local runner does not serve it or is off.
                                 This is <code>onlineRunners: 0</code> from <a href="#secrets">&sect;6.1e</a>, stated
                                 on the run.</li>
-                            <li><em>this run belongs to Central (it has no scope, or its scope is Central's), and
-                                    no online runner serves Central &hellip;</em>: a run of Central's that was
-                                queued before the upgrade to 2.5.3. Central runs nothing: cancel the run, move
-                                the definition to the agency whose work it is, and run it there (<a
-                                    href="#upgrade-2-5-3">&sect;8.7</a>). Since 2.5.3 a run of an agency's job with
-                                no scope is that agency's, and waits for that agency's runner like any other.</li>
+                            <li><em>this run belongs to Central, which runs nothing since 2.5.3, so no runner takes
+                                    it &mdash; cancel it and run the job in the agency whose work it is (Notices
+                                    lists what Central still holds)</em>: a run of Central's that was queued before
+                                the upgrade to 2.5.3. Do as it says (<a href="#upgrade-2-5-3">&sect;8.7</a>). Since
+                                2.5.3 a run of an agency's job with no scope is that agency's, and waits for that
+                                agency's runner like any other.</li>
                             <li><em>the local runner would take this run and is not running &mdash; it is turned
                                     off, or forbidden on this host (a global administrator: Settings &rarr; Local
                                     runner)</em>: the local runner is the only runner that could take the run. A
@@ -8870,13 +8890,14 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             <em>&ldquo;the local runner has no approved host key for host &hellip; &mdash; scan it
                                 and approve its key under Runners &rarr; Local runner &rarr; Host keys&rdquo;</em>.
                             Each host that the server connected to before 2.3.0 has a carried key, unless its stored key could not be read; a new host has none.</p>
-                        <p><strong>Correction:</strong> a global administrator goes to Runners &rarr; expand
-                            <em>Local runner</em> &rarr; <strong>Trusted host keys</strong> &rarr; <strong>Scan
-                                keys&hellip;</strong>, scans the scope (or types the hosts), compares the
+                        <p><strong>Correction:</strong> an administrator of the local runner's agency (since
+                            2.5.3; a global administrator while it belongs to no agency) goes to Runners &rarr;
+                            expand <em>Local runner</em> &rarr; <strong>Trusted host keys</strong> &rarr;
+                            <strong>Scan keys&hellip;</strong>, scans the scope (or types the hosts), compares the
                             fingerprints through an out-of-band channel, and approves them. For a host behind a
-                            bastion, use <strong>Paste keys&hellip;</strong>; the bastion itself is scanned. An
-                            administrator of the scope's agency can start the scan, and the keys then wait for a
-                            global administrator (&sect;7.12). The notice <em>The local runner has no approved key
+                            bastion, use <strong>Paste keys&hellip;</strong>; the bastion itself is scanned. A
+                            change of the local runner's agency clears its approved keys, so the new agency
+                            approves its hosts' keys again (&sect;7.12). The notice <em>The local runner has no approved key
                                 for some hosts</em> lists the hosts for each scope.</p>
                     </div>
                 </details>
@@ -8962,8 +8983,12 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         <p class="faq-cause"><strong>Cause:</strong> many possibilities &mdash; the runner's
                             <code>-watch-paths</code> allowlist does not cover the path, the file has not held still
                             for its stability window, the arrival was de-duplicated (same path, size and mtime as a
-                            prior fire), the job is paused or binned, the concurrency gate refused, or the job's
-                            scope is bound to runners and this runner is not one of them (&sect;7.10).</p>
+                            prior fire), the job is paused or binned, the concurrency gate refused, the job's
+                            scope is bound to runners and this runner is not one of them (&sect;7.10), or (since
+                            2.5.3) the day is ruled out by the job's Forbid or Allow calendars, a freeze calendar of
+                            its agency or the installation-wide freeze. A start refused for the day is dropped, not
+                            kept for later: run the job by hand if the file must be processed today (a person's Run
+                            passes the job's own calendars, not a freeze, &sect;7.11).</p>
                         <p><strong>Correction:</strong> read the job's <strong>File Arrivals</strong> ledger
                             (<code>GET /jobs/{jobId}/file-sightings</code>) &mdash; <em>every</em> arrival leaves a
                             row, and one that started nothing carries its <code>refusedReason</code>. No row at all
@@ -9016,6 +9041,26 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             to fire and could not, with the reason in <code>detail</code>. No row at all means the
                             reactor never saw a matching completion &mdash; verify the upstream really reached a
                             terminal state, and that its <code>completed_at</code> is inside the 24-hour grace.</p>
+                    </div>
+                </details>
+                <details class="faq">
+                    <summary>A job did not start today, and History shows a skipped run; or a token's trigger
+                        answers <code>409 suppressed_by_calendar</code></summary>
+                    <div class="body">
+                        <p class="faq-cause"><strong>Cause:</strong> a calendar ruled the day out (&sect;4.4c). Since
+                            2.5.3 a job's or workflow's own Forbid and Allow calendars gate every automatic start:
+                            the schedule, a service account's trigger, a reaction, a file arrival, and a parked
+                            run's promotion. So do the entry's own calendars (for the schedule only), a freeze
+                            calendar of the agency and the installation-wide freeze. The skip's reason names the
+                            calendar and its level (<em>forbidden by the job's calendar &ldquo;x&rdquo;</em>,
+                            <em>not a run day in the workflow's calendar &ldquo;x&rdquo;</em>); when a Forbid and an
+                            Allow both list the day, the reason ends <em>&hellip; and Forbid prevails</em>.</p>
+                        <p><strong>Correction:</strong> filter History by the calendar (<code>?calendar=</code>) to
+                            see each start that it stopped. A refused start is dropped, never postponed: nothing
+                            starts on the next allowed day by itself. To run the job today, a person runs it: the
+                            Run dialog names the calendar and the run goes ahead, unless a freeze calendar or the
+                            installation-wide freeze stops it. If the day should be allowed, correct the calendar,
+                            or the job's or workflow's Forbid and Allow lists.</p>
                     </div>
                 </details>
                 <details class="faq">
@@ -9159,8 +9204,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         keeps the installation settings, the agency catalog, the installation's change log,
                         Activity and notices, the installation freeze, its alert rules (which match every agency's
                         runs), push targets and contact, and the calendar catalogue. It is renamable and never
-                        deleted; an installation made before 2.5.2 calls it Global until a global administrator
-                        renames it. A job with no scope is its own agency's. What Central held at the upgrade to
+                        deleted; an installation made before 2.5.2 keeps its earlier name until a global
+                        administrator renames it. A job with no scope is its own agency's. What Central held at the upgrade to
                         2.5.3 stays, does not run, and is listed by <code>central_holds_work</code> (<a
                             href="#agencies">&sect;6.1c</a>, <a href="#upgrade-2-5-3">&sect;8.7</a>).</dd>
                     <dt>Operations (the first agency)</dt>
@@ -9272,6 +9317,30 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         Git-authored jobs and workflows may bind one by name. Suppressed fires are recorded as <span
                             class="pill mut"><span class="dot"></span>skipped</span> runs carrying
                         <code>suppressed_by_calendar</code>. See &sect;4.4.</dd>
+                    <dt>Calendar catalogue / copy (from Central)</dt>
+                    <dd>Since 2.5.3, the calendars that global administrators keep in Central (Schedules &rarr;
+                        Calendars, working in Central). No run reads them. An agency takes a <strong>copy</strong>
+                        (<em>Add from Central</em>, or a global administrator's <em>Add to agencies&hellip;</em>):
+                        its own calendar, read-only there, that follows the catalogue calendar by
+                        <em>Ask before updating</em> (the default; its editors press <em>Update</em>) or
+                        <em>Update automatically</em>. <em>Make it our own</em> detaches it. A copy whose catalogue
+                        calendar was deleted is <em>no longer offered</em> (<a
+                            href="#calendar-catalogue">&sect;4.4b</a>).</dd>
+                    <dt>Forbid and Allow (calendars)</dt>
+                    <dd>The two roles of a calendar binding. <strong>Forbid</strong>: do not start on its days.
+                        <strong>Allow</strong>: start only on a day that one of the Allow calendars lists. Since
+                        2.5.3 a job and a workflow have their own (<code>spec.forbidCalendars</code>,
+                        <code>spec.allowCalendars</code>), which gate every automatic start and not a person's Run;
+                        a schedule entry's are its <code>skipCalendars</code> and <code>onlyCalendars</code>, which
+                        gate its fires. Forbid is checked first and wins. A refused start is dropped, never
+                        postponed (<a href="#definition-calendars">&sect;4.4c</a>).</dd>
+                    <dt>Freeze calendar</dt>
+                    <dd>A calendar with the freeze flag (the key <code>global</code> in the API; on screen
+                        <em>Freeze: forbid its days to every start of &lt;agency&gt;</em>, the badge
+                        <em>freeze</em>). Its days are forbidden to every start of its own agency, a person's Run
+                        included; other agencies are unaffected. It can never be an Allow. A freeze calendar in
+                        Central's catalogue freezes nothing until an agency adds a copy (<a
+                            href="#freeze">&sect;4.4</a>).</dd>
                     <dt>Change Log</dt>
                     <dd>The audited record of in-app configuration changes (Timestamp, User, Category, Action, Target,
                         Details). View it in History &rarr; Change Log. It is CSV-exportable. Retention is the
@@ -9392,9 +9461,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         local clone of each and parses it again on each sync. Its token must be able to push (<a
                             href="#repositories">&sect;5.6</a>).</dd>
                     <dt>Installation-wide freeze</dt>
-                    <dd>A global administrator's switch, with a reason, that stops every agency's scheduled fires
-                        and records each as skipped (<code>/settings/freeze</code>); since 2.5.2 it may be scheduled for a
-                        window. It replaces the freeze that the built-in agency's freeze calendar gave every
+                    <dd>A global administrator's switch, with a reason, that stops every start of every agency, a
+                        person's Run included, and records each as skipped (<code>/settings/freeze</code>); runs
+                        already going finish. Since 2.5.2 it may be scheduled for a window. It replaces the freeze that the built-in agency's freeze calendar gave every
                         agency before 2.4.0 (<a href="#freeze">&sect;4.4</a>).</dd>
                     <dt>Reading rule</dt>
                     <dd>Since 2.5.0: an agency's rows are read by its own people and by those whose access reaches
@@ -10195,6 +10264,15 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     start and in the notice <em>Environment settings that no longer apply are
                                     set</em>; remove it. Each agency's repository has its own webhook secret
                                     (Settings &rarr; Repositories)</td>
+                            </tr>
+                            <tr>
+                                <td><code>CRONOMICON_RUNNER_BOOTSTRAP_TOKEN</code></td>
+                                <td><em>(empty)</em></td>
+                                <td><strong>Refused since 2.5.3</strong>: an agent that presents it is answered
+                                    <code>401 bootstrap_token_retired</code>. It named no agency and enrolled agents
+                                    as the built-in agency's, and Central runs nothing. A set one is named in a
+                                    warning at start and in the same notice; remove it. Agents enrol with a
+                                    registration token minted in their agency (&sect;7.2)</td>
                             </tr>
                             <tr>
                                 <td><code>CRONOMICON_SECRETS_INJECTION_ENABLED</code></td>

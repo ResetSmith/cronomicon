@@ -3217,8 +3217,8 @@
 
                 <h4 id="agency-ownership">Agencies, Central, and who administers what</h4>
                 <p>An <strong>agency</strong> is a department's own space. Every job, workflow, script, schedule,
-                    calendar, scope, secret, variable, SSH key, host record, bastion, alert rule and runner belongs to
-                    <strong>exactly one agency</strong>, and each agency has its own repository. Agencies are
+                    calendar, scope, secret, variable, SSH key, host record, bastion and runner belongs to
+                    <strong>exactly one agency</strong>, and each agency may connect a repository of its own. Agencies are
                     <strong>independent</strong>: nothing an agency runs depends on another agency's things.
                     <strong>Central</strong> is not one of them: it is the installation's administration and
                     <strong>runs nothing</strong> (since 2.5.3; <a href="#central-administration">§3.5</a>). It
@@ -4338,9 +4338,12 @@
                         the same.</p>
                     <p class="muted">A separate note speaks for the job's <em>schedule entries</em>: <em>Schedule
                             "…" would be suppressed today by …</em> or <em>…only runs on days in …, and today is not one
-                            of them</em>, followed by <em>Working calendars gate scheduled fires only — this run will
+                            of them</em>, followed by <em>A schedule's calendars gate its fires only — this run will
                             still happen.</em> A <strong>freeze calendar</strong> of the agency, and the installation
-                        freeze, are different: they stop a person's Run too, and pressing Run on such a day is refused
+                        freeze, are different: they stop a person's Run too. On a day a freeze calendar lists, the note
+                        says <em>Today is frozen by … : a freeze stops every start of this agency, a person's Run
+                            included, so this run will be refused</em> (for a run parked for later, that it will be
+                        skipped at that instant), whether or not the job has a schedule, and pressing Run is refused
                         (<a href="#calendars">§9.2</a>).</p>
                 </div>
                 <div class="card" style="margin:14px 0">
@@ -4773,8 +4776,10 @@
                     only) is available in both modes behind a confirm.</p>
                 <p>Both editors carry a <strong>Calendars (optional)</strong> field (since 2.5.3): the workflow's own
                     <strong>Forbid</strong> and <strong>Allow</strong> calendars, which decide whether the workflow
-                    starts on a day, for every automatic start. Inside a running workflow a step's job calendars do not
-                    apply, so a workflow never stops half-way. In YAML: <code>spec.forbidCalendars</code> and
+                    starts on a day, for every automatic start; a person's Run of the workflow starts at once, and its
+                    expanded row in the list says when today is forbidden. Inside a running workflow a step's job
+                    calendars do not apply, so a workflow never stops half-way (an agency's freeze calendar and the
+                    installation freeze still apply to every start). In YAML: <code>spec.forbidCalendars</code> and
                     <code>spec.allowCalendars</code>. See <a href="#compose-calendars">§10.1</a> and <a
                         href="#calendar-levels">§9.2</a>.</p>
 
@@ -5069,9 +5074,9 @@
                         blocked</em>, above).</p>
                 <p>Because a freeze that nobody can see looks exactly like an outage, when a freeze calendar of the
                     agency in use covers <em>today</em> both the <a href="#dashboard">Dashboard</a> and the Schedules
-                    view say so by name, along with the day's label: <em>Automatic starts of … are stopped
-                        today</em> (or <em>…by N freeze calendars</em>), ending <em>Other agencies are unaffected; a
-                        person's Run is stopped too.</em></p>
+                    view say so by name, along with the day's label: <em>Nothing of … starts today</em> (or <em>…starts
+                        today by N freeze calendars</em>), ending <em>A freeze stops a person's Run too; other agencies
+                        are unaffected.</em></p>
 
                 <h4 id="calendar-starts">Which starts calendars gate</h4>
                 <p>A job's or workflow's own Forbid and Allow calendars gate <strong>every automatic start</strong>.
@@ -5110,7 +5115,8 @@
                             <td>By the job's calendars: the arrival is refused, with the reason.</td>
                         </tr>
                         <tr>
-                            <td><strong>A waiting run released</strong> (one parked by the queue or by a reaction)</td>
+                            <td><strong>A waiting run released</strong> (an automatic start the queue parked, or a
+                                reaction's)</td>
                             <td><strong>Yes</strong></td>
                             <td>Judged when it is released, not when it was parked; a forbidden one is dropped and
                                 recorded as skipped.</td>
@@ -5816,8 +5822,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         their dates the only days this schedule may fire. Both together are legal and Forbid wins.
                         These are this entry's own; a job's or workflow's own calendars apply on top (<a
                             href="#calendar-levels">§9.2</a>). Authoring the calendars themselves is <a
-                            href="#calendars">§9.2</a>, which is also where the boundary is spelled out — calendars
-                        gate automatic starts, never <em>Run now</em>.</p>
+                            href="#calendars">§9.2</a>, which is also where the boundary is spelled out — an entry's
+                        calendars gate its fires, never <em>Run now</em>; only a freeze calendar and the installation
+                        freeze stop a person's Run.</p>
                     <p>The same pair is authorable per <em>inline</em> schedule in the <a href="#compose">Composer</a>
                         and on preserved inline entries in the Workflow Editor, and in Git YAML as
                         <code>skipCalendars</code> (Forbid) / <code>onlyCalendars</code> (Allow) on a schedule entry. A
@@ -6378,7 +6385,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         indefinitely, so nothing alerts and no notification fires. Each waiting run's status line says so,
                         and the expanded agency says it outright and tells you
                         <strong>how many runs are already waiting</strong>. Fix it by enrolling an agent for that
-                        agency (Runners → Add Runner, with this agency as its owner), or bringing one of its runners
+                        agency (Runners → <strong>+ Add Runner</strong>, working in that agency), or bringing one of its runners
                         back online. A waiting run holds up only its own agency at the installation's cap.
                     </p>
                 </div>
@@ -6496,7 +6503,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     uses and reveals in the window, references, and changes made from outside the agency. It never holds a
                     value. <strong>Held by Central</strong>, under each tab, lists the agency's former secrets and keys
                     that several agencies shared before 2.3.0 and that Central holds now: Central runs nothing, so no
-                    run uses them (a global administrator can give one to your agency with <em>Move agency</em>;
+                    run uses them (a global administrator can give one to your agency with <em>Repair: move to another agency…</em>;
                     until then, create your own if your jobs need one), and each
                     opens its Usage. They are read only: revealing one, making it unrevealable, editing or deleting it
                     is a global administrator's. In the Agencies column such a row also names its owner, marked
@@ -8079,8 +8086,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             <tr>
                                 <td>Jobs in Git still declare an executor, which is ignored</td>
                                 <td>One notice per agency, listing the Git jobs that still carry
-                                    <code>executor:</code> (a job with no scope, or in a scope of several agencies, is
-                                    listed under Central). The key no longer decides anything.</td>
+                                    <code>executor:</code>, each under its own agency (one whose repository is gone, and
+                                    so belongs to no agency, is listed under Central). The key no longer decides
+                                    anything.</td>
                                 <td>Remove the line from the job's file, or from the script's sidecar when the job took
                                     it from there. Clears at the next sync.</td>
                             </tr>
@@ -8325,7 +8333,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <p class="muted">Views: Scripts → Scopes → Compose → Jobs → Dashboard → History</p>
                 <ol class="steps">
                     <li>Pick the agency in the <a href="#agency-switcher">agency switcher</a>: the job will be that
-                        agency's, and so must its script and scope be.</li>
+                        agency's, and so must its script and scope be. Not Central: it runs nothing. (On a new
+                        installation the one agency is <strong>Operations</strong> until a global administrator
+                        renames it.)</li>
                     <li>Decide the origin. The fastest first job is an <strong>in-app (cronomicon-source)</strong> job —
                         but you must be an <strong>Admin</strong> (Compose). The Git path is for reviewed,
                         version-controlled definitions in the agency's repository.</li>
@@ -8408,7 +8418,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <h3 id="recipe-repository">15.4 Connect an agency's repository and sync definitions</h3>
                 <p class="muted">Views: Settings → Repositories · GitLab · Scripts · History → Git Sync</p>
                 <ol class="steps">
-                    <li>Every agency has a repository of its own (Central has none since 2.5.3); it is connected
+                    <li>Each agency connects a repository of its own (Central has none since 2.5.3); it is connected
                         when the agency is created (Scopes → Agencies → <strong>+ Add Agency</strong>) or later by the
                         agency's administrator. Lay it out with
                         <code>jobs/ scripts/ schedules/ workflows/ inventory/</code> directories. Add
@@ -8440,6 +8450,15 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         merge time (below). See <a href="administrator-manual.html#gitops">GitOps &amp; GitLab Sync</a>
                         (Administrator Manual).</li>
                 </ol>
+                <div class="callout note" id="recipe-repository-central">
+                    <div class="ct"><span class="em">🧳</span> If Central still has a repository from before 2.5.3</div>
+                    <p>Central syncs nothing since 2.5.3, so its old repository no longer runs anything. A global
+                        administrator working in Central opens Settings → Repositories, presses <strong>Remove the
+                            leftover repository</strong> (a repair: it asks for a reason, and is recorded; it removes the
+                        connection and what it synced, and leaves the repository itself untouched), then
+                        connects the same URL and branch to the agency whose work it is, as above. That agency's sync
+                        brings the definitions in as its own; each job must name one of that agency's scopes.</p>
+                </div>
                 <div class="callout tip" id="validate">
                     <div class="ct"><span class="em">✅</span> <code>cronomicon validate</code> and the CI template</div>
                     <p><code>cronomicon validate [-agency] &lt;path&gt;…</code> checks a file, or a repository's
@@ -8730,6 +8749,28 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             in Central; for Central's old repository, remove the leftover and connect the same URL and
                             branch to the agency (<a href="#recipe-repository">§15.4</a>). If there is no agency yet,
                             the first start made one, <strong>Operations</strong>; rename it and work there.</p>
+                        <p>A run that was already queued at the upgrade and is stamped with Central waits, with the
+                            reason <em>this run belongs to Central, which runs nothing since 2.5.3, so no runner takes
+                                it &mdash; cancel it and run the job in the agency whose work it is (Notices lists what
+                                Central still holds)</em>. No runner can be given to Central, so cancel it.</p>
+                    </div>
+                </details>
+                <details class="faq" id="faq-scope-required">
+                    <summary>Run is refused with <code>422 scope_required</code>: “this job consumes credentials its run
+                        cannot use”</summary>
+                    <div class="body">
+                        <p class="faq-cause"><strong>Cause:</strong> the job binds a secret, variable or SSH key, and
+                            the run has no scope. Since 2.5.3 such a run is the job's agency's, so it can use only that
+                            agency's own unscoped rows; a row of another agency, one Central still holds, or one of a
+                            scope the run is not on resolves for nobody. The sentence names the first one: <em>this job
+                                consumes credentials its run cannot use &mdash; &lt;kind&gt; &lt;name&gt; is not one its
+                                agency can use when the run has no scope: create it in the job's agency, or bind the job
+                                to the scope it belongs to</em>. A scheduled fire is refused the same way and
+                            recorded as a skipped run with the reason <code>unbound_references</code>; a reaction
+                            records a delivery error, and a file arrival is refused with the reason.</p>
+                        <p><strong>Fix:</strong> create the row in the job's agency, or give the job (or this run,
+                            under <strong>Targets</strong>) the scope the row belongs to (<a
+                                href="#refbindings">§11.6</a>).</p>
                     </div>
                 </details>
                 <details class="faq" id="faq-calendar-dropped">
@@ -8786,10 +8827,16 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> a concurrency cap is reached: the installation's
                             (<code>maxConcurrent</code>: the runs running in every agency plus those waiting in the
-                            job's agency), or the job's agency's own cap (<a href="#concepts">§2.7</a>).</p>
-                        <p><strong>Fix:</strong> wait for active runs to finish or kill stale/queued ones of the agency;
-                            raise the cap in Settings → General, or the agency's on its panel under Scopes → Agencies,
-                            if appropriate (a global administrator).</p>
+                            job's agency), or the job's agency's own cap (<a href="#concepts">§2.7</a>). Or a freeze is
+                            on today: a freeze calendar of the job's agency, or the installation freeze
+                            (<code>409 suppressed_by_calendar</code>, naming it; <a href="#calendar-freeze">§9.2</a>).
+                            (A job Central holds from before 2.5.3 is not offered Run at all; a trigger through the API
+                            answers <code>409 run_refused</code>, <a href="#faq-central-leftovers">above</a>.) A job's own Forbid and Allow calendars never
+                            refuse a person's Run.</p>
+                        <p><strong>Fix:</strong> for a cap, wait for active runs to finish or kill stale/queued ones of
+                            the agency; raise the cap in Settings → General, or the agency's on its panel under Scopes →
+                            Agencies, if appropriate (a global administrator). For a freeze, run it when the freeze
+                            ends, or have the freeze lifted.</p>
                     </div>
                 </details>
                 <details class="faq">
@@ -8879,12 +8926,13 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <summary>A scheduled job didn't fire when expected</summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> the job is paused, the concurrency cap was hit, a
-                            Forbid policy suppressed it, the cron is invalid, or it fires in the <strong>effective
+                            Forbid overlap policy suppressed it, a calendar stopped it (<a
+                                href="#faq-calendar-dropped">above</a>), the cron is invalid, or it fires in the <strong>effective
                                 application timezone</strong> (the Settings → General Timezone, else the host
                             <code>TZ</code>) rather than the zone you assumed.
                         </p>
                         <p><strong>Fix:</strong> unpause it, check History for a <span class="pill mut"><span
-                                    class="dot"></span>skipped</span> (Forbid) run, validate the cron, and confirm the
+                                    class="dot"></span>skipped</span> run and its reason, validate the cron, and confirm the
                             application timezone in Settings → General (the informational banner names it).</p>
                     </div>
                 </details>
@@ -8926,7 +8974,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             finished with an outcome you are not watching (a run that ended with warnings counts as
                             <strong>success</strong>, and an operator stop that was <em>not</em> classified is
                             <strong>stopped</strong>, not a failure); the reaction or its owning definition is disabled
-                            or paused; a <strong>global</strong> working calendar covers today; the reaction's minimum
+                            or paused; a freeze calendar of its agency covers today, or the reacting job's or workflow's own
+                            Forbid or Allow calendars stop today (the start is dropped, not postponed); the reaction's minimum
                             interval swallowed the event; the chain hit its depth limit; the upstream ran as a step
                             inside a workflow (a job only raises a reaction from inside a workflow if that reaction
                             opted in); or the upstream finished more than <strong>24 hours</strong> ago and was recorded
@@ -9162,8 +9211,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <dt>Agency</dt>
                     <dd>A department's own space, <strong>independent</strong> of every other. Every job, workflow,
                         script, schedule, calendar, scope, secret, variable, SSH key, host record, bastion, alert rule
-                        and runner belongs to <strong>exactly one</strong> agency, each agency has its own repository,
-                        and a reference resolves within the agency that makes it (names are unique per agency and
+                        and runner belongs to <strong>exactly one</strong> agency, each agency may connect a repository
+                        of its own, and a reference resolves within the agency that makes it (names are unique per agency and
                         case-sensitive). Nothing an agency runs uses another agency's or Central's. An agent serves the
                         agency that owns it (set by its registration token, <em>never</em> self-declared by the agent).
                         Dispatch is <strong>hard-isolated</strong>: a job dispatches only to a runner its scope's agency
@@ -9281,6 +9330,14 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         runs, filterable in History by calendar. Cronomicon ships no dates; a calendar that runs out of
                         days silently stops suppressing. See <a href="#calendars">§9.2</a>.
                     </dd>
+                    <dt>Catalogue (calendars) / copy</dt>
+                    <dd>Since 2.5.3, the calendars a global administrator keeps in Central (Schedules → Calendars,
+                        working in Central). No run reads them. An agency takes a <strong>copy</strong> with
+                        <strong>Add from Central</strong> (or a global administrator adds one to chosen agencies): its
+                        own calendar, listed under <em>From Central</em>, read-only there, updated from the catalogue
+                        either when its editors press <strong>Update</strong> (<em>Ask before updating</em>, the
+                        default) or by itself (<em>Update automatically</em>). <strong>Make it our own</strong> detaches
+                        it into an ordinary calendar. See <a href="#calendars-from-central">§9.2</a>.</dd>
                     <dt>Central (the administration)</dt>
                     <dd>The built-in agency, the installation's own (its older name is Global, which an older
                         installation keeps until it is renamed; its id, <code>global</code>, never changes).
@@ -9373,12 +9430,28 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         (<code>metadata.name</code>/id), so moving it never changes references or routes. See <a
                             href="#scripts">§6.1</a>.
                     </dd>
+                    <dt>Forbid / Allow (calendars)</dt>
+                    <dd>The two roles a calendar is named in, on a job or workflow (since 2.5.3) and on a schedule
+                        entry. <strong>Forbid</strong>: never start on its days. <strong>Allow</strong>: start only on
+                        days in one of them. A day any Forbid calendar (or a freeze calendar of the agency) lists is
+                        forbidden first; then each level that names Allow calendars must list it. Forbid wins over
+                        Allow, and the skip says so. They gate every automatic start, not a person's Run. YAML:
+                        <code>spec.forbidCalendars</code> / <code>spec.allowCalendars</code> on a job or workflow,
+                        <code>skipCalendars</code> / <code>onlyCalendars</code> on an entry. See <a
+                            href="#calendar-levels">§9.2</a>. (Not the <em>Forbid</em> overlap policy of
+                        <code>concurrency_policy</code>.)</dd>
                     <dt>Forward-only migrations</dt>
                     <dd>Cronomicon applies up-migrations automatically on every boot. Down-migrations are dev/test only;
                         production recovery from a bad migration is restore-from-backup.</dd>
                     <dt>GitOps pruning</dt>
                     <dd>During sync, any <code>source='git'</code> row not seen in the repo this pass is deleted — how
                         removing a YAML file in Git removes the definition. Cronomicon-source rows are never pruned.</dd>
+                    <dt>Freeze calendar</dt>
+                    <dd>A calendar with its freeze setting ticked (the list's <span class="tag">freeze</span> badge;
+                        the key <code>global</code> in YAML or JSON). On its days nothing of its agency starts, a
+                        person's Run included, whether or not anything names it. It is never an Allow calendar. Other
+                        agencies are unaffected; stopping every agency is the installation freeze. See <a
+                            href="#calendar-freeze">§9.2</a>.</dd>
                     <dt>Global (agency)</dt>
                     <dd>The name of the built-in agency before 2.5.2, kept on an older installation until a global
                         administrator renames it. See <em>Central</em>.</dd>
@@ -9396,7 +9469,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         resolves it against its own inventory (for isolated segments).</dd>
                     <dt>Job-definitions repo</dt>
                     <dd>An agency's repository: the source of truth for that agency's job, script, schedule, workflow
-                        and inventory definitions. Every agency has one (Settings → Repositories); Central has none.
+                        and inventory definitions. Each agency connects its own (Settings → Repositories); Central has none.
                         Cronomicon keeps a local clone of each and re-parses it on each sync.</dd>
                     <dt>Job-level env</dt>
                     <dd>A plaintext env map declared on a Job (Composer → <em>Environment (job-level)</em>) and injected
@@ -9434,6 +9507,11 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         shown to that agency's administrators while they work in it. A notice clears itself when its cause is put right;
                         dismissing hides it until the condition goes away and comes back. See <a
                             href="#notices">§14.2</a>.</dd>
+                    <dt>Operations (agency)</dt>
+                    <dd>The ordinary agency Cronomicon makes at first start when no agency but Central exists (an
+                        upgrade that had only Central gets one too; once deleted it is not made again). Rename it and
+                        work there; its Dashboard offers <em>Name your agency</em> to global administrators. See <a
+                            href="#agencies">§11.2</a>.</dd>
                     <dt>Operations overview</dt>
                     <dd>Since 2.5.2, the Dashboard with <strong>All agencies</strong> chosen in the switcher
                         (<code>/?agency=overview</code>; the old <code>/overview</code> lands there), for global
@@ -9491,6 +9569,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             agency</em>, which becomes the owner of the agent it enrols; it dies on its
                         first successful registration and records which runner consumed it. Stored only as a SHA-256
                         hash; plaintext shown once at mint. Revoking an unused token never affects registered runners.
+                        Since 2.5.3 it is never minted in Central, and the environment's bootstrap token
+                        (<code>CRONOMICON_RUNNER_BOOTSTRAP_TOKEN</code>) is refused.
                     </dd>
                     <dt>Reveal</dt>
                     <dd>The explicit, audited unmask of a stored secret. A POST, because every reveal writes a Change
@@ -10040,6 +10120,13 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                     minted in its agency.)</td>
                             </tr>
                             <tr>
+                                <td><code>CRONOMICON_RUNNER_BOOTSTRAP_TOKEN</code></td>
+                                <td><em>(empty)</em></td>
+                                <td><strong>Refused since 2.5.3</strong> (<code>bootstrap_token_retired</code>): an
+                                    agent enrols with a registration token minted in its agency (Runners →
+                                    <strong>+ Add Runner</strong>, working in that agency).</td>
+                            </tr>
+                            <tr>
                                 <td><code>CRONOMICON_RUNNER_OFFLINE_AFTER</code> / <code>_DEREGISTER_AFTER</code></td>
                                 <td><code>5m</code> / <code>14d</code></td>
                                 <td>Reaper offline / auto-deregister windows</td>
@@ -10122,8 +10209,13 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             <tr>
                                 <td><span class="pill mut"><span class="dot"></span>Skipped</span></td>
                                 <td><code>skipped</code></td>
-                                <td>A scheduled fire that was deliberately not run (dimmed row): Forbid-suppressed, or
-                                    refused with a stated reason such as an SSH key binding no agent can deliver</td>
+                                <td>A start that was deliberately not run (dimmed row): a scheduled fire a calendar stopped (a
+                                    Forbid or Allow calendar of the definition or the entry, a freeze calendar, the
+                                    installation freeze; the calendar is named), since 2.5.3 a service account's
+                                    trigger or a released waiting run the definition's own calendars stopped, a fire
+                                    the <em>Forbid</em> overlap policy suppressed, or that was refused with a stated reason &mdash; an SSH key
+                                    binding no agent can deliver, a definition Central holds (<em>the built-in
+                                        administration agency runs nothing</em>). It is dropped, never run later.</td>
                             </tr>
                             <tr>
                                 <td><span class="pill mut"><span class="dot"></span>Cancelled</span></td>
@@ -10193,10 +10285,11 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         (The local runner runs the shell types only.)</li>
                     <li><em>no online runner serves &lt;agency&gt;</em> — your department's runner is down, or it has
                         none.</li>
-                    <li><em>this run belongs to Central …, and no online runner serves Central</em> — seen only on
-                        a run of something Central held from before 2.5.3. Since 2.5.3 a run with no scope is its job's
-                        agency's, so this reason no longer appears for an agency's job; Central's own definitions do
-                        not run (<a href="#faq-central-leftovers">§16</a>).</li>
+                    <li><em>this run belongs to Central, which runs nothing since 2.5.3, so no runner takes it &mdash;
+                            cancel it and run the job in the agency whose work it is (Notices lists what Central still
+                            holds)</em> — seen only on a run queued before 2.5.3 and stamped with Central. Since 2.5.3
+                        a run with no scope is its job's agency's, so this reason no longer appears for an agency's
+                        job, and no runner can be given to Central (<a href="#faq-central-leftovers">§16</a>).</li>
                     <li><em>this job binds an SSH key, which the local runner cannot deliver, and no agent that could
                             take the run is online</em> — only an agent delivers a bound key as a file; the agency's
                         agent is offline.</li>
