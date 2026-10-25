@@ -1468,7 +1468,7 @@ describe("RunDialog — the job's own calendars (2.5.3 CA-32)", () => {
     detailResponse = { ...makeJob([]), calendarToday: { day: "2026-12-25", polarity: "skip", calendar: "holidays", label: "Christmas" } };
     const { q, runBtn } = renderDialog(makeJob([]));
     await vi.waitFor(() => expect(q.getByTestId("today-forbidden")).toBeTruthy());
-    expect(q.getByTestId("today-forbidden").textContent).toMatch(/^Today is forbidden by holidays \(Christmas\)\. Its schedules and triggers do not start it today; a Run from here still runs\./);
+    expect(q.getByTestId("today-forbidden").textContent).toMatch(/^Today is forbidden by holidays \(Christmas\)\. Its schedules and triggers do not start it today; these calendars do not stop a Run from here\./);
     expect(runBtn().disabled).toBe(false);
   });
 

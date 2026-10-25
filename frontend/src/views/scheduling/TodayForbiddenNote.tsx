@@ -27,7 +27,7 @@ export function TodayForbiddenNote({ today, allow }: { today?: CalendarToday | n
         fontSize: c.fontSm,
       }}
     >
-      {said} Its schedules and triggers do not start it today; a Run from here still runs.
+      {said} Its schedules and triggers do not start it today; these calendars do not stop a Run from here.
     </div>
   );
 }
