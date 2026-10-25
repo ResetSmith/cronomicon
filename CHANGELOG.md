@@ -134,7 +134,11 @@ Then, because Central runs nothing from this release on:
 - A job with no scope is its own agency's, and so are its runs: any runner
   that serves the agency may take one (until now they were the built-in
   agency's; the composer's "each run is given one of the agency's scopes" was
-  never so, and is corrected).
+  never so, and is corrected). A workflow of an agency that runs one does not
+  span agencies, so saving it, or making a job it runs scopeless, is no longer
+  refused with `409 crosses_agencies`; and the notices about shell jobs with no
+  runner, and about requirements no agent advertises, look at that agency's
+  runners (the first no longer files one under Central, which runs nothing).
 - The schedule entry's calendars are called Forbid and Allow on screen (the
   YAML keys stay `skipCalendars` and `onlyCalendars`).
 - The manuals, the courses, the runner and language guides and the security

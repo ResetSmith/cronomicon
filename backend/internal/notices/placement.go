@@ -305,7 +305,9 @@ func checkShellJobRequires(ctx context.Context, database *sql.DB) error {
 		          AND EXISTS (
 		              SELECT 1 FROM runner_agencies ra
 		               WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency
-		                 AND ((COALESCE(j.scope, '') = '' AND ra.agency_id = ?)
+		                 -- A job with no scope: its own agency's agents (2.5.3, CA-5;
+		                 -- until CA6 Global's, which flagged nearly every one).
+		                 AND ((COALESCE(j.scope, '') = '' AND ra.agency_id = COALESCE(`+agencyid.JobSQL("j")+`, ?))
 		                      OR ra.agency_id IN (SELECT sa.agency_id FROM scope_agencies sa
 		                                            JOIN scopes sc ON sc.id = sa.scope_id
 		                                           WHERE sc.name = j.scope AND sc.owner_agency = COALESCE(`+agencyid.JobSQL("j")+`, '`+agencyid.Global+`'))))
@@ -355,11 +357,16 @@ func checkShellJobRequires(ctx context.Context, database *sql.DB) error {
 // registered runner — agent or local — serves the agency with a shell
 // capability. Registered, not online: an agent that is merely offline is an
 // ordinary wait, and its runs say so.
+//
+// A job with no scope is its own agency's (2.5.3, CA-5; until CA6 it was counted
+// as Global's, which filed a false notice under Global and told its agency
+// nothing). The built-in agency is left out: it runs nothing, what it still
+// holds is central_holds_work's, and an agent cannot be enrolled for it.
 func checkNoRunnerForShellJobs(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		WITH shell_jobs AS (
 			SELECT j.name AS job,
-			       CASE WHEN COALESCE(j.scope, '') = '' THEN ? ELSE sa.agency_id END AS agency
+			       CASE WHEN COALESCE(j.scope, '') = '' THEN COALESCE(`+agencyid.JobSQL("j")+`, ?1) ELSE sa.agency_id END AS agency
 			  FROM jobs j
 			  LEFT JOIN scopes sc ON sc.name = j.scope AND sc.owner_agency = COALESCE(`+agencyid.JobSQL("j")+`, '`+agencyid.Global+`')
 			  LEFT JOIN scope_agencies sa ON sa.scope_id = sc.id
@@ -369,7 +376,8 @@ func checkNoRunnerForShellJobs(ctx context.Context, database *sql.DB) error {
 		       (SELECT group_concat(job, ', ') FROM (
 		            SELECT DISTINCT s2.job AS job FROM shell_jobs s2 WHERE s2.agency = a.id ORDER BY s2.job LIMIT 5))
 		  FROM agencies a JOIN shell_jobs sj ON sj.agency = a.id
-		 WHERE NOT EXISTS (
+		 WHERE a.id <> ?1
+		   AND NOT EXISTS (
 		       SELECT 1 FROM runners rn JOIN runner_agencies ra ON ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency
 		        WHERE ra.agency_id = a.id
 		          AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c

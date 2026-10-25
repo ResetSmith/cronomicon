@@ -187,11 +187,13 @@ func SpanningWorkflows(ctx context.Context, q interface {
 		      FROM (SELECT DISTINCT root, prow, name FROM stepfound) f
 		),
 		step(root, agency) AS MATERIALIZED (
+		    -- A step's agency is its job's (1400), with a scope or without: since
+		    -- 2.5.3 a run with no scope is its job's agency's (CA-5). Until CA6 a
+		    -- scopeless job read as Global's here, so an agency's workflow running
+		    -- one "spanned" and a save that made one was refused. A job with no
+		    -- owner at all is still Global's.
 		    SELECT s.root,
-		           CASE
-		             WHEN COALESCE(j.scope, '') = '' THEN ?1
-		             ELSE COALESCE(`+agencyid.JobSQL("j")+`, ?1) -- its owner (1400)
-		           END
+		           COALESCE(`+agencyid.JobSQL("j")+`, ?1)
 		      FROM stepjob s JOIN jobs j ON j.rowid = s.jrow AND j.deleted_at IS NULL
 		),
 		counted(root, n) AS MATERIALIZED (
