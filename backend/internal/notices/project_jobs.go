@@ -94,7 +94,7 @@ func checkProjectJobs(ctx context.Context, database *sql.DB) error {
 			rows.Close()
 			return err
 		}
-		on := "no scope (each run takes one of its agency's scopes)"
+		on := "no scope (its runs are its agency's)"
 		if scope != "" {
 			on = "the scope " + scope
 		}

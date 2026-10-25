@@ -209,8 +209,8 @@ export function JobComposer() {
   // there, and no job is ever Central's.
   const inAgency = useAgencyOptional();
   const noScopeMeans = inAgency
-    ? `the job is ${inAgency.agencyName}'s, and each run is given one of ${inAgency.agencyName}'s scopes when it starts`
-    : "the job is its agency's, and each run is given one of that agency's scopes when it starts";
+    ? `the job is ${inAgency.agencyName}'s, and so are its runs: any runner that serves ${inAgency.agencyName} may take one`
+    : "the job is its agency's, and so are its runs: any runner that serves that agency may take one";
   // Reactions were, from GC (v2.2.2) until 2.4.2, the one part of this form the
   // server took only from a compose administrator; since question 61 they are
   // the job's agency's, like the job.

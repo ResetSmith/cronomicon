@@ -76,8 +76,8 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   // 2.5.3 CA-7: settings that configured Central's work are ignored.
   environment_settings_ignored: { title: "Environment settings that no longer apply are set", to: "/settings?tab=repositories", toLabel: "Repositories" },
   // 2.5.3 CA-28, CA-27: a copy of a Central calendar is behind, or its original is gone.
-  calendar_update_available: { title: "A calendar from Central has an update", to: "/schedules?tab=calendars", toLabel: "Calendars" },
-  calendar_no_longer_offered: { title: "A calendar from Central is no longer offered", to: "/schedules?tab=calendars", toLabel: "Calendars" },
+  calendar_update_available: { get title() { return `A calendar from ${globalAgencyName()} has an update`; }, to: "/schedules?tab=calendars", toLabel: "Calendars" },
+  calendar_no_longer_offered: { get title() { return `A calendar from ${globalAgencyName()} is no longer offered`; }, to: "/schedules?tab=calendars", toLabel: "Calendars" },
 };
 
 /** Where each kind central_holds_work lists (subject `central:<kind>`) is moved

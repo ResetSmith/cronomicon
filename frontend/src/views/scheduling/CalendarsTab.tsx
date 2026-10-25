@@ -156,7 +156,7 @@ export function CalendarsTab() {
         <div style={{ fontSize: c.fontSm, color: c.textSec, flex: 1, minWidth: 280 }}>
           {inCentral ? (
             <>
-              Central's catalogue: calendars the agencies take a copy of. No run reads them here; an agency's copy is
+              {globalAgencyName()}'s catalogue: calendars the agencies take a copy of. No run reads them here; an agency's copy is
               its own, and changes when this one does, by an update the agency takes or that comes by itself.{" "}
             </>
           ) : (
@@ -189,7 +189,7 @@ export function CalendarsTab() {
           onClose={() => setAddingFromCentral(false)}
           onAdded={() => {
             setAddingFromCentral(false);
-            setSaid("Added from Central.");
+            setSaid(`Added from ${globalAgencyName()}.`);
             reload();
           }}
         />
@@ -215,8 +215,8 @@ export function CalendarsTab() {
         <div style={{ border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, background: c.panel, padding: 20, maxWidth: 680 }}>
           <div style={{ fontSize: c.fontSm, color: c.text, fontWeight: 600, marginBottom: 8 }}>The catalogue has no calendars yet.</div>
           <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-            A calendar here is offered to the agencies: a holiday list, a change freeze. An agency takes a copy with Add from
-            Central, or you add one to chosen agencies; each copy is that agency's own, and changes when this one does. No
+            A calendar here is offered to the agencies: a holiday list, a change freeze. An agency takes a copy with Add from{" "}
+            {globalAgencyName()}, or you add one to chosen agencies; each copy is that agency's own, and changes when this one does. No
             run reads a calendar here. <strong>Cronomicon ships no holiday dates</strong>: the editor takes a pasted block of{" "}
             <code>YYYY-MM-DD,label</code> lines, or a CSV or .ics file.
           </div>
@@ -273,7 +273,7 @@ export function CalendarsTab() {
           {ours.length > 0 ? calendarTable("ours") : copies.length > 0 && <div style={{ fontSize: c.fontSm, color: c.textMuted, marginBottom: 16 }}>None of its own yet.</div>}
           {copies.length > 0 && (
             <>
-              <div style={{ ...groupLabel(), marginTop: 18 }}>From Central</div>
+              <div style={{ ...groupLabel(), marginTop: 18 }}>From {globalAgencyName()}</div>
               {calendarTable("copies")}
             </>
           )}
@@ -551,8 +551,8 @@ function CalendarEditor({
       {readOnly && origin && (
         <div role="note" style={{ fontSize: c.fontSm, color: c.textMuted }}>
           {origin.state === "no_longer_offered"
-            ? `Read-only. This calendar was a copy of a Central calendar that is no longer offered. Make it your own, on the list, to change it, or delete it.`
-            : `Read-only. This calendar is a copy of ${origin.catalogueName ?? "a calendar"} from Central: its days and settings change only by an update. Make it your own, on the list, to change it here.`}
+            ? `Read-only. This calendar was a copy of a ${globalAgencyName()} calendar that is no longer offered. Make it your own, on the list, to change it, or delete it.`
+            : `Read-only. This calendar is a copy of ${origin.catalogueName ?? "a calendar"} from ${globalAgencyName()}: its days and settings change only by an update. Make it your own, on the list, to change it here.`}
         </div>
       )}
       {readOnly && !origin && (

@@ -496,8 +496,8 @@ func ValidateBinding(skip, only []string, known, global map[string]bool) (outSki
 	}
 	for _, n := range outOnly {
 		if global[n] {
-			return nil, nil, "calendar " + n + " is global and cannot be used as a run-day (only) calendar; " +
-				"a global calendar is unioned into every entry's SKIP set"
+			return nil, nil, "calendar " + n + " is a freeze calendar and cannot be used as a run-day (only) calendar; " +
+				"a freeze calendar is unioned into every entry's SKIP set"
 		}
 	}
 	return outSkip, outOnly, ""

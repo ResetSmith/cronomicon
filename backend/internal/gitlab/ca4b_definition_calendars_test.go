@@ -46,7 +46,7 @@ func TestCA4b_AFilesOwnCalendarsAreValidatedAndStored(t *testing.T) {
 	gitCommitFile(t, repoB, remoteB, "workflows/keeps-freeze.yaml", wf, "a workflow keeping to a freeze calendar")
 	grBackdateAll(t, a)
 	res = grSync(t, b, "with the workflow")
-	if res.Status != "partial" || !strings.Contains(res.ErrorMessage, "global") {
+	if res.Status != "partial" || !strings.Contains(res.ErrorMessage, "freeze calendar") {
 		t.Errorf("a workflow allowing a freeze calendar: %s (%s); want partial", res.Status, res.ErrorMessage)
 	}
 	if n := grCount(t, a.db, `SELECT COUNT(*) FROM workflows WHERE name = 'keeps-freeze'`); n != 0 {

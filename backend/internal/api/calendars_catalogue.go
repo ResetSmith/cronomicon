@@ -259,7 +259,7 @@ func onlyBindingReason(bindings map[string][]calendarBinding, owner, name string
 				where += " (in recycle bin)"
 			}
 			return "calendar " + name + " is bound as a run-day (only) calendar by " + where +
-				" and cannot also be global; a global calendar is unioned into every entry's SKIP set"
+				" and cannot also be a freeze calendar; a freeze calendar is unioned into every entry's SKIP set"
 		}
 	}
 	return ""

@@ -131,8 +131,10 @@ Then, because Central runs nothing from this release on:
 - Nothing offers Central when something is created or moved: the agency
   pickers, SSH Targets, a registration token, the repair moves, a scope's
   clone.
-- A job with no scope is its own agency's, and each run is given one of its
-  agency's scopes.
+- A job with no scope is its own agency's, and so are its runs: any runner
+  that serves the agency may take one (until now they were the built-in
+  agency's; the composer's "each run is given one of the agency's scopes" was
+  never so, and is corrected).
 - The schedule entry's calendars are called Forbid and Allow on screen (the
   YAML keys stay `skipCalendars` and `onlyCalendars`).
 - The manuals, the courses, the runner and language guides and the security
@@ -148,6 +150,13 @@ Then, because Central runs nothing from this release on:
 
 ### Fixed
 
+- A freeze calendar, and the installation freeze, stop a person's Run too (the
+  server answers `409 suppressed_by_calendar`), but the freeze banner said
+  manual runs were unaffected, and the Run dialog named the freeze calendar and
+  then said the run "will still happen". The banner now says a freeze stops a
+  person's Run; the dialog says the run will be refused (a deferred one,
+  skipped at its instant), also for a job with no schedule, and an entry's own
+  calendar no longer hides the freeze.
 - Settings → Repositories, for a global administrator working in an agency,
   offered a *Connect* card for every other agency (since 2.4.4): it shows the
   agency in use.

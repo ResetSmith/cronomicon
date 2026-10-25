@@ -16,6 +16,7 @@ import { Btn, ConfirmDialog, Modal } from "../../components/ui";
 import { c } from "../../theme";
 import type { components } from "../../api/schema";
 import type { Calendar } from "./calendars";
+import { globalAgencyName } from "../../globalName";
 
 type CatalogueCalendar = components["schemas"]["CatalogueCalendar"];
 type Origin = NonNullable<Calendar["fromCentral"]>;
@@ -50,7 +51,7 @@ export function pendingSummary(o: Origin): string {
 export function CopyState({ origin }: { origin: Origin }) {
   if (origin.state === "no_longer_offered") {
     return (
-      <span style={pill(c.danger)} title="Its calendar was removed from Central's catalogue. Make it your own to edit it, or delete it.">
+      <span style={pill(c.danger)} title={`Its calendar was removed from ${globalAgencyName()}'s catalogue. Make it your own to edit it, or delete it.`}>
         no longer offered
       </span>
     );
@@ -101,7 +102,7 @@ export function CopyActions({ cal, onChanged }: { cal: Calendar; onChanged: () =
       )}
       {!gone && (
         <select
-          aria-label={`How ${name} takes updates from Central`}
+          aria-label={`How ${name} takes updates from ${globalAgencyName()}`}
           value={origin.updateMode}
           disabled={busy}
           onChange={(e) => setMode(e.target.value as UpdateMode)}
@@ -127,7 +128,7 @@ export function CopyActions({ cal, onChanged }: { cal: Calendar; onChanged: () =
           message={
             <>
               It becomes an ordinary calendar of this agency, which its calendar editors change. It is no longer linked to
-              {origin.catalogueName ? ` ${origin.catalogueName} in` : ""} Central's catalogue, and takes no more updates from
+              {origin.catalogueName ? ` ${origin.catalogueName} in` : ""} {globalAgencyName()}'s catalogue, and takes no more updates from
               it. Its days and bindings stay as they are.
             </>
           }
@@ -165,7 +166,7 @@ export function AddFromCentralDialog({ onClose, onAdded }: { onClose: () => void
 
   return (
     <Modal
-      title="Add a calendar from Central"
+      title={`Add a calendar from ${globalAgencyName()}`}
       onClose={onClose}
       footer={
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -179,13 +180,15 @@ export function AddFromCentralDialog({ onClose, onAdded }: { onClose: () => void
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: c.fontSm }}>
         <div style={{ color: c.textSec }}>
-          A copy is this agency's own calendar, linked to Central's: it changes only when Central's does, by an update
+          A copy is this agency's own calendar, linked to {globalAgencyName()}'s: it changes only when {globalAgencyName()}'s does, by an update
           you take or that comes by itself. Make it your own later to edit it.
         </div>
         {q.loading && <div style={{ color: c.textSec }}>Loading the catalogue…</div>}
         {q.error && <div role="alert" style={{ color: c.danger }}>{q.error}</div>}
         {!q.loading && !q.error && items.length === 0 && (
-          <div style={{ color: c.textMuted }}>Central's catalogue has no calendars yet. A global administrator adds them, working in Central.</div>
+          <div style={{ color: c.textMuted }}>
+            {globalAgencyName()}'s catalogue has no calendars yet. A global administrator adds them, working in {globalAgencyName()}.
+          </div>
         )}
         {items.map((it) => {
           const on = picked?.uid === it.uid;
@@ -238,7 +241,7 @@ export function AddFromCentralDialog({ onClose, onAdded }: { onClose: () => void
 function UpdateModeChoice({ value, onChange }: { value: UpdateMode; onChange: (m: UpdateMode) => void }) {
   return (
     <fieldset style={{ border: "none", padding: 0, margin: 0, color: c.text }}>
-      <legend style={{ color: c.textMuted, marginBottom: 4 }}>When Central changes it</legend>
+      <legend style={{ color: c.textMuted, marginBottom: 4 }}>When {globalAgencyName()} changes it</legend>
       <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
         <input type="radio" checked={value === "ask"} onChange={() => onChange("ask")} /> Ask before updating
       </label>

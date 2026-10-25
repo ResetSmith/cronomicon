@@ -153,8 +153,9 @@ func TestAnAssignmentIsOneCommitCarryingTheWholeSet(t *testing.T) {
 	}
 	_, err = f.assign()
 	if !errors.As(err, &refusal) || refusal.Code != "calendar_missing" || strings.Join(refusal.CatalogueCalendars, ",") != "holidays" ||
-		!strings.Contains(refusal.Message, "from Central") {
-		t.Fatalf("with the catalogue's holidays: want calendar_missing offering it from Central, got %v (%v)", err, refusal)
+		// The built-in agency by its name now (this database's is "Global").
+		!strings.Contains(refusal.Message, "Global's catalogue offers holidays") || !strings.Contains(refusal.Message, "from Global") {
+		t.Fatalf("with the catalogue's holidays: want calendar_missing offering it from the built-in agency, got %v (%v)", err, refusal)
 	}
 	f.finHasCalendar()
 

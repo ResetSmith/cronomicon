@@ -78,6 +78,9 @@ const COPY = {
 
 beforeEach(() => {
   inUse.current = OPS;
+  // An installation made since 2.5.2: the built-in agency is Central, and the
+  // screens read its name, never a literal.
+  setGlobalAgencyName("Central");
   CALENDARS = [OWN, COPY];
   CATALOGUE = [];
   pushAnswer = {};
@@ -145,7 +148,6 @@ describe("Calendars in an agency (CA-26 to CA-29)", () => {
 
   it("adds a calendar from Central under a name and an update mode of the agency's choosing", async () => {
     CATALOGUE = [{ uid: "cal-2", name: "uk-holidays", global: false, recordSuppressed: false, dayCount: 8, lastDay: "2027-12-28", hash: "h", copiedAs: [] }];
-    setGlobalAgencyName("Central"); // the button names the built-in agency by its name
     show();
     fireEvent.click(await screen.findByRole("button", { name: "Add from Central" }));
     fireEvent.click(await screen.findByRole("radio", { name: /uk-holidays/ }));

@@ -256,8 +256,9 @@ func TestComposeRejectsBadCalendarBindings(t *testing.T) {
 	if code != http.StatusUnprocessableEntity {
 		t.Errorf("global calendar in only role = %d, want 422", code)
 	}
-	if msg, _ := body["message"].(string); !strings.Contains(msg, "global") {
-		t.Errorf("422 message %q should explain the global/only incompatibility", msg)
+	// The flag is called freeze on screen since 2.5.3 (the field stays `global`).
+	if msg, _ := body["message"].(string); !strings.Contains(msg, "freeze calendar") {
+		t.Errorf("422 message %q should explain the freeze/only incompatibility", msg)
 	}
 
 	// The valid binding persists and copies down to the runtime row.

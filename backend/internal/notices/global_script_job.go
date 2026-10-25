@@ -57,8 +57,8 @@ func checkGlobalScriptJob(ctx context.Context, database *sql.DB) error {
 			AgencyID: agency.String,
 			Subject:  j.uid,
 			// 2.5.0 C11, defect 90 said a run on no scope ran as Global's; since
-			// 2.5.3 (CA-5) such a run is given one of the job's agency's scopes,
-			// where the script's repository confines it (runref.RepoScopeMismatch).
+			// 2.5.3 (CA-5) such a run is its job's agency's (execspec.ScopeAgencies),
+			// and only a run on a scope is confined (runref.RepoScopeMismatch).
 			Detail: fmt.Sprintf("The job %s is built on the script %s of %s's repository. %s runs nothing since 2.5.3, and a "+
 				"definition takes nothing from another agency's repository: its runs on this agency's scopes are refused, "+
 				"with the reason. Copy the script into this agency's repository and choose it for the job. This notice "+

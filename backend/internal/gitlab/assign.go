@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/settings"
@@ -312,8 +313,9 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 		}
 		how := "Create the calendars in " + st.targetName + " and assign again"
 		if len(offered) > 0 {
-			how = "Central's catalogue offers " + strings.Join(offered, ", ") + ": add them to " + st.targetName +
-				" from Central (Schedules → Calendars), create the others there, and assign again"
+			central := agencyid.CurrentGlobalName(st.ctx, st.r.db) // the built-in agency's name now (2.5.2 GR)
+			how = central + "'s catalogue offers " + strings.Join(offered, ", ") + ": add them to " + st.targetName +
+				" from " + central + " (Schedules → Calendars), create the others there, and assign again"
 		}
 		e := refuse(http.StatusUnprocessableEntity, "calendar_missing",
 			"%s has no calendar named %s, which the copy's schedules name: its sync would refuse them, and what names them. %s",
@@ -324,7 +326,7 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 	}
 	if len(st.unbindableCalendars) > 0 {
 		e := refuse(http.StatusUnprocessableEntity, "calendar_not_bindable",
-			"%s's calendar %s is global: it freezes the whole agency, and may be skipped but not kept to, so its sync would refuse the copy's schedules that keep to it. Make the calendar not global in %s, or change the origin's schedules, and assign again",
+			"%s's calendar %s is a freeze calendar: it freezes the whole agency, and may be skipped but not kept to, so its sync would refuse the copy's schedules that keep to it. Clear its Freeze in %s, or change the origin's schedules, and assign again",
 			st.targetName, strings.Join(st.unbindableCalendars, ", "), st.targetName)
 		e.Calendars = st.unbindableCalendars
 		return nil, e
