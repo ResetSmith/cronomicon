@@ -7,9 +7,9 @@
 # binary and ships on distroless/static (no glibc, no shell) — the smallest,
 # hardest final image we can produce.
 #
-# This image deliberately carries ONLY the agent. The ansible/terraform
+# This image deliberately carries ONLY the agent. The ansible
 # toolchains live in the FAT image (Dockerfile.runner.fat) because they are bulky
-# and only the T-a (ansible/terraform) driver needs them; an SSH-onward runner
+# and only the T-a (ansible) driver needs them; an SSH-onward runner
 # (T-b network-isolated shells) does not. Keep the slim image slim.
 #
 # Build context is the REPOSITORY ROOT, like the app image, so the root

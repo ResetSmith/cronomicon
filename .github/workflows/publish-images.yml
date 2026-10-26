@@ -5,26 +5,56 @@
 #
 #   ghcr.io/resetsmith/cronomicon             the server (backend/Dockerfile)
 #   ghcr.io/resetsmith/cronomicon-runner      slim runner (backend/Dockerfile.runner)
-#   ghcr.io/resetsmith/cronomicon-runner-fat  runner + ansible/terraform (backend/Dockerfile.runner.fat)
+#   ghcr.io/resetsmith/cronomicon-runner-fat  runner + ansible and git (backend/Dockerfile.runner.fat)
 #   ghcr.io/resetsmith/cronomicon-validate    `cronomicon validate` for CI (backend/Dockerfile, target validate; 2.5.0)
 #
 # Each is tagged X.Y.Z, X.Y and latest. This is a publish step, not a gate:
 # `make verify` and the frontend build + tests still run locally before the
 # release merge. A tag that disagrees with the version const or the top
 # CHANGELOG entry is refused before anything is built.
+#
+# Since 2.5.3 (2.5.0's C13, which first shipped in 2.5.3) every image is attested: a build-provenance attestation
+# (SLSA, Sigstore-signed through GitHub's attestations) and a signed SPDX SBOM,
+# both pushed beside the image, and a Trivy report; the docs zip is attested
+# too; and a scan-source job runs govulncheck and npm audit. The reports and
+# SBOMs go to the GitHub Release, and the counts to the run's page. They are
+# reports, not a gate (question 122). Between releases, scan-images.yml scans
+# the published images weekly and raises an alert for what a rebuild would fix.
+# A user verifies with:
+#   gh attestation verify oci://ghcr.io/resetsmith/cronomicon:X.Y.Z --repo ResetSmith/cronomicon
+#
+# TEST MODE (question 121): run it by hand from any branch with `test` ticked.
+# The tag check is skipped; the images go to ghcr.io/resetsmith/test/<image>,
+# separate packages (private on first push; delete them afterwards), tagged
+# test-<short sha>, never X.Y.Z or latest; every attestation is made and then
+# verified in the same run; the docs are built and the zip attested, but no
+# Release is made and the site is not pushed.
 name: Publish images
 
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   # Re-publish an existing tag by hand: run it with the tag selected as the ref.
+  # Or tick `test` to try the whole workflow from a branch (see TEST MODE).
   workflow_dispatch:
+    inputs:
+      test:
+        description: "Test run: push to ghcr.io/resetsmith/test/*, make no Release, push no site"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+env:
+  # inputs.test is empty on a tag push, so these are the release values there.
+  TEST: ${{ inputs.test && 'true' || 'false' }}
+  IMAGE_NS: ${{ inputs.test && 'ghcr.io/resetsmith/test' || 'ghcr.io/resetsmith' }}
+  TRIVY_VERSION: 0.76.0
+
 jobs:
   check-version:
+    if: ${{ !inputs.test }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -43,10 +73,15 @@ jobs:
 
   publish:
     needs: check-version
+    # A test run skips check-version; `always()` lets this job run after a skip
+    # but never after a failure.
+    if: ${{ always() && (needs.check-version.result == 'success' || (inputs.test && needs.check-version.result == 'skipped')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+      id-token: write # Sigstore signing of the attestations
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -59,7 +94,7 @@ jobs:
             description: Cronomicon runner agent (slim, SSH-onward, no local toolchains)
           - image: cronomicon-runner-fat
             dockerfile: backend/Dockerfile.runner.fat
-            description: Cronomicon runner agent with ansible, terraform and git
+            description: Cronomicon runner agent with ansible and git
           - image: cronomicon-validate
             dockerfile: backend/Dockerfile
             target: validate
@@ -69,7 +104,9 @@ jobs:
 
       - name: Build date
         id: date
-        run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/reports"
 
       - uses: docker/setup-buildx-action@v4
 
@@ -82,15 +119,19 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/resetsmith/${{ matrix.image }}
+          images: ${{ env.IMAGE_NS }}/${{ matrix.image }}
+          flavor: |
+            latest=${{ inputs.test && 'false' || 'auto' }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},enable=${{ !inputs.test }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !inputs.test }}
+            type=sha,prefix=test-,format=short,enable=${{ inputs.test }}
           labels: |
             org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.description=${{ matrix.description }}
 
-      - uses: docker/build-push-action@v7
+      - id: build
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -107,6 +148,139 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,scope=${{ matrix.image }},mode=max
 
+      # C13: build provenance (SLSA), signed through GitHub's attestations and
+      # pushed beside the image.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NS }}/${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      # C13: an SPDX SBOM of the pushed image (Syft), signed against its digest.
+      - name: SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.IMAGE_NS }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/reports/${{ matrix.image }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest the SBOM
+        # actions/attest in its SBOM mode (sbom-path): actions/attest-sbom is
+        # deprecated in its favour (the first test run's warning).
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NS }}/${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/reports/${{ matrix.image }}.spdx.json
+          push-to-registry: true
+
+      # C13: a Trivy report of the pushed image. A report, not a gate (question
+      # 122): the base images' CVEs would otherwise block a release on findings
+      # nobody can fix that day. Trivy comes from its release, its checksum
+      # checked against the release's checksums file.
+      - name: Trivy report
+        env:
+          IMAGE: ${{ env.IMAGE_NS }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          NAME: ${{ matrix.image }}
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        # The TOOL does not gate either: the images are pushed by now, and a
+        # failure here would skip the docs job (no Release, no reports). A
+        # download or scan that fails after three tries, or a binary whose
+        # checksum does not match (never run), leaves a "scan failed" report and
+        # a warning, and the Release goes on.
+        run: |
+          set -u
+          out="$RUNNER_TEMP/reports"
+          failed() {
+            echo "::warning::Trivy could not scan $NAME: $1. The release goes on; its report says so."
+            printf '{"scanFailed": true, "reason": "%s"}\n' "$1" > "$out/trivy-$NAME.json"
+            echo "Trivy could not scan this image at release: $1." > "$out/trivy-$NAME.txt"
+            echo "| $NAME | scan failed | | |" > "$out/counts-$NAME.md"
+            exit 0
+          }
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          tgz="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          cd "$RUNNER_TEMP" || failed "no runner temp"
+          curl -fsSL --retry 3 -O "$base/$tgz" || failed "download of Trivy ${TRIVY_VERSION}"
+          curl -fsSL --retry 3 -O "$base/trivy_${TRIVY_VERSION}_checksums.txt" || failed "download of Trivy's checksums"
+          grep " $tgz\$" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c - || failed "Trivy's checksum did not match"
+          tar xzf "$tgz" trivy || failed "unpacking Trivy"
+          scanned=""
+          for try in 1 2 3; do
+            if ./trivy image --quiet --format json --output "$out/trivy-$NAME.json" "$IMAGE"; then scanned=yes; break; fi
+            echo "Trivy failed (try $try of 3); trying again in 30 s"
+            sleep 30
+          done
+          [ -n "$scanned" ] || failed "the scan failed three times (its vulnerability database, most likely)"
+          ./trivy convert --format table --output "$out/trivy-$NAME.txt" "$out/trivy-$NAME.json" ||
+            echo "Trivy's table could not be written; see the JSON report." > "$out/trivy-$NAME.txt"
+          # One line for the release notes: counts by severity, of distinct
+          # vulnerabilities. Trivy lists a CVE once per binary package (one
+          # util-linux CVE is eight rows), so rows would overstate it.
+          jq -r --arg n "$NAME" '[.Results[]?.Vulnerabilities[]?] | unique_by(.VulnerabilityID) | map(.Severity) as $s
+            | "| \($n) | \([$s[] | select(. == "CRITICAL")] | length) | \([$s[] | select(. == "HIGH")] | length) | \([$s[] | select(. == "MEDIUM")] | length) |"' \
+            "$out/trivy-$NAME.json" > "$out/counts-$NAME.md" || echo "| $NAME | count failed | | |" > "$out/counts-$NAME.md"
+          cat "$out/counts-$NAME.md"
+
+      # Every attestation verifies before the job ends, in every mode: what a
+      # user will run, run here first.
+      - name: Verify the attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ env.IMAGE_NS }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          gh attestation verify "oci://$IMAGE" --repo "$GITHUB_REPOSITORY"
+          gh attestation verify "oci://$IMAGE" --repo "$GITHUB_REPOSITORY" --predicate-type https://spdx.dev/Document/v2.3
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports-${{ matrix.image }}
+          path: ${{ runner.temp }}/reports/
+          if-no-files-found: error
+
+  # C13: the source's own scans, as reports (question 122). govulncheck under the
+  # newest Go 1.26 (the images build with golang:1.26, which floats to it) and
+  # npm audit; neither fails the run. check-latest: without it setup-go takes
+  # the Go already cached on the runner, which can trail the images' (it
+  # scanned go1.26.9 while the images built with go1.26.10).
+  scan-source:
+    needs: check-version
+    if: ${{ always() && (needs.check-version.result == 'success' || (inputs.test && needs.check-version.result == 'skipped')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+          check-latest: true
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: govulncheck and npm audit
+        run: |
+          set -u
+          out="$RUNNER_TEMP/reports"; mkdir -p "$out"
+          (cd backend && go version && go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...) > "$out/govulncheck.txt" 2>&1 || true
+          (cd backend && go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -format json ./...) > "$out/govulncheck.json" 2>/dev/null || true
+          (cd frontend && npm ci --ignore-scripts >/dev/null && npm audit --json) > "$out/npm-audit.json" 2>/dev/null || true
+          tail -5 "$out/govulncheck.txt"
+          jq -r '.metadata.vulnerabilities // {} | "npm audit: \(.)"' "$out/npm-audit.json" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports-source
+          path: ${{ runner.temp }}/reports/
+          if-no-files-found: error
+
   # The manuals, published after every image is up. They are the same pages the
   # server embeds (frontend build → backend/web/dist), rebuilt here from the
   # tagged source so they cannot drift from it, and they use only relative asset
@@ -119,10 +293,13 @@ jobs:
   #   • and, untouched by this job, a checkout: backend/web/dist/*.html open
   #     straight from disk.
   docs:
-    needs: publish
+    needs: [publish, scan-source]
+    if: ${{ always() && needs.publish.result == 'success' && needs.scan-source.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the release
+      id-token: write # C13: the docs zip's attestation
+      attestations: write
     env:
       HAS_DOCS_DEPLOY_KEY: ${{ secrets.DOCS_DEPLOY_KEY != '' }}
     steps:
@@ -145,6 +322,7 @@ jobs:
         run: |
           set -eu
           v="${GITHUB_REF_NAME#v}"
+          if [ "$TEST" = true ]; then v="test-${GITHUB_SHA::7}"; fi
           name="cronomicon-docs-$v"
           out="$RUNNER_TEMP/$name"
           dist=backend/web/dist
@@ -161,16 +339,77 @@ jobs:
             echo "zip=$RUNNER_TEMP/$name.zip"
           } >> "$GITHUB_OUTPUT"
 
+      # C13: the docs zip is attested like the images, and verified at once.
+      - name: Attest the docs zip
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.bundle.outputs.zip }}
+
+      - name: Verify the docs zip's attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZIP: ${{ steps.bundle.outputs.zip }}
+        run: gh attestation verify "$ZIP" --repo "$GITHUB_REPOSITORY"
+
+      # C13: every image's SBOM and Trivy report and the source scans, named for
+      # the version, for the Release.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: reports-*
+          path: ${{ runner.temp }}/reports
+          merge-multiple: true
+
+      - name: Name the reports for the version
+        id: reports
+        env:
+          V: ${{ steps.bundle.outputs.version }}
+        run: |
+          set -eu
+          r="$RUNNER_TEMP/reports"; a="$RUNNER_TEMP/assets"; mkdir -p "$a"
+          for f in "$r"/*.spdx.json; do b=$(basename "$f" .spdx.json); cp "$f" "$a/$b-$V.spdx.json"; done
+          for f in "$r"/trivy-*.txt "$r"/trivy-*.json; do b=$(basename "$f"); cp "$f" "$a/${b%.*}-$V.${b##*.}"; done
+          cp "$r/govulncheck.txt" "$a/govulncheck-$V.txt"
+          cp "$r/govulncheck.json" "$a/govulncheck-$V.json"
+          cp "$r/npm-audit.json" "$a/npm-audit-$V.json"
+          cat "$r"/counts-*.md > "$RUNNER_TEMP/counts.md"
+          ls -la "$a"
+          echo "dir=$a" >> "$GITHUB_OUTPUT"
+
+      # The counts on the run's page as well, where a test run (no Release) shows them.
+      - name: The scans on the run's page
+        run: |
+          set -u
+          r="$RUNNER_TEMP/reports"
+          {
+            echo "### Vulnerabilities (distinct, by severity)"
+            echo
+            echo "| Image | Critical | High | Medium |"
+            echo "|---|---|---|---|"
+            cat "$RUNNER_TEMP/counts.md"
+            echo
+            echo "govulncheck: $(grep -m1 '^Your code is affected' "$r/govulncheck.txt" || echo 'no result; see govulncheck.txt')"
+            echo
+            echo "npm audit: $(jq -er '.metadata.vulnerabilities.total // empty | "\(.) vulnerabilities"' "$r/npm-audit.json" 2>/dev/null || echo 'no result; see npm-audit.json')"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: A test run makes no Release
+        if: env.TEST == 'true'
+        run: |
+          echo "Test run: the images, SBOMs, reports and every attestation verified; no Release, no site push."
+
       - name: GitHub Release with notes and the docs zip
+        if: env.TEST != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           V: ${{ steps.bundle.outputs.version }}
           ZIP: ${{ steps.bundle.outputs.zip }}
+          ASSETS: ${{ steps.reports.outputs.dir }}
         run: |
           set -eu
           notes="$RUNNER_TEMP/notes.md"
           # This version's CHANGELOG section, without its own heading.
           awk -v h="## [$V]" 'index($0, "## [") == 1 { if (p) exit; if (index($0, h) == 1) { p = 1; next } } p' CHANGELOG.md > "$notes"
+          counts=$(cat "$RUNNER_TEMP/counts.md")
           cat >> "$notes" <<NOTES
 
           ## Images
@@ -186,20 +425,42 @@ jobs:
 
           Online at https://cronomicon.io/docs/. \`cronomicon-docs-$V.zip\` below has
           the same manuals for offline reading: unzip it and open \`administrator-manual.html\`.
+
+          ## Verify this release
+
+          Every image carries a build-provenance attestation and a signed SBOM, made
+          by this repository's release workflow from this tag's commit:
+
+          \`\`\`bash
+          gh attestation verify oci://ghcr.io/resetsmith/cronomicon:$V --repo ResetSmith/cronomicon
+          gh attestation verify oci://ghcr.io/resetsmith/cronomicon:$V --repo ResetSmith/cronomicon \\
+            --predicate-type https://spdx.dev/Document/v2.3
+          gh attestation verify cronomicon-docs-$V.zip --repo ResetSmith/cronomicon
+          \`\`\`
+
+          The same for \`cronomicon-runner\`, \`cronomicon-runner-fat\` and \`cronomicon-validate\`.
+          Each image's SBOM (\`<image>-$V.spdx.json\`) and Trivy report (\`trivy-<image>-$V.txt\`,
+          \`.json\`), and the source's \`govulncheck-$V.txt\` and \`npm-audit-$V.json\`, are attached
+          below. The reports are as of the release; scan again for what was found since. The
+          counts are of distinct vulnerabilities: one CVE in several packages counts once.
+
+          | Image | Critical | High | Medium |
+          |---|---|---|---|
+          $counts
           NOTES
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release edit "$GITHUB_REF_NAME" --notes-file "$notes"
-            gh release upload "$GITHUB_REF_NAME" "$ZIP" --clobber
+            gh release upload "$GITHUB_REF_NAME" "$ZIP" "$ASSETS"/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --title "Cronomicon $V" --notes-file "$notes" "$ZIP"
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "Cronomicon $V" --notes-file "$notes" "$ZIP" "$ASSETS"/*
           fi
 
       - name: No deploy key for cronomicon.io
-        if: env.HAS_DOCS_DEPLOY_KEY != 'true'
+        if: env.TEST != 'true' && env.HAS_DOCS_DEPLOY_KEY != 'true'
         run: echo "::warning::DOCS_DEPLOY_KEY is not set; the manuals were not published to cronomicon.io/docs/"
 
       - name: Check out the site
-        if: env.HAS_DOCS_DEPLOY_KEY == 'true'
+        if: env.TEST != 'true' && env.HAS_DOCS_DEPLOY_KEY == 'true'
         uses: actions/checkout@v7
         with:
           repository: ResetSmith/cronomicon.io
@@ -207,7 +468,7 @@ jobs:
           path: site
 
       - name: Publish to cronomicon.io/docs/
-        if: env.HAS_DOCS_DEPLOY_KEY == 'true'
+        if: env.TEST != 'true' && env.HAS_DOCS_DEPLOY_KEY == 'true'
         env:
           V: ${{ steps.bundle.outputs.version }}
           DIR: ${{ steps.bundle.outputs.dir }}

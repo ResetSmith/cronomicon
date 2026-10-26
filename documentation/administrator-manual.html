@@ -6812,6 +6812,13 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                     (Compose, systemd, Kubernetes) is your choice. The steps below describe a Compose layout that matches the topology above: a
                     reverse proxy that terminates TLS and does forward-auth against an identity provider, with
                     the app on an internal network and its port never published.</p>
+                <p><strong>Verify the image first</strong> (since 2.5.3). Every published image carries a
+                    build-provenance attestation and a signed SBOM, made by the project's release workflow from the
+                    tag's commit; <code>gh attestation verify oci://ghcr.io/resetsmith/cronomicon:&lt;version&gt; --repo
+                    ResetSmith/cronomicon</code> checks the first, and the same with <code>--predicate-type
+                    https://spdx.dev/Document/v2.3</code> the second. The GitHub Release for the tag carries each image's
+                    SBOM and Trivy report and the source's <code>govulncheck</code> and <code>npm audit</code> reports;
+                    they are as of the release, so scan again before you deploy an older one.</p>
                 <ol class="steps">
                     <li>Give the proxy its certificates, or configure ACME (the protocol that gets certificates
                         automatically). Set the real hostnames in the Compose file and in the identity-provider
