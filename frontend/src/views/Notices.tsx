@@ -68,6 +68,8 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   leftover_executor_key: { title: "Jobs in Git still declare an executor, which is ignored", to: "/scopes", toLabel: "Scopes" },
   project_job_no_checkout_agent: { title: "A job on a project has no agent that allows checkout", to: "/runners", toLabel: "Runners" },
   job_script_gone: { title: "A job's script was removed from Git", to: "/jobs", toLabel: "Jobs" },
+  // 2.5.3 CA7: every job names a scope; one made before with none is listed.
+  job_without_scope: { title: "Jobs built in the app have no scope", to: "/jobs", toLabel: "Jobs" },
   // 2.5.3 (CA-17): one finding per kind of row Central still holds; its way
   // out is on the page of that kind (see HELD).
   central_holds_work: { title: "The administration still holds work that no longer runs" },

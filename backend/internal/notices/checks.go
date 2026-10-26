@@ -59,6 +59,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindLeftoverExecutorKey, checkLeftoverExecutorKey},
 		{KindProjectJobNoCheckoutAgent, checkProjectJobs},
 		{KindJobScriptGone, checkJobScriptGone},
+		{KindJobWithoutScope, checkJobWithoutScope},
 		{KindGrantGroupUnlisted, checkGrantGroupUnlisted},
 	} {
 		if err := c.run(ctx, database); err != nil {
