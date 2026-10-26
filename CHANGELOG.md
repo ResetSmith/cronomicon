@@ -81,6 +81,18 @@ Then, because Central runs nothing from this release on:
   `central_runs_nothing`, also for an agency's administrator who names Central
   (until now 403). A global administrator's Vault-backed secret or key is made
   in an agency, inside that agency's Vault paths.
+- **Every job names a scope.** The Job Composer has no "No scope" option, and
+  the API refuses a job with an empty scope (`""`) as it refused an omitted
+  one, on create and on edit, for every caller (422 `validation_failed`). A
+  job built in the app with no scope before 2.5.3 stays as it was and is
+  listed per agency in the Notices inbox (*Jobs built in the app have no
+  scope*). Its scheduled and automatic starts are refused when its script is
+  in its agency's repository, as they already were; a person may still run it
+  on one of the agency's scopes from the Run dialog. A global administrator
+  gives each a scope (Jobs → Edit): for work on the runner itself, a scope
+  whose one host is the runner (`runner ansible_host=127.0.0.1
+  ansible_connection=local`); for a job that pins its target host, a scope
+  that lists no hosts.
 - `cronomicon validate` without `-agency` refuses a job with no scope. The CI
   template (`deploy/ci-validate-template.yml`) now defaults
   `CRONOMICON_REPO_KIND` to `agency`; a pipeline copied from it earlier still
@@ -150,7 +162,8 @@ Then, because Central runs nothing from this release on:
 - Notices: *The administration still holds work that no longer runs*, *The
   local runner belongs to no agency and is off*, *Environment settings that no
   longer apply are set*, *A calendar from Central has an update*, *A calendar
-  from Central is no longer offered*.
+  from Central is no longer offered*, and *Jobs built in the app have no
+  scope* (one per agency, `job_without_scope`).
 
 ### Changed
 
@@ -162,14 +175,17 @@ Then, because Central runs nothing from this release on:
 - Nothing offers Central when something is created or moved: the agency
   pickers, SSH Targets, a registration token, the repair moves, a scope's
   clone.
-- A job with no scope is its own agency's, and so are its runs: any runner
-  that serves the agency may take one (until now they were the built-in
-  agency's; the composer's "each run is given one of the agency's scopes" was
-  never so, and is corrected). A workflow of an agency that runs one does not
-  span agencies, so saving it, or making a job it runs scopeless, is no longer
-  refused with `409 crosses_agencies`; and the notices about shell jobs with no
-  runner, and about requirements no agent advertises, look at that agency's
-  runners (the first no longer files one under Central, which runs nothing).
+- Every job names one of its agency's scopes: the composer and the API no
+  longer make a job with no scope (Upgrading, above), matching an agency's
+  repository and `cronomicon validate`. A job with no scope made before is its
+  own agency's, and so are its runs: any runner that serves the agency may take
+  one (until now they were the built-in agency's; the composer's "each run is
+  given one of the agency's scopes" was never so, and is corrected). A
+  workflow of an agency that runs one does not span agencies, so saving it is
+  no longer refused with `409 crosses_agencies`; and the notices about shell
+  jobs with no runner, and about requirements no agent advertises, look at
+  that agency's runners (the first no longer files one under Central, which
+  runs nothing).
 - The schedule entry's calendars are called Forbid and Allow on screen (the
   YAML keys stay `skipCalendars` and `onlyCalendars`).
 - The validate and fat images apply Debian's published security fixes

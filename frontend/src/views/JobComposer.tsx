@@ -197,20 +197,12 @@ export function JobComposer() {
   // EV-6 parity — key-binding writes go through the reference-bindings PUT, which
   // is gated on ManageEnvVars (same as JobKeyField in job detail).
   const [canManageEnv, setCanManageEnv] = useState(false);
-  // AF-2 — may this caller author an ALL-scoped job? Only an unrestricted compose
-  // grant may, because a scheduled fire of an unbound job runs scope-unchecked
-  // (RB-30). A departmental composer is offered named scopes only, rather than
-  // being shown an option the server will refuse.
-  const [canComposeUnbound, setCanComposeUnbound] = useState(false);
-  // What "No scope" means, said of the agency the job is created in (2.5.0 C11,
-  // defect 90: it said "visible to every agency", and even the 2.5.0 hint was
-  // true only in Global): the agency's job, a scope of its given to each run.
-  // Central composes nothing since 2.5.3 (CA-1, CA-14): the page is not offered
-  // there, and no job is ever Central's.
+  // Every job names one of its agency's scopes (2.5.3, CA7). Until 2.5.3 an
+  // unrestricted composer was offered "No scope" (AF-2, composeUnbound); the
+  // shapes it was used for are scopes now, and this says which.
+  const scopeShapes =
+    "for work on the runner itself, a scope whose one host is the runner (ansible_connection=local); for a job that pins its target host, a scope that lists no hosts";
   const inAgency = useAgencyOptional();
-  const noScopeMeans = inAgency
-    ? `the job is ${inAgency.agencyName}'s, and so are its runs: any runner that serves ${inAgency.agencyName} may take one`
-    : "the job is its agency's, and so are its runs: any runner that serves that agency may take one";
   // Reactions were, from GC (v2.2.2) until 2.4.2, the one part of this form the
   // server took only from a compose administrator; since question 61 they are
   // the job's agency's, like the job.
@@ -218,7 +210,6 @@ export function JobComposer() {
     fetchCapabilities().then((caps) => {
       setCanCompose(caps.compose);
       setCanManageEnv(caps.manageEnvVars);
-      setCanComposeUnbound(caps.composeUnbound);
     });
   }, []);
 
@@ -688,11 +679,12 @@ export function JobComposer() {
     if (new Set(inlineNames).size !== inlineNames.length) return setErr("Inline schedule names must be unique.");
     const jobCalErr = bindingError({ skipCalendars: preserved.forbidCalendars, onlyCalendars: preserved.allowCalendars }, "job");
     if (jobCalErr) return setErr(`Calendars: ${jobCalErr}`);
-    // AF-1 — the choice must be made, and only silence is refused. Client-side so
-    // the author is told in the form rather than by a 422 after a full round-trip;
-    // the server enforces the same rule for every other client.
-    if (scope == null) {
-      return setErr(`Pick a scope — it decides where this job runs. Or pick "No scope": ${noScopeMeans}.`);
+    // AF-1, since 2.5.3 (CA7) — every job names a scope: silence and "" (a job
+    // with no scope from before) are both refused. Client-side so the author is
+    // told in the form rather than by a 422 after a full round-trip; the server
+    // enforces the same rule for every other client.
+    if (scope == null || scope.trim() === "") {
+      return setErr(`Pick a scope — it decides where this job runs. Every job names one of its agency's scopes: ${scopeShapes}.`);
     }
     setBusy(true);
     const body: Record<string, unknown> = {
@@ -811,7 +803,8 @@ export function JobComposer() {
     if (isEdit) return;
     setName("");
     setScriptRef("");
-    setScope("");
+    // Not chosen yet, not "" (a job with no scope; CA7).
+    setScope(null);
     setTargetHost("");
     setSshUser("");
     setSshCredential("");
@@ -932,30 +925,17 @@ export function JobComposer() {
       <div style={{ display: "flex", gap: 12 }}>
         <Field label="Scope" style={{ flex: 1 }}>
           {/* JC22/JC23 — searchable, creatable scope combobox (replaces the select/manual toggle).
-              AF-1 — with an explicit All option, because the scope is what decides
-              which agencies see this job and that must be answered, not defaulted. */}
-          <ScopePicker
-            value={scope}
-            onChange={setScope}
-            suggestions={scopeSuggestions}
-            style={input()}
-            allowAll={canComposeUnbound}
-          />
+              Every job names one of its agency's scopes (2.5.3, CA7). */}
+          <ScopePicker value={scope} onChange={setScope} suggestions={scopeSuggestions} style={input()} />
           {scope == null && (
             <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
-              Decides where this job runs.{" "}
-              {canComposeUnbound ? (
-                <>
-                  <strong>No scope</strong>: {noScopeMeans}.
-                </>
-              ) : (
-                <>Pick one of the scopes your role is granted.</>
-              )}
+              Decides where this job runs: {scopeShapes}.
             </div>
           )}
           {scope === "" && (
-            <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
-              No scope: {noScopeMeans}.
+            <div style={{ fontSize: c.fontXs, color: c.warning, marginTop: 4 }}>
+              ⚠ This job has no scope (it was made before 2.5.3). Every job names one of its agency's scopes now, and
+              this one is saved only with one: {scopeShapes}.
             </div>
           )}
           {/* AF-Q3 — advisory, never blocking: a scope that maps to no agency is
