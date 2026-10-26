@@ -20,6 +20,7 @@ import { LocalRunnerSection } from "./settings/LocalRunner";
 import { BackupsSection } from "./settings/Backups";
 import { AgencyVaultSection } from "./settings/AgencyVault";
 import { TimezoneAlert } from "./settings/TimezoneAlert";
+import { CentralGate } from "../components/CentralRunsNothing";
 
 // Settings — two groups since v2.3.0 (LR-86).
 //
@@ -193,7 +194,13 @@ export function Settings() {
           {section === "repositories" && <RepositoriesSection isGlobal={isGlobal} />}
           {section === "vault" && <VaultSection canWrite={isGlobal} />}
           {section === "observability" && <ObservabilitySection canWrite={isGlobal} />}
-          {section === "targets" && <SshTargetsSection canWrite={isGlobal} />}
+          {/* 2.5.3 CA-12: Central holds no host record or bastion; while it still
+              holds some from before, they are listed for their way out. */}
+          {section === "targets" && (
+            <CentralGate holds={["host", "bastion"]}>
+              <SshTargetsSection canWrite={isGlobal} />
+            </CentralGate>
+          )}
           {section === "alerts" && <AlertsSection isGlobal={isGlobal} />}
           {section === "agencyvault" && <AgencyVaultSection isGlobal={isGlobal} />}
           {section === "logstorage" && <LogStorageSection canWrite={isGlobal} />}

@@ -1459,3 +1459,29 @@ describe("RunDialog — paused job", () => {
     expect(onRun).not.toHaveBeenCalled();
   });
 });
+
+// 2.5.3 CA-32: a job's own calendars gate every automatic start, not a person's
+// Run. The dialog says so when today is one they stop (calendarToday, from the
+// detail fetch), and the Run stays offered.
+describe("RunDialog — the job's own calendars (2.5.3 CA-32)", () => {
+  it("says today is forbidden, naming the calendar and the day's label, and still runs", async () => {
+    detailResponse = { ...makeJob([]), calendarToday: { day: "2026-12-25", polarity: "skip", calendar: "holidays", label: "Christmas" } };
+    const { q, runBtn } = renderDialog(makeJob([]));
+    await vi.waitFor(() => expect(q.getByTestId("today-forbidden")).toBeTruthy());
+    expect(q.getByTestId("today-forbidden").textContent).toMatch(/^Today is forbidden by holidays \(Christmas\)\. Its schedules and triggers do not start it today; these calendars do not stop a Run from here\./);
+    expect(runBtn().disabled).toBe(false);
+  });
+
+  it("says today is not in the Allow calendars, naming them all", async () => {
+    detailResponse = { ...makeJob([]), allowCalendars: ["weekdays", "month-end"], calendarToday: { day: "2026-10-24", polarity: "only", calendar: "weekdays" } };
+    const { q } = renderDialog(makeJob([]));
+    await vi.waitFor(() => expect(q.getByTestId("today-forbidden").textContent).toMatch(/^Today is not in weekdays, month-end\./));
+  });
+
+  it("says nothing on a day the job's calendars allow", async () => {
+    detailResponse = { ...makeJob([]), forbidCalendars: ["holidays"] };
+    const { q } = renderDialog(makeJob([]));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(q.queryByTestId("today-forbidden")).toBeNull();
+  });
+});

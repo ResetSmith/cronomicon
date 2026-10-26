@@ -242,7 +242,8 @@ describe("SSH Targets — the caller's agencies are unknown", () => {
 });
 
 describe("SSH Targets — a global administrator", () => {
-  it("has every control enabled, and may create a record for Global or any agency", async () => {
+  // 2.5.3 CA-1, CA-14: Central owns no record; a global administrator names an agency.
+  it("has every control enabled, and may create a record for any agency, never Global", async () => {
     await open(true);
     for (const name of ["+ Add Host", "+ Add Bastion"]) {
       const b = button(screen, name);
@@ -256,8 +257,8 @@ describe("SSH Targets — a global administrator", () => {
 
     fireEvent.click(button(screen, "+ Add Host"));
     const owner = (await waitFor(() => screen.getByLabelText("Agency that owns this host record"))) as HTMLSelectElement;
-    expect(Array.from(owner.options).map((o) => o.textContent)).toEqual(["Global", "Finance", "Tax"]);
-    expect(owner.value).toBe("global");
+    expect(Array.from(owner.options).map((o) => o.textContent)).toEqual(["Owner…", "Finance", "Tax"]);
+    expect(owner.value).toBe("");
     fireEvent.change(owner, { target: { value: "ag-tax" } });
     fireEvent.change(screen.getByPlaceholderText("Hostname"), { target: { value: "new-host" } });
     fireEvent.click(button(screen, "Add"));

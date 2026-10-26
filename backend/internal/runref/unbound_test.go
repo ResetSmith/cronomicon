@@ -149,7 +149,7 @@ func TestUnboundRefusalNamesTheReference(t *testing.T) {
 		t.Errorf("no blockers = %q, want empty", got)
 	}
 	one := UnboundRefusal([]Binding{{Kind: KindSecret, Name: "DEPT_PASSWORD"}})
-	for _, want := range []string{"DEPT_PASSWORD", "bind a scope"} {
+	for _, want := range []string{"DEPT_PASSWORD", "create it in the job's agency"} {
 		if !strings.Contains(one, want) {
 			t.Errorf("refusal %q missing %q", one, want)
 		}

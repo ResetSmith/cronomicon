@@ -5,6 +5,9 @@ import { agenciesFor, useMyAccess } from "../../api/access";
 import { c } from "../../theme";
 import { Btn, Card, SettingRow, Toggle, csrfHeader, errMsg, fmtDateTime, inputStyle } from "./ui";
 import { globalAgencyName } from "../../globalName";
+import { useInCentral } from "../../components/CentralRunsNothing";
+import { RepairDialog, type RepairBody } from "../../components/RepairDialog";
+import { useAgencyOptional } from "../../agency";
 
 type GitRepo = components["schemas"]["GitRepo"];
 type GitlabConfig = components["schemas"]["GitlabConfig"];
@@ -29,6 +32,10 @@ type Agency = { id: string; name: string };
 const wide = (): React.CSSProperties => ({ ...inputStyle(), width: 300 });
 
 export function RepositoriesSection({ isGlobal }: { isGlobal: boolean }) {
+  // 2.5.3 CA-15: Central has no repository (CA-6). Working in it, a global
+  // administrator sees the allowed hosts and, while one is left from before,
+  // Central's old connection with the way to remove it (question 203).
+  const inCentral = useInCentral();
   const access = useMyAccess();
   const [repos, setRepos] = useState<GitRepo[] | null>(null);
   const [agencies, setAgencies] = useState<Agency[]>([]);
@@ -51,11 +58,27 @@ export function RepositoriesSection({ isGlobal }: { isGlobal: boolean }) {
   // The agencies the caller may connect a repository for and has none: from
   // before 2.4.0 (agency_no_repository says which). A global administrator,
   // every agency; anyone else, those they administer.
-  const mine = isGlobal ? agencies : agenciesFor(access ?? null, "configureApp");
+  // Never Central, which has no repository since 2.5.3 (CA-6, CA-15); and,
+  // working in an agency, that agency alone (question 215): the list is
+  // narrowed to it, so another agency's repository would read as missing.
+  const here = useAgencyOptional();
+  const inAgency = here && !here.onOverview ? here.agency : null;
+  const mine = (isGlobal ? agencies : agenciesFor(access ?? null, "configureApp")).filter(
+    (a) => a.id !== "global" && (!inAgency || a.id === inAgency),
+  );
   // An agency with a row (Global's has one even unconfigured) is edited on
   // that row's card; only one with none gets a Connect card (from R8's review).
   const connected = new Set((repos ?? []).map((r) => r.agencyId));
   const unconnected = mine.filter((a) => !connected.has(a.id));
+
+  if (inCentral) {
+    return (
+      <div>
+        {isGlobal && <LeftoverRepoCard />}
+        {isGlobal && <AllowedHostsCard />}
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -282,6 +305,93 @@ function RepoCard({ repo, onSaved, unconnected }: { repo: GitRepo; onSaved: () =
   );
 }
 
+// Central's repository connection left from before 2.5.3 (CA-6, CA-17,
+// question 203): it no longer syncs, and what it supplied runs nowhere. A
+// global administrator removes it here (a repair, with a reason) and connects
+// the same URL to the agency whose work it is; sync then brings its
+// definitions in as that agency's. Shown only while there is one.
+function LeftoverRepoCard() {
+  const [repo, setRepo] = useState<GitRepo | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | undefined>(undefined);
+  const [removed, setRemoved] = useState(false);
+  useEffect(() => {
+    api.GET("/agencies/{agencyId}/git-repo", { params: { path: { agencyId: "global" } } }).then(({ data }) => {
+      const r = data as (GitRepo & { leftover?: boolean }) | undefined;
+      setRepo(r?.leftover ? r : null);
+    });
+  }, []);
+  async function remove(rep: RepairBody) {
+    setBusy(true);
+    setErr(undefined);
+    const { error } = await api.DELETE("/agencies/{agencyId}/git-repo", {
+      params: { path: { agencyId: "global" }, header: csrfHeader },
+      body: rep as never,
+    });
+    setBusy(false);
+    if (error) {
+      setErr(errMsg(error));
+      return;
+    }
+    setAsking(false);
+    setRemoved(true);
+    setRepo(null);
+  }
+  if (removed) {
+    return (
+      <Card title={`${globalAgencyName()}'s repository`}>
+        <div role="status" style={{ fontSize: c.fontSm, color: c.success }}>
+          Removed. Connect its URL to the agency whose work it is, under that agency's Repositories.
+        </div>
+      </Card>
+    );
+  }
+  if (!repo) return null;
+  const s = repo.supplies;
+  return (
+    <Card title={`${globalAgencyName()}'s repository, left from before 2.5.3`}>
+      <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.7 }}>
+        <div>
+          <code style={{ fontFamily: c.mono }}>{repo.repoUrl || "(no URL)"}</code> · branch <strong>{repo.writeBranch || "main"}</strong>
+        </div>
+        <div>
+          Last sync: {repo.lastStatus ? `${repo.lastStatus}${repo.lastSyncedAt ? `, ${fmtDateTime(repo.lastSyncedAt)}` : ""}` : "never"} · supplied{" "}
+          {s.jobs} jobs, {s.workflows} workflows, {s.scripts} scripts, {s.schedules} schedules, {s.scopes} scopes
+        </div>
+        <div role="note" style={{ color: c.warning, marginTop: 6 }}>
+          {globalAgencyName()} runs nothing, so this repository no longer syncs and what it supplied runs nowhere. Remove it, then
+          connect the same URL and branch to the agency whose work it is: its next sync brings the definitions in as that
+          agency's, except a job with no scope, which an agency's sync refuses: give each one of that agency's scopes first
+          (<code style={{ fontFamily: c.mono }}>cronomicon validate -agency</code> on a checkout lists them).
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <Btn small onClick={() => setAsking(true)}>Remove the leftover repository</Btn>
+        </div>
+      </div>
+      {asking && (
+        <RepairDialog
+          title="Remove the leftover repository"
+          message={
+            <>
+              This removes {globalAgencyName()}'s connection to <code style={{ fontFamily: c.mono }}>{repo.repoUrl}</code> and what it
+              synced. The repository itself is not touched.
+            </>
+          }
+          confirmLabel="Remove"
+          busy={busy}
+          error={err}
+          onConfirm={remove}
+          onCancel={() => {
+            setAsking(false);
+            setErr(undefined);
+          }}
+        />
+      )}
+    </Card>
+  );
+}
+
 // The hosts an agency's repository may be on (GR-10): a global
 // administrator's, in the general settings.
 function AllowedHostsCard() {
@@ -304,7 +414,7 @@ function AllowedHostsCard() {
   return (
     <Card title="Allowed hosts" action={<Btn small onClick={save} disabled={!general}>Save</Btn>}>
       <div style={{ fontSize: c.fontSm, color: c.textSec, marginBottom: 8 }}>
-        The hosts an agency's repository may be on, one per line (Global's own is exempt). A connection to any other is refused.
+        The hosts an agency's repository may be on, one per line. A connection to any other is refused.
       </div>
       <textarea aria-label="Allowed hosts" value={text} onChange={(e) => setText(e.target.value)} rows={4} style={{ ...inputStyle(), width: 300, fontFamily: c.mono }} />
       {msg && <div role={msg.ok ? "status" : "alert"} style={{ color: msg.ok ? c.success : c.danger }}>{msg.text}</div>}

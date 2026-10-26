@@ -125,8 +125,10 @@ func (s *Server) createScheduleDef(w http.ResponseWriter, r *http.Request) {
 	} else {
 		in.OwnerAgency = a
 	}
-	if in.OwnerAgency == "" {
-		in.OwnerAgency = agencyid.Global
+	if in.OwnerAgency == "" || in.OwnerAgency == agencyid.Global {
+		// 2.5.3 (CA-4): a schedule is an agency's; none is Central's.
+		failCentralRunsNothing(w, "schedule")
+		return
 	}
 	var known int
 	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, in.OwnerAgency).Scan(&known); err != nil {

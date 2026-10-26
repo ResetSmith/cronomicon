@@ -41,13 +41,13 @@ func TestC11_AReactionToAnUpstreamTheTargetLacksIsRefused(t *testing.T) {
 	}
 }
 
-// It keeps to holidays, which Global has (the fixture's calendar, not global).
+// It keeps to holidays, which the origin agency has (the fixture's calendar, not global).
 const keepsToSchedule = "apiVersion: cronomicon.io/v1\nkind: Schedule\nmetadata:\n  name: nightly-cron\nspec:\n  cron: '0 2 * * *'\n  onlyCalendars:\n    - holidays\n"
 
 func TestC11_KeepingToACalendarTheTargetHasAsGlobalIsRefused(t *testing.T) {
 	f := newAssignFixture(t, map[string]string{"schedules/nightly-cron.yaml": keepsToSchedule}, nil)
 	// Finance's holidays freezes its whole agency.
-	if _, err := f.global.db.Exec(`INSERT INTO calendars (source, name, global, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 1, 't', 't', 'ag-fin')`); err != nil {
+	if _, err := f.origin.db.Exec(`INSERT INTO calendars (source, name, global, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 1, 't', 't', 'ag-fin')`); err != nil {
 		t.Fatal(err)
 	}
 	before := f.head()
@@ -61,7 +61,7 @@ func TestC11_KeepingToACalendarTheTargetHasAsGlobalIsRefused(t *testing.T) {
 		t.Fatal("a refused assignment pushed")
 	}
 
-	if _, err := f.global.db.Exec(`UPDATE calendars SET global = 0 WHERE name = 'holidays' AND owner_agency = 'ag-fin'`); err != nil {
+	if _, err := f.origin.db.Exec(`UPDATE calendars SET global = 0 WHERE name = 'holidays' AND owner_agency = 'ag-fin'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.assign(); err != nil {

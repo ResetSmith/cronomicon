@@ -85,24 +85,24 @@ func TestI1_AnAgencysJobOnGlobalsScriptIsReported(t *testing.T) {
 // An agency the local runner served until 2.4.0 is told its shell jobs wait
 // for an agent of its own (§0a, IN-3), until one serves it.
 func TestI1_AnAgencyTheLocalRunnerServedIsTold(t *testing.T) {
+	// Retired in 2.5.3 (CA-11): the local runner belongs to whichever agency a
+	// global administrator gives it (CA-8), so "it serves Global only now" is
+	// no longer so. With the record of 1380 present, nothing is raised, and a
+	// notice left open from before is cleared at the first check.
 	pool := open(t)
 	mustExec(t, pool, `INSERT INTO agencies (id, name, created_at) VALUES ('ag-tax', 'Tax', 't'), ('ag-fin', 'Finance', 't')`)
 	mustExec(t, pool, `INSERT INTO settings (key, value) VALUES (?, '["ag-tax","ag-gone"]')`, notices.LocalRunnerServedKey)
-	check := func() map[string]notices.Notice {
-		t.Helper()
-		if err := notices.RunChecks(context.Background(), pool); err != nil {
-			t.Fatalf("checks: %v", err)
-		}
-		return openOf(t, pool, notices.KindLocalRunnerServed)
+	if err := notices.Reconcile(context.Background(), pool, notices.KindLocalRunnerServed,
+		[]notices.Finding{{AgencyID: "ag-tax", Subject: "ag-tax", Detail: "left open by an earlier version"}}); err != nil {
+		t.Fatal(err)
 	}
-	got := check()
-	if n, ok := got["ag-tax"]; len(got) != 1 || !ok || n.AgencyID != "ag-tax" || !strings.Contains(n.Detail, "Tax") {
-		t.Fatalf("open notices = %v; want one for Tax, filed under Tax", got)
+	if got := openOf(t, pool, notices.KindLocalRunnerServed); len(got) != 1 {
+		t.Fatalf("fixture: %d open, want the one left from before", len(got))
 	}
-	mustExec(t, pool, `INSERT INTO runners (id, name, kind, status, os, capabilities, load, max_concurrent, version, registered_at, created_at, owner_agency)
-	                   VALUES ('r-tax', 'tax-agent', 'agent', 'online', 'Linux', '["bash"]', 0, 1, '1', 't', 't', 'ag-tax')`)
-	mustExec(t, pool, `INSERT OR IGNORE INTO runner_agencies (runner_id, agency_id) VALUES ('r-tax', 'ag-tax')`)
-	if got := check(); len(got) != 0 {
-		t.Errorf("after Tax got an agent of its own: %v", got)
+	if err := notices.RunChecks(context.Background(), pool); err != nil {
+		t.Fatalf("checks: %v", err)
+	}
+	if got := openOf(t, pool, notices.KindLocalRunnerServed); len(got) != 0 {
+		t.Errorf("open notices after the check = %v; want none, the notice being retired", got)
 	}
 }

@@ -36,7 +36,14 @@ func TestWorkflowComposeStepIdentity(t *testing.T) {
 	seed(`INSERT INTO jobs(uid, name, source, run_type, command, content_hash, synced_at)
 	      VALUES('uid-build','build','cronomicon','bash','make','sha256:c','t')`)
 
+	// The departments are ordinary agencies (2.5.3: the built-in agency
+	// composes nothing): the work agency, with deploy's first twin and build,
+	// in which the administrator works, and a second.
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	seed(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-dss', 'DSS', 't')`)
+	seed(`UPDATE jobs SET owner_agency = ? WHERE uid IN ('uid-deploy-fin', 'uid-build')`, workAgency)
+	seed(`UPDATE jobs SET owner_agency = 'ag-dss' WHERE uid = 'uid-deploy-dss'`)
 	post := func(body any) *http.Response {
 		t.Helper()
 		b, _ := json.Marshal(body)

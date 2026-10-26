@@ -34,7 +34,9 @@ func TestAPublishRefusedForUnsyncedCommitsStartsASync(t *testing.T) {
 	h := NewHandlers(svc)
 	publish := func(base string) (int, map[string]any) {
 		t.Helper()
-		body := `{"filePath":"jobs/from-the-app.yaml","content":` + string(mustJSON(t, jobYAML("from-the-app"))) + `}`
+		// It names the repository: a publish that names none was Global's, which
+		// has no repository since 2.5.3 (CA-6).
+		body := `{"repoId":"` + fixtureRepo + `","filePath":"jobs/from-the-app.yaml","content":` + string(mustJSON(t, grScopedJob("from-the-app", fixtureScope))) + `}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/schedules/publish", strings.NewReader(body))
 		req.Header.Set("If-Match", base)
 		rec := httptest.NewRecorder()

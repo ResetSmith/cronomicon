@@ -29,7 +29,7 @@ export function AgencyVaultSection({ isGlobal }: { isGlobal: boolean }) {
     return (
       <Card title="Vault">
         <div role="note" style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-          Global's Vault is the installation's, used by Global and by every agency without a Vault of its own.{" "}
+          {agencyName}'s Vault is the installation's, used by every agency without a Vault of its own.{" "}
           {isGlobal ? (
             <a href="/settings?tab=vault" style={{ color: c.accent }}>
               Settings → Vault (Installation)

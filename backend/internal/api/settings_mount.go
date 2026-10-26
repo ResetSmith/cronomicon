@@ -982,7 +982,7 @@ func (s *Server) requireVaultPath(w http.ResponseWriter, r *http.Request, id aut
 			return true
 		}
 		s.denyEntityAgency(w, r, id, perm, auth.AllScopes,
-			"a Vault-backed "+label+" that is Global's may name any path on the installation's one Vault "+
+			"a Vault-backed "+label+" of "+agencyid.CurrentGlobalName(r.Context(), s.db)+"'s may name any path on the installation's one Vault "+
 				"connection, so only a global administrator may create, edit or migrate one")
 		return false
 	}
@@ -2068,7 +2068,8 @@ func validateAlertRuleInput(inp settings.AlertRuleInput) (code, msg string) {
 // (2.5.1 SG-17).
 func notJobTrigger(trigger string) bool {
 	switch strings.ToLower(trigger) {
-	case notify.TriggerSecretRevealed, notify.TriggerSecretChanged, notify.TriggerBackupKeyChanged:
+	case notify.TriggerSecretRevealed, notify.TriggerSecretChanged, notify.TriggerBackupKeyChanged,
+		notify.TriggerCalendarUpdateAvailable, notify.TriggerCalendarUpdated: // 2.5.3 CA-28
 		return true
 	}
 	return false
@@ -2080,7 +2081,7 @@ func notJobTrigger(trigger string) bool {
 func alertTriggerFitsOwner(w http.ResponseWriter, inp settings.AlertRuleInput, owner string) bool {
 	if strings.EqualFold(inp.Trigger, notify.TriggerBackupKeyChanged) && agencyOrGlobal(owner) != agencyid.Global {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "trigger_global_only",
-			"backup-key-changed is about the installation's backup keys: only a rule of Global's hears it")
+			"backup-key-changed is about the installation's backup keys: only a rule of the built-in administration agency hears it")
 		return false
 	}
 	return true

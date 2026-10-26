@@ -2,97 +2,121 @@ package gitlab
 
 import (
 	"context"
+	"io"
+	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/notices"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
 // A job of Global's repository that names an agency's scope (I-7, allowed
-// until §0a) is not removed at Global's next sync: it is KEPT as it was, its
-// row, identity and switches untouched, its file refused with the reason, and
-// a notice lists it (§0a, open point 1: "each stops, and is listed"). It goes
-// when its file leaves Global's repository.
+// until §0a) is KEPT as it was, its row, identity and switches untouched, and
+// a notice lists it (§0a, open point 1: "each stops, and is listed").
 //
-// As first built in I1 (c9f865c) the refused file's row was pruned, and the
-// job's switches and its link to its runs with it.
+// Since 2.5.3 the built-in agency has no repository (CA-6): a connection it
+// kept from before is a leftover that nothing syncs, a write of it included,
+// so such a job is not touched by any sync. It goes when a global
+// administrator removes the leftover connection (RemoveCentralLeftover), with
+// everything that connection synced, and the notice clears.
+//
+// Until 2.5.3 Global's repository synced, refused the file with the reason,
+// and the job went when its file left Global's repository; a job of Global's
+// own scope edited onto an agency's went at that sync. As first built in I1
+// (c9f865c) the refused file's row was pruned, and the job's switches and its
+// link to its runs with it.
 func TestI1_GlobalsJobOnAnAgencysScopeIsKeptAsItWas(t *testing.T) {
-	a, repoA, remoteA := newSyncFixture(t)
-	grSync(t, a, "Global's repository")
+	a, _, remoteA := newSyncFixture(t)
 	grSecondRepo(t, a) // its agency owns hosts-of-repo-b
-	// As an upgrade finds it: synced before §0a, switched off by an operator.
+	ctx := context.Background()
+	// As an upgrade finds it: Central's connection from before 2.5.3, and a job
+	// it synced before §0a, switched off by an operator.
+	if _, err := a.db.Exec(`UPDATE git_repos SET url = ?, branch = ? WHERE id = 'global'`, remoteA, a.Cfg.GitLabWriteBranch); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := a.db.Exec(`INSERT INTO jobs (uid, name, source, run_type, command, scope, enabled, synced_at, repo_id, source_path)
 	                        VALUES ('uid-g-theirs', 'g-theirs', 'git', 'bash', 'echo g-theirs', 'hosts-of-repo-b', 0, '2020-01-01T00:00:00Z', 'global', 'jobs/g-theirs.yaml')`); err != nil {
 		t.Fatal(err)
 	}
-	grCommitFiles(t, repoA, remoteA, map[string]string{"jobs/g-theirs.yaml": grScopedJob("g-theirs", "hosts-of-repo-b")}, "the file is still there")
-	grBackdateAll(t, a)
-	res := grSync(t, a, "Global's repository after the upgrade")
-	if res.Status != "partial" || !strings.Contains(res.ErrorMessage, `the scope "hosts-of-repo-b" is an agency's, and Global's jobs run on Global's scopes only`) || !strings.Contains(res.ErrorMessage, "as it was at the last sync and does not run") {
-		t.Errorf("Global's sync: %q (%s); want partial, the file refused", res.Status, res.ErrorMessage)
+	reg := NewRegistry(a.db, slog.New(slog.NewTextHandler(io.Discard, nil)), &config.Config{})
+	clones := t.TempDir()
+	reg.cloneDir = func(repoID string) string { return filepath.Join(clones, repoID) }
+	t.Cleanup(reg.Close)
+	if err := reg.Restart(ctx, repoid.Global); err != nil || reg.Service(repoid.Global) != nil {
+		t.Fatalf("a write of Central's leftover connection: %v; want no Service started", err)
 	}
 	if got := grString(t, a.db, `SELECT COALESCE((SELECT uid || ' enabled=' || enabled FROM jobs WHERE source='git' AND name='g-theirs'), '(gone)')`); got != "uid-g-theirs enabled=0" {
-		t.Errorf("Global's job on an agency's scope after the sync: %s; want it kept as it was (uid-g-theirs enabled=0)", got)
+		t.Errorf("Global's job on an agency's scope: %s; want it kept as it was (uid-g-theirs enabled=0)", got)
 	}
-	if err := notices.RunChecks(context.Background(), a.db); err != nil {
+	// Since 2.5.3 (CA-18) the leftover and what it synced are listed by
+	// central_holds_work; global_job_on_agency_scope is retired.
+	notices.SetCentralLeftoverRepoCheck(settings.CentralLeftoverRepo)
+	t.Cleanup(func() { notices.SetCentralLeftoverRepoCheck(nil) })
+	if err := notices.RunChecks(ctx, a.db); err != nil {
 		t.Fatal(err)
 	}
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM notices WHERE kind = ? AND subject = 'uid-g-theirs' AND resolved_at IS NULL AND agency_id = 'global'`,
-		notices.KindGlobalJobOnAgencyScope); n != 1 {
-		t.Errorf("open notices for the kept job = %d, want 1", n)
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM notices WHERE kind = ? AND subject = 'central:repository' AND resolved_at IS NULL AND agency_id = 'global'`,
+		notices.KindCentralHoldsWork); n != 1 {
+		t.Errorf("open notices for the leftover holding the kept job = %d, want 1", n)
 	}
 
-	// A job of Global's own scope whose file is edited onto an agency's scope
-	// is not kept: it goes, as an agency's repository's would (found by the
-	// review of I1: it was kept running its old body).
-	grCommitFiles(t, repoA, remoteA, map[string]string{
-		"inventory/globals.ini": "[web]\n10.0.0.9\n",
-		"jobs/g-own.yaml":       grScopedJob("g-own", "globals"),
-	}, "a job on Global's scope")
-	grBackdateAll(t, a)
-	grSync(t, a, "Global's repository with its own job")
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND name='g-own'`); n != 1 {
-		t.Fatalf("Global's job on Global's scope was not synced")
+	// The leftover connection is removed: the job goes with it, and the notice
+	// clears.
+	remove, finish, err := reg.RemoveCentralLeftover(ctx, "root")
+	if err != nil {
+		t.Fatalf("remove Central's leftover connection: %v", err)
 	}
-	gitCommitFile(t, repoA, remoteA, "jobs/g-own.yaml", grScopedJob("g-own", "hosts-of-repo-b"), "edited onto an agency's scope")
-	grBackdateAll(t, a)
-	grSync(t, a, "Global's repository, the job edited")
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND name='g-own'`); n != 0 {
-		t.Errorf("Global's job edited onto an agency's scope was kept, running its old body")
-	}
-
-	// Its file leaves: it goes, and the notice clears.
-	gitRemoveFile(t, repoA, "jobs/g-theirs.yaml", "the file leaves")
-	grBackdateAll(t, a)
-	grSync(t, a, "Global's repository without it")
+	committed := false
+	func() {
+		defer func() { finish(committed) }()
+		tx, err := a.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		if err := remove(tx); err != nil {
+			t.Fatalf("remove Central's leftover connection: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		committed = true
+	}()
 	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND name='g-theirs'`); n != 0 {
-		t.Errorf("the job stayed after its file left")
+		t.Errorf("the job stayed after the leftover connection was removed")
 	}
-	if err := notices.RunChecks(context.Background(), a.db); err != nil {
+	if err := notices.RunChecks(ctx, a.db); err != nil {
 		t.Fatal(err)
 	}
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM notices WHERE kind = ? AND resolved_at IS NULL`, notices.KindGlobalJobOnAgencyScope); n != 0 {
-		t.Errorf("the notice is still open after the job went")
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM notices WHERE kind = ? AND subject = 'central:repository' AND resolved_at IS NULL`, notices.KindCentralHoldsWork); n != 0 {
+		t.Errorf("the notice is still open after the leftover went")
 	}
 }
 
 // A job in an agency's repository uses its own repository's scripts and
 // schedules, and watches its own repository's definitions, and nothing of
-// Global's (§0a, IN-1, IN-8). A name its repository has no file for does not
-// resolve, as a name that nobody has; and Global's prune of a script or a
-// schedule does not wait for anybody.
+// another's (§0a, IN-1, IN-8). A name its repository has no file for does not
+// resolve, as a name that nobody has; and the other repository's prune of a
+// script or a schedule does not wait for anybody.
 //
 // From Phase R4 (GR-16) until §0a such a name was looked up in Global's
 // repository next, its edits reached the agency's job at Global's sync, and
 // Global's prune of a row another repository used was deferred (GR-17).
-func TestI1_AnAgencysJobTakesNothingFromGlobalsRepository(t *testing.T) {
+// Until 2.5.3 (TestI1_AnAgencysJobTakesNothingFromGlobalsRepository) the other
+// repository here was Global's; the built-in agency has none since (CA-6), and
+// it is ag-a's.
+func TestI1_AnAgencysJobTakesNothingFromAnotherAgencysRepository(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
 	grCommitFiles(t, repoA, remoteA, map[string]string{
 		"scripts/shared.sh":     "#!/bin/bash\necho from-global\n",
 		"schedules/yearly.yaml": grSchedule("0 3 1 1 *"),
 		"jobs/nightly.yaml":     grJob("nightly", "echo nightly"),
-	}, "Global's repository")
-	grSync(t, a, "Global's repository")
+	}, "ag-a's repository")
+	grSync(t, a, "ag-a's repository")
 
 	b, repoB, remoteB := grSecondRepo(t, a)
 	const usesScript = "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: uses-script\nspec:\n  script_ref: shared.sh\n  scope: hosts-of-repo-b\n"
@@ -103,10 +127,10 @@ func TestI1_AnAgencysJobTakesNothingFromGlobalsRepository(t *testing.T) {
 		"jobs/uses-script.yaml":   usesScript,
 		"jobs/uses-schedule.yaml": usesSchedule,
 		"jobs/after.yaml":         after,
-	}, "an agency's jobs naming Global's script, schedule and job")
+	}, "an agency's jobs naming ag-a's script, schedule and job")
 	res := grSync(t, b, "the agency's repository")
 	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE repo_id='repo-b' AND name IN ('uses-script','uses-schedule','after')`); n != 0 {
-		t.Errorf("%d of the agency's jobs were synced on Global's script, schedule or job", n)
+		t.Errorf("%d of the agency's jobs were synced on ag-a's script, schedule or job", n)
 	}
 	for _, want := range []string{
 		`script_ref "shared.sh" does not resolve to any script in scripts/`,
@@ -118,7 +142,7 @@ func TestI1_AnAgencysJobTakesNothingFromGlobalsRepository(t *testing.T) {
 		}
 	}
 	if strings.Contains(res.ErrorMessage, "installation's own") {
-		t.Errorf("the agency's sync still speaks of looking in Global's repository: %s", res.ErrorMessage)
+		t.Errorf("the agency's sync still speaks of looking in ag-a's repository: %s", res.ErrorMessage)
 	}
 
 	// The same names in its own repository resolve there.
@@ -135,15 +159,15 @@ func TestI1_AnAgencysJobTakesNothingFromGlobalsRepository(t *testing.T) {
 		t.Errorf("the agency's job's script is %q, want its own repository's %q", got, want)
 	}
 
-	// Global's script and schedule leave its repository: they are pruned at
-	// Global's sync, and no notice is opened for anybody.
-	gitRemoveFile(t, repoA, "scripts/shared.sh", "Global's script leaves")
+	// ag-a's script and schedule leave its repository: they are pruned at
+	// ag-a's sync, and no notice is opened for anybody.
+	gitRemoveFile(t, repoA, "scripts/shared.sh", "ag-a's script leaves")
 	gitRemoveFile(t, repoA, "schedules/yearly.yaml", "and its schedule")
 	grBackdateAll(t, a)
-	grSync(t, a, "Global's repository without them")
-	if n := grCount(t, a.db, `SELECT (SELECT COUNT(*) FROM scripts WHERE repo_id='global' AND name='shared.sh')
-	                          + (SELECT COUNT(*) FROM schedules WHERE repo_id='global' AND name='yearly')`); n != 0 {
-		t.Errorf("Global's script or schedule was kept after its file left (%d rows)", n)
+	grSync(t, a, "ag-a's repository without them")
+	if n := grCount(t, a.db, `SELECT (SELECT COUNT(*) FROM scripts WHERE repo_id='repo-a' AND name='shared.sh')
+	                          + (SELECT COUNT(*) FROM schedules WHERE repo_id='repo-a' AND name='yearly')`); n != 0 {
+		t.Errorf("ag-a's script or schedule was kept after its file left (%d rows)", n)
 	}
 	if n := grCount(t, a.db, `SELECT COUNT(*) FROM notices WHERE kind = 'prune_deferred'`); n != 0 {
 		t.Errorf("%d deferred-prune notices were opened", n)
@@ -151,40 +175,40 @@ func TestI1_AnAgencysJobTakesNothingFromGlobalsRepository(t *testing.T) {
 }
 
 // A Git schedule's edit reaches the in-app definitions of its repository's
-// agency only (§0a; the owner's answer to question 32): an agency's in-app
-// job bound to Global's schedule before §0a keeps the timing it copied, and
-// Global's own in-app job follows. Until §0a Global's repository's schedules
+// agency only (§0a; the owner's answer to question 32): another agency's
+// in-app job bound to ag-a's schedule before §0a keeps the timing it copied,
+// and ag-a's own in-app job follows. Until §0a Global's repository's schedules
 // retimed every in-app definition bound to them.
-func TestI1_GlobalsScheduleEditReachesGlobalsDefinitionsOnly(t *testing.T) {
+//
+// Until 2.5.3 (TestI1_GlobalsScheduleEditReachesGlobalsDefinitionsOnly) the
+// schedule was Global's repository's and the job that follows Global's. The
+// built-in agency has no repository since (CA-6): the schedule is ag-a's.
+func TestI1_AScheduleEditReachesItsAgencysDefinitionsOnly(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
-	grCommitFiles(t, repoA, remoteA, map[string]string{"schedules/yearly.yaml": grSchedule("0 3 1 1 *")}, "Global's schedule")
-	grSync(t, a, "Global's repository")
+	grCommitFiles(t, repoA, remoteA, map[string]string{"schedules/yearly.yaml": grSchedule("0 3 1 1 *")}, "ag-a's schedule")
+	grSync(t, a, "ag-a's repository")
 	grSecondRepo(t, a) // its agency owns hosts-of-repo-b
-	for _, j := range [][2]string{{"j-b", "hosts-of-repo-b"}, {"j-g", ""}} {
-		var scope any
-		if j[1] != "" {
-			scope = j[1]
-		}
-		if _, err := a.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at, scope) VALUES(?, ?, 'cronomicon', 'bash', 't', ?)`, j[0], "app-"+j[0], scope); err != nil {
+	for _, j := range [][3]string{{"j-b", "hosts-of-repo-b", "ag-b"}, {"j-g", fixtureScope, fixtureAgency}} {
+		if _, err := a.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at, scope, owner_agency) VALUES(?, ?, 'cronomicon', 'bash', 't', ?, ?)`, j[0], "app-"+j[0], j[1], j[2]); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := a.db.Exec(`INSERT INTO definition_schedules (owner_source, owner_kind, owner_name, name, cron, position, owner_uid, schedule_uid, source_ref)
-		                        SELECT 'cronomicon', 'job', ?, 'yearly', '0 3 1 1 *', 1, ?, uid, 'yearly' FROM schedules WHERE repo_id = 'global' AND name = 'yearly'`,
+		                        SELECT 'cronomicon', 'job', ?, 'yearly', '0 3 1 1 *', 1, ?, uid, 'yearly' FROM schedules WHERE repo_id = 'repo-a' AND name = 'yearly'`,
 			"app-"+j[0], j[0]); err != nil {
 			t.Fatal(err)
 		}
 	}
-	gitCommitFile(t, repoA, remoteA, "schedules/yearly.yaml", grSchedule("0 4 4 4 *"), "Global edits its schedule")
-	grSync(t, a, "Global's repository, edited")
+	gitCommitFile(t, repoA, remoteA, "schedules/yearly.yaml", grSchedule("0 4 4 4 *"), "ag-a edits its schedule")
+	grSync(t, a, "ag-a's repository, edited")
 	cronOf := func(uid string) string {
 		t.Helper()
 		return grString(t, a.db, `SELECT cron FROM definition_schedules WHERE owner_uid = ? AND name = 'yearly'`, uid)
 	}
 	if got := cronOf("j-g"); got != "0 4 4 4 *" {
-		t.Errorf("Global's in-app job fires at %q after Global's edit, want the new timing", got)
+		t.Errorf("ag-a's in-app job fires at %q after ag-a's edit, want the new timing", got)
 	}
 	if got := cronOf("j-b"); got != "0 3 1 1 *" {
-		t.Errorf("the agency's in-app job fires at %q after Global's edit; want the timing it copied", got)
+		t.Errorf("the agency's in-app job fires at %q after ag-a's edit; want the timing it copied", got)
 	}
 }
 
@@ -196,7 +220,7 @@ func TestI1_GlobalsScheduleEditReachesGlobalsDefinitionsOnly(t *testing.T) {
 // synced with a warning, the binding live until the copies.)
 func TestI2_AnAgencysFileNamesItsOwnCalendars(t *testing.T) {
 	a, _, _ := newSyncFixture(t)
-	grSync(t, a, "Global's repository")
+	grSync(t, a, "ag-a's repository")
 	if _, err := a.db.Exec(`INSERT INTO calendars (source, name, global, record_suppressed, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 0, 0, 't', 't', 'global')`); err != nil {
 		t.Fatal(err)
 	}
@@ -225,9 +249,11 @@ func TestI2_AnAgencysFileNamesItsOwnCalendars(t *testing.T) {
 	}
 }
 
-// Global's own repository takes nothing from anywhere: a name it has no file
-// for does not resolve, as before.
-func TestGR4_GlobalsRepositoryBorrowsNothing(t *testing.T) {
+// An agency's own repository takes nothing from anywhere: a name it has no
+// file for does not resolve, as before. Until 2.5.3
+// (TestGR4_GlobalsRepositoryBorrowsNothing) this was held of Global's
+// repository; the built-in agency has none since (CA-6), and it is ag-a's.
+func TestGR4_AnAgencysRepositoryBorrowsNothing(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
 	b, repoB, remoteB := grSecondRepo(t, a)
 	grCommitFiles(t, repoB, remoteB, map[string]string{
@@ -238,16 +264,16 @@ func TestGR4_GlobalsRepositoryBorrowsNothing(t *testing.T) {
 	grCommitFiles(t, repoA, remoteA, map[string]string{
 		"jobs/wants-script.yaml":   "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: wants-script\nspec:\n  script_ref: theirs.sh\n",
 		"jobs/wants-schedule.yaml": "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: wants-schedule\nspec:\n  run_type: bash\n  command: echo hi\n  scheduleRefs:\n    - yearly\n",
-	}, "Global's jobs naming an agency's script and schedule")
-	res := grSync(t, a, "Global's repository")
+	}, "ag-a's jobs naming an agency's script and schedule")
+	res := grSync(t, a, "ag-a's repository")
 	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE name IN ('wants-script','wants-schedule')`); n != 0 {
-		t.Errorf("Global's jobs were synced on an agency's script or schedule (count %d)", n)
+		t.Errorf("ag-a's jobs were synced on an agency's script or schedule (count %d)", n)
 	}
 	if res.Status != "partial" || strings.Contains(res.ErrorMessage, "installation's own") {
-		t.Errorf("Global's sync: %q (%s)", res.Status, res.ErrorMessage)
+		t.Errorf("ag-a's sync: %q (%s)", res.Status, res.ErrorMessage)
 	}
 
-	// Nor from its own past: a script whose file has left Global's repository
+	// Nor from its own past: a script whose file has left ag-a's repository
 	// is not found again in the tables, where its row still is until the prune.
 	grCommitFiles(t, repoA, remoteA, map[string]string{
 		"scripts/old.sh":     "#!/bin/bash\necho old\n",
@@ -255,36 +281,38 @@ func TestGR4_GlobalsRepositoryBorrowsNothing(t *testing.T) {
 	}, "a script and a job that uses it")
 	gitRemoveFile(t, repoA, "jobs/wants-script.yaml", "remove a job that does not resolve")
 	gitRemoveFile(t, repoA, "jobs/wants-schedule.yaml", "remove the other")
-	if r := grSync(t, a, "Global's repository with the script"); r.Status != "success" {
-		t.Fatalf("Global's sync with the script and its job: %s (%s)", r.Status, r.ErrorMessage)
+	if r := grSync(t, a, "ag-a's repository with the script"); r.Status != "success" {
+		t.Fatalf("ag-a's sync with the script and its job: %s (%s)", r.Status, r.ErrorMessage)
 	}
 	gitRemoveFile(t, repoA, "scripts/old.sh", "the script's file leaves; the job still names it")
-	res = grSync(t, a, "Global's repository without the script")
+	res = grSync(t, a, "ag-a's repository without the script")
 	if res.Status != "partial" || !strings.Contains(res.ErrorMessage, `script_ref "old.sh" does not resolve`) {
-		t.Errorf("Global's sync after its script's file left: %q (%s); want partial, the job's script not resolving", res.Status, res.ErrorMessage)
+		t.Errorf("ag-a's sync after its script's file left: %q (%s); want partial, the job's script not resolving", res.Status, res.ErrorMessage)
 	}
 }
 
 // An in-app job that has lost its script is joined to a returning script of
 // that name in ITS agency's repository, and in no other (§0a; the owner's yes
 // to question 31). An agency's repository joins only its own agency's in-app
-// jobs, and Global's only Global's (a job with no scope).
+// jobs: ag-b's only ag-b's, and ag-a's only ag-a's.
 //
 // Until Phase R4 only Global's repository joined anything, and joined every
 // in-app job of the name; from R4 until §0a Global's joined the other
 // agencies' jobs too, when their own repository had no script of the name.
+// Until 2.5.3 the first repository here was Global's, joining Global's job (a
+// job with no scope); the built-in agency has no repository since (CA-6).
 func TestI1_AnInAppJobIsRejoinedInItsAgencysRepositoryOnly(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
 	grCommitFiles(t, repoA, remoteA, map[string]string{
-		"scripts/task.sh":        "#!/bin/bash\necho task-of-global\n",
-		"scripts/only-global.sh": "#!/bin/bash\necho only-global\n",
-	}, "Global's scripts")
+		"scripts/task.sh":   "#!/bin/bash\necho task-of-a\n",
+		"scripts/only-a.sh": "#!/bin/bash\necho only-a\n",
+	}, "ag-a's scripts")
 	b, repoB, remoteB := grSecondRepo(t, a) // its agency ag-b owns the scope hosts-of-repo-b
 	gitCommitFile(t, repoB, remoteB, "scripts/task.sh", "#!/bin/bash\necho task-of-b\n", "the agency's script of the same name")
 	for _, j := range [][3]string{
-		{"j-global", "", "task.sh"},
+		{"j-a", fixtureScope, "task.sh"},
 		{"j-b", "hosts-of-repo-b", "task.sh"},
-		{"j-b-other", "hosts-of-repo-b", "only-global.sh"},
+		{"j-b-other", "hosts-of-repo-b", "only-a.sh"},
 	} {
 		var scope any
 		if j[1] != "" {
@@ -301,47 +329,47 @@ func TestI1_AnInAppJobIsRejoinedInItsAgencysRepositoryOnly(t *testing.T) {
 	}
 
 	grSync(t, b, "the agency's repository")
-	for job, want := range map[string]string{"j-global": "(none)", "j-b": "repo-b/task.sh", "j-b-other": "(none)"} {
+	for job, want := range map[string]string{"j-a": "(none)", "j-b": "repo-b/task.sh", "j-b-other": "(none)"} {
 		if got := joined(job); got != want {
 			t.Errorf("after the agency's sync %s is joined to %s, want %s", job, got, want)
 		}
 	}
 
 	// The agency's job loses its script again (as a prune of it would leave it),
-	// and Global's repository syncs.
+	// and ag-a's repository syncs.
 	if _, err := a.db.Exec(`UPDATE jobs SET script_uid = NULL WHERE uid = 'j-b'`); err != nil {
 		t.Fatal(err)
 	}
-	grSync(t, a, "Global's repository")
+	grSync(t, a, "ag-a's repository")
 	for job, want := range map[string]string{
-		"j-global":  "global/task.sh",
+		"j-a":       "repo-a/task.sh",
 		"j-b":       "(none)", // the agency's: its own repository's to join
-		"j-b-other": "(none)", // the agency's: Global's script is not its (§0a; until then joined)
+		"j-b-other": "(none)", // the agency's: ag-a's script is not its (§0a; until then joined)
 	} {
 		if got := joined(job); got != want {
-			t.Errorf("after Global's sync %s is joined to %s, want %s", job, got, want)
+			t.Errorf("after ag-a's sync %s is joined to %s, want %s", job, got, want)
 		}
 	}
 	// A join is said by the sync that makes it (2.4.0, with the owner's
-	// decision of 2026-10-13). Global's sync joined Global's job alone.
-	global := grProblems(t, a, "global")
-	if !grHas(global, "warning", "had no script and is joined", "app-j-global") {
-		t.Errorf("Global's sync does not say that it joined app-j-global to its script:\n%s", strings.Join(global, "\n"))
+	// decision of 2026-10-13). ag-a's sync joined ag-a's job alone.
+	rowsA := grProblems(t, a, fixtureRepo)
+	if !grHas(rowsA, "warning", "had no script and is joined", "app-j-a") {
+		t.Errorf("ag-a's sync does not say that it joined app-j-a to its script:\n%s", strings.Join(rowsA, "\n"))
 	}
 	said := 0
-	for _, line := range global {
+	for _, line := range rowsA {
 		if strings.Contains(line, "had no script and is joined") {
 			said++
 		}
 	}
 	if said != 1 {
-		t.Errorf("Global's sync says %d joins, want the one it made:\n%s", said, strings.Join(global, "\n"))
+		t.Errorf("ag-a's sync says %d joins, want the one it made:\n%s", said, strings.Join(rowsA, "\n"))
 	}
 
 	// And a job that has a script is not moved to another.
 	grSync(t, b, "the agency's repository again")
-	if got := joined("j-global"); got != "global/task.sh" {
-		t.Errorf("the agency's sync moved Global's in-app job to %s", got)
+	if got := joined("j-a"); got != "repo-a/task.sh" {
+		t.Errorf("the agency's sync moved ag-a's in-app job to %s", got)
 	}
 	if got := joined("j-b"); got != "repo-b/task.sh" {
 		t.Errorf("the agency's job is joined to %s after its repository synced, want its own", got)

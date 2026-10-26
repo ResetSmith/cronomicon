@@ -118,15 +118,31 @@ describe("creation agency picker", () => {
     expect(lastBody).toEqual({ agencyIds: ["ag-tax"] });
   });
 
-  it("offers a global administrator Global, by default, and every agency", async () => {
+  // 2.5.3 CA-14: Central runs nothing, so it is neither offered nor
+  // preselected; a global administrator chooses among the agencies.
+  it("offers a global administrator every agency, never Global, and asks which", async () => {
     CAPS = { manageEnvVars: true, manageEnvVarsGlobal: true, unrestricted: true };
     render(<Host isEdit={false} permission="manageEnvVars" />);
-    await waitFor(() => expect(select().value).toBe("global"));
-    expect(options()).toEqual(["Global", "Tax", "Finance", "HR"]);
-    expect(save().disabled).toBe(false);
-    expect(lastBody).toEqual({ agencyIds: ["global"] });
+    await waitFor(() => expect(options()).toEqual(["Choose an agency…", "Tax", "Finance", "HR"]));
+    expect(select().value).toBe("");
+    expect(save().disabled).toBe(true);
+    expect(lastBody).toEqual({});
     fireEvent.change(select(), { target: { value: "ag-hr" } });
     await waitFor(() => expect(lastBody).toEqual({ agencyIds: ["ag-hr"] }));
+    expect(save().disabled).toBe(false);
+  });
+
+  it("preselects the one agency there is for a global administrator", async () => {
+    CAPS = { manageEnvVars: true, manageEnvVarsGlobal: true, unrestricted: true };
+    CATALOG_OVERRIDE = [
+      { id: "global", name: "Global" },
+      { id: "ag-ops", name: "Operations" },
+    ];
+    render(<Host isEdit={false} permission="manageEnvVars" />);
+    await waitFor(() => expect(select().value).toBe("ag-ops"));
+    expect(options()).toEqual(["Operations"]);
+    expect(save().disabled).toBe(false);
+    expect(lastBody).toEqual({ agencyIds: ["ag-ops"] });
   });
 
   it("never offers Global to anyone else", async () => {
@@ -178,7 +194,8 @@ describe("creation agency picker", () => {
   it("keeps a caller that names no permission on `unrestricted`", async () => {
     CAPS = { unrestricted: true };
     render(<Host isEdit={false} />);
-    await waitFor(() => expect(select().value).toBe("global"));
-    expect(save().disabled).toBe(false);
+    // Global administrator by `unrestricted`: every agency, never Global.
+    await waitFor(() => expect(options()).toEqual(["Choose an agency…", "Tax", "Finance", "HR"]));
+    expect(save().disabled).toBe(true);
   });
 });

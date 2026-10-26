@@ -32,6 +32,8 @@ func TestJobComposeCRUD(t *testing.T) {
 	      VALUES('reports','git','bash','echo git','sha256:ccc','jobs/reports.yaml','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 
 	post := func(method, url string, body any, hdrCSRF bool) *http.Response {
 		t.Helper()
@@ -186,6 +188,8 @@ func TestJobComposeAnsibleTargetHostValidation(t *testing.T) {
 	      VALUES('patch','ansible','- hosts: web\n','ssh','sha256:aaa','scripts/patch.yaml','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 	post := func(method, url string, body any) *http.Response {
 		t.Helper()
 		var rdr *bytes.Reader

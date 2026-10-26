@@ -63,7 +63,7 @@ var errIdentityNotReady = errors.New("identity provider not ready")
 // tags); a release build still overrides all three via -ldflags. Kept in sync with
 // the top CHANGELOG.md entry.
 var (
-	version   = "2.5.2"
+	version   = "2.5.3"
 	commit    = "none"
 	buildDate = "unknown"
 )
@@ -220,7 +220,16 @@ func run() error {
 	// the inbox is opened. A failure here is a stale inbox, not a failed boot.
 	notices.SetRecordKeyNameCheck(sshexec.BastionKeyNameFindings)
 	notices.SetLocalRunnerHostKeysCheck(hostkeys.LocalRunnerMissingKeys)
-	notices.SetGlobalRepoFromEnvironment(strings.TrimSpace(cfg.GitLabBaseURL) != "")
+	notices.SetLocalRunnerUnassignedCheck(settings.LocalRunnerUnassignedButSwitchedOn)
+	notices.SetCentralLeftoverRepoCheck(settings.CentralLeftoverRepo)
+	// 2.5.3 (question 207): settings this version no longer reads are named
+	// here and in a notice, rather than silently ignored.
+	ignoredEnv := settings.EnvSettingsIgnored(cfg)
+	notices.SetIgnoredEnvironmentSettings(ignoredEnv)
+	if len(ignoredEnv) > 0 {
+		logger.Warn("environment settings that this version no longer reads are set: the built-in agency has no "+
+			"repository and enrols no agents; remove them", "settings", strings.Join(ignoredEnv, ", "))
+	}
 	if err := notices.RunChecks(context.Background(), pool); err != nil {
 		logger.Warn("notices: boot checks failed", "err", err)
 	}
@@ -270,6 +279,16 @@ func run() error {
 		if err := seed.Seed(ctx0, pool, logger); err != nil {
 			logger.Error("demo seed failed", "error", err)
 		}
+	}
+	// 2.5.3 CA-16: Central runs nothing, so an installation with no agency but
+	// Central gets one to work in, Operations, once (after the seed, which
+	// makes its own). Non-fatal: the first-agency card makes one by hand.
+	if id, why, ferr := settings.EnsureFirstAgency(ctx0, pool); ferr != nil {
+		logger.Error("could not make the first agency; create one in the app", "error", ferr)
+	} else if id != "" {
+		logger.Info("first agency made", "agency", settings.FirstAgencyName, "id", id)
+	} else if why != "it ran before" {
+		logger.Info("first agency not made", "reason", why)
 	}
 
 	// Identity: OIDC relying party + operator sessions (B2). Never
@@ -656,11 +675,13 @@ func runValidate(args []string) int {
 // test can assert both the exit code and the line-numbered stderr format against
 // a deliberately-broken repo.
 //
-// The flag applies to a directory: -agency says it is an agency's repository
-// (a job must name a scope, one of the checkout's). Without it a directory is
-// Global's repository. Either way a reference resolves in the checkout or is
-// an error, as at sync (§0a, IN-8; `-library`, which looked in a checkout of
-// Global's repository too, went with borrowing).
+// The flag applies to a directory: -agency says it is an agency's repository,
+// and a job's scope that is not one of the checkout's is a warning. Either way
+// a job with no scope is an error (since 2.5.3, question 206: without the flag
+// a directory was read as Global's repository, which no longer exists), and a
+// reference resolves in the checkout or is an error, as at sync (§0a, IN-8;
+// `-library`, which looked in a checkout of Global's repository too, went with
+// borrowing).
 func validatePaths(args []string, out, errOut io.Writer) int {
 	const usage = "usage: cronomicon validate [-agency] <path>...\n" +
 		"  <path> is a file, or a repository's checkout (a directory) for the checks across its files"

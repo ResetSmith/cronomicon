@@ -177,28 +177,24 @@ func TestChecksFindAndResolveTheirConditions(t *testing.T) {
 		t.Fatalf("RunChecks: %v", err)
 	}
 	shared := openOf(t, pool, notices.KindSharedOwnership)
-	// Two for Global (the secret two agencies were listed for, and the key held
-	// back), and since 2.5.1 (SG-16) one for each member agency of a row Global
-	// holds: Finance and Tax for the secret, Tax for the key.
-	if len(shared) != 5 {
-		t.Fatalf("shared_ownership = %v, want two for Global and three for the member agencies", shared)
+	// Since 2.5.1 (SG-16) one for each member agency of a row Global holds:
+	// Finance and Tax for the secret, Tax for the key. The two Global-filed
+	// findings of those rows are central_holds_work's since 2.5.3 (CA-18),
+	// which lists every row the built-in agency holds.
+	if len(shared) != 3 {
+		t.Fatalf("shared_ownership = %v, want three, for the member agencies", shared)
 	}
 	for subject, agency := range map[string]string{"secret:s-both@ag-fin": "ag-fin", "secret:s-both@ag-tax": "ag-tax", "ssh-credential:k-held@ag-tax": "ag-tax"} {
 		if got := shared[subject]; got.AgencyID != agency {
 			t.Errorf("%s is filed under %q, want %q", subject, got.AgencyID, agency)
 		}
 	}
-	n := shared["secret:s-both"]
-	if n.AgencyID != "global" {
-		t.Errorf("the notice belongs to %q, want global: only a global administrator can change the row", n.AgencyID)
+	held := openOf(t, pool, notices.KindCentralHoldsWork)
+	if n := held["central:secret"]; n.AgencyID != "global" || !strings.Contains(n.Detail, "DB_PASSWORD") {
+		t.Errorf("central_holds_work's secrets = %+v, want the global administrators' notice naming DB_PASSWORD", n)
 	}
-	for _, want := range []string{"DB_PASSWORD", "prod", "Finance, Tax"} {
-		if !strings.Contains(n.Detail, want) {
-			t.Errorf("detail does not name %q: %s", want, n.Detail)
-		}
-	}
-	if !strings.Contains(shared["ssh-credential:k-held"].Detail, "deploy") {
-		t.Errorf("the key's notice does not name it: %s", shared["ssh-credential:k-held"].Detail)
+	if n := held["central:ssh-credential"]; !strings.Contains(n.Detail, "deploy") {
+		t.Errorf("central_holds_work's SSH keys do not name the key: %s", n.Detail)
 	}
 	if got := openOf(t, pool, notices.KindOrphaned); len(got) != 0 {
 		t.Fatalf("orphaned = %v on a healthy database", got)
@@ -212,8 +208,8 @@ func TestChecksFindAndResolveTheirConditions(t *testing.T) {
 	if err := notices.RunChecks(ctx, pool); err != nil {
 		t.Fatalf("RunChecks: %v", err)
 	}
-	// The secret's three findings resolve; the key's two (Global's and Tax's) stay.
-	if shared := openOf(t, pool, notices.KindSharedOwnership); len(shared) != 2 || shared["ssh-credential:k-held"].Subject == "" || shared["ssh-credential:k-held@ag-tax"].Subject == "" {
+	// The secret's two findings resolve; the key's (Tax's) stays.
+	if shared := openOf(t, pool, notices.KindSharedOwnership); len(shared) != 1 || shared["ssh-credential:k-held@ag-tax"].Subject == "" {
 		t.Errorf("shared_ownership after settling the secret = %v, want only the key's", shared)
 	}
 	orphans := openOf(t, pool, notices.KindOrphaned)

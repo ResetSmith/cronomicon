@@ -70,6 +70,8 @@ func (s *Server) mountCalendars(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/calendars/{name}", compose(owned(s.updateCalendar)))
 	mux.Handle("DELETE /api/v1/calendars/{name}", compose(owned(s.deleteCalendar)))
 	mux.Handle("PUT /api/v1/calendars/{name}/days", compose(owned(s.replaceCalendarDays)))
+	// Central's catalogue and the agencies' copies (2.5.3 CA4a).
+	s.mountCalendarCatalogue(mux)
 }
 
 // calendarRef is the calendar a {name} route means: the name in the agency
@@ -187,6 +189,19 @@ type calendarRow struct {
 	Days          []calendarDayInput `json:"days,omitempty"`
 	CreatedBy     string             `json:"createdBy,omitempty"`
 	CreatedAt     string             `json:"createdAt,omitempty"`
+	// UID is the calendar's identity (migration 1700): a copy names the
+	// catalogue calendar it came from by it.
+	UID string `json:"uid"`
+	// FromCentral is a copy's link to Central's catalogue (2.5.3 CA-26 to
+	// CA-28); absent on a calendar that is no copy.
+	FromCentral *calendarOrigin `json:"fromCentral,omitempty"`
+	// Copies are the agencies' copies of a catalogue calendar (one of the
+	// built-in agency's), each with its state.
+	Copies []calendarCopyRef `json:"copies,omitempty"`
+
+	// The stored link, read by the catalogue code (calendars_catalogue.go).
+	originUID, originHash, updateMode string
+	originGone                        bool
 }
 
 // calendarBinding is one schedule entry that names a calendar.
@@ -204,6 +219,10 @@ type calendarBinding struct {
 	// bindings list can qualify an owner name two departments share. Additive.
 	OwnerUID      string   `json:"ownerUid,omitempty"`
 	OwnerAgencies []string `json:"ownerAgencies,omitempty"`
+	// Level is "definition" for a job's or a workflow's own Forbid (skip) or
+	// Allow (only) calendar (2.5.3, CA-30), which no schedule entry carries
+	// (ScheduleName empty); absent for an entry's.
+	Level string `json:"level,omitempty"`
 }
 
 // calendarExpiryWarningDays is CAL-16's threshold: warn while there is still
@@ -213,11 +232,12 @@ type calendarBinding struct {
 const calendarExpiryWarningDays = 60
 
 func (s *Server) listCalendars(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.loadCalendarRows(r.Context(), "", "")
+	v, err := s.loadCatalogueView(r.Context())
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
+	rows := v.rows
 	bindings, err := collectCalendarBindings(r.Context(), s.db)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -231,9 +251,12 @@ func (s *Server) listCalendars(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		c.UsedBy = bindings[calKey(c.OwnerAgency, c.Name)]
-		c.Days = nil // the list view carries counts and coverage, not every date
-		c.CanEdit = caller.CanAgency(auth.PermCompose, c.OwnerAgency)
-		c.CanDelete = c.CanEdit
+		v.annotate(&c) // a copy's link, a catalogue calendar's copies (CA4a)
+		c.Days = nil   // the list view carries counts and coverage, not every date
+		// A copy is read-only in its agency until made its own (CA-27); it may
+		// be deleted.
+		c.CanDelete = caller.CanAgency(auth.PermCompose, c.OwnerAgency)
+		c.CanEdit = c.CanDelete && c.FromCentral == nil
 		items = append(items, c)
 	}
 	// The threshold ships with the data so the badge in the UI and any future
@@ -265,6 +288,15 @@ func (s *Server) getCalendar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.UsedBy = bindings[calKey(c.OwnerAgency, c.Name)]
+	v, err := s.loadCatalogueView(r.Context())
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if row := v.find(c.OwnerAgency, c.Name); row != nil {
+		v.annotate(row)
+		c.FromCentral, c.Copies = row.FromCentral, row.Copies
+	}
 	httpx.JSON(w, http.StatusOK, c)
 }
 
@@ -278,6 +310,12 @@ func (s *Server) createCalendar(w http.ResponseWriter, r *http.Request) {
 	in.Name = strings.TrimSpace(in.Name)
 	if !composeNameRe.MatchString(in.Name) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid calendar name (want "+composeNameRe.String()+")")
+		return
+	}
+	// GET /calendars/catalogue is Central's catalogue (2.5.3 CA4a): a calendar
+	// of that name could not be read by name.
+	if in.Name == catalogueReservedName {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", `the name "catalogue" is reserved`)
 		return
 	}
 	// In an agency context, that agency's (2.4.4 S3).
@@ -366,6 +404,9 @@ func (s *Server) updateCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid request body")
 		return
 	}
+	if s.refuseCopyWrite(w, r, owner, name) {
+		return
+	}
 	// CAL-27 — a calendar bound into any entry's `only` role may not be made
 	// global. The two are incompatible by construction: global means "unioned
 	// into every skip set", and a calendar that is simultaneously somebody's
@@ -379,8 +420,30 @@ func (s *Server) updateCalendar(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A catalogue calendar's save updates its automatic copies in the same
+	// transaction (2.5.3 CA-28): read what they hold first.
+	var v *catalogueView
+	var next *calendarRow
+	if owner == agencyid.Global {
+		var err error
+		if v, err = s.loadCatalogueView(r.Context()); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if cur := v.find(owner, name); cur != nil {
+			n := *cur
+			n.Description, n.Global, n.RecordSuppressed = in.Description, in.Global, in.RecordSuppressed
+			next = &n
+		}
+	}
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	defer tx.Rollback()
 	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), `
 		UPDATE calendars SET description=?, global=?, record_suppressed=?,
 		                     last_modified_by=?, last_modified_at=?
 		 WHERE owner_agency=? AND name=?`,
@@ -389,7 +452,21 @@ func (s *Server) updateCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
+	var saved catalogueSave
+	if next != nil {
+		if saved, err = propagateCatalogue(r.Context(), tx, v, next, id.Email, now); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
 	s.auditCalendar(r, owner, id.Email, "Updated", name, "Calendar updated")
+	if next != nil {
+		s.afterCatalogueSave(r, name, saved)
+	}
 	s.writeCalendar(w, r, owner, name, http.StatusOK)
 }
 
@@ -414,6 +491,23 @@ func (s *Server) replaceCalendarDays(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
 		return
 	}
+	if s.refuseCopyWrite(w, r, owner, name) {
+		return
+	}
+	var v *catalogueView
+	var next *calendarRow
+	if owner == agencyid.Global {
+		var err error
+		if v, err = s.loadCatalogueView(r.Context()); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if cur := v.find(owner, name); cur != nil {
+			n := *cur
+			n.Days = days
+			next = &n
+		}
+	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -428,17 +522,28 @@ func (s *Server) replaceCalendarDays(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
+	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := tx.ExecContext(r.Context(),
 		`UPDATE calendars SET last_modified_by=?, last_modified_at=? WHERE owner_agency=? AND name=?`,
-		id.Email, time.Now().UTC().Format(time.RFC3339), owner, name); err != nil {
+		id.Email, now, owner, name); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
+	}
+	var saved catalogueSave
+	if next != nil {
+		if saved, err = propagateCatalogue(r.Context(), tx, v, next, id.Email, now); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
 	s.auditCalendar(r, owner, id.Email, "Updated", name, "Calendar days replaced ("+strconv.Itoa(len(days))+" day(s))")
+	if next != nil {
+		s.afterCatalogueSave(r, name, saved)
+	}
 	s.writeCalendar(w, r, owner, name, http.StatusOK)
 }
 
@@ -469,7 +574,7 @@ func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request) {
 	if len(used) > 0 && r.URL.Query().Get("force") != "true" {
 		refs := make([]string, 0, len(used))
 		for _, b := range used {
-			ref := b.Polarity + ":" + b.OwnerKind + ":" + b.OwnerName + "/" + b.ScheduleName
+			ref := b.Polarity + ":" + bindingRef(b)
 			if b.BinnedOwner {
 				ref += " (in recycle bin)"
 			}
@@ -480,11 +585,50 @@ func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request) {
 				" — pass ?force=true to delete and leave those bindings dangling")
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM calendars WHERE owner_agency=? AND name=?`, owner, name); err != nil {
+	// The copies of a catalogue calendar stay, no longer offered (CA-27); a
+	// copy deleted takes its notices with it.
+	var uid string
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COALESCE(uid, '') FROM calendars WHERE owner_agency=? AND name=?`, owner, name).Scan(&uid); err != nil && err != sql.ErrNoRows {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	defer tx.Rollback()
+	var copies []string
+	if owner == agencyid.Global && uid != "" {
+		if _, err := tx.ExecContext(r.Context(), `UPDATE calendars SET origin_gone = 1 WHERE origin_uid = ?`, uid); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		crows, err := tx.QueryContext(r.Context(), `SELECT uid FROM calendars WHERE origin_uid = ?`, uid)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		for crows.Next() {
+			var c string
+			if crows.Scan(&c) == nil {
+				copies = append(copies, c)
+			}
+		}
+		crows.Close()
+	}
+	if _, err := tx.ExecContext(r.Context(), `DELETE FROM calendars WHERE owner_agency=? AND name=?`, owner, name); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
 	s.auditCalendar(r, owner, id.Email, "Deleted", name, "Calendar deleted")
+	if uid != "" {
+		s.settleCopyNotices(r.Context(), append(copies, uid))
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -499,7 +643,8 @@ func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request) {
 // both empty, every calendar.
 func (s *Server) loadCalendarRows(ctx context.Context, owner, only string) ([]calendarRow, error) {
 	q := `SELECT source, name, COALESCE(description,''), global, record_suppressed,
-	             COALESCE(created_by,''), COALESCE(created_at,''), owner_agency
+	             COALESCE(created_by,''), COALESCE(created_at,''), owner_agency,
+	             COALESCE(uid,''), COALESCE(origin_uid,''), COALESCE(origin_hash,''), COALESCE(update_mode,''), origin_gone
 	        FROM calendars`
 	var args []any
 	if only != "" {
@@ -515,13 +660,15 @@ func (s *Server) loadCalendarRows(ctx context.Context, owner, only string) ([]ca
 	var out []calendarRow
 	for rows.Next() {
 		var c calendarRow
-		var global, record int
-		if err := rows.Scan(&c.Source, &c.Name, &c.Description, &global, &record, &c.CreatedBy, &c.CreatedAt, &c.OwnerAgency); err != nil {
+		var global, record, gone int
+		if err := rows.Scan(&c.Source, &c.Name, &c.Description, &global, &record, &c.CreatedBy, &c.CreatedAt, &c.OwnerAgency,
+			&c.UID, &c.originUID, &c.originHash, &c.updateMode, &gone); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		c.Global = global == 1
 		c.RecordSuppressed = record == 1
+		c.originGone = gone == 1
 		c.Days = []calendarDayInput{}
 		out = append(out, c)
 	}
@@ -687,6 +834,51 @@ func allCalendarBindings(ctx context.Context, database *sql.DB) (map[string][]ca
 	}
 	rows.Close()
 
+	// A job's and a workflow's OWN calendars (2.5.3, CA-30): Forbid as skip and
+	// Allow as only, so the delete guard and CAL-27 (a global calendar is never
+	// kept to) count them as an entry's. Of the definition's agency.
+	for _, d := range []struct{ kind, q string }{
+		{"job", `SELECT j.source, j.name, COALESCE(j.uid, ''), j.deleted_at IS NOT NULL,
+		                COALESCE(j.forbid_calendars, ''), COALESCE(j.allow_calendars, ''),
+		                COALESCE(` + agencyid.JobSQL("j") + `, '` + agencyid.Global + `')
+		           FROM jobs j WHERE j.forbid_calendars IS NOT NULL OR j.allow_calendars IS NOT NULL`},
+		{"workflow", `SELECT w.source, w.name, COALESCE(w.uid, ''), w.deleted_at IS NOT NULL,
+		                COALESCE(w.forbid_calendars, ''), COALESCE(w.allow_calendars, ''),
+		                COALESCE(` + agencyid.WorkflowSQL + `, '` + agencyid.Global + `')
+		           FROM workflows w WHERE w.forbid_calendars IS NOT NULL OR w.allow_calendars IS NOT NULL`},
+	} {
+		drows, err := database.QueryContext(ctx, d.q)
+		if err != nil {
+			return nil, err
+		}
+		for drows.Next() {
+			var src, name, uid, forbidRaw, allowRaw, agencyID string
+			var binned bool
+			if err := drows.Scan(&src, &name, &uid, &binned, &forbidRaw, &allowRaw, &agencyID); err != nil {
+				drows.Close()
+				return nil, err
+			}
+			for _, pl := range []struct {
+				polarity string
+				names    []string
+			}{{"skip", calendar.ParseNames(forbidRaw)}, {"only", calendar.ParseNames(allowRaw)}} {
+				polarity := pl.polarity
+				for _, n := range pl.names {
+					k := calKey(agencyID, n)
+					out[k] = append(out[k], calendarBinding{
+						OwnerKind: d.kind, OwnerName: name, OwnerSource: src, Polarity: polarity,
+						BinnedOwner: binned, OwnerUID: uid, Level: "definition",
+					})
+				}
+			}
+		}
+		if err := drows.Err(); err != nil {
+			drows.Close()
+			return nil, err
+		}
+		drows.Close()
+	}
+
 	// FIRST-CLASS schedules — a reusable policy object that no job references YET
 	// is still a binding. Omitting these would let a calendar be deleted (or
 	// promoted to global) out from under a schedule that names it, and the damage
@@ -727,17 +919,7 @@ func (s *Server) calendarUsedAsOnly(ctx context.Context, owner, name string) (st
 	if err != nil {
 		return "", err
 	}
-	for _, b := range bindings[calKey(owner, name)] {
-		if b.Polarity == "only" {
-			where := b.OwnerKind + ":" + b.OwnerName + "/" + b.ScheduleName
-			if b.BinnedOwner {
-				where += " (in recycle bin)"
-			}
-			return "calendar " + name + " is bound as a run-day (only) calendar by " + where +
-				" and cannot also be global; a global calendar is unioned into every entry's SKIP set", nil
-		}
-	}
-	return "", nil
+	return onlyBindingReason(bindings, owner, name, true), nil
 }
 
 // normalizeCalendarDays validates, de-duplicates and sorts a day list.
@@ -771,12 +953,7 @@ func writeCalendarDays(ctx context.Context, tx *sql.Tx, owner, name string, days
 }
 
 func (s *Server) writeCalendar(w http.ResponseWriter, r *http.Request, owner, name string, status int) {
-	rows, err := s.loadCalendarRows(r.Context(), owner, name)
-	if err != nil || len(rows) == 0 {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return
-	}
-	httpx.JSON(w, status, rows[0])
+	s.writeAnnotatedCalendar(w, r, owner, name, status)
 }
 
 func (s *Server) auditCalendar(r *http.Request, agency, actor, action, target, summary string) {

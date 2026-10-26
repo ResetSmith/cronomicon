@@ -54,6 +54,7 @@ func TestGR1_AWorkflowIsBoundToItsScheduleByUID(t *testing.T) {
 	a := newGRSchedAPI(t)
 	a.exec(`INSERT INTO jobs(name, source, run_type, command, content_hash, source_path, synced_at)
 	        VALUES('build','git','bash','make','sha256:a','jobs/build.yaml','t')`)
+	ownJobsByWorkAgency(t, a.pool, "build") // the in-app workflow's agency's job
 	// Git's `cadence`, with a Git workflow bound to it.
 	a.exec(`INSERT INTO schedules(uid, name, source, cron, content_hash, synced_at) VALUES('s-git-cadence', 'cadence', 'git', '0 0 1 * * *', 'h', 't')`)
 	a.exec(`INSERT INTO workflows(uid, name, source, steps, synced_at) VALUES('w-git', 'gitflow', 'git', '[]', 't')`)

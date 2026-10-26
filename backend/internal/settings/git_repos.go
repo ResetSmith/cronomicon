@@ -23,6 +23,10 @@ import (
 // Repo is one repository: whose it is, its connection as the connection's
 // form reads and writes it, what its last sync was, and how much it supplies.
 type Repo struct {
+	// Leftover marks the built-in agency's connection from before 2.5.3
+	// (CA-6): it does not sync, and is only removed. Set by the route that
+	// shows it.
+	Leftover   bool   `json:"leftover,omitempty"`
 	ID         string `json:"id"`
 	AgencyID   string `json:"agencyId"`
 	AgencyName string `json:"agencyName"`
@@ -47,12 +51,19 @@ type RepoCounts struct {
 // ErrNoSuchAgency is PutAgencyRepo's answer for an agency that is not there.
 var ErrNoSuchAgency = errors.New("no such agency")
 
-// RepoOfAgency is the id of the repository an agency has connected. Global's
-// is 'global' whether or not its row is there; any other agency with none is
-// ErrRepoNotFound.
+// ErrCentralHasNoRepository is PutAgencyRepo's answer for the built-in agency
+// (2.5.3, CA-6): it runs nothing, so it keeps no definitions in Git. Templates
+// live in an ordinary agency's repository (CA-19).
+var ErrCentralHasNoRepository = errors.New("the built-in administration agency has no repository: " +
+	"it runs nothing, so it keeps no definitions in Git; connect the repository to an ordinary agency instead")
+
+// RepoOfAgency is the id of the repository an agency has connected;
+// ErrRepoNotFound for an agency with none. The built-in agency has none since
+// 2.5.3 (CA-6), whatever row 1310 left for it: a connection made before is a
+// leftover (CentralLeftoverRepo) that does not sync and is only removed.
 func RepoOfAgency(ctx context.Context, database *sql.DB, agencyID string) (string, error) {
 	if agencyID == agencyid.Global {
-		return repoid.Global, nil
+		return "", ErrRepoNotFound
 	}
 	var id string
 	err := database.QueryRowContext(ctx, `SELECT id FROM git_repos WHERE agency_id = ?`, agencyID).Scan(&id)
@@ -93,8 +104,37 @@ func GetRepo(ctx context.Context, database *sql.DB, appCfg *config.Config, repoI
 	return r, nil
 }
 
-// ListRepos is every repository, Global's first (present whether or not its
-// row is), the others by their agency's name.
+// CentralLeftoverRepo reports whether the built-in agency still holds a
+// repository from before 2.5.3 (CA-6): its row with a URL, or with a commit it
+// synced, or rows of definitions still recorded as its repository's. The
+// second and third are the installation whose Global repository came from
+// CRONOMICON_GITLAB_BASE_URL, which never wrote the URL into the row (found by
+// the review of CA2), and the dev seed's. A leftover does not sync; a global
+// administrator removes it ("Remove the leftover repository", question 203).
+// The unconfigured row 1310 gave every installation, with nothing synced, is
+// no leftover.
+func CentralLeftoverRepo(ctx context.Context, database interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}) (bool, error) {
+	var left bool
+	err := database.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM git_repos WHERE id = ?1
+		                  AND (COALESCE(url, '') <> '' OR COALESCE(last_sha, '') <> ''))
+		    OR EXISTS (SELECT 1 FROM git_repos WHERE id = ?1)
+		       AND (EXISTS (SELECT 1 FROM jobs      WHERE source = 'git' AND repo_id = ?1)
+		         OR EXISTS (SELECT 1 FROM workflows WHERE source = 'git' AND repo_id = ?1)
+		         OR EXISTS (SELECT 1 FROM scripts   WHERE repo_id = ?1)
+		         OR EXISTS (SELECT 1 FROM schedules WHERE source = 'git' AND repo_id = ?1)
+		         OR EXISTS (SELECT 1 FROM scopes    WHERE source = 'git' AND repo_id = ?1))`, repoid.Global).Scan(&left)
+	if err != nil {
+		return false, fmt.Errorf("read the built-in agency's repository: %w", err)
+	}
+	return left, nil
+}
+
+// ListRepos is every agency's repository, by its agency's name. The built-in
+// agency's row is not one (2.5.3, CA-6): a leftover connection is read on its
+// own (CentralLeftoverRepo, GET /agencies/global/git-repo).
 func ListRepos(ctx context.Context, database *sql.DB, appCfg *config.Config) ([]*Repo, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT g.id FROM git_repos g LEFT JOIN agencies a ON a.id = g.agency_id
@@ -102,7 +142,7 @@ func ListRepos(ctx context.Context, database *sql.DB, appCfg *config.Config) ([]
 	if err != nil {
 		return nil, fmt.Errorf("list git_repos: %w", err)
 	}
-	ids := []string{repoid.Global}
+	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
@@ -157,20 +197,15 @@ func CountRepoRows(ctx context.Context, database interface {
 // PutAgencyRepo writes the connection of an agency's repository, connecting
 // one when the agency has none. created reports which it was.
 //
-// Global's is the row it always was, written as PUT /settings/gitlab writes
-// it, and its URL is not held to the allowed hosts (GR-10). Any other
-// agency's must be a URL, and CheckRepoURL decides it before anything is
+// The built-in agency has no repository (2.5.3, CA-6): ErrCentralHasNoRepository.
+// An agency's must be a URL, and CheckRepoURL decides it before anything is
 // written: the scheme, no user in it, and a host on the list.
 //
 // The caller starts or restarts the repository's sync service afterwards
 // (gitlab.Registry.Restart), which is what first syncs a new connection.
 func PutAgencyRepo(ctx context.Context, database *sql.DB, appCfg *config.Config, agencyID string, inp GitlabConfig, actor string) (repo *Repo, created bool, err error) {
 	if agencyID == agencyid.Global {
-		if _, err := UpdateGitlabConfig(ctx, database, appCfg, repoid.Global, inp, actor); err != nil {
-			return nil, false, err
-		}
-		repo, err = GetRepo(ctx, database, appCfg, repoid.Global)
-		return repo, false, err
+		return nil, false, ErrCentralHasNoRepository
 	}
 	var one int
 	if err := database.QueryRowContext(ctx, `SELECT 1 FROM agencies WHERE id = ?`, agencyID).Scan(&one); err != nil {
@@ -270,8 +305,10 @@ func ListRepoProblems(ctx context.Context, database *sql.DB, repoID string) ([]R
 	return out, rows.Err()
 }
 
-// RepoAgency is the agency a repository belongs to. Global's is Global's
-// whether or not its row is there; any other without a row is ErrRepoNotFound.
+// RepoAgency is the agency a repository belongs to. The id 'global' is the
+// built-in agency's whether or not its row is there (its history is still
+// read, and its leftover removed, since 2.5.3: CA-6); any other without a row
+// is ErrRepoNotFound.
 func RepoAgency(ctx context.Context, database *sql.DB, repoID string) (string, error) {
 	if repoID == "" || repoID == repoid.Global {
 		return agencyid.Global, nil

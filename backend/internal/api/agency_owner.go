@@ -52,6 +52,20 @@ func (s *Server) ownerMatchesContext(w http.ResponseWriter, r *http.Request, own
 	return false
 }
 
+// failCentralRunsNothing is the refusal of a row that would be the built-in
+// agency's (2.5.3, CA-1, CA-4): Central is the installation's administration and
+// owns nothing that runs. It does not name the agency, whose name may change.
+func failCentralRunsNothing(w http.ResponseWriter, label string) {
+	httpx.Fail(w, http.StatusUnprocessableEntity, "central_runs_nothing",
+		"this "+label+" would belong to the built-in administration agency, which runs nothing: "+
+			"switch to an agency, or name one, to create it there")
+}
+
+// centralMayOwn is what the built-in agency still owns of what the creation
+// gate places (CA-2): its alert rules, which hear every agency's runs, and the
+// push targets they send to.
+var centralMayOwn = map[string]bool{"alert rule": true, "push target": true}
+
 func failContextMismatch(w http.ResponseWriter, label string) {
 	httpx.Fail(w, http.StatusUnprocessableEntity, "agency_context_mismatch",
 		"this "+label+" would belong to another agency than the one you are working in: switch to that agency to create it there")

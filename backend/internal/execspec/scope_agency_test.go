@@ -10,9 +10,10 @@ import (
 )
 
 // TestScopeAgency covers the M3 resolver: a scope bound to an agency resolves to
-// that agency's NAME; a scope nobody assigned, an unknown scope, and the empty
-// scope all resolve to Global (migration 1220 — they resolved to nothing, which
-// meant "the general pool", before Global was a row).
+// that agency's NAME; for a run of Global's, a scope nobody assigned, an unknown
+// scope, and the empty scope all resolve to Global (migration 1220 — they
+// resolved to nothing, which meant "the general pool", before Global was a row).
+// For a run of another agency they resolve to that agency (CA-5, below).
 func TestScopeAgency(t *testing.T) {
 	pool, err := db.Open(filepath.Join(t.TempDir(), "scopeagency.db"))
 	if err != nil {
@@ -73,7 +74,10 @@ func TestScopeAgency(t *testing.T) {
 
 	// A scope is looked for in the agency whose run it is (I2). prod is in two
 	// agencies, which makes it Global's (1410); a run of alpha's that names it
-	// does not find it, as for any scope its agency does not hold.
+	// does not find it, as for any scope its agency does not hold. Such a run,
+	// and a run with no scope, is its own agency's (CA-5, 2.5.3): it used to be
+	// stamped Global whatever its agency, which put an agency's run on Central's
+	// local runner. Only a run of Global's, or of no named agency, is Global's.
 	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('s3','alpha-only','cronomicon','t')`)
 	exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES('s3','a1')`)
 	for _, c := range []struct {
@@ -81,9 +85,12 @@ func TestScopeAgency(t *testing.T) {
 		want          string
 	}{
 		{"a1", "alpha-only", "alpha"},
-		{"a2", "alpha-only", "Global"},
+		{"a2", "alpha-only", "beta"},
 		{"global", "alpha-only", "Global"},
-		{"a1", "prod", "Global"},
+		{"a1", "prod", "alpha"},
+		{"a1", "", "alpha"},
+		{"a2", "ghost", "beta"},
+		{"", "", "Global"},
 	} {
 		got, err := ScopeAgencies(ctx, pool, c.agency, c.scope)
 		if err != nil || len(got) != 1 || got[0] != c.want {

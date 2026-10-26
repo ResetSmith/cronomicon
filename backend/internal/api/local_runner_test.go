@@ -31,6 +31,9 @@ type localRunnerJSON struct {
 	Serves        []struct {
 		ID string `json:"id"`
 	} `json:"serves"`
+	Owner *struct {
+		ID string `json:"id"`
+	} `json:"owner"` // 2.5.3 (CA-8): null while it belongs to no agency
 }
 
 func getLocalRunner(t *testing.T, h http.Handler, who string) localRunnerJSON {
@@ -78,15 +81,31 @@ func TestLocalRunner_TheRowExistsAndTheSwitchIsAGlobalAdministrators(t *testing.
 		t.Errorf("concurrency 0 = %d %s, want 422", code, ec)
 	}
 
-	if code, ec := put(gRoot, `{"enabled":true,"maxConcurrent":6}`); code != 200 {
-		t.Fatalf("a global administrator turning it on = %d %s", code, ec)
+	// Since 2.5.3 it belongs to no agency until a global administrator gives
+	// it one, and unassigned it is off and is not turned on (CA-8, CA-9).
+	if code, ec := put(gRoot, `{"enabled":true}`); code != 422 || ec != "local_runner_unassigned" {
+		t.Errorf("turning on an unassigned local runner = %d %s, want 422 local_runner_unassigned", code, ec)
+	}
+	if code, _ := put(gFinAdmin, `{"ownerAgency":"ag:FIN"}`); code != http.StatusForbidden {
+		t.Errorf("FIN's administrator taking the local runner = %d, want 403", code)
+	}
+	if code, ec := put(gRoot, `{"ownerAgency":"ag:nowhere"}`); code != 422 || ec != "unknown_agency" {
+		t.Errorf("giving it to an agency that is not there = %d %s, want 422 unknown_agency", code, ec)
+	}
+	// Given and turned on in one request, deliberately.
+	if code, ec := put(gRoot, `{"ownerAgency":"ag:FIN","enabled":true,"maxConcurrent":6}`); code != 200 {
+		t.Fatalf("a global administrator giving it to FIN and turning it on = %d %s", code, ec)
 	}
 	// The engine was told, not only the database: the row reads online at once.
 	lr = getLocalRunner(t, h, gRoot)
-	if !lr.Enabled || lr.Status != "online" || lr.MaxConcurrent != 6 {
-		t.Errorf("after turning on = %+v, want on, online, 6 at once", lr)
+	if !lr.Enabled || lr.Status != "online" || lr.MaxConcurrent != 6 || lr.Owner == nil || lr.Owner.ID != "ag:FIN" {
+		t.Errorf("after giving it to FIN and turning it on = %+v, want FIN's, on, online, 6 at once", lr)
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM activity WHERE runner_name = 'Local runner' AND actor = 'root-admins@example.com'`); n != 2 {
+	// The installation's rows (a change of the switch is written for the
+	// built-in agency and for the local runner's agency since 2.5.3), not the
+	// assignment's own.
+	if n := count(t, pool, `SELECT COUNT(*) FROM activity WHERE runner_name = 'Local runner' AND actor = 'root-admins@example.com'
+	                       AND agency_id = 'global' AND summary NOT LIKE 'local runner given to%'`); n != 2 {
 		t.Errorf("%d activity rows for the change, want one for the switch and one for the concurrency", n)
 	}
 	if code, ec := put(gRoot, `{"enabled":false}`); code != 200 {
@@ -214,11 +233,13 @@ func TestLocalRunner_ItsServeListIsAGlobalAdministratorsAndAgenciesBindToIt(t *t
 	// A global administrator cannot widen it either: the local runner is
 	// Global's and serves Global only (§0a, IN-3; until then a global
 	// administrator gave it any agencies).
-	if code, ec := set(gRoot, "global", "ag:FIN"); code != 422 || ec != "local_runner_global_only" {
-		t.Errorf("a global admin adding FIN = %d %s, want 422 local_runner_global_only", code, ec)
+	// Since 2.5.3 its serve list is its owner (CA-8): given to an agency by
+	// PUT /local-runner, never through the serve list.
+	if code, ec := set(gRoot, "global", "ag:FIN"); code != 422 || ec != "local_runner_serves_owner" {
+		t.Errorf("a global admin adding FIN = %d %s, want 422 local_runner_serves_owner", code, ec)
 	}
-	if code, ec := set(gRoot, "ag:FIN"); code != 422 || ec != "local_runner_global_only" {
-		t.Errorf("a global admin giving it FIN alone = %d %s, want 422 local_runner_global_only", code, ec)
+	if code, ec := set(gRoot, "ag:FIN"); code != 422 || ec != "local_runner_serves_owner" {
+		t.Errorf("a global admin giving it FIN alone = %d %s, want 422 local_runner_serves_owner", code, ec)
 	}
 	if got := served(t, pool, id); !slices.Equal(got, []string{"global"}) {
 		t.Fatalf("it serves %v, want Global alone", got)

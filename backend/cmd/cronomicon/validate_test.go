@@ -141,3 +141,31 @@ func TestValidatePaths(t *testing.T) {
 		}
 	})
 }
+
+// 2.5.3 (question 206): a job with no scope is an error without -agency too. A
+// checkout with no flag was read as Global's repository, where a job could have
+// none; the built-in agency runs nothing and syncs nothing since 2.5.3, so such
+// a job could never run anywhere. A job on a scope still validates.
+func TestValidateAScopelessJobIsAnErrorWithoutAgency(t *testing.T) {
+	repo := t.TempDir()
+	writeFixture(t, filepath.Join(repo, "scripts", "backup.yaml"),
+		"apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: backup\nspec:\n  run_type: bash\n  command: pg_dump\n")
+	writeFixture(t, filepath.Join(repo, "inventory", "prod.ini"), "[web]\nhost1\n")
+	writeFixture(t, filepath.Join(repo, "jobs", "scoped.yaml"),
+		"apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: scoped\nspec:\n  script_ref: backup\n  scope: prod\n")
+	var out, errOut bytes.Buffer
+	if code := validatePaths([]string{repo}, &out, &errOut); code != 0 {
+		t.Fatalf("a checkout whose job names a scope = %d, want 0 (stderr=%q)", code, errOut.String())
+	}
+
+	writeFixture(t, filepath.Join(repo, "jobs", "noscope.yaml"),
+		"apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: noscope\nspec:\n  script_ref: backup\n")
+	for _, args := range [][]string{{repo}, {"-agency", repo}} {
+		out.Reset()
+		errOut.Reset()
+		if code := validatePaths(args, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "noscope") ||
+			!strings.Contains(errOut.String(), "spec.scope") {
+			t.Errorf("validate %v with a scopeless job = %d, want 1 naming it and spec.scope (stderr=%q)", args, code, errOut.String())
+		}
+	}
+}

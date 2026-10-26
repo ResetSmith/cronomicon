@@ -533,9 +533,12 @@ func scopeAgencyIDs(ctx context.Context, db *sql.DB, scopeID string) ([]string, 
 // so the snapshot is deterministic and two enqueues of the same scope produce
 // byte-identical JSON.
 //
-// Never empty (LR-22, LR-24, migration 1220). A run with no scope is Global's,
-// and so is a run whose job names a scope the catalog does not hold (a job's
-// scope is free text; such a run has always been general-pool work). A scope
+// Never empty (LR-22, LR-24, migration 1220). A run with no scope is its
+// agency's, and so is a run whose job names a scope the catalog does not hold (a
+// job's scope is free text; such a run has always been general-pool work). Until
+// 2.5.3 both were Global's whatever the job's agency, which put an agency's
+// scopeless run on Central's local runner (CA-5); Global's is now only the answer
+// for a caller that names no agency. A scope
 // that EXISTS and has no agency is not "global": every scope is born with a
 // Global row and can only trade it for another, so that state is corruption, and
 // it is returned as ErrScopeHasNoAgency for the producer to refuse on.
@@ -547,11 +550,11 @@ func scopeAgencyIDs(ctx context.Context, db *sql.DB, scopeID string) ([]string, 
 // agency's scope of the name is nothing to this run.
 func ScopeAgencies(ctx context.Context, db *sql.DB, agency, scope string) ([]string, error) {
 	out := []string{}
-	if scope == "" {
-		return []string{agencyid.CurrentGlobalName(ctx, db)}, nil
-	}
 	if agency == "" {
 		agency = agencyid.Global
+	}
+	if scope == "" {
+		return runAgencyName(ctx, db, agency)
 	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT a.name FROM scope_agencies sa
@@ -588,6 +591,24 @@ func ScopeAgencies(ctx context.Context, db *sql.DB, agency, scope string) ([]str
 	}
 	if known {
 		return nil, fmt.Errorf("%w: %q", ErrScopeHasNoAgency, scope)
+	}
+	return runAgencyName(ctx, db, agency)
+}
+
+// runAgencyName is the one-name snapshot of a run that is its agency's alone
+// (no scope, or a scope the catalog does not hold): that agency's current name,
+// read by id since names change. The built-in agency's name for Global, or for
+// an agency that is gone, as before 2.5.3.
+func runAgencyName(ctx context.Context, db *sql.DB, agency string) ([]string, error) {
+	if agency != agencyid.Global {
+		var name string
+		err := db.QueryRowContext(ctx, `SELECT name FROM agencies WHERE id = ?`, agency).Scan(&name)
+		if err == nil && name != "" {
+			return []string{name}, nil
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
 	}
 	return []string{agencyid.CurrentGlobalName(ctx, db)}, nil
 }

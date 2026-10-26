@@ -59,6 +59,7 @@ func checkGlobalHostRecord(ctx context.Context, database *sql.DB) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	central := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	var found []Finding
 	for _, k := range order {
 		noun := "scope"
@@ -68,11 +69,11 @@ func checkGlobalHostRecord(ctx context.Context, database *sql.DB) error {
 		found = append(found, Finding{
 			AgencyID: k.agency,
 			Subject:  k.agency + ":" + k.host,
-			Detail: fmt.Sprintf("The host %s, which this agency's %s %s reach, has a host record only Global has. A record "+
-				"of Global's is used by Global's runs only: this agency's runs on %s find no record, and fail on that host. "+
+			Detail: fmt.Sprintf("The host %s, which this agency's %s %s reach, has a host record only %s has. %s runs "+
+				"nothing since 2.5.3, so no run uses its records: this agency's runs on %s find no record, and fail on that host. "+
 				"Give this agency a record for %s (by hand, or imported with the scope's inventory). This notice clears "+
 				"when it is done.",
-				k.host, noun, strings.Join(scopes[k], ", "), k.host, k.host),
+				k.host, noun, strings.Join(scopes[k], ", "), central, central, k.host, k.host),
 		})
 	}
 	return Reconcile(ctx, database, KindGlobalHostRecord, found)

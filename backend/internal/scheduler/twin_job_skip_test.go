@@ -34,8 +34,9 @@ func TestTwoJobsOfOneNameEachLeaveTheirOwnRecordOfAFireThatDidNotHappen(t *testi
 		}
 		return n
 	}
-	exec(`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, synced_at) VALUES
-	        ('j-fin', 'load', 'cronomicon', 'bash', 'Allow', 1, 't'), ('j-tax', 'load', 'cronomicon', 'python', 'Allow', 1, 't')`)
+	seedFinTax(t, pool)
+	exec(`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, synced_at, owner_agency) VALUES
+	        ('j-fin', 'load', 'cronomicon', 'bash', 'Allow', 1, 't', 'ag-fin'), ('j-tax', 'load', 'cronomicon', 'python', 'Allow', 1, 't', 'ag-tax')`)
 	exec(`INSERT INTO definition_schedules (owner_source, owner_kind, owner_name, name, cron, position, owner_uid, skip_calendars) VALUES
 	        ('cronomicon', 'job', 'load', 'at-two', '0 2 * * *', 0, 'j-fin', '["closed"]'),
 	        ('cronomicon', 'job', 'load', 'at-two', '0 2 * * *', 0, 'j-tax', '["closed"]')`)
@@ -96,7 +97,10 @@ func TestTwoJobsOfOneNameEachLeaveTheirOwnRecordOfAFireThatDidNotHappen(t *testi
 	exec(`DELETE FROM runs`)
 
 	// ── A closed calendar (one record for the day, per definition). ─────────
-	seedCal(t, pool, "closed", false, true, map[string]string{today(s): "closed"})
+	// Each agency's own calendar of the name (a definition's calendars are its
+	// agency's, §0a).
+	seedCalOf(t, pool, "ag-fin", "closed", false, true, map[string]string{today(s): "closed"})
+	seedCalOf(t, pool, "ag-tax", "closed", false, true, map[string]string{today(s): "closed"})
 	for range 2 {
 		fire("j-fin")
 		fire("j-tax")

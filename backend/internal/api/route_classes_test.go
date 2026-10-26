@@ -137,6 +137,7 @@ var routeClasses = map[string]routeClass{
 	"/api/v1/roles":                       {"any-session", ""},
 	"/api/v1/settings/general":            {"any-session", ""},
 	"/api/v1/settings/freeze":             {"any-session", ""},
+	"/api/v1/calendars/catalogue":         {"any-session", ""}, // what Central offers every agency (2.5.3 CA-25); the handler asks compose on some agency
 	"/api/v1/settings/alert-link-address": {"installation", ""},
 	"/api/v1/settings/audit-compliance":   {"any-session", ""},
 	"/api/v1/local-runner":                {"any-session", ""},

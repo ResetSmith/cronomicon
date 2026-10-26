@@ -18,9 +18,13 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/repoid"
 )
 
-// regFixture is a migrated database, a local repository connected as Global's
-// (its URL and branch on Global's row of git_repos), and a Registry whose
-// clones go under a temporary directory. Nothing is started.
+// regFixture is a migrated database, a local repository connected as the
+// agency ag-a's (repo-a: its URL and branch on its row of git_repos, as
+// newSyncFixture writes it), and a Registry whose clones go under a temporary
+// directory. Nothing is started.
+//
+// Until 2.5.3 the repository was Global's. The registry starts no Service for
+// the built-in agency since (CA-6).
 type regFixture struct {
 	t      *testing.T
 	db     *sql.DB
@@ -34,11 +38,8 @@ func newRegFixture(t *testing.T) *regFixture {
 	t.Helper()
 	svc, repo, remote := newSyncFixture(t)
 	branch := svc.Cfg.GitLabWriteBranch
-	if _, err := svc.db.Exec(`UPDATE git_repos SET url = ?, branch = ? WHERE id = 'global'`, remote, branch); err != nil {
-		t.Fatalf("connect Global's repository: %v", err)
-	}
 	// No environment override: the row is the connection, as it is for every
-	// installation that saved one.
+	// repository.
 	reg := NewRegistry(svc.db, slog.New(slog.NewTextHandler(io.Discard, nil)), &config.Config{})
 	clones := t.TempDir()
 	reg.cloneDir = func(repoID string) string { return filepath.Join(clones, repoID) }
@@ -86,15 +87,24 @@ func headOf(t *testing.T, repo *gogit.Repository) string {
 func TestRegistry_AWrittenConnectionTakesEffectWithoutARestart(t *testing.T) {
 	f := newRegFixture(t)
 	ctx := context.Background()
+	// Central's row keeps a connection from before 2.5.3 (the same remote).
+	// The built-in agency has no repository (CA-6): the registry starts no
+	// Service for it, at start or when the row is written.
+	if _, err := f.db.Exec(`UPDATE git_repos SET url = ?, branch = ? WHERE id = 'global'`, f.remote, f.branch); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.reg.Start(ctx); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	first := f.reg.Global()
+	first := f.reg.Service(fixtureRepo)
 	if first == nil {
-		t.Fatal("no Service for Global's repository after Start")
+		t.Fatal("no Service for the agency's repository after Start")
+	}
+	if f.reg.Service(repoid.Global) != nil {
+		t.Error("the registry started a Service for Central's leftover connection")
 	}
 	eventually(t, "the first sync of the repository as connected at start", func() bool {
-		return f.lastSHA(repoid.Global) == headOf(t, f.repo)
+		return f.lastSHA(fixtureRepo) == headOf(t, f.repo)
 	})
 	if jobCount(t, f.db, "keep") != 1 {
 		t.Fatalf("the first repository's job was not imported")
@@ -109,18 +119,22 @@ func TestRegistry_AWrittenConnectionTakesEffectWithoutARestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	grConfinedTo.Store(second, fixtureScope) // the same agency's repository
 	gitCommitFile(t, repo2, second, "jobs/other.yaml", jobYAML("other"), "the second repository's job")
 	head2, _ := repo2.Head()
-	if _, err := f.db.Exec(`UPDATE git_repos SET url = ?, branch = ? WHERE id = 'global'`, second, head2.Name().Short()); err != nil {
+	if _, err := f.db.Exec(`UPDATE git_repos SET url = ?, branch = ? WHERE id = 'repo-a'`, second, head2.Name().Short()); err != nil {
 		t.Fatal(err)
 	}
 	grBackdate(t, f.db)
-	if err := f.reg.Restart(ctx, repoid.Global); err != nil {
+	if err := f.reg.Restart(ctx, fixtureRepo); err != nil {
 		t.Fatalf("restart after the connection was written: %v", err)
+	}
+	if err := f.reg.Restart(ctx, repoid.Global); err != nil || f.reg.Service(repoid.Global) != nil {
+		t.Errorf("a write of Central's leftover connection: %v; want nothing started", err)
 	}
 
 	eventually(t, "a sync of the repository the connection names now", func() bool {
-		return f.lastSHA(repoid.Global) == headOf(t, repo2)
+		return f.lastSHA(fixtureRepo) == headOf(t, repo2)
 	})
 	if jobCount(t, f.db, "other") != 1 {
 		t.Errorf("the newly connected repository's job was not imported")
@@ -128,7 +142,7 @@ func TestRegistry_AWrittenConnectionTakesEffectWithoutARestart(t *testing.T) {
 	if jobCount(t, f.db, "keep") != 0 {
 		t.Errorf("the job of the repository that is no longer connected is still there")
 	}
-	now := f.reg.Global()
+	now := f.reg.Service(fixtureRepo)
 	if now == nil || now == first {
 		t.Fatalf("the registry still answers with the Service that was built for the old connection")
 	}
@@ -145,6 +159,9 @@ func TestRegistry_AWrittenConnectionTakesEffectWithoutARestart(t *testing.T) {
 	if after := grCount(t, f.db, `SELECT COUNT(*) FROM git_sync_events`); after != before {
 		t.Errorf("the stopped Service recorded %d more sync(s)", after-before)
 	}
+	if got := f.lastSHA(repoid.Global); got != "" {
+		t.Errorf("Central's leftover connection was synced (last_sha %s)", got)
+	}
 }
 
 // A repository connected while the server runs gets its first sync when its
@@ -156,7 +173,7 @@ func TestRegistry_ARepositoryConnectedWhileRunningGetsItsFirstSync(t *testing.T)
 	if err := f.reg.Start(ctx); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	eventually(t, "Global's first sync", func() bool { return f.lastSHA(repoid.Global) != "" })
+	eventually(t, "the first repository's first sync", func() bool { return f.lastSHA(fixtureRepo) != "" })
 
 	second := t.TempDir()
 	repo2, err := gogit.PlainInit(second, false)
@@ -185,11 +202,11 @@ func TestRegistry_ARepositoryConnectedWhileRunningGetsItsFirstSync(t *testing.T)
 	if svc == nil || svc.repo() != "repo-b" || svc.agency() != "ag-b" {
 		t.Fatalf("the registry's Service for the repository: %+v", svc)
 	}
-	if svc.cloneDir == f.reg.Global().cloneDir {
+	if svc.cloneDir == f.reg.Service(fixtureRepo).cloneDir {
 		t.Errorf("the two repositories share a clone directory: %s", svc.cloneDir)
 	}
 	if svc.webhookSecret != "" {
-		t.Errorf("the agency's repository's Service was handed the start-up webhook secret, which is Global's alone")
+		t.Errorf("the agency's repository's Service was handed the start-up webhook secret")
 	}
 
 	f.reg.Stop("repo-b")
@@ -199,8 +216,8 @@ func TestRegistry_ARepositoryConnectedWhileRunningGetsItsFirstSync(t *testing.T)
 	if r := svc.SyncBlocking(ctx, "manual"); !r.notRun {
 		t.Errorf("the disconnected repository's Service still syncs: %+v", r)
 	}
-	if f.reg.Global() == nil {
-		t.Errorf("stopping one repository stopped Global's")
+	if f.reg.Service(fixtureRepo) == nil {
+		t.Errorf("stopping one repository stopped the other's")
 	}
 }
 
@@ -229,13 +246,13 @@ func TestRegistry_OneOperationAtATime(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "both repositories' first syncs", func() bool {
-		return f.lastSHA(repoid.Global) != "" && f.lastSHA("repo-b") != ""
+		return f.lastSHA(fixtureRepo) != "" && f.lastSHA("repo-b") != ""
 	})
-	a, b := f.reg.Global(), f.reg.Service("repo-b")
+	a, b := f.reg.Service(fixtureRepo), f.reg.Service("repo-b")
 	a.wg.Wait()
 	b.wg.Wait()
 
-	// Global's next sync stops in the middle, holding the queue.
+	// The first repository's next sync stops in the middle, holding the queue.
 	inside, letGo := make(chan struct{}), make(chan struct{})
 	var once, releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(letGo) }) }
@@ -257,7 +274,7 @@ func TestRegistry_OneOperationAtATime(t *testing.T) {
 	}()
 	select {
 	case r := <-bDone:
-		t.Fatalf("the other repository's sync ran while Global's was working: %+v", r)
+		t.Fatalf("the other repository's sync ran while the first's was working: %+v", r)
 	case err := <-pubDone:
 		t.Fatalf("a publish ran while a sync was working in the clone: %v", err)
 	case <-time.After(300 * time.Millisecond):
@@ -268,7 +285,7 @@ func TestRegistry_OneOperationAtATime(t *testing.T) {
 		select {
 		case r := <-aDone:
 			if r.Status == "failed" {
-				t.Errorf("Global's sync: %s", r.ErrorMessage)
+				t.Errorf("the first repository's sync: %s", r.ErrorMessage)
 			}
 			aDone = nil
 		case r := <-bDone:
@@ -298,9 +315,9 @@ func TestRegistry_StopCancelsAQueuedSync(t *testing.T) {
 	if err := f.reg.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	svc := f.reg.Global()
+	svc := f.reg.Service(fixtureRepo)
 	stopped := make(chan struct{})
-	go func() { f.reg.Stop(repoid.Global); close(stopped) }()
+	go func() { f.reg.Stop(fixtureRepo); close(stopped) }()
 	select {
 	case <-stopped:
 	case <-time.After(10 * time.Second):
@@ -310,10 +327,10 @@ func TestRegistry_StopCancelsAQueuedSync(t *testing.T) {
 	if n := grCount(t, f.db, `SELECT COUNT(*) FROM git_sync_events`); n != 0 {
 		t.Errorf("a sync that never had its turn recorded %d event(s)", n)
 	}
-	if f.lastSHA(repoid.Global) != "" {
+	if f.lastSHA(fixtureRepo) != "" {
 		t.Errorf("a sync that never had its turn wrote a sync state")
 	}
-	if f.reg.Service(repoid.Global) != nil {
+	if f.reg.Service(fixtureRepo) != nil {
 		t.Errorf("the registry still has the stopped Service")
 	}
 	svc.TriggerSync(ctx, "webhook") // starts nothing
@@ -324,7 +341,7 @@ func TestRegistry_StopCancelsAQueuedSync(t *testing.T) {
 
 	// Closing the registry stops the rest, and it starts nothing afterwards.
 	f.reg.Close()
-	if err := f.reg.Restart(ctx, repoid.Global); err == nil {
+	if err := f.reg.Restart(ctx, fixtureRepo); err == nil {
 		t.Errorf("a closed registry started a Service")
 	}
 }
@@ -354,7 +371,7 @@ func TestATriggerDuringASyncIsNotLost(t *testing.T) {
 	if jobCount(t, svc.db, "pushed") != 1 {
 		t.Errorf("the job pushed during the sync was not imported: the trigger its push caused was dropped")
 	}
-	if got := grString(t, svc.db, `SELECT COALESCE(last_sha,'') FROM git_repos WHERE id='global'`); got != headOf(t, repo) {
+	if got := grString(t, svc.db, `SELECT COALESCE(last_sha,'') FROM git_repos WHERE id='repo-a'`); got != headOf(t, repo) {
 		t.Errorf("the last synced commit is %q, want the pushed one %q", got, headOf(t, repo))
 	}
 	if n := grCount(t, svc.db, `SELECT COUNT(*) FROM git_sync_events`); n != 2 {
@@ -424,22 +441,22 @@ func TestRegistry_AConnectionWithNoURLForgetsItsProblems(t *testing.T) {
 	if err := f.reg.Start(ctx); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	eventually(t, "the first sync", func() bool { return f.lastSHA(repoid.Global) == headOf(t, f.repo) })
+	eventually(t, "the first sync", func() bool { return f.lastSHA(fixtureRepo) == headOf(t, f.repo) })
 	open := func() int {
-		return grCount(t, f.db, `SELECT COUNT(*) FROM notices WHERE kind='git_sync_problems' AND subject='global' AND resolved_at IS NULL`)
+		return grCount(t, f.db, `SELECT COUNT(*) FROM notices WHERE kind='git_sync_problems' AND subject='repo-a' AND resolved_at IS NULL`)
 	}
 	eventually(t, "the notice of the file that does not validate", func() bool { return open() == 1 })
-	if n := grCount(t, f.db, `SELECT COUNT(*) FROM git_sync_problems WHERE repo_id='global'`); n == 0 {
+	if n := grCount(t, f.db, `SELECT COUNT(*) FROM git_sync_problems WHERE repo_id='repo-a'`); n == 0 {
 		t.Fatalf("no problem rows after a sync of a file that does not validate")
 	}
 
-	if _, err := f.db.Exec(`UPDATE git_repos SET url = '' WHERE id = 'global'`); err != nil {
+	if _, err := f.db.Exec(`UPDATE git_repos SET url = '' WHERE id = 'repo-a'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.reg.Restart(ctx, repoid.Global); err != nil {
+	if err := f.reg.Restart(ctx, fixtureRepo); err != nil {
 		t.Fatalf("restart after the URL was removed: %v", err)
 	}
-	if n := grCount(t, f.db, `SELECT COUNT(*) FROM git_sync_problems WHERE repo_id='global'`); n != 0 {
+	if n := grCount(t, f.db, `SELECT COUNT(*) FROM git_sync_problems WHERE repo_id='repo-a'`); n != 0 {
 		t.Errorf("%d problem row(s) left for a connection with no URL", n)
 	}
 	if open() != 0 {

@@ -36,7 +36,7 @@ import (
 // grSecondRepo makes a second local remote and a Service that syncs it into
 // the SAME database as first, from its own clone directory, as a repository of
 // its own ("repo-b", belonging to the agency "ag-b"; the first Service is
-// Global's).
+// ag-a's, newSyncFixture's).
 func grSecondRepo(t *testing.T, first *Service) (*Service, *gogit.Repository, string) {
 	t.Helper()
 	return grRepo(t, first, "repo-b", "ag-b")
@@ -50,9 +50,9 @@ func grRepo(t *testing.T, first *Service, id, agency string) (*Service, *gogit.R
 	if err != nil {
 		t.Fatalf("git init: %v", err)
 	}
-	// Its row of git_repos (migration 1310), with its branch: the environment's
-	// branch override, which the first Service's fixture uses, is Global's
-	// repository's alone (GR-21), so a second repository reads its own row.
+	// Its row of git_repos (migration 1310), with its URL and branch: the row
+	// is the connection (the environment's branch override, Global's alone,
+	// is read no more since 2.5.3).
 	grAgencyScope(t, first.db, agency, "hosts-of-"+id)
 	grConfinedTo.Store(remote, "hosts-of-"+id)
 	if _, err := first.db.Exec(`INSERT OR REPLACE INTO git_repos (id, agency_id, url, branch) VALUES (?, ?, ?, ?)`,
@@ -204,7 +204,7 @@ func TestGR1_TwoScriptsOfOneNameAreTwoScripts(t *testing.T) {
 		t.Helper()
 		return grString(t, a.db, `SELECT `+col+` FROM scripts WHERE repo_id=? AND name='deploy.sh'`, repo)
 	}
-	uidA, hashA := script("global", "uid"), script("global", "content_hash")
+	uidA, hashA := script(fixtureRepo, "uid"), script(fixtureRepo, "content_hash")
 	if uidA == "" || hashA == "" {
 		t.Fatalf("the first repository's script: uid %q, hash %q", uidA, hashA)
 	}
@@ -234,10 +234,10 @@ func TestGR1_TwoScriptsOfOneNameAreTwoScripts(t *testing.T) {
 		t.Errorf("the two scripts carry one body hash: the second repository's body was not stored as its own")
 	}
 	// The first repository's script is as it was: same uid, same body.
-	if got := script("global", "uid"); got != uidA {
+	if got := script(fixtureRepo, "uid"); got != uidA {
 		t.Errorf("the first repository's script uid changed from %q to %q", uidA, got)
 	}
-	if got := script("global", "content_hash"); got != hashA {
+	if got := script(fixtureRepo, "content_hash"); got != hashA {
 		t.Errorf("the first repository's script body was overwritten by the second repository's")
 	}
 	// Each job uses the script of its own repository, although both wrote the
@@ -256,7 +256,7 @@ func TestGR1_TwoScriptsOfOneNameAreTwoScripts(t *testing.T) {
 	if got := script("repo-b", "content_hash"); got == hashB {
 		t.Errorf("the edit did not reach the second repository's script")
 	}
-	if got := script("global", "content_hash"); got != hashA {
+	if got := script(fixtureRepo, "content_hash"); got != hashA {
 		t.Errorf("an edit in the second repository changed the first repository's script")
 	}
 }
@@ -286,9 +286,9 @@ func TestGR1_TwoSchedulesOfOneNameAreTwoSchedules(t *testing.T) {
 		t.Helper()
 		return grString(t, a.db, `SELECT `+col+` FROM definition_schedules WHERE owner_source='git' AND owner_name=?`, job)
 	}
-	uidA := sched("global", "uid")
-	if got := sched("global", "repo_id"); got != "global" {
-		t.Errorf("the first repository's schedule has repo_id %q, want global", got)
+	uidA := sched(fixtureAgency, "uid")
+	if got := sched(fixtureAgency, "repo_id"); got != fixtureRepo {
+		t.Errorf("the first repository's schedule has repo_id %q, want repo-a", got)
 	}
 	if got := entry("bound-a", "schedule_uid"); got != uidA {
 		t.Fatalf("bound-a's entry is tied to %q, want its own repository's schedule %q", got, uidA)
@@ -316,13 +316,13 @@ func TestGR1_TwoSchedulesOfOneNameAreTwoSchedules(t *testing.T) {
 		t.Errorf("the second repository's schedule has repo_id %q, want repo-b", got)
 	}
 	// Each keeps its own timing.
-	if got := sched("global", "cron"); got != "0 3 1 1 *" {
+	if got := sched(fixtureAgency, "cron"); got != "0 3 1 1 *" {
 		t.Errorf("the first repository's schedule now fires at %q: the second repository's overwrote it", got)
 	}
 	if got := sched("ag-b", "cron"); got != "0 4 2 2 *" {
 		t.Errorf("the second repository's schedule fires at %q, want its own", got)
 	}
-	if got := sched("global", "uid"); got != uidA {
+	if got := sched(fixtureAgency, "uid"); got != uidA {
 		t.Errorf("the first repository's schedule uid changed from %q to %q", uidA, got)
 	}
 	// And each job is bound to the schedule of its own repository.
@@ -359,8 +359,8 @@ func TestGR2_EachRepositoryHasItsOwnSyncState(t *testing.T) {
 	// prune is not bounded by repository, until Phase R3
 	// (TestGR0_TwoJobsOfOneNameAreOneRow, TestGR0_ASecondRepositorysSyncDeletesTheFirsts,
 	// both inverted since, in two_repos_test.go), so that sync could remove this one.
-	if got := grString(t, a.db, `SELECT repo_id FROM jobs WHERE source='git' AND name='keep'`); got != "global" {
-		t.Errorf("the first repository's job has repo_id %q, want global", got)
+	if got := grString(t, a.db, `SELECT repo_id FROM jobs WHERE source='git' AND name='keep'`); got != fixtureRepo {
+		t.Errorf("the first repository's job has repo_id %q, want repo-a", got)
 	}
 
 	b, repoB, remoteB := grSecondRepo(t, a)
@@ -370,8 +370,8 @@ func TestGR2_EachRepositoryHasItsOwnSyncState(t *testing.T) {
 		t.Fatalf("the two repositories should be at two commits (first %q, second %q)", ra.SHA, rb.SHA)
 	}
 
-	if got := grString(t, a.db, `SELECT last_sha FROM git_repos WHERE id = 'global'`); got != ra.SHA {
-		t.Errorf("Global's last_sha = %q, want its own %q: the second repository's sync wrote over it", got, ra.SHA)
+	if got := grString(t, a.db, `SELECT last_sha FROM git_repos WHERE id = 'repo-a'`); got != ra.SHA {
+		t.Errorf("the first repository's last_sha = %q, want its own %q: the second repository's sync wrote over it", got, ra.SHA)
 	}
 	if got := grString(t, a.db, `SELECT last_sha FROM git_repos WHERE id = 'repo-b'`); got != rb.SHA {
 		t.Errorf("the second repository's last_sha = %q, want %q", got, rb.SHA)
@@ -382,7 +382,7 @@ func TestGR2_EachRepositoryHasItsOwnSyncState(t *testing.T) {
 	if st, err := b.GetSyncState(context.Background()); err != nil || st.LastSHA != rb.SHA {
 		t.Errorf("the second Service reads its sync state as %q (%v), want its own %q", st.LastSHA, err, rb.SHA)
 	}
-	if got := grString(t, a.db, `SELECT GROUP_CONCAT(repo_id || '=' || sha, ' ') FROM (SELECT repo_id, sha FROM git_sync_events ORDER BY id)`); got != "global="+ra.SHA+" repo-b="+rb.SHA {
+	if got := grString(t, a.db, `SELECT GROUP_CONCAT(repo_id || '=' || sha, ' ') FROM (SELECT repo_id, sha FROM git_sync_events ORDER BY id)`); got != fixtureRepo+"="+ra.SHA+" repo-b="+rb.SHA {
 		t.Errorf("the sync history = %q, want one event per repository, each naming its own", got)
 	}
 	// Every table of Git rows says which repository (GR-3).

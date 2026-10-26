@@ -30,6 +30,8 @@ func TestWorkflowComposeCRUD(t *testing.T) {
 	      VALUES('gitpipe','git','[]','workflows/gitpipe.yaml','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	ownJobsByWorkAgency(t, pool, "build", "deploy")
 	post := func(method, url string, body any) *http.Response {
 		t.Helper()
 		var rdr *bytes.Reader
@@ -171,6 +173,8 @@ func TestWorkflowComposeLayoutRoundTrip(t *testing.T) {
 	}
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	ownJobsByWorkAgency(t, pool, "build")
 	do := func(method, url string, body any) *http.Response {
 		t.Helper()
 		rdr := bytes.NewReader(nil)
@@ -269,6 +273,8 @@ func TestWorkflowStructuralValidation(t *testing.T) {
 	      VALUES('deploy','git','bash','make deploy','sha256:b','jobs/deploy.yaml','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	ownJobsByWorkAgency(t, pool, "build", "deploy")
 	post := func(method, url string, body any) *http.Response {
 		t.Helper()
 		var rdr *bytes.Reader

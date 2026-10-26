@@ -722,6 +722,21 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 		}
 		return bad
 	}
+	// And a definition's own Forbid and Allow calendars (2.5.3, CA-30), by the
+	// same rules: a name the agency lacks, one in both, a freeze calendar as an
+	// Allow. The definition is refused, as for an entry's.
+	dangleDefinitionCalendars := func(file string, forbid, allow []string) bool {
+		if calErr != nil {
+			return false
+		}
+		if _, _, verr := calendar.ValidateDefinitionBinding(forbid, allow, knownCals, globalCals); verr != "" {
+			ve := ValidationError{File: file, Field: "spec.forbidCalendars", Message: verr}
+			allErrs = append(allErrs, ve.Error())
+			res.Errors = append(res.Errors, ve)
+			return true
+		}
+		return false
+	}
 
 	// The SAME check for FIRST-CLASS schedules (schedules/*.yaml). Easy to miss,
 	// and missing it defeats the point: a first-class schedule's binding is copied
@@ -864,6 +879,9 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 		if dangleCalendars("jobs/"+j.Metadata.Name+".yaml", j.Spec.Schedules) {
 			continue
 		}
+		if dangleDefinitionCalendars("jobs/"+j.Metadata.Name+".yaml", j.Spec.ForbidCalendars, j.Spec.AllowCalendars) {
+			continue
+		}
 		if badReactions("jobs/"+j.Metadata.Name+".yaml", "job", j.Metadata.Name, j.Spec.Reactions) {
 			continue
 		}
@@ -887,8 +905,9 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	// Global's repository is the exception to "removed" (§0a, open point 1): a
 	// job of it that was synced, and names an agency's scope (I-7, allowed
 	// until §0a), is KEPT as it was, not pruned. It does not run (run-time
-	// confinement refuses it, with the reason), the notice
-	// global_job_on_agency_scope lists it, and it goes when its file does.
+	// confinement refuses it, with the reason), and it goes when its file
+	// does. (Until 2.5.3; since then Central's repository syncs no more, CA-6,
+	// and central_holds_work lists the leftover.)
 	var keepAsWas []string
 	if kept, refused, cerr := s.confineJobs(ctx, goodJobs, scopes); cerr != nil {
 		// What could not be asked is not answered "no": nothing is refused,
@@ -921,6 +940,9 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 			continue
 		}
 		if dangleCalendars("workflows/"+wf.Metadata.Name+".yaml", wf.Spec.Schedules) {
+			continue
+		}
+		if dangleDefinitionCalendars("workflows/"+wf.Metadata.Name+".yaml", wf.Spec.ForbidCalendars, wf.Spec.AllowCalendars) {
 			continue
 		}
 		if badReactions("workflows/"+wf.Metadata.Name+".yaml", "workflow", wf.Metadata.Name, wf.Spec.Reactions) {
@@ -1065,7 +1087,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 				`UPDATE jobs SET synced_at = ? WHERE source = 'git' AND repo_id = ? AND name = ?
 				    AND EXISTS (SELECT 1 FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
 				                 WHERE sc.name = jobs.scope AND sa.agency_id <> ?)`, nowStr, repoID, name, agencyid.Global); err != nil {
-				allErrs = append(allErrs, "keep Global's job on an agency's scope: "+err.Error())
+				allErrs = append(allErrs, "keep the built-in agency's job on an agency's scope: "+err.Error())
 				dbErr = err
 				break
 			}
@@ -1324,7 +1346,7 @@ func (s *Service) writeBranch(ctx context.Context) string {
 // sync after it failed).
 func (s *Service) cloneOrFetch(ctx context.Context, branch string) (*gogit.Repository, error) {
 	if s.repoURL == "" {
-		return nil, fmt.Errorf("CRONOMICON_GITLAB_BASE_URL not configured")
+		return nil, fmt.Errorf("the repository is not configured: its connection has no URL")
 	}
 	if err := s.checkURL(ctx); err != nil {
 		return nil, err
@@ -2909,7 +2931,7 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		if strings.TrimSpace(j.Spec.Scope) == "" {
 			// 2.5.0 C11, defect 90: it said the job "lands in All — visible to
 			// every agency", the pre-2.4 model.
-			s.logWarn("git sync: job declares no scope: in Global's repository it is Global's and runs on Global's hosts and runners, and an agency's repository refuses it; add `spec.scope`",
+			s.logWarn("git sync: job declares no scope: an agency's repository refuses it; add `spec.scope`",
 				"job", j.Metadata.Name, "source_path", j.SourcePath)
 		}
 		// LR-71 — a fixed target_host must be one of the job's scope's hosts, or
@@ -3046,8 +3068,9 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			                 source_path, synced_at, prompts_json, env_passthrough,
 			                 project_root, requires_json, prompt_enforcement,
 			                 ssh_user, ssh_credential, become_password_secret,
-			                 warn_after_seconds, must_finish_by, watch_json, uid, script_uid, repo_id)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			                 warn_after_seconds, must_finish_by, watch_json, uid, script_uid, repo_id,
+			                 forbid_calendars, allow_calendars)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(repo_id, name) WHERE source = 'git' DO UPDATE SET
 				run_type=excluded.run_type,
 				description=excluded.description,
@@ -3079,7 +3102,9 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 				become_password_secret=excluded.become_password_secret,
 				warn_after_seconds=excluded.warn_after_seconds,
 				must_finish_by=excluded.must_finish_by,
-				watch_json=excluded.watch_json`,
+				watch_json=excluded.watch_json,
+				forbid_calendars=excluded.forbid_calendars,
+				allow_calendars=excluded.allow_calendars`,
 			name, runType, j.Spec.Description, j.Spec.Scope, j.Spec.TargetHost,
 			nullStr(legacyMirror), enabled,
 			j.Spec.TimeoutSeconds, j.Spec.Retries, requestable,
@@ -3102,7 +3127,9 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			db.NewID(), nullStr(scriptUID),
 			// The repository the job comes from (GR-3, migration 1310): written
 			// at first sight and absent from DO UPDATE, like the uid.
-			s.repo())
+			s.repo(),
+			// Its own calendars (2.5.3, CA-30), validated above.
+			nullStr(calendar.MarshalNames(j.Spec.ForbidCalendars)), nullStr(calendar.MarshalNames(j.Spec.AllowCalendars)))
 		if err != nil {
 			return fmt.Errorf("upsert job %q: %w", name, err)
 		}
@@ -3437,15 +3464,18 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 			legacyMirror = entries[0].Cron
 		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO workflows(name, description, steps, schedule, enabled, source_path, synced_at, uid, repo_id, owner_agency)
-			VALUES(?,?,?,?,?,?,?,?,?,?)
+			INSERT INTO workflows(name, description, steps, schedule, enabled, source_path, synced_at, uid, repo_id, owner_agency,
+			                      forbid_calendars, allow_calendars)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(repo_id, name) WHERE source = 'git' DO UPDATE SET
 				description=excluded.description,
 				steps=excluded.steps,
 				schedule=excluded.schedule,
 				enabled=excluded.enabled,
 				source_path=excluded.source_path,
-				synced_at=excluded.synced_at`,
+				synced_at=excluded.synced_at,
+				forbid_calendars=excluded.forbid_calendars,
+				allow_calendars=excluded.allow_calendars`,
 			name, wf.Spec.Description, string(stepsJSON),
 			nullStr(legacyMirror), enabled,
 			defPath(wf.SourcePath, "workflows/"+name+".yaml"), now,
@@ -3454,7 +3484,8 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 			// that repository's agency (GR-6, 1360): written at first sight and
 			// absent from the update, like the uid, since a repository's agency
 			// never changes (GR-2).
-			s.repo(), s.agency())
+			s.repo(), s.agency(),
+			nullStr(calendar.MarshalNames(wf.Spec.ForbidCalendars)), nullStr(calendar.MarshalNames(wf.Spec.AllowCalendars)))
 		if err != nil {
 			return fmt.Errorf("upsert workflow %q: %w", name, err)
 		}

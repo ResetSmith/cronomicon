@@ -37,6 +37,8 @@ import {
 import { th, td } from "./ui";
 import { useNameDisambiguator } from "../../utils/disambiguate";
 import { globalAgencyName } from "../../globalName";
+import { useInCentral } from "../../components/CentralRunsNothing";
+import { AddFromCentralDialog, CentralCopyDialog, CopiesSummary, CopyActions, CopyState } from "./CalendarCatalogue";
 
 // ExpiryBadge (CAL-16) — the only warning surface this feature has, since there
 // is no server-side Doctor to hang an operator-facing check on.
@@ -69,7 +71,7 @@ function ExpiryBadge({ state, daysRemaining }: { state: ExpiryState; daysRemaini
 
 const GlobalBadge = () => (
   <span
-    title="Applies to every schedule entry of its agency, whether or not the entry names it."
+    title="A freeze calendar: it forbids its days to every start of its agency, whether or not the job or entry names it."
     style={{
       fontSize: c.fontXs,
       fontWeight: 600,
@@ -81,7 +83,7 @@ const GlobalBadge = () => (
       whiteSpace: "nowrap",
     }}
   >
-    global
+    freeze
   </span>
 );
 
@@ -104,8 +106,20 @@ export function CalendarsTab() {
   // 2.4.2 (question 55): a row says canEdit; this is for a server that does not.
   const mayWrite = (owner?: string | null) => composeAdmin || access == null || composesOn.has(owner || GLOBAL_AGENCY);
   // The calendar open in the editor: its name and owner, or "" for a new one.
-  const [editing, setEditing] = useState<{ name: string; owner?: string; canEdit?: boolean } | null>(null);
+  const [editing, setEditing] = useState<{
+    name: string;
+    owner?: string;
+    canEdit?: boolean;
+    canDelete?: boolean;
+    origin?: Calendar["fromCentral"];
+  } | null>(null);
   const { calendars, expiryWarningDays, loading, error } = useCalendars(refresh);
+  // 2.5.3 CA-25 to CA-29: working in Central, this is the catalogue agencies copy
+  // from; in an agency, its own calendars and its copies from Central.
+  const inCentral = useInCentral();
+  const [addingFromCentral, setAddingFromCentral] = useState(false);
+  const [centralDialog, setCentralDialog] = useState<{ cal: Calendar; kind: "add" | "push" } | null>(null);
+  const [said, setSaid] = useState<string | null>(null);
 
   useEffect(() => {
     fetchCapabilities().then((caps) => {
@@ -115,6 +129,8 @@ export function CalendarsTab() {
   }, []);
 
   const reload = () => setRefresh((n) => n + 1);
+  const ours = calendars.filter((cal) => !cal.fromCentral);
+  const copies = calendars.filter((cal) => !!cal.fromCentral);
 
   if (editing !== null) {
     return (
@@ -123,6 +139,8 @@ export function CalendarsTab() {
         owner={editing.owner}
         ownerName={agencyName(editing.owner)}
         mayWrite={editing.name === "" ? canCompose : (editing.canEdit ?? mayWrite(editing.owner))}
+        canDelete={editing.canDelete}
+        origin={editing.origin}
         onClose={() => setEditing(null)}
         onSaved={() => {
           setEditing(null);
@@ -136,21 +154,81 @@ export function CalendarsTab() {
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
         <div style={{ fontSize: c.fontSm, color: c.textSec, flex: 1, minWidth: 280 }}>
-          A working calendar is a named set of dates. Bind it to a schedule so it never runs on those days,
-          or so it runs on no others. It can only ever <em>stop</em> a run, never cause one.{" "}
+          {inCentral ? (
+            <>
+              {globalAgencyName()}'s catalogue: calendars the agencies take a copy of. No run reads them here; an agency's copy is
+              its own, and changes when this one does, by an update the agency takes or that comes by itself.{" "}
+            </>
+          ) : (
+            <>
+              A working calendar is a named set of dates. Bind it to a job, a workflow or a schedule so it never runs on
+              those days (Forbid), or so it runs on no others (Allow). It can only ever <em>stop</em> a run, never cause
+              one.{" "}
+            </>
+          )}
           <DocLink href={DOC_LINKS.calendars}>How the veto is applied</DocLink>
         </div>
+        {canCompose && !inCentral && (
+          <Btn onClick={() => setAddingFromCentral(true)} style={{ padding: "8px 14px", fontSize: c.fontSm }}>
+            Add from {globalAgencyName()}
+          </Btn>
+        )}
         {canCompose && (
           <Btn primary onClick={() => setEditing({ name: "" })} style={{ padding: "8px 14px", fontSize: c.fontSm }}>
             + New calendar
           </Btn>
         )}
       </div>
+      {said && (
+        <div role="status" style={{ marginBottom: 12, fontSize: c.fontSm, color: c.success }}>
+          {said}
+        </div>
+      )}
+      {addingFromCentral && (
+        <AddFromCentralDialog
+          onClose={() => setAddingFromCentral(false)}
+          onAdded={() => {
+            setAddingFromCentral(false);
+            setSaid(`Added from ${globalAgencyName()}.`);
+            reload();
+          }}
+        />
+      )}
+      {centralDialog && (
+        <CentralCopyDialog
+          cal={centralDialog.cal}
+          kind={centralDialog.kind}
+          onClose={() => setCentralDialog(null)}
+          onDone={(m) => {
+            setCentralDialog(null);
+            setSaid(m);
+            reload();
+          }}
+        />
+      )}
 
       {loading && <div style={{ padding: 16 }}><SkeletonRows rows={4} /></div>}
       {error && <div style={{ color: c.danger }}>Error: {error}</div>}
 
-      {!loading && !error && calendars.length === 0 && (
+      {!loading && !error && calendars.length === 0 && inCentral && (
+        // 2.5.3 CA-25: the catalogue binds nothing, so it does not teach binding.
+        <div style={{ border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, background: c.panel, padding: 20, maxWidth: 680 }}>
+          <div style={{ fontSize: c.fontSm, color: c.text, fontWeight: 600, marginBottom: 8 }}>The catalogue has no calendars yet.</div>
+          <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
+            A calendar here is offered to the agencies: a holiday list, a change freeze. An agency takes a copy with Add from{" "}
+            {globalAgencyName()}, or you add one to chosen agencies; each copy is that agency's own, and changes when this one does. No
+            run reads a calendar here. <strong>Cronomicon ships no holiday dates</strong>: the editor takes a pasted block of{" "}
+            <code>YYYY-MM-DD,label</code> lines, or a CSV or .ics file.
+          </div>
+          {canCompose && (
+            <div style={{ marginTop: 14 }}>
+              <Btn small onClick={() => setEditing({ name: "" })}>New calendar</Btn>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!loading && !error && calendars.length === 0 && !inCentral && (
         // The teaching empty state (CAL-19): this is the only place a first-time
         // operator learns what a calendar is for, and that the dates are theirs.
         <div style={{ border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, background: c.panel, padding: 20, maxWidth: 680 }}>
@@ -158,10 +236,10 @@ export function CalendarsTab() {
           <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
             <p style={{ marginTop: 0 }}>
               A calendar is a list of dates — your company holidays, a change freeze, your month-end close.
-              Bind one to a schedule as a <strong>skip</strong> calendar and no fire lands on those days; bind it as a{" "}
-              <strong>run-day</strong> calendar and the schedule fires on no others. Mark one <strong>global</strong> and
-              it applies to every schedule of its agency at once, which is how an agency's change freeze is one checkbox
-              instead of N edits. It does not reach another agency's schedules.
+              Name one on a job, a workflow or a schedule as a <strong>Forbid</strong> calendar and nothing starts on
+              those days; name it as an <strong>Allow</strong> calendar and nothing starts on any other. Mark one a{" "}
+              <strong>freeze</strong> calendar and it forbids its days to every start of its agency at once, which is how an
+              agency's change freeze is one checkbox instead of N edits. It does not reach another agency.
             </p>
             <p>
               <strong>Cronomicon ships no holiday dates</strong> — every date is yours to author, so no list of ours can be
@@ -169,7 +247,7 @@ export function CalendarsTab() {
               pasted block of <code>YYYY-MM-DD,label</code> lines, or a CSV or .ics file.
             </p>
             <p style={{ marginBottom: 0 }}>
-              A calendar stops working when it runs out of days — a skip calendar simply stops suppressing, with nothing
+              A calendar stops working when it runs out of days — a Forbid calendar simply stops suppressing, with nothing
               else to tell you. This list flags one that has expired or is close to it, so renewing next year's dates
               stays an annual task with an owner.
             </p>
@@ -187,57 +265,115 @@ export function CalendarsTab() {
         </div>
       )}
 
-      {!loading && !error && calendars.length > 0 && (
-        <TableSurface>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm }}>
-            <thead>
-              <tr style={{ color: c.textSec, borderBottom: `1px solid ${c.border}` }}>
-                <th style={th()}>Calendar</th>
-                <th style={th()}>Days</th>
-                <th style={th()}>Coverage through</th>
-                <th style={th()}>Bound to</th>
-                <th style={th()} />
-              </tr>
-            </thead>
-            <tbody>
-              {calendars.map((cal) => {
-                const expiry = calendarExpiry(cal, expiryWarningDays);
-                const usedBy = cal.usedBy ?? [];
-                return (
-                  <tr key={`${cal.ownerAgency ?? ""}:${cal.name}`} style={{ borderBottom: `1px solid ${c.border}` }}>
-                    <td style={td}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                        <span style={{ fontFamily: c.mono, fontWeight: 600, color: c.text }}>{cal.name}</span>
-                        {cal.global && <GlobalBadge />}
-                        <span style={{ fontSize: c.fontXs, color: c.textMuted }}>{agencyName(cal.ownerAgency)}</span>
-                        <ExpiryBadge state={expiry} daysRemaining={cal.daysRemaining} />
-                      </div>
-                      {cal.description && (
-                        <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 2 }}>{cal.description}</div>
-                      )}
-                    </td>
-                    <td style={{ ...td, color: c.textSec, whiteSpace: "nowrap" }}>{cal.dayCount ?? 0}</td>
-                    <td style={{ ...td, color: c.textSec, whiteSpace: "nowrap" }}>{cal.lastDay ?? "—"}</td>
-                    <td style={{ ...td, color: usedBy.length ? c.textSec : c.textMuted }}>
-                      {usedBy.length === 0
-                        ? "not bound"
-                        : `${usedBy.length} ${usedBy.length === 1 ? "entry" : "entries"}`}
-                    </td>
-                    <td style={{ ...td, textAlign: "right" }}>
-                      <Btn small onClick={() => setEditing({ name: cal.name ?? "", owner: cal.ownerAgency ?? undefined, canEdit: cal.canEdit })}>
-                        {(cal.canEdit ?? mayWrite(cal.ownerAgency)) ? "Edit" : "View"}
-                      </Btn>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </TableSurface>
-      )}
+      {!loading && !error && calendars.length > 0 && (inCentral ? (
+        calendarTable("catalogue")
+      ) : (
+        <>
+          {copies.length > 0 && <div style={groupLabel()}>Our calendars</div>}
+          {ours.length > 0 ? calendarTable("ours") : copies.length > 0 && <div style={{ fontSize: c.fontSm, color: c.textMuted, marginBottom: 16 }}>None of its own yet.</div>}
+          {copies.length > 0 && (
+            <>
+              <div style={{ ...groupLabel(), marginTop: 18 }}>From {globalAgencyName()}</div>
+              {calendarTable("copies")}
+            </>
+          )}
+        </>
+      ))}
     </div>
   );
+
+  // A render function, not a component: a component defined here would be a
+  // new type each render, and remount the rows (closing a row's open dialog).
+  function calendarTable(kind: "ours" | "copies" | "catalogue") {
+    const list = kind === "copies" ? copies : kind === "ours" ? ours : calendars;
+    return (
+      <TableSurface>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: c.fontSm }}>
+          <thead>
+            <tr style={{ color: c.textSec, borderBottom: `1px solid ${c.border}` }}>
+              <th style={th()}>Calendar</th>
+              <th style={th()}>Days</th>
+              <th style={th()}>Coverage through</th>
+              <th style={th()}>{kind === "catalogue" ? "Copies" : "Bound to"}</th>
+              <th style={th()} />
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((cal) => {
+              const expiry = calendarExpiry(cal, expiryWarningDays);
+              const usedBy = cal.usedBy ?? [];
+              const defs = usedBy.filter((b) => b.level === "definition").length;
+              const entries = usedBy.length - defs;
+              const bound = [
+                entries > 0 ? `${entries} ${entries === 1 ? "entry" : "entries"}` : "",
+                defs > 0 ? `${defs} ${defs === 1 ? "job or workflow" : "jobs or workflows"}` : "",
+              ].filter(Boolean);
+              const open = () =>
+                setEditing({
+                  name: cal.name ?? "",
+                  owner: cal.ownerAgency ?? undefined,
+                  canEdit: cal.canEdit,
+                  canDelete: cal.canDelete,
+                  origin: cal.fromCentral,
+                });
+              return (
+                <tr key={`${cal.ownerAgency ?? ""}:${cal.name}`} style={{ borderBottom: `1px solid ${c.border}` }}>
+                  <td style={td}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: c.mono, fontWeight: 600, color: c.text }}>{cal.name}</span>
+                      {cal.global && <GlobalBadge />}
+                      <span style={{ fontSize: c.fontXs, color: c.textMuted }}>{agencyName(cal.ownerAgency)}</span>
+                      {cal.fromCentral && <CopyState origin={cal.fromCentral} />}
+                      <ExpiryBadge state={expiry} daysRemaining={cal.daysRemaining} />
+                    </div>
+                    {cal.description && (
+                      <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 2 }}>{cal.description}</div>
+                    )}
+                    {cal.fromCentral?.catalogueName && cal.fromCentral.catalogueName !== cal.name && (
+                      <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 2 }}>A copy of {cal.fromCentral.catalogueName}.</div>
+                    )}
+                  </td>
+                  <td style={{ ...td, color: c.textSec, whiteSpace: "nowrap" }}>{cal.dayCount ?? 0}</td>
+                  <td style={{ ...td, color: c.textSec, whiteSpace: "nowrap" }}>{cal.lastDay ?? "—"}</td>
+                  <td style={{ ...td, color: kind === "catalogue" || bound.length ? c.textSec : c.textMuted }}>
+                    {kind === "catalogue" ? <CopiesSummary cal={cal} /> : bound.length === 0 ? "not bound" : bound.join(", ")}
+                  </td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    <div style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      {kind === "copies" && cal.fromCentral && (cal.canDelete ?? mayWrite(cal.ownerAgency)) && (
+                        <CopyActions cal={cal} onChanged={() => { setSaid(null); reload(); }} />
+                      )}
+                      {kind === "catalogue" && (cal.canEdit ?? mayWrite(cal.ownerAgency)) && (
+                        <>
+                          <Btn small onClick={() => setCentralDialog({ cal, kind: "add" })}>Add to agencies…</Btn>
+                          {(cal.copies ?? []).some((k) => k.state === "update_available") && (
+                            <Btn small onClick={() => setCentralDialog({ cal, kind: "push" })}>Push the update…</Btn>
+                          )}
+                        </>
+                      )}
+                      <Btn small onClick={open}>
+                        {kind !== "copies" && (cal.canEdit ?? mayWrite(cal.ownerAgency)) ? "Edit" : "View"}
+                      </Btn>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </TableSurface>
+    );
+  }
 }
+
+const groupLabel = (): React.CSSProperties => ({
+  fontSize: c.fontXs,
+  fontWeight: 600,
+  textTransform: "uppercase",
+  letterSpacing: 0.6,
+  color: c.textSec,
+  marginBottom: 8,
+});
 
 // ── editor ───────────────────────────────────────────────────────────────────
 
@@ -248,6 +384,8 @@ function CalendarEditor({
   owner,
   ownerName,
   mayWrite,
+  canDelete,
+  origin,
   onClose,
   onSaved,
 }: {
@@ -257,6 +395,10 @@ function CalendarEditor({
   ownerName: string;
   /** Compose on the owner (a new one: compose somewhere). */
   mayWrite: boolean;
+  /** The row's canDelete: a copy from Central is deletable, not editable (CA-27). */
+  canDelete?: boolean;
+  /** Set on a copy of a Central calendar (CA-26). */
+  origin?: Calendar["fromCentral"];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -333,7 +475,7 @@ function CalendarEditor({
     const nm = slug.trim();
     if (!NAME_RE.test(nm)) return setErr("Name must be a slug (a-z, 0-9, _-, ≤64 chars).");
     if (global && boundAsOnly.length > 0) {
-      return setErr(`"${nm}" is bound as a run-day calendar by ${boundAsOnly.length} entr${boundAsOnly.length === 1 ? "y" : "ies"} — a global calendar may only ever skip.`);
+      return setErr(`"${nm}" is named as an Allow calendar ${boundAsOnly.length} time${boundAsOnly.length === 1 ? "" : "s"} — a freeze calendar may only ever forbid.`);
     }
     if (!isEdit && ownerPick.blockedReason) return setErr(`${ownerPick.blockedReason}.`);
     setBusy(true);
@@ -406,7 +548,14 @@ function CalendarEditor({
           <>A new working calendar: a named set of dates that schedule entries can be bound to.</>
         )}
       </div>
-      {readOnly && (
+      {readOnly && origin && (
+        <div role="note" style={{ fontSize: c.fontSm, color: c.textMuted }}>
+          {origin.state === "no_longer_offered"
+            ? `Read-only. This calendar was a copy of a ${globalAgencyName()} calendar that is no longer offered. Make it your own, on the list, to change it, or delete it.`
+            : `Read-only. This calendar is a copy of ${origin.catalogueName ?? "a calendar"} from ${globalAgencyName()}: its days and settings change only by an update. Make it your own, on the list, to change it here.`}
+        </div>
+      )}
+      {readOnly && !origin && (
         <div role="note" style={{ fontSize: c.fontSm, color: c.textMuted }}>
           Read-only. This calendar is {ownerName === globalAgencyName() ? `${ownerName}'s — only a global composer (Compose on every agency)` : `${ownerName}'s — only that agency's composers`} can
           change it.
@@ -433,14 +582,14 @@ function CalendarEditor({
         <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: c.fontSm, color: c.text }}>
           <input type="checkbox" checked={global} onChange={(e) => setGlobal(e.target.checked)} disabled={readOnly || boundAsOnly.length > 0} style={{ marginTop: 3 }} />
           <span>
-            Apply to every schedule of {ownerLabel} (global)
+            Freeze: forbid its days to every start of {ownerLabel}
             <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 2 }}>
-              Its days are skipped by every entry of {ownerLabel}, whether or not the entry names it — a change freeze as one
-              checkbox instead of N schedule edits. Other agencies' schedules are not affected. Skip only: a global calendar
-              can never be a run-day calendar.
+              No job, workflow or schedule entry of {ownerLabel} starts on its days, whether or not it names the calendar — a
+              change freeze as one checkbox instead of N edits. Other agencies are not affected. Forbid only: a freeze
+              calendar can never be an Allow calendar.
               {boundAsOnly.length > 0 && (
                 <span style={{ color: c.warning }}>
-                  {" "}Unavailable — {boundAsOnly.length} entr{boundAsOnly.length === 1 ? "y binds" : "ies bind"} this as a run-day calendar.
+                  {" "}Unavailable — it is named as an Allow calendar {boundAsOnly.length} time{boundAsOnly.length === 1 ? "" : "s"}.
                 </span>
               )}
             </div>
@@ -449,11 +598,11 @@ function CalendarEditor({
         <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: c.fontSm, color: c.text }}>
           <input type="checkbox" checked={recordSuppressed} onChange={(e) => setRecordSuppressed(e.target.checked)} disabled={readOnly} style={{ marginTop: 3 }} />
           <span>
-            Record run-day (only) suppressions in History
+            Record a schedule's Allow misses in History
             <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 2 }}>
-              Skip-mode suppressions are always recorded — that is the compliance question. Leave this off unless you
-              want an audit row every time a run-day calendar holds a fire back, which for a weekdays-only calendar is
-              every weekend.
+              Forbidden starts are always recorded — that is the compliance question — and so is any start other than the
+              schedule that an Allow calendar holds back. Leave this off unless you want an audit row every time an Allow
+              calendar holds a scheduled fire back, which for a weekdays-only calendar is every weekend.
             </div>
           </span>
         </label>
@@ -463,14 +612,15 @@ function CalendarEditor({
 
       {usedBy.length > 0 && (
         <div>
-          <div style={sectionLabel()}>Bound by {usedBy.length} schedule {usedBy.length === 1 ? "entry" : "entries"}</div>
+          <div style={sectionLabel()}>Bound {usedBy.length} {usedBy.length === 1 ? "time" : "times"}</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {usedBy.map((b, i) => (
               <span
                 key={`${b.ownerKind}:${b.ownerName}:${b.scheduleName}:${i}`}
                 style={{ fontFamily: c.mono, fontSize: c.fontXs, padding: "3px 8px", borderRadius: c.radiusChip, background: c.panel2, border: `1px solid ${c.border}`, color: c.textSec }}
               >
-                {b.ownerKind}: {bindingLabel(b)} · {b.scheduleName} ({b.polarity})
+                {b.ownerKind}: {bindingLabel(b)}
+                {b.level === "definition" ? "" : ` · ${b.scheduleName}`} ({b.polarity === "only" ? "Allow" : "Forbid"})
               </span>
             ))}
           </div>
@@ -488,7 +638,7 @@ function CalendarEditor({
         <button onClick={onClose} disabled={busy} style={btnGhost()}>
           {readOnly ? "← Back to calendars" : "Cancel"}
         </button>
-        {isEdit && !readOnly && (
+        {isEdit && (canDelete ?? !readOnly) && (
           <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center" }}>
             {pendingForce ? (
               <>

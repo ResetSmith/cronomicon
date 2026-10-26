@@ -40,7 +40,7 @@ var (
 	// another agency's secrets.
 	ErrAgencyVaultInUse = errors.New("the agency's Vault-sourced secrets and SSH keys still name paths in its Vault")
 	// ErrGlobalUsesInstallationVault refuses an own Vault for Global (422).
-	ErrGlobalUsesInstallationVault = fmt.Errorf("%w: Global's Vault is the installation's (Settings → Vault)", ErrValidation)
+	ErrGlobalUsesInstallationVault = fmt.Errorf("%w: the built-in administration agency's Vault is the installation's (Settings → Vault)", ErrValidation)
 )
 
 const maxCAPEMBytes = 64 << 10

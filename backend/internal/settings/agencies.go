@@ -76,17 +76,18 @@ var (
 
 	// ErrAgencyRequired is returned by a membership write that would leave an
 	// entity in no agency at all (LR-26). Every scope, runner, secret, variable
-	// and key belongs to at least one; to make something Global's, name Global.
+	// and key belongs to at least one (since 2.5.3 nothing that runs is made the
+	// built-in agency's, CA-1: it is named only to keep what it already holds).
 	// Removing the last agency used to be HOW a row became "global" — for a
 	// secret that means usable by every agency — which made a delete the way to
 	// take the most consequential decision there is. Mapped 422.
-	ErrAgencyRequired = errors.New("every entity belongs to at least one agency — name Global to make it Global's")
+	ErrAgencyRequired = errors.New("every entity belongs to an agency: name the agency whose work it is")
 
 	// ErrGlobalMixed is returned when a membership write names Global together
 	// with another agency (LR-25). Global's rows are already usable by every
 	// agency; "Global and Finance" says nothing "Global" does not, and reads as a
 	// restriction it is not. Mapped 422.
-	ErrGlobalMixed = errors.New("an entity is Global's or an agency's, never both")
+	ErrGlobalMixed = errors.New("an entity is the built-in administration agency's or another agency's, never both")
 
 	// ErrOneAgency is returned when a write would put a scope, a secret, a
 	// variable or an SSH key in more than one agency (LR-7, LR-54). Each belongs
@@ -950,9 +951,8 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 				return ErrUnknownAgency
 			}
 		}
-		// Global beside another agency is refused for an agent (its list is its
-		// owner). The local runner is the one runner whose list may hold both
-		// (MA-11): it serves whoever a global administrator names.
+		// An agent's list, and since 2.5.3 the local runner's, is its owner
+		// (MA-11, CA-8): CheckRunnerPlacement judges it.
 		local, err := IsLocalRunner(ctx, database, a.RunnerID)
 		if err != nil {
 			return err
@@ -1013,10 +1013,10 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 		}
 		summary := "agencies set: " + strings.Join(agencyNamesFor(ctx, tx, after), ", ")
 		if len(after) == 1 && after[0] == agencyid.Global {
-			// RB-22: say what the move MEANS. This runner now serves Global's
-			// work — every run with no scope — which is a change of who it works
-			// for, not merely a removal.
-			summary = "moved to Global (it now serves Global's runs, and no department's)"
+			// RB-22: say what the move MEANS. Since 2.5.3 the built-in agency
+			// runs nothing (CA-1): a runner moved there takes no runs at all.
+			summary = "moved to " + firstOr(agencyNamesFor(ctx, tx, after), after[0]) +
+				", the administration, which runs nothing: it takes no runs"
 		}
 		// In the transaction, like DRF-1/DRF-4: a membership change is an
 		// isolation change, and one without its audit row must not exist. Target

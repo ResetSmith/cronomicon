@@ -135,9 +135,10 @@ func jobAgencyOf(ctx context.Context, database *sql.DB, uid string) string {
 
 // watchAgencyPermits mirrors claimRun's agency rule: a job's directories are
 // watchable only by a runner that serves one of the job's scope's agencies. An
-// unscoped job is Global's (migration 1220) and is watched only by a runner that
-// serves Global — what "a runner with no agencies at all" meant before Global
-// was a row. Relaxing it would let one department observe another's directories.
+// unscoped job is its own agency's (2.5.3, CA-5, through ScopeAgencies; Global's
+// from migration 1220 until then) and is watched only by a runner that serves
+// that agency. Relaxing it would let one department observe another's
+// directories.
 func watchAgencyPermits(ctx context.Context, database *sql.DB, agency, scope string, runnerAgencies []string) bool {
 	jobAgencies, err := execspec.ScopeAgencies(ctx, database, agency, strings.TrimSpace(scope))
 	if err != nil {

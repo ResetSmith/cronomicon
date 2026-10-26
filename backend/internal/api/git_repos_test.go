@@ -213,8 +213,10 @@ func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
 	if code, got := list(gTaxAdmin); code != http.StatusOK || len(got) != 0 {
 		t.Errorf("TAX's administrator's list = %d %v, want none", code, got)
 	}
-	if code, got := list(gRoot); code != http.StatusOK || strings.Join(got, ",") != "global,ag:FIN" {
-		t.Errorf("a global administrator's list = %d %v, want Global's and FIN's", code, got)
+	// The built-in agency has no repository since 2.5.3 (CA-6): its row is not
+	// listed, to a global administrator either.
+	if code, got := list(gRoot); code != http.StatusOK || strings.Join(got, ",") != "ag:FIN" {
+		t.Errorf("a global administrator's list = %d %v, want FIN's alone", code, got)
 	}
 	if code, _ := list(gFinViewer); code != http.StatusForbidden {
 		t.Errorf("a viewer's list = %d, want 403", code)
@@ -256,14 +258,17 @@ func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
 		t.Errorf("an edit of the bot's name while the remote is down = %d %s, want 200", code, body)
 	}
 
-	// A global administrator may connect any agency's, and writes Global's
-	// through the same route with any URL (Global's is exempt from the list).
+	// A global administrator may connect any agency's. Global's they wrote
+	// through the same route until 2.5.3; the built-in agency has no
+	// repository since (CA-6), and the write is refused with nothing stored.
 	if code, tax, body := put(gRoot, "ag:TAX", `{"repoUrl":"http://127.0.0.1:1/tax.git"}`); code != http.StatusCreated || tax.AgencyID != "ag:TAX" {
 		t.Errorf("a global administrator connecting TAX's = %d %s", code, body)
 	}
-	// (A port that is not on the list: the list does not govern Global's.)
-	if code, g, body := put(gRoot, "global", `{"repoUrl":"http://127.0.0.1:2/global.git","writeBranch":"main"}`); code != http.StatusOK || g.ID != "global" {
-		t.Errorf("a global administrator writing Global's through this route = %d %s", code, body)
+	if code, _, body := put(gRoot, "global", `{"repoUrl":"http://127.0.0.1:2/global.git","writeBranch":"main"}`); code != http.StatusUnprocessableEntity || !strings.Contains(body, "central_runs_nothing") {
+		t.Errorf("a global administrator writing Global's through this route = %d %s, want 422 central_runs_nothing", code, body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM git_repos WHERE id = 'global' AND COALESCE(url, '') <> ''`); n != 0 {
+		t.Errorf("a refused write of Global's connection stored its URL")
 	}
 	if code, _, _ := put(gRoot, "ag:NOPE", conn); code != http.StatusNotFound {
 		t.Errorf("a global administrator connecting an agency that is not there = %d, want 404", code)

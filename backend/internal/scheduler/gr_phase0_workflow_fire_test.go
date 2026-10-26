@@ -70,10 +70,11 @@ func TestTwoWorkflowsOfOneNameEachFireAsThemselves(t *testing.T) {
 // steps and its own schedule entry.
 func seedTwoNightlies(t *testing.T, pool *sql.DB) {
 	t.Helper()
+	seedFinTax(t, pool)
 	for _, q := range []string{
-		`INSERT INTO workflows (uid, name, source, steps, enabled, created_at) VALUES
-		      ('w-fin', 'nightly', 'cronomicon', '[{"type":"job","name":"fin-job"}]', 1, 't'),
-		      ('w-tax', 'nightly', 'cronomicon', '[{"type":"job","name":"tax-job"}]', 1, 't')`,
+		`INSERT INTO workflows (uid, name, source, steps, enabled, created_at, owner_agency) VALUES
+		      ('w-fin', 'nightly', 'cronomicon', '[{"type":"job","name":"fin-job"}]', 1, 't', 'ag-fin'),
+		      ('w-tax', 'nightly', 'cronomicon', '[{"type":"job","name":"tax-job"}]', 1, 't', 'ag-tax')`,
 		`INSERT INTO definition_schedules (owner_source, owner_kind, owner_name, name, cron, position, owner_uid) VALUES
 		      ('cronomicon', 'workflow', 'nightly', 'fin-at-two',   '0 2 * * *', 0, 'w-fin'),
 		      ('cronomicon', 'workflow', 'nightly', 'tax-at-three', '0 3 * * *', 0, 'w-tax')`,

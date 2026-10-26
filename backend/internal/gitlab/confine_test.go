@@ -22,15 +22,17 @@ func grScopedJob(name, scope string) string {
 // Until Phase R4 a second repository's job was written whatever scope it
 // named: an agency's committer could put a job on another agency's hosts, or,
 // by naming no scope, make it Global's work.
+//
+// Until 2.5.3 Global's scope here came from Global's repository, and the test
+// also held Global's repository to its own rule (§0a, IN-3: a job with no
+// scope kept as Global's, one on an agency's scope refused and kept as it
+// was). The built-in agency has no repository since (CA-6) and nothing syncs
+// one: Global's scope is one built in the app, and the first repository is
+// ag-a's (newSyncFixture).
 func TestGR4_AJobInAnAgencysRepositoryMustNameItsAgencysScope(t *testing.T) {
-	a, repoA, remoteA := newSyncFixture(t)
-	grCommitFiles(t, repoA, remoteA, map[string]string{
-		"inventory/globals.ini": fmt.Sprintf(grScope, "g1", "10.0.0.1"),
-		// Global's repository: no scope (Global's), and an agency's (refused).
-		"jobs/g-none.yaml":   grJob("g-none", "echo g"),
-		"jobs/g-theirs.yaml": grScopedJob("g-theirs", "theirs"),
-	}, "Global's repository")
-	grSync(t, a, "Global's repository")
+	a, _, _ := newSyncFixture(t)
+	grAgencyScope(t, a.db, "global", "globals")
+	grSync(t, a, "ag-a's repository")
 
 	c, repoC, remoteC := grRepo(t, a, "repo-c", "ag-c")
 	gitCommitFile(t, repoC, remoteC, "inventory/cs.ini", fmt.Sprintf(grScope, "c1", "10.0.0.3"), "a third agency's scope")
@@ -103,20 +105,13 @@ func TestGR4_AJobInAnAgencysRepositoryMustNameItsAgencysScope(t *testing.T) {
 	if _, open, detail := grNotice(t, b, "repo-b"); !open || !strings.Contains(detail, "jobs/") {
 		t.Errorf("the repository's notice: open=%v %q, want it open, naming a refused file", open, detail)
 	}
-	// Global's repository is confined too (§0a, IN-3; until then it might name
-	// any agency's scope): its job with no scope is Global's and is kept, and
-	// its job on an agency's scope was refused, told what became of it (kept
-	// as it was, which for a new file is absent; see keepAsWas).
-	for _, name := range []string{"g-none", "keep"} {
-		if grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND repo_id='global' AND name=?`, name) != 1 {
-			t.Errorf("Global's repository's job %s is missing", name)
-		}
+	// Nothing of the agency's refusals is the first repository's: its job,
+	// which names its own agency's scope, is there, and it has no problem rows.
+	if grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND repo_id='repo-a' AND name='keep'`) != 1 {
+		t.Errorf("ag-a's repository's job keep is missing")
 	}
-	if grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND repo_id='global' AND name='g-theirs'`) != 0 {
-		t.Errorf("Global's repository's job on an agency's scope was synced")
-	}
-	if rowsA := grProblems(t, a, "global"); !grHas(rowsA, "error job jobs/g-theirs.yaml:", `the scope "theirs" is an agency's, and Global's jobs run on Global's scopes only`) || !grHas(rowsA, "as it was at the last sync and does not run") || grHas(rowsA, "must name one of") || grHas(rowsA, "was not synced") {
-		t.Errorf("Global's repository: want its job on an agency's scope refused, and its job with no scope kept:\n%s", strings.Join(rowsA, "\n"))
+	if rowsA := grProblems(t, a, fixtureRepo); len(rowsA) != 0 {
+		t.Errorf("ag-a's repository has problem rows:\n%s", strings.Join(rowsA, "\n"))
 	}
 
 	// The refused files are still there at the next sync, and the kind is still
@@ -142,8 +137,8 @@ func TestGR4_AJobInAnAgencysRepositoryMustNameItsAgencysScope(t *testing.T) {
 
 // What a sync warns of about a job's credential or secret is asked within the
 // repository's agency: a name only ANOTHER agency holds "names no stored" one
-// for this repository, as it will at dispatch. Global's repository, whose jobs
-// may name any agency's scope, is asked as before.
+// for this repository, as it will at dispatch; and so for every agency's
+// repository.
 //
 // Until Phase R4 the question was "does anybody have one of this name", so the
 // absence of a warning told an agency's committers which names other agencies
@@ -207,13 +202,20 @@ func TestGR4_AJobsAdvisoryChecksAskWithinItsAgency(t *testing.T) {
 		}
 	}
 
-	grCommitFiles(t, repoA, remoteA, files(""), "Global's repository")
-	grSync(t, a, "Global's repository")
-	// Global's repository is asked within Global too (§0a, IN-6; until then it
-	// was asked of every agency's names, and warned of none of these).
-	for name, want := range map[string]bool{"j-theirs": true, "j-own": true, "j-global": false} {
+	// Another agency's repository is asked within ITS agency: ag-b's key and
+	// Global's are not ag-a's, and its own is. (Until 2.5.3 this was Global's
+	// repository, asked within Global, §0a IN-6; the built-in agency has no
+	// repository since, CA-6.)
+	if _, err := a.db.Exec(`INSERT INTO ssh_credentials (id, label, source, created_at, owner_agency) VALUES ('k-a', 'a-key', 'stored', 't', 'ag-a')`); err != nil {
+		t.Fatal(err)
+	}
+	filesA := files(fixtureScope)
+	filesA["jobs/j-a.yaml"] = job("j-a", fixtureScope, "a-key", "OWN_PW")
+	grCommitFiles(t, repoA, remoteA, filesA, "ag-a's repository")
+	grSync(t, a, "ag-a's repository")
+	for name, want := range map[string]bool{"j-theirs": true, "j-own": true, "j-global": true, "j-a": false} {
 		if got := warned(a, &logA, name, "names no stored SSH credential"); got != want {
-			t.Errorf("Global's repository, %s: warned of its SSH credential = %v, want %v", name, got, want)
+			t.Errorf("ag-a's repository, %s: warned of its SSH credential = %v, want %v", name, got, want)
 		}
 	}
 }
@@ -222,8 +224,8 @@ func TestGR4_AJobsAdvisoryChecksAskWithinItsAgency(t *testing.T) {
 // when the workflow is first seen and not changed by a later sync.
 func TestGR4_AGitWorkflowIsItsRepositorysAgencys(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
-	gitCommitFile(t, repoA, remoteA, "workflows/nightly.yaml", grWorkflow, "Global's workflow")
-	grSync(t, a, "Global's repository")
+	gitCommitFile(t, repoA, remoteA, "workflows/nightly.yaml", grWorkflow, "ag-a's workflow")
+	grSync(t, a, "ag-a's repository")
 	b, repoB, remoteB := grSecondRepo(t, a)
 	grCommitFiles(t, repoB, remoteB, map[string]string{
 		"jobs/keep.yaml":         jobYAML("keep"),
@@ -234,8 +236,8 @@ func TestGR4_AGitWorkflowIsItsRepositorysAgencys(t *testing.T) {
 		t.Helper()
 		return grString(t, a.db, `SELECT owner_agency FROM workflows WHERE source='git' AND repo_id = ? AND name='nightly'`, repo)
 	}
-	if got := owner("global"); got != "global" {
-		t.Errorf("Global's repository's workflow is %q's, want global's", got)
+	if got := owner(fixtureRepo); got != fixtureAgency {
+		t.Errorf("ag-a's repository's workflow is %q's, want ag-a's", got)
 	}
 	if got := owner("repo-b"); got != "ag-b" {
 		t.Errorf("the agency's repository's workflow is %q's, want ag-b's", got)

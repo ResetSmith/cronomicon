@@ -98,7 +98,8 @@ type Report230 struct {
 	// GitJobsOnAgencyScopes are the Git jobs whose scope is one agency's: every
 	// Git job is Global's repository's, and from 2.4.0 a job of Global's
 	// repository runs on Global's scopes only, so each of their runs is refused
-	// (runref.RepoScopeMismatch; the notice global_job_on_agency_scope).
+	// (runref.RepoScopeMismatch). Since 2.5.3 Global's repository syncs no
+	// more, and the notice central_holds_work lists it (CA-17).
 	GitJobsOnAgencyScopes []NamedJob
 	// AgencyGitScopes are the Git scopes of one agency: 1470 makes each that
 	// agency's own, in the app, with its hosts, and its file in Global's
@@ -900,7 +901,7 @@ func (r Report230) write24(p func(string, ...any)) {
 		p("     scopes only, so each of their runs (scheduled, by hand, by a token) is refused,")
 		p("     with the reason. Give each agency its repository and move these files there")
 		p("     (or, after the upgrade, Give to an agency… on the job). The notice")
-		p("     global_job_on_agency_scope lists them.")
+		p("     central_holds_work lists Global's repository (2.5.3).")
 		for _, j := range r.GitJobsOnAgencyScopes {
 			p("    %s — scope %s (%s)", j.Job, j.Scope, j.Detail)
 		}

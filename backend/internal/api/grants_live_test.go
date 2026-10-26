@@ -40,7 +40,7 @@ func meScopes(t *testing.T, h http.Handler, groups string) []string {
 // cached snapshot, and this is its test — add a step for any new writer of
 // access_grants, scope_agencies, scopes or agencies.
 func TestEveryGrantWriterIsInForceOnTheNextRequest(t *testing.T) {
-	h, _ := gateServer(t)
+	h, pool := gateServer(t)
 	const taxOp = "tax-operators"
 	want := func(step, groups string, scopes ...string) {
 		t.Helper()
@@ -84,17 +84,24 @@ func TestEveryGrantWriterIsInForceOnTheNextRequest(t *testing.T) {
 	want("after a matrix move", gFinAdmin, "fin-hosts", "fin-renamed")
 	want("after a matrix move", gTaxAdmin, "tax-hosts")
 	// The agency editor adds what is Global's (a scope in another agency is
-	// moved on the scope itself, LR-7), so the scope goes by way of Global.
-	do("move (to Global)", http.MethodPut, "/api/v1/scopes/"+made.ID+"/agency", gRoot, asRepair(`{"agencyId":null}`), http.StatusOK)
-	want("after a move to Global", gFinAdmin, "fin-hosts")
+	// moved on the scope itself, LR-7). Until 2.5.3 the scope went there by
+	// way of Global; since CA-4 nothing moves into Central (refused, nothing
+	// changes), so what the editor adds is a scope that is Global's already,
+	// an upgrade's leftover, written as one.
+	do("move (to Global)", http.MethodPut, "/api/v1/scopes/"+made.ID+"/agency", gRoot, asRepair(`{"agencyId":null}`), http.StatusUnprocessableEntity)
+	want("after a refused move to Global", gFinAdmin, "fin-hosts", "fin-renamed")
+	mustExec(t, pool)(`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc:left', 'left-over', 'cronomicon', '2026-01-01T00:00:00Z')`)
+	want("before a members move", gTaxAdmin, "tax-hosts")
 	do("move (members)", http.MethodPut, "/api/v1/agencies/ag:TAX/members", gRoot,
-		asRepair(`{"members":[{"kind":"scope","id":"sc:tax"},{"kind":"scope","id":"`+made.ID+`"}]}`), http.StatusOK)
-	want("after a members move", gTaxAdmin, "fin-renamed", "tax-hosts")
+		asRepair(`{"members":[{"kind":"scope","id":"sc:tax"},{"kind":"scope","id":"sc:left"}]}`), http.StatusOK)
+	want("after a members move", gTaxAdmin, "left-over", "tax-hosts")
 
-	// It is deleted.
+	// They are deleted.
 	do("delete", http.MethodDelete, "/api/v1/scopes/"+made.ID, gRoot, "", http.StatusNoContent)
-	want("after a delete", gTaxAdmin, "tax-hosts")
+	want("after a delete", gTaxAdmin, "left-over", "tax-hosts")
 	want("after a delete", gFinAdmin, "fin-hosts")
+	do("delete", http.MethodDelete, "/api/v1/scopes/sc:left", gRoot, "", http.StatusNoContent)
+	want("after a delete", gTaxAdmin, "tax-hosts")
 
 	// An agency is renamed: what "My access" calls it follows (the snapshot holds
 	// the names too).

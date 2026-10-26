@@ -20,9 +20,12 @@ func TestI2_AnAgencyCreatesAScopeOfANameGlobalHolds(t *testing.T) {
 		rec := gateReq(t, h, method, path, who, body)
 		return rec.Code, rec.Body.String()
 	}
-	if c, b := code(gRoot, http.MethodPost, "/api/v1/scopes", `{"scope":"web","hosts":["h0"]}`); c != http.StatusCreated {
-		t.Fatalf("Global's web = %d %s", c, b)
+	// Global's web: since 2.5.3 (CA-4) no scope is created as Central's, so it
+	// is an upgrade's leftover, written as one (born with no agency, Global's).
+	if c, b := code(gRoot, http.MethodPost, "/api/v1/scopes", `{"scope":"web","hosts":["h0"]}`); c != http.StatusUnprocessableEntity || !strings.Contains(b, "central_runs_nothing") {
+		t.Fatalf("Global's web through the route = %d %s, want 422 central_runs_nothing", c, b)
 	}
+	mustExec(t, pool)(`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc:global-web', 'web', 'cronomicon', '2026-01-01T00:00:00Z')`)
 	if c, b := code(gFinAdmin, http.MethodPost, "/api/v1/scopes", `{"scope":"web","hosts":["h1"]}`); c != http.StatusCreated {
 		t.Fatalf("FIN creating its web while Global has web = %d %s, want 201", c, b)
 	}

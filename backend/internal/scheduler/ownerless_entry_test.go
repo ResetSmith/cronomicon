@@ -23,17 +23,19 @@ import (
 func TestAScheduleEntryWithNoOwnerFiresOnlyWhereOneDefinitionHoldsItsName(t *testing.T) {
 	pool := mustPool(t)
 	ctx := context.Background()
+	seedFinTax(t, pool)
+	seedOpsAgency(t, pool)
 	for _, q := range []string{
 		// Two agencies' jobs called "twin", and one called "solo".
-		`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, synced_at) VALUES
-		      ('j-fin',  'twin', 'cronomicon', 'bash', 'Allow', 1, 't'),
-		      ('j-tax',  'twin', 'cronomicon', 'bash', 'Allow', 1, 't'),
-		      ('j-solo', 'solo', 'cronomicon', 'bash', 'Allow', 1, 't')`,
+		`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, synced_at, owner_agency) VALUES
+		      ('j-fin',  'twin', 'cronomicon', 'bash', 'Allow', 1, 't', 'ag-fin'),
+		      ('j-tax',  'twin', 'cronomicon', 'bash', 'Allow', 1, 't', 'ag-tax'),
+		      ('j-solo', 'solo', 'cronomicon', 'bash', 'Allow', 1, 't', 'ag-ops')`,
 		// The same for workflows.
-		`INSERT INTO workflows (uid, name, source, steps, enabled, created_at) VALUES
-		      ('w-fin',  'flow',   'cronomicon', '[]', 1, 't'),
-		      ('w-tax',  'flow',   'cronomicon', '[]', 1, 't'),
-		      ('w-solo', 'weekly', 'cronomicon', '[]', 1, 't')`,
+		`INSERT INTO workflows (uid, name, source, steps, enabled, created_at, owner_agency) VALUES
+		      ('w-fin',  'flow',   'cronomicon', '[]', 1, 't', 'ag-fin'),
+		      ('w-tax',  'flow',   'cronomicon', '[]', 1, 't', 'ag-tax'),
+		      ('w-solo', 'weekly', 'cronomicon', '[]', 1, 't', 'ag-ops')`,
 		`INSERT INTO definition_schedules (owner_source, owner_kind, owner_name, name, cron, position, owner_uid) VALUES
 		      ('cronomicon', 'job',      'twin',   'whose-is-this',  '0 1 * * *', 0, NULL),
 		      ('cronomicon', 'job',      'twin',   'fins-own',       '0 2 * * *', 1, 'j-fin'),

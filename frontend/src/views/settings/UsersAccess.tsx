@@ -7,6 +7,7 @@ import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { DOC_LINKS } from "../../components/docLinks";
 import { useAgencyOptional } from "../../agency";
+import { globalAgencyName } from "../../globalName";
 import { AlertBanner, ConfirmDialog, SearchBar, SkeletonRows, SortableLabel, DocLink } from "../../components/ui";
 import { Btn, Card, csrfHeader, errMsg, fmtDateTime, inputStyle, tdStyle, thStyle } from "./ui";
 
@@ -48,7 +49,7 @@ const PERMISSION_LABELS: { key: keyof RolePermissions; label: string; hint: stri
     label: "Create jobs & workflows",
     hint:
       "Author jobs, workflows, reusable schedules and calendars within the agencies this role is granted, " +
-      "and restore their deleted definitions from the Recycle Bin. Global's definitions are a global administrator's.",
+      "and restore their deleted definitions from the Recycle Bin.",
   },
 ];
 
@@ -466,7 +467,7 @@ function AccessGrantsCard() {
         {fixedWhere !== null ? (
           <span
             data-testid="grant-where"
-            title="A grant is made in the agency you are working in. To grant elsewhere, switch to that agency (Global, for a grant on every agency)."
+            title={`A grant is made in the agency you are working in. To grant elsewhere, switch to that agency (${globalAgencyName()}, for a grant on every agency).`}
             style={{ color: c.textSec, fontSize: c.fontSm, width: 190 }}
           >
             {fixedWhere === "*" ? "On every agency" : fixedWhere ? `In ${ag?.agencyName}` : "Only a global administrator grants here"}

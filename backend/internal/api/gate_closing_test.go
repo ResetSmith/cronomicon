@@ -314,24 +314,24 @@ func TestGC_ANewScopeLandsInItsCreatorsAgency(t *testing.T) {
 	if n := count(t, pool, `SELECT COUNT(*) FROM scopes WHERE name='fin-sneak'`); n != 0 {
 		t.Error("a refused scope was created anyway")
 	}
-	// A global administrator who names no agency creates it in Global — where a
-	// scope "no agency owns" has belonged since migration 1220 — and nowhere else.
+	// A global administrator who names no agency created it in Global until
+	// 2.5.3 — where a scope "no agency owns" had belonged since migration 1220.
+	// Since CA-4 no scope is Central's: refused, and not placed anywhere else.
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/scopes", gRoot, `{"scope":"everyones"}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("root creating a Global scope = %d (%s)", rec.Code, rec.Body)
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Fatalf("root creating a Global scope = %d (%s), want 422 central_runs_nothing", rec.Code, rec.Body)
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies sa JOIN scopes s ON s.id=sa.scope_id
-	                         WHERE s.name='everyones' AND sa.agency_id <> 'global'`); n != 0 {
-		t.Error("a global administrator's scope was placed in an agency without being asked")
+	if n := count(t, pool, `SELECT COUNT(*) FROM scopes WHERE name='everyones'`); n != 0 {
+		t.Error("a refused Global scope was created anyway")
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies sa JOIN scopes s ON s.id=sa.scope_id
-	                         WHERE s.name='everyones' AND sa.agency_id = 'global'`); n != 1 {
-		t.Error("a global administrator's scope is not Global's")
-	}
-	// An agency administrator may not create one there.
+	// Nor may an agency administrator create one there (403 until 2.5.3; the
+	// CA-4 refusal is asked first now).
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/scopes", gFinAdmin, `{"scope":"fin-global","agencyIds":["global"]}`)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("fin admin creating a scope in Global = %d, want 403 (%s)", rec.Code, rec.Body)
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Errorf("fin admin creating a scope in Global = %d, want 422 central_runs_nothing (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM scopes WHERE name='fin-global'`); n != 0 {
+		t.Error("a refused scope in Global was created anyway")
 	}
 }
 
@@ -387,10 +387,8 @@ func TestGC_HostAndBastionRecords(t *testing.T) {
 		{http.MethodPut, "/api/v1/ssh/bastions/b-old", bastionBody, true},
 		{http.MethodDelete, "/api/v1/ssh/bastions/b-old", "", true},
 		{http.MethodPost, "/api/v1/ssh/bastions/b-old/test", "", true},
-		// Nor may it create one in Global, or in TAX.
-		{http.MethodPost, "/api/v1/ssh/hosts", `{"hostname":"x02","port":22,"ownerAgency":"global"}`, true},
+		// Nor may it create one in TAX (in Global: below).
 		{http.MethodPost, "/api/v1/ssh/hosts", `{"hostname":"x03","port":22,"ownerAgency":"ag:TAX"}`, true},
-		{http.MethodPost, "/api/v1/ssh/bastions", `{"name":"b2","address":"10.0.0.2","port":22,"ownerAgency":"global"}`, true},
 		{http.MethodPost, "/api/v1/ssh/bastions", `{"name":"b3","address":"10.0.0.3","port":22,"ownerAgency":"ag:TAX"}`, true},
 		// Its own scope's imported record is its own, as since 2.2.2.
 		{http.MethodPut, "/api/v1/ssh/hosts/h-fin", `{"hostname":"fin01","port":2222}`, false},
@@ -398,6 +396,16 @@ func TestGC_HostAndBastionRecords(t *testing.T) {
 		rec := gateReq(t, h, c.method, c.path, gFinAdmin, c.body)
 		if got := rec.Code == http.StatusForbidden; got != c.forbidden {
 			t.Errorf("fin admin %s %s = %d, want forbidden=%v (%s)", c.method, c.path, rec.Code, c.forbidden, rec.Body)
+		}
+	}
+	// Nor in Global: 403 until 2.5.3; since CA-4 no host record or bastion is
+	// Central's, whoever asks, and that refusal is asked first.
+	for _, c := range []struct{ path, body string }{
+		{"/api/v1/ssh/hosts", `{"hostname":"x02","port":22,"ownerAgency":"global"}`},
+		{"/api/v1/ssh/bastions", `{"name":"b2","address":"10.0.0.2","port":22,"ownerAgency":"global"}`},
+	} {
+		if rec := gateReq(t, h, http.MethodPost, c.path, gFinAdmin, c.body); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+			t.Errorf("fin admin POST %s in Global = %d, want 422 central_runs_nothing (%s)", c.path, rec.Code, rec.Body)
 		}
 	}
 	if n := count(t, pool, `SELECT (SELECT COUNT(*) FROM ssh_hosts WHERE id IN ('h-manual','h-tax')) + (SELECT COUNT(*) FROM bastions WHERE id='b-old')`); n != 3 {
@@ -488,11 +496,14 @@ func TestGC_HostAndBastionRecords(t *testing.T) {
 		t.Error("an imported record was given an owner of its own")
 	}
 
-	// A global administrator who names no agency writes Global's, as before.
+	// A global administrator who names no agency wrote Global's until 2.5.3;
+	// since CA-4 that is refused, and nothing is written.
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/ssh/hosts", gRoot, `{"hostname":"everyones","port":22}`)
-	_ = json.Unmarshal(rec.Body.Bytes(), &made)
-	if rec.Code != http.StatusCreated || made.OwnerAgency != "global" {
-		t.Errorf("root creating a host record = %d owned by %q, want 201 and global (%s)", rec.Code, made.OwnerAgency, rec.Body)
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Errorf("root creating a host record naming no agency = %d, want 422 central_runs_nothing (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_hosts WHERE hostname='everyones'`); n != 0 {
+		t.Error("the refused host record was written")
 	}
 	// An agency that owns a record or a bastion cannot be deleted from under it.
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag:OPS','OPS','2026-01-01T00:00:00Z')`)
@@ -537,11 +548,19 @@ func TestGC_ARecordNamesOnlyAKeyItsOwnerMayUse(t *testing.T) {
 			{gFinAdmin, "k-tax", "ag:FIN", http.StatusUnprocessableEntity},
 			{gFinAdmin, "k-nope", "ag:FIN", http.StatusUnprocessableEntity},
 			{gRoot, "k-tax", "ag:FIN", http.StatusUnprocessableEntity},
-			{gRoot, "k-fin", "global", http.StatusUnprocessableEntity}, // a Global record names a Global key
-			{gRoot, "k-shared", "global", http.StatusCreated},
 		} {
 			if got := create(c.who, c.cred, c.owner); got != c.want {
 				t.Errorf("%s creating a record of %s with key %s = %d, want %d", c.who, c.owner, c.cred, got, c.want)
+			}
+		}
+	}
+	// A Global record named a Global key, and only one, until 2.5.3. Since CA-4
+	// no record is created as Global's, whichever key it names.
+	for _, path := range []string{"/api/v1/ssh/hosts", "/api/v1/ssh/bastions"} {
+		for _, cred := range []string{"k-fin", "k-shared"} {
+			body := `{"hostname":"h-` + cred + `-global","name":"b-` + cred + `-global","address":"10.0.0.1","port":22,"authCredentialId":"` + cred + `","ownerAgency":"global"}`
+			if rec := gateReq(t, h, http.MethodPost, path, gRoot, body); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+				t.Errorf("root creating a Global record at %s with key %s = %d, want 422 central_runs_nothing (%s)", path, cred, rec.Code, rec.Body)
 			}
 		}
 	}
@@ -606,11 +625,12 @@ func TestGC_VaultPathsAreAGlobalAdministrators(t *testing.T) {
 	if n := count(t, pool, `SELECT COUNT(*) FROM secrets WHERE source <> 'stored' OR vault_ref IS NOT NULL`); n != 0 {
 		t.Errorf("%d secret(s) now name a Vault path", n)
 	}
-	// A secret that is Global's is still a global administrator's, any path.
+	// A secret that was Global's was a global administrator's, any path, until
+	// 2.5.3. Since CA-4 no secret is created as Central's.
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gRoot,
 		`{"key":"SHARED_VAULT","source":"vault","vaultPath":"secret/data/anything/at/all#k"}`)
-	if rec.Code != http.StatusCreated {
-		t.Errorf("a global administrator creating a Global Vault-backed secret = %d, want 201 (%s)", rec.Code, rec.Body)
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Errorf("a global administrator creating a Global Vault-backed secret = %d, want 422 central_runs_nothing (%s)", rec.Code, rec.Body)
 	}
 }
 
@@ -1036,10 +1056,11 @@ func TestGC_AVaultBackedSSHKeyIsAGlobalAdministrators(t *testing.T) {
 		t.Errorf("fin admin relabelling its own stored key = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
 
-	// A global administrator creates one.
+	// A global administrator created one, as Global's, until 2.5.3. Since CA-4
+	// no SSH key is created as Central's.
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/ssh/credentials", gRoot, vaultKey)
-	if rec.Code != http.StatusCreated {
-		t.Errorf("root creating a Vault-backed SSH key = %d, want 201 (%s)", rec.Code, rec.Body)
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Errorf("root creating a Vault-backed SSH key naming no agency = %d, want 422 central_runs_nothing (%s)", rec.Code, rec.Body)
 	}
 }
 

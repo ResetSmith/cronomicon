@@ -381,7 +381,7 @@ export function PublishBuilder() {
             <label style={label()}>Repository</label>
             {publishable.length === 0 ? (
               <div style={{ fontSize: c.fontSm, color: c.textSec }}>
-                You may publish to no repository: an agency's repository takes publishes from its publishers, Global's from a global publisher.
+                You may publish to no repository: an agency's repository takes publishes from its publishers.
               </div>
             ) : (
               <select

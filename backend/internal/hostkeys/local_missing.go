@@ -95,7 +95,7 @@ func LocalRunnerMissingKeys(ctx context.Context, database *sql.DB) ([]notices.Fi
 			Detail: fmt.Sprintf("The local runner takes the runs of the scope %s and has no approved host key for %d of the %d "+
 				"hosts it would connect to there (%s%s). A run it takes fails for those hosts (host_key_unverified). Until "+
 				"2.3.0 the server captured a host's key the first time it connected; it now connects only to a host whose "+
-				"key has been approved. A global administrator scans the scope and approves the keys under Runners → Local "+
+				"key has been approved. The local runner's agency's administrators scan the scope and approve the keys under Runners → Local "+
 				"runner → Host keys; a host reached through a bastion cannot be scanned, and its key is pasted there. Or "+
 				"bind the scope to an agent, which has trusted keys of its own.",
 				s.name, len(missing), dialled, strings.Join(names, ", "), more),

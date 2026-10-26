@@ -18,6 +18,7 @@ import { GlobalCalendarBanner } from "./scheduling/GlobalCalendarBanner";
 import { fmtInAppZone } from "../utils/datetime";
 import { RefreshScope } from "../components/RefreshScope";
 import { globalAgencyName } from "../globalName";
+import { CentralGate, useInCentral } from "../components/CentralRunsNothing";
 
 type Schedule = components["schemas"]["Schedule"];
 // CO-4 — the table row: the schedule plus its per-render-mode display name.
@@ -82,7 +83,11 @@ const DEFAULT = SLUGS.indexOf("upcoming");
 
 export function Schedules() {
   const [params, setParams] = useSearchParams();
-  const initial = Math.max(0, SLUGS.indexOf(params.get("tab") ?? SLUGS[DEFAULT]));
+  // 2.5.3 CA-12, CA-25: Central schedules nothing; it holds the calendar
+  // catalogue, so there the page opens on Calendars and the rest say why.
+  const inCentral = useInCentral();
+  const landing = inCentral ? SLUGS.indexOf("calendars") : DEFAULT;
+  const initial = Math.max(0, SLUGS.indexOf(params.get("tab") ?? SLUGS[landing]));
   const [tab, setTab] = useState(initial);
   const [seen, setSeen] = useState<number[]>([initial]);
   const select = (i: number) => {
@@ -92,10 +97,18 @@ export function Schedules() {
     // and the /schedule redirect can land on a specific tab. Upcoming is the
     // default, so drop the param for a clean URL.
     const next = new URLSearchParams(params);
-    if (i === DEFAULT) next.delete("tab");
+    if (i === landing) next.delete("tab");
     else next.set("tab", SLUGS[i]);
     setParams(next, { replace: true });
   };
+  // Switched into (or out of) Central on this page: its landing tab, unless
+  // the address names one.
+  useEffect(() => {
+    if (params.get("tab")) return;
+    setTab(landing);
+    setSeen((cur) => (cur.includes(landing) ? cur : [...cur, landing]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inCentral]);
 
   return (
     <div>
@@ -128,7 +141,7 @@ export function Schedules() {
       {PANELS.map((Panel, i) =>
         seen.includes(i) ? (
           <div key={TABS[i]} style={{ display: tab === i ? "block" : "none" }}>
-            <Panel onGoToTab={select} />
+            {inCentral && SLUGS[i] !== "calendars" ? <CentralGate holds={["schedule"]}><Panel onGoToTab={select} /></CentralGate> : <Panel onGoToTab={select} />}
           </div>
         ) : null,
       )}
@@ -153,6 +166,7 @@ const SCHEDULE_SORT_COLS: SortColumn<Schedule>[] = [
 ];
 
 function CatalogTab() {
+  const inCentral = useInCentral(); // 2.5.3 CA-12: Central has no create actions
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
@@ -177,7 +191,7 @@ function CatalogTab() {
     if (flagged === true || (flagged === undefined && (composeAdmin || access == null || composesOn.has(owner)))) return "";
     if (sched.source !== "cronomicon") return "";
     return owner === GLOBAL_AGENCY
-      ? "This schedule is Global's — only a global composer (Compose on every agency) can change it."
+      ? `This schedule is ${agencyName(GLOBAL_AGENCY)}'s — only a global composer (Compose on every agency) can change it.`
       : `This schedule belongs to ${agencyName(owner)} — only that agency's composers can change it.`;
   };
   const [tagFilter, setTagFilter] = useState<string[]>([]);
@@ -381,7 +395,7 @@ function CatalogTab() {
         <ColumnsMenu cols={cols} cw={cw} />
         {/* A disabled button inside a live <Link> would still navigate, so the
             link is only rendered when the click can succeed. */}
-        {canCompose && (
+        {canCompose && !inCentral && (
           <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
             <Btn primary style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ New schedule</Btn>
           </Link>

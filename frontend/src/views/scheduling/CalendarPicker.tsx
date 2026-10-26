@@ -6,6 +6,11 @@
 // Skip is a veto and wins over only, so the same name in both roles is an
 // authoring error surfaced inline (the API 422s it too). Global calendars apply
 // to every entry automatically and may not be bound as run-day (only) calendars.
+//
+// 2.5.3 (CA-30): the screens call the two polarities Forbid and Allow, at both
+// levels; the wire keeps skipCalendars/onlyCalendars for an entry and takes
+// forbidCalendars/allowCalendars for a job or a workflow, whose own calendars
+// this picker also binds (`level="definition"`).
 import { c } from "../../theme";
 import { modeOf, type ScheduleSpec } from "./cron";
 import {
@@ -25,11 +30,14 @@ export const EMPTY_BINDING: CalendarBinding = { skipCalendars: [], onlyCalendars
 
 // bindingError — the client-side mirror of the API's mutual-exclusion 422, so
 // the form catches it before save.
-export function bindingError(v: CalendarBinding): string | null {
+export function bindingError(v: CalendarBinding, of = "entry"): string | null {
   const both = v.skipCalendars.filter((n) => v.onlyCalendars.includes(n));
-  if (both.length > 0) return `"${both[0]}" cannot be both a skip and an only calendar on one entry.`;
+  if (both.length > 0) return `"${both[0]}" cannot be both a Forbid and an Allow calendar on one ${of}.`;
   return null;
 }
+
+/** What a definition's own calendars are said to be of, in the picker's copy. */
+type Of = "job" | "workflow";
 
 export function CalendarPicker({
   value,
@@ -37,6 +45,8 @@ export function CalendarPicker({
   compact,
   spec,
   agency,
+  level = "entry",
+  of = "job",
 }: {
   value: CalendarBinding;
   onChange: (next: CalendarBinding) => void;
@@ -49,6 +59,10 @@ export function CalendarPicker({
    *  the ones offered and judged, as the scheduler judges them. Unknown: every
    *  calendar, as before. */
   agency?: string;
+  /** "definition" binds a job's or a workflow's own calendars (CA-30), which
+   *  gate its every automatic start (CA-32); "entry" (the default) one entry's. */
+  level?: "entry" | "definition";
+  of?: Of;
 }) {
   const { calendars: all } = useCalendars();
   const bound = [...value.skipCalendars, ...value.onlyCalendars];
@@ -57,7 +71,7 @@ export function CalendarPicker({
   const isOnce = !!spec && modeOf(spec) === "once" && !!spec.startAt?.trim();
   const { relevant: calendars, globals, daysByName: days } = useAgencyCalendars(all, agency, bound, isOnce);
 
-  const err = bindingError(value);
+  const err = bindingError(value, level === "definition" ? of : "entry");
   // Dangling names (CAL-16): a force-deleted calendar leaves its bindings in
   // place by design; the badge is how the author learns the policy is dead.
   const known = new Set(calendars.map((cal) => cal.name ?? ""));
@@ -108,7 +122,7 @@ export function CalendarPicker({
     return (
       <div style={{ minWidth: 200, flex: 1 }}>
         <div style={{ color: c.textSec, fontSize: c.fontXs, marginBottom: 4 }}>
-          {isSkip ? "Never run on days in" : "Run only on days in"}
+          {isSkip ? "Forbid — never on days in" : "Allow — only on days in"}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {options.map(({ name, cal, disabled }) => {
@@ -122,7 +136,7 @@ export function CalendarPicker({
                 onClick={() => toggle(role, name)}
                 title={
                   disabled
-                    ? "A global calendar already applies to every entry of its agency and cannot be a run-day calendar."
+                    ? "A freeze calendar already applies to every start of its agency and cannot be an Allow calendar."
                     : missing
                       ? "This calendar no longer exists — the binding does nothing. Click to remove it."
                       : cal?.description || undefined
@@ -140,7 +154,7 @@ export function CalendarPicker({
                 }}
               >
                 {name}
-                {cal?.global ? " ◦ global" : ""}
+                {cal?.global ? " ◦ freeze" : ""}
                 {missing ? " — missing" : ""}
               </button>
             );
@@ -153,11 +167,21 @@ export function CalendarPicker({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      {!compact && (
+      {!compact && level === "entry" && (
         <div style={{ color: c.textSec, fontSize: c.fontSm }}>
-          Optional. Skip calendars veto a fire landing on one of their days; run-day (only) calendars
-          make their days the only days this entry may fire. Skip wins when both apply. Suppressed
-          fires appear in History as skipped, with the calendar named.
+          Optional. Forbid calendars veto a fire landing on one of their days; Allow calendars make their
+          days the only days this entry may fire. Forbid wins when both apply. Suppressed fires appear in
+          History as skipped, with the calendar named.
+        </div>
+      )}
+      {!compact && level === "definition" && (
+        <div style={{ color: c.textSec, fontSize: c.fontSm }}>
+          Optional. The {of} never starts on a day in a Forbid calendar, and starts only on days in one of its Allow
+          calendars. They gate every automatic start: its schedules, a service account's trigger, a reaction, a file
+          arrival. A start on a forbidden day is dropped, not postponed, and recorded as skipped with the calendar named.
+          A person's Run is not stopped; the Run dialog says when today is forbidden. Forbid wins when both list a day,
+          and an entry's own Forbid and Allow apply on top.
+          {of === "workflow" && " A step's job calendars do not apply inside the workflow: a workflow never stops half-way."}
         </div>
       )}
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>

@@ -304,6 +304,8 @@ func TestExplicitJobDeleteMintsAFreshCodeOnRecreate(t *testing.T) {
 		t.Fatalf("seed script: %v", err)
 	}
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 
 	createJob := func(name string) int64 {
 		t.Helper()

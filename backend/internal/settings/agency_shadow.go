@@ -148,9 +148,9 @@ func ShadowFindings(ctx context.Context, database *sql.DB) ([]ShadowFinding, err
 			f.Unrestricted = len(f.Agencies) == 0
 			if f.Unrestricted {
 				f.Reason = fmt.Sprintf(
-					"the %s in scope %q is Global's (it belongs to no department), so it shadows the global %s "+
-						"for EVERY department's runs in that scope — assign it to a department, "+
-						"or delete it if the global row was meant to win",
+					"the %s in scope %q is the built-in administration agency's (it belongs to no department), "+
+						"which runs nothing since 2.5.3, so no run uses it in place of the global %s — give it to the "+
+						"department whose work it is, or delete it if the global row was meant to win",
 					kindNoun(spec.kind), r.scope, kindNoun(spec.kind))
 			} else {
 				f.Reason = fmt.Sprintf(

@@ -198,8 +198,9 @@ func TestSG6_ADisconnectTakesThePrefixesWithIt(t *testing.T) {
 // A5: a Vault-backed row names a path in its owner's Vault. A move to an owner
 // on another Vault reads the same path somewhere else: refused with the rows
 // listed, unless the request confirms it; a confirmed move says so in the
-// change log. Both routes, both directions, own to own, keys too, and the
-// removal that settles a held row on its last member.
+// change log. Both routes, both directions (own → installation is refused
+// outright since 2.5.3, CA-4), own to own, keys too, and the removal that
+// settles a held row on its last member.
 func TestSG6_AMoveAcrossVaultsIsConfirmed(t *testing.T) {
 	fin, tax := newSG6Vault(t, "FIN-VALUE"), newSG6Vault(t, "TAX-VALUE")
 	e := newSG6Env(t, fin, tax)
@@ -228,19 +229,26 @@ func TestSG6_AMoveAcrossVaultsIsConfirmed(t *testing.T) {
 		}
 	}
 
-	// Own → installation, through the per-kind route.
+	// Own → installation, through the per-kind route: until 2.5.3 refused
+	// unconfirmed (409 vault_changes) and moved when confirmed. Since CA-4
+	// nothing moves into Central, confirmed or not, and nothing is logged.
+	centralRefused := func(what string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+			t.Errorf("%s = %d %s, want 422 central_runs_nothing", what, rec.Code, rec.Body)
+		}
+	}
 	s1 := e.vaultSecret(t, "FIN_DB", "secret/data/fin/db#value", "ag:FIN")
-	refused("FIN's own-Vault secret to Global", repair("secret-agencies", s1, "global", false), s1)
+	centralRefused("FIN's own-Vault secret to Global, unconfirmed", repair("secret-agencies", s1, "global", false))
+	centralRefused("FIN's own-Vault secret to Global, confirmed", repair("secret-agencies", s1, "global", true))
 	if o := e.owner(t, "secrets", s1); o != "ag:FIN" {
 		t.Fatalf("a refused move changed the owner to %s", o)
 	}
-	if rec := repair("secret-agencies", s1, "global", true); rec.Code != http.StatusOK {
-		t.Fatalf("confirmed = %d %s", rec.Code, rec.Body)
+	var logged int
+	_ = e.pool.QueryRow(`SELECT COUNT(*) FROM change_log WHERE action = 'moved' AND details LIKE ?`, "%id="+s1+"%").Scan(&logged)
+	if logged != 0 {
+		t.Errorf("the refused move into Central left %d change-log rows", logged)
 	}
-	if o := e.owner(t, "secrets", s1); o != "global" {
-		t.Errorf("after a confirmed move the owner is %s", o)
-	}
-	confirmedInLog("own → installation", s1)
 
 	// Installation → own, through both routes.
 	s2 := e.vaultSecret(t, "GLOBAL_DB", "secret/data/global/db#value", "global")
@@ -297,7 +305,8 @@ func TestSG6_AMoveAcrossVaultsIsConfirmed(t *testing.T) {
 	      VALUES ('k-fin-vault','fin_vault_key','vault','secret/data/fin/key#private_key','ag:FIN','t','2026-01-01T00:00:00Z','t','2026-01-01T00:00:00Z')`)
 	exec(`DELETE FROM ssh_credential_agencies WHERE credential_id = 'k-fin-vault'`)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES ('k-fin-vault','ag:FIN')`)
-	refused("FIN's own-Vault key to Global", repair("ssh-credential-agencies", "k-fin-vault", "global", false), "k-fin-vault")
+	// (409 vault_changes until 2.5.3; since CA-4 the move into Central is refused.)
+	centralRefused("FIN's own-Vault key to Global", repair("ssh-credential-agencies", "k-fin-vault", "global", false))
 
 	// Same Vault on both sides: no confirmation. Global → OPS, both on the
 	// installation's Vault, inside OPS's prefixes.

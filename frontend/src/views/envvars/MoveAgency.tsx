@@ -7,9 +7,9 @@ import { c } from "../../theme";
 import { inputStyle } from "./ui";
 import { globalAgencyName } from "../../globalName";
 
-type Kind = "secret" | "env-var" | "ssh-credential";
+type Kind = "secret" | "env-var" | "ssh-credential" | "host" | "bastion";
 
-const NOUN: Record<Kind, string> = { secret: "secret", "env-var": "variable", "ssh-credential": "SSH key" };
+const NOUN: Record<Kind, string> = { secret: "secret", "env-var": "variable", "ssh-credential": "SSH key", host: "host record", bastion: "bastion" };
 const ROUTE = {
   secret: "/secret-agencies",
   "env-var": "/env-var-agencies",
@@ -29,7 +29,12 @@ const ROUTE = {
  * `{repair, reason, assignments}`).
  *
  * A global administrator gets the control, offering every agency but the one
- * it is in. Anyone else reads that the agency does not change (REPAIR_HINT).
+ * it is in, and never Central, which owns none since 2.5.3 (CA-1): the way out
+ * of what it held before (CA-17). Anyone else reads that the agency does not
+ * change (REPAIR_HINT).
+ *
+ * A host record and a bastion (2.5.3 CA-17) are moved by their own full update
+ * with the new owner and the repair: the caller gives it as `send`.
  */
 export function MoveAgency({
   kind,
@@ -37,6 +42,7 @@ export function MoveAgency({
   name,
   ownerName,
   canRepair,
+  send,
   onMoved,
   onError,
 }: {
@@ -48,6 +54,8 @@ export function MoveAgency({
   ownerName?: string | null;
   /** The row's own canRepair (R8); without it, whether the caller is a global administrator. */
   canRepair?: boolean;
+  /** Sends the move to `targetId` (a host record, a bastion); the assignments route otherwise. */
+  send?: (targetId: string, repair: RepairBody) => Promise<{ error?: unknown }>;
   onMoved: (message: string) => void;
   onError: (message: string) => void;
 }) {
@@ -64,9 +72,7 @@ export function MoveAgency({
 
   const owner = ownerName || globalAgencyName();
   const ownerId = owner === globalAgencyName() ? GLOBAL_AGENCY : catalog.find((a) => a.name === owner)?.id;
-  const candidates: AgencyRef[] = [{ id: GLOBAL_AGENCY, name: globalAgencyName() }, ...catalog.filter((a) => a.id !== GLOBAL_AGENCY)].filter(
-    (a) => a.id !== ownerId,
-  );
+  const candidates: AgencyRef[] = catalog.filter((a) => a.id !== GLOBAL_AGENCY && a.id !== ownerId);
 
   if (!allowed) {
     return <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, fontSize: c.fontXs, color: c.textMuted }}>Owned by {owner}. {REPAIR_HINT}</div>;
@@ -77,10 +83,12 @@ export function MoveAgency({
     if (!target) return;
     setBusy(true);
     setRefusal("");
-    const { error } = await api.PUT(ROUTE[kind], {
-      params: { header: csrfHeader },
-      body: { ...rep, assignments: [{ id, agencyIds: [target.id] }] } as never,
-    });
+    const { error } = send
+      ? await send(target.id, rep)
+      : await api.PUT(ROUTE[kind as keyof typeof ROUTE], {
+          params: { header: csrfHeader },
+          body: { ...rep, assignments: [{ id, agencyIds: [target.id] }] } as never,
+        });
     setBusy(false);
     const changes = vaultChangesOf(error);
     if (changes) {
@@ -127,15 +135,10 @@ export function MoveAgency({
           title={`Move ${name} to ${target.name}?`}
           message={
             <>
-              {target.id === GLOBAL_AGENCY ? (
-                <>It becomes Global's: only Global's runs may use it, and only global administrators change it.</>
-              ) : (
-                <>
-                  {target.name}'s administrators will manage it, and only {target.name}'s runs will resolve it.
-                </>
-              )}{" "}
-              {owner === globalAgencyName() ? "Runs of every other agency" : `${owner}'s runs`} that bind this {NOUN[kind]} will stop resolving it
-              the next time they start. Check where it is used before moving it.
+              {target.name}'s administrators will manage it, and only {target.name}'s runs will use it.{" "}
+              {ownerId === GLOBAL_AGENCY
+                ? `No run uses it while ${owner} holds it.`
+                : `${owner}'s runs that use this ${NOUN[kind]} will stop finding it the next time they start. Check where it is used before moving it.`}
             </>
           }
           confirmLabel={`Move to ${target.name}`}

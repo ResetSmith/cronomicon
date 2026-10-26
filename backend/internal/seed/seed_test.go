@@ -9,6 +9,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/notices"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/sshexec"
 )
 
@@ -56,12 +57,16 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 	// A repository for Global (migration 1310) and one for each agency (§0a:
 	// each agency's Git definitions are its own repository's), with NO URL:
 	// the demo data is in no repository, and a URL would send the sync service
-	// to clone it. Global's has what the last sync saw.
+	// to clone it. An agency's has what the last sync saw; Central's has
+	// nothing synced, which would be a leftover since 2.5.3 (CA-6).
 	var repos int
-	var repoURL, lastSHA string
-	_ = pool.QueryRow(`SELECT COUNT(*), COALESCE(MAX(url),''), (SELECT COALESCE(last_sha,'') FROM git_repos WHERE id = 'global') FROM git_repos`).Scan(&repos, &repoURL, &lastSHA)
-	if repos != 3 || repoURL != "" || lastSHA == "" {
-		t.Errorf("git_repos after the seed: %d rows, url %q, Global's last_sha %q; want Global's and the two agencies', no URL, a last SHA", repos, repoURL, lastSHA)
+	var repoURL, lastSHA, centralSHA string
+	_ = pool.QueryRow(`SELECT COUNT(*), COALESCE(MAX(url),''),
+	        (SELECT COALESCE(MAX(last_sha),'') FROM git_repos WHERE id <> 'global'),
+	        (SELECT COALESCE(last_sha,'') FROM git_repos WHERE id = 'global') FROM git_repos`).Scan(&repos, &repoURL, &lastSHA, &centralSHA)
+	if repos != 3 || repoURL != "" || lastSHA == "" || centralSHA != "" {
+		t.Errorf("git_repos after the seed: %d rows, url %q, an agency's last_sha %q, Central's %q; want Central's and the two agencies', no URL, a last SHA on an agency's only",
+			repos, repoURL, lastSHA, centralSHA)
 	}
 	var misplaced int
 	_ = pool.QueryRow(`SELECT COUNT(*) FROM jobs j JOIN git_repos g ON g.id = j.repo_id
@@ -109,8 +114,8 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 		}
 	}
 	// The demo fleet can take the demo work: every agency that owns a scope has
-	// an online runner, and Global has a runner of its own. (Until 2.3.0 every
-	// seeded runner was in no agency and every seeded scope was in one.)
+	// an online runner. (Until 2.3.0 every seeded runner was in no agency and
+	// every seeded scope was in one.)
 	var unserved int
 	if err := pool.QueryRow(`
 		SELECT COUNT(*) FROM (SELECT DISTINCT agency_id FROM scope_agencies) sa
@@ -118,10 +123,12 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 		                    WHERE ra.agency_id = sa.agency_id AND rn.status = 'online')`).Scan(&unserved); err != nil || unserved != 0 {
 		t.Errorf("%d agencies that own a scope have no online runner (%v)", unserved, err)
 	}
+	// And none serves the built-in agency, which runs nothing since 2.5.3
+	// (CA-1; until then Global had a runner of its own, for jobs with no scope).
 	var globalRunners int
 	_ = pool.QueryRow(`SELECT COUNT(*) FROM runner_agencies WHERE agency_id = 'global'`).Scan(&globalRunners)
-	if globalRunners == 0 {
-		t.Error("no seeded runner serves Global, so no seeded job without a scope can ever run")
+	if globalRunners != 0 {
+		t.Errorf("%d seeded runners serve the built-in agency, which runs nothing", globalRunners)
 	}
 
 	// A fresh demo starts with an empty inbox: every notice is a condition an
@@ -130,6 +137,10 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 	// record naming a key its owner may not use, a row in no agency.
 	notices.SetRecordKeyNameCheck(sshexec.BastionKeyNameFindings)
 	t.Cleanup(func() { notices.SetRecordKeyNameCheck(nil) })
+	// As the server runs them (main.go): with the reader of Central's leftover
+	// repository, which a sync recorded on Central's row would be (2.5.3 CA-6).
+	notices.SetCentralLeftoverRepoCheck(settings.CentralLeftoverRepo)
+	t.Cleanup(func() { notices.SetCentralLeftoverRepoCheck(nil) })
 	if err := notices.RunChecks(ctx, pool); err != nil {
 		t.Fatalf("notices checks on the seeded database: %v", err)
 	}

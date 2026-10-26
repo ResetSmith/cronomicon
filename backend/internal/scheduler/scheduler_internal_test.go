@@ -30,11 +30,54 @@ func mustPool(t *testing.T) *sql.DB {
 
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-func seedJobRow(t *testing.T, pool *sql.DB, name string, enabled int) {
+// opsAgency is the ordinary agency this package's fixtures run in. Since 2.5.3
+// (CA-1) the built-in agency runs nothing, and a job inserted with no owner and
+// no scope is born its (migration 1400), so a fixture that means "a job" must
+// belong to an agency. A test whose subject is the built-in agency says so.
+const opsAgency = "ag-ops"
+
+// seedOpsAgency writes opsAgency's row, once per database.
+func seedOpsAgency(t *testing.T, pool *sql.DB) {
 	t.Helper()
 	if _, err := pool.ExecContext(context.Background(),
-		`INSERT INTO jobs (uid, name, run_type, concurrency_policy, enabled, synced_at)
-		 VALUES ('uid-'||?, ?, 'bash', 'Allow', ?, 't')`, name, name, enabled); err != nil {
+		`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, 'Ops', 't')`, opsAgency); err != nil {
+		t.Fatalf("seed agency %s: %v", opsAgency, err)
+	}
+}
+
+// opsRepo is opsAgency's repository, for a Git workflow fixture: a Git
+// workflow's agency is its repository's (Global's for a row that records
+// none), whatever its owner_agency says. Seeded only by the tests that need
+// it, because a second repository changes how a reaction's names resolve
+// (GR-16).
+const opsRepo = "repo-ops"
+
+func seedOpsRepo(t *testing.T, pool *sql.DB) {
+	t.Helper()
+	seedOpsAgency(t, pool)
+	if _, err := pool.ExecContext(context.Background(),
+		`INSERT OR IGNORE INTO git_repos (id, agency_id, url, branch) VALUES (?, ?, 'u', 'main')`, opsRepo, opsAgency); err != nil {
+		t.Fatalf("seed repository %s: %v", opsRepo, err)
+	}
+}
+
+// seedFinTax writes the two agencies the twin fixtures' definitions are of
+// (ag-fin "Finance", ag-tax "Tax", as the other tests of the package name
+// them), once per database.
+func seedFinTax(t *testing.T, pool *sql.DB) {
+	t.Helper()
+	if _, err := pool.ExecContext(context.Background(),
+		`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', 't'), ('ag-tax', 'Tax', 't')`); err != nil {
+		t.Fatalf("seed agencies: %v", err)
+	}
+}
+
+func seedJobRow(t *testing.T, pool *sql.DB, name string, enabled int) {
+	t.Helper()
+	seedOpsAgency(t, pool)
+	if _, err := pool.ExecContext(context.Background(),
+		`INSERT INTO jobs (uid, name, run_type, concurrency_policy, enabled, synced_at, owner_agency)
+		 VALUES ('uid-'||?, ?, 'bash', 'Allow', ?, 't', ?)`, name, name, enabled, opsAgency); err != nil {
 		t.Fatalf("seed job %q: %v", name, err)
 	}
 }
@@ -125,8 +168,9 @@ func TestFireHonorsPauseAndPersistsTraceability(t *testing.T) {
 func TestFireMergesJobLevelEnv(t *testing.T) {
 	pool := mustPool(t)
 	ctx := context.Background()
+	seedOpsAgency(t, pool)
 	if _, err := pool.ExecContext(ctx,
-		`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, env_json, synced_at)VALUES ('uid-'||'jenv', 'jenv', 'git', 'bash', 'Allow', 1, '{"X":"job","Y":"job"}', 't')`); err != nil {
+		`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, env_json, synced_at, owner_agency)VALUES ('uid-'||'jenv', 'jenv', 'git', 'bash', 'Allow', 1, '{"X":"job","Y":"job"}', 't', ?)`, opsAgency); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	s := New(pool, quietLog(), nil)

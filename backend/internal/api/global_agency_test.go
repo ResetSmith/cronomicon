@@ -66,20 +66,22 @@ func TestGlobalAgency_CannotBeGranted(t *testing.T) {
 }
 
 // LR-22, LR-25, LR-26 — what a global administrator creates without naming an
-// agency is Global's; naming a department moves it out of Global; and no write
-// leaves a row in both, or in neither.
+// agency was Global's until 2.5.3, and is refused since (CA-4: Central runs
+// nothing); naming a department moves a Global row out of Global, and nothing
+// moves back in (CA-4); and no write leaves a row in both, or in neither.
 func TestGlobalAgency_ARowIsInGlobalOrADepartmentNeverBothNeverNeither(t *testing.T) {
 	h, pool := gateServer(t)
 	exec := mustExec(t, pool)
 
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gRoot, `{"key":"SHARED_TOKEN","source":"stored","value":"v"}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("root creating a secret = %d (%s)", rec.Code, rec.Body)
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Fatalf("root creating a secret naming no agency = %d (%s), want 422 central_runs_nothing", rec.Code, rec.Body)
 	}
-	var sec struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &sec)
+	// Global's secret is an upgrade's leftover, written as one (born with no
+	// owner, it is Global's).
+	exec(`INSERT INTO secrets (id, key, source, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('s-shared', 'SHARED_TOKEN', 'stored', 't', 't', 't', 't')`)
+	sec := struct{ ID string }{"s-shared"}
 	agenciesOf := func(table, col, id string) string {
 		t.Helper()
 		var s string
@@ -150,25 +152,30 @@ func TestGlobalAgency_ARowIsInGlobalOrADepartmentNeverBothNeverNeither(t *testin
 		if got := agenciesOf(rt.table, rt.col, rt.id); got != "ag:FIN" {
 			t.Errorf("%s: after moving to FIN it is in %q, want ag:FIN alone", rt.kind, got)
 		}
-		// And back, by a global administrator.
+		// And not back, even by a global administrator: until 2.5.3 it moved
+		// back; since CA-4 nothing moves into Central.
 		rec = gateReq(t, h, http.MethodPut, rt.path, gRoot, body(rt.kind, rt.id, `["global"]`))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("%s: moving back to Global = %d (%s)", rt.kind, rec.Code, rec.Body)
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+			t.Fatalf("%s: moving back to Global = %d (%s), want 422 central_runs_nothing", rt.kind, rec.Code, rec.Body)
 		}
-		if got := agenciesOf(rt.table, rt.col, rt.id); got != "global" {
-			t.Errorf("%s: after moving back it is in %q, want global", rt.kind, got)
+		if got := agenciesOf(rt.table, rt.col, rt.id); got != "ag:FIN" {
+			t.Errorf("%s: after the refused move back it is in %q, want ag:FIN", rt.kind, got)
 		}
 	}
 
 	// The agency-shaped editor obeys the same two rules.
-	rec = gateReq(t, h, http.MethodPut, "/api/v1/secret-agencies", gRoot, body("secret", sec.ID, `["ag:FIN"]`))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("moving the secret to FIN = %d (%s)", rec.Code, rec.Body)
-	}
-	// Removing FIN's only hold on the secret would leave it in no agency. The
-	// owner rule speaks first when FIN owns the row, so take the owner away to
-	// reach the rule under test.
-	exec(`UPDATE secrets SET owner_agency = 'global' WHERE id = ?`, sec.ID)
+	//
+	// Removing FIN's only hold on a secret would leave it in no agency. The
+	// owner rule speaks first when FIN owns the row, so the row under test is
+	// one FIN holds and does not own: Global's, held in FIN (a pre-2.3.0 shape).
+	// Until 2.5.3 the test made the secret above so by taking its owner away;
+	// since then the database refuses to make FIN's row Central's (1670), so
+	// it is written as an upgrade leaves it.
+	exec(`INSERT INTO secrets (id, key, source, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('s-held', 'HELD_TOKEN', 'stored', 't', 't', 't', 't')`)
+	exec(`DELETE FROM secret_agencies WHERE secret_id = 's-held'`)
+	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES ('s-held', 'ag:FIN')`)
+	sec.ID = "s-held"
 	rec = gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/members", gRoot, asRepair(`{"members":[{"kind":"scope","id":"sc:fin"}]}`))
 	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "agency_required" {
 		t.Errorf("emptying a secret's agencies through the agency editor = %d %s, want 422 agency_required (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
@@ -178,22 +185,28 @@ func TestGlobalAgency_ARowIsInGlobalOrADepartmentNeverBothNeverNeither(t *testin
 	}
 	// Adding a department's row to Global through Global's own editor is the
 	// mixed write by another door.
-	// (Global's list as it stands — the shared scope, r1, and the local runner,
-	// which is Global's from the first start — plus the row under test.)
+	// (Global's list as it stands — r1, and the local runner, which is Global's
+	// from the first start; the shared scope is FIN's since the moves above,
+	// which do not move back since 2.5.3 — plus the row under test.)
 	var localID string
 	if err := pool.QueryRow(`SELECT id FROM runners WHERE kind = 'server'`).Scan(&localID); err != nil {
 		t.Fatalf("the local runner's row: %v", err)
 	}
 	rec = gateReq(t, h, http.MethodPut, "/api/v1/agencies/global/members", gRoot,
-		asRepair(`{"members":[{"kind":"scope","id":"sc:shared"},{"kind":"runner","id":"r1"},{"kind":"runner","id":"`+localID+`"},{"kind":"secret","id":"`+sec.ID+`"}]}`))
-	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "global_mixed" {
-		t.Errorf("adding FIN's secret to Global = %d %s, want 422 global_mixed (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
+		asRepair(`{"members":[{"kind":"runner","id":"r1"},{"kind":"runner","id":"`+localID+`"},{"kind":"secret","id":"`+sec.ID+`"}]}`))
+	// Until 2.5.3 the answer was 422 global_mixed; since CA-4 the move into
+	// Central is refused before that is asked.
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+		t.Errorf("adding FIN's secret to Global = %d %s, want 422 central_runs_nothing (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
+	}
+	if got := agenciesOf("secret_agencies", "secret_id", sec.ID); got != "ag:FIN" {
+		t.Errorf("the refused save left the secret in %q", got)
 	}
 }
 
-// LR-26 — making something Global is a global administrator's decision: a
-// Global secret is usable by every agency's runs. A department's administrator
-// can neither move their row into Global nor take a Global row for themselves.
+// LR-26 — making something Global was a global administrator's decision (since
+// 2.5.3 nobody's: CA-4). A department's administrator can neither move their
+// row into Global nor take a Global row for themselves.
 func TestGlobalAgency_OnlyAGlobalAdministratorMovesARowInOrOut(t *testing.T) {
 	h, pool := gateServer(t)
 
@@ -210,14 +223,12 @@ func TestGlobalAgency_OnlyAGlobalAdministratorMovesARowInOrOut(t *testing.T) {
 		t.Errorf("fin admin moving their secret into Global = %d, want 403 (%s)", rec.Code, rec.Body)
 	}
 
-	rec = gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gRoot, `{"key":"SHARED_TOKEN","source":"stored","value":"v"}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("root creating a secret = %d (%s)", rec.Code, rec.Body)
-	}
-	var shared struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &shared)
+	// A Global secret: since 2.5.3 (CA-4) nobody creates one, so it is an
+	// upgrade's leftover, written as one (born with no owner, it is Global's).
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO secrets (id, key, source, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('s-shared', 'SHARED_TOKEN', 'stored', 't', 't', 't', 't')`)
+	shared := struct{ ID string }{"s-shared"}
 	rec = gateReq(t, h, http.MethodPut, "/api/v1/secret-agencies", gFinAdmin, `[{"id":"`+shared.ID+`","agencyIds":["ag:FIN"]}]`)
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("fin admin taking a Global secret = %d, want 403 (%s)", rec.Code, rec.Body)
@@ -326,9 +337,12 @@ func TestGlobalAgency_JobRowFlagsAnswerEachRoutesOwnQuestion(t *testing.T) {
 		who  string
 		want map[string]flags
 	}{
+		// Since 2.5.3 (CA-1) Global's jobs are leftovers the run route refuses
+		// for everyone: no Run, while stopping a run already going and pausing
+		// are answered as before.
 		{gRoot, map[string]flags{
-			"platform-idle": {true, true, true}, "platform-unbound-run": {true, true, true},
-			"platform-fin-run": {true, true, true}, "fin-job": {true, true, true}, "fin-job-tax-run": {true, true, true},
+			"platform-idle": {false, true, true}, "platform-unbound-run": {false, true, true},
+			"platform-fin-run": {false, true, true}, "fin-job": {true, true, true}, "fin-job-tax-run": {true, true, true},
 		}},
 		// Global's jobs are not listed to FIN's people since 2.5.0 C2 (question
 		// 77): only to those who reach every agency (gMixed below).
@@ -390,8 +404,9 @@ func TestGlobalAgency_JobRowFlagsAnswerEachRoutesOwnQuestion(t *testing.T) {
 
 	// LR-24 retired (2.5.0 C2, question 78): Global's job with no scope is not
 	// run against an agency's scope, by the agency (to which it is absent) nor by
-	// a global administrator (IN-3: Global's jobs run on Global's hosts). A
-	// global administrator still runs it unbound.
+	// a global administrator (IN-3: Global's jobs run on Global's hosts). Until
+	// 2.5.3 a global administrator still ran it unbound; since CA-1 Global's job
+	// runs nothing, and that run is refused too.
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-idle")+"/run", gFinOperator, `{"scope":"fin-hosts"}`); rec.Code != http.StatusNotFound {
 		t.Errorf("fin operator running Global's job against FIN's scope = %d, want 404 (%s)", rec.Code, rec.Body)
 	}
@@ -399,8 +414,9 @@ func TestGlobalAgency_JobRowFlagsAnswerEachRoutesOwnQuestion(t *testing.T) {
 		!strings.Contains(rec.Body.String(), "scope_not_in_agency") {
 		t.Errorf("a global administrator running Global's job against FIN's scope = %d, want 422 scope_not_in_agency (%s)", rec.Code, rec.Body)
 	}
-	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-idle")+"/run", gRoot, `{}`); rec.Code != http.StatusAccepted {
-		t.Errorf("a global administrator running Global's job unbound = %d, want 202 (%s)", rec.Code, rec.Body)
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+id("platform-idle")+"/run", gRoot, `{}`); rec.Code != http.StatusConflict ||
+		errCode(rec.Body.Bytes()) != "run_refused" || !strings.Contains(rec.Body.String(), "runs nothing") {
+		t.Errorf("a global administrator running Global's job unbound = %d, want 409 run_refused (Central runs nothing) (%s)", rec.Code, rec.Body)
 	}
 }
 
@@ -412,16 +428,14 @@ func TestGlobalAgency_AGlobalAdministratorCanReHomeARowInNoAgency(t *testing.T) 
 	h, pool := gateServer(t)
 	exec := mustExec(t, pool)
 
-	rec := gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gFinAdmin, `{"key":"FIN_TOKEN","source":"stored","scope":"fin-hosts","value":"v"}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("fin admin creating a secret = %d (%s)", rec.Code, rec.Body)
-	}
-	var sec struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &sec)
+	// A secret Global owns, on FIN's scope, in no agency at all. Until 2.5.3 the
+	// test made FIN's own secret so by taking its owner away; since then the
+	// database refuses to make FIN's row Central's (1670), so the orphan is
+	// written as an upgrade leaves one (born with no owner, it is Global's).
+	exec(`INSERT INTO secrets (id, key, source, scope, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('s-orphan', 'FIN_TOKEN', 'stored', 'fin-hosts', 't', 't', 't', 't')`)
+	sec := struct{ ID string }{"s-orphan"}
 	exec(`INSERT INTO runners (id,name,status,registered_at,created_at) VALUES ('r1','r1','online','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
-	exec(`UPDATE secrets SET owner_agency = 'global' WHERE id = ?`, sec.ID)
 	exec(`DELETE FROM secret_agencies WHERE secret_id = ?`, sec.ID)
 	exec(`DELETE FROM runner_agencies WHERE runner_id = 'r1'`)
 

@@ -24,10 +24,11 @@ func TestTwoDefinitionsOfOneNameAreEachPausedTimedAndWatchedAsThemselves(t *test
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	exec(`INSERT INTO workflows (uid, name, source, steps, enabled, created_at) VALUES
-	        ('w-fin', 'nightly', 'cronomicon', '[]', 1, 't'), ('w-tax', 'nightly', 'cronomicon', '[]', 1, 't')`)
-	exec(`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, synced_at) VALUES
-	        ('j-fin', 'load', 'cronomicon', 'bash', 'Allow', 1, 't'), ('j-tax', 'load', 'cronomicon', 'bash', 'Allow', 1, 't')`)
+	seedFinTax(t, pool)
+	exec(`INSERT INTO workflows (uid, name, source, steps, enabled, created_at, owner_agency) VALUES
+	        ('w-fin', 'nightly', 'cronomicon', '[]', 1, 't', 'ag-fin'), ('w-tax', 'nightly', 'cronomicon', '[]', 1, 't', 'ag-tax')`)
+	exec(`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, synced_at, owner_agency) VALUES
+	        ('j-fin', 'load', 'cronomicon', 'bash', 'Allow', 1, 't', 'ag-fin'), ('j-tax', 'load', 'cronomicon', 'bash', 'Allow', 1, 't', 'ag-tax')`)
 	// Each has an entry called at-two. FIN's entries skip on FIN's calendar.
 	exec(`INSERT INTO definition_schedules (owner_source, owner_kind, owner_name, name, cron, position, owner_uid, skip_calendars) VALUES
 	        ('cronomicon', 'workflow', 'nightly', 'at-two', '0 2 * * *', 0, 'w-tax', NULL),
@@ -60,7 +61,7 @@ func TestTwoDefinitionsOfOneNameAreEachPausedTimedAndWatchedAsThemselves(t *test
 	fireFlow := func(uid string) { s.fireWorkflow(uid, "cronomicon", "nightly", "at-two", "") }
 
 	// ── The calendar: FIN's is closed today, TAX's names none. ──────────────
-	seedCal(t, pool, "fin-closed", false, true, map[string]string{today(s): "FIN is closed"})
+	seedCalOf(t, pool, "ag-fin", "fin-closed", false, true, map[string]string{today(s): "FIN is closed"})
 	fireFlow("w-tax")
 	fireJob("j-tax")
 	if flowsStarted("w-tax") != 1 || rows(`SELECT COUNT(*) FROM runs WHERE job_uid = 'j-tax' AND status = 'queued'`) != 1 {

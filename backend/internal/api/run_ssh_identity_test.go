@@ -180,6 +180,10 @@ func TestRunSSHIdentityPermGate(t *testing.T) {
 	exec(`INSERT INTO ssh_credentials (id, label, source, ciphertext, nonce, wrapped_dek, kek_version,
 	                                   created_by, created_at, last_modified_by, last_modified_at)
 	      VALUES ('c1','prod-key','stored', x'00', x'00', x'00', 1, 't','t','t','t')`)
+	// 2.5.3: the built-in agency runs nothing; the job and its key are an
+	// ordinary agency's.
+	ownJobsByWorkAgency(t, pool, "id-job")
+	ownKeyByWorkAgency(t, pool, "c1")
 	var jobID int64
 	if err := pool.QueryRow(`SELECT rowid FROM jobs WHERE name='id-job'`).Scan(&jobID); err != nil {
 		t.Fatalf("rowid: %v", err)
@@ -239,6 +243,10 @@ func seedIdentityFixture(t *testing.T, pool *sql.DB, runType string) {
 		 VALUES ('cred1','prod-key','stored', x'00', x'00', x'00', 1, 't','t','t','t')`); err != nil {
 		t.Fatalf("seed credential: %v", err)
 	}
+	// 2.5.3: the built-in agency runs nothing; the job and its key are an
+	// ordinary agency's.
+	ownJobsByWorkAgency(t, pool, "idjob")
+	ownKeyByWorkAgency(t, pool, "cred1")
 }
 
 // jobRowID returns the rowid the run endpoint addresses a job by.
@@ -273,6 +281,10 @@ func TestRunJobSpecIdentityFold(t *testing.T) {
 	      VALUES('foldans','git','ansible','play','','sha256:g','jobs/foldans.yaml','svc','prod-key','t')`)
 	exec(`INSERT INTO jobs(name, source, run_type, command, scope, content_hash, source_path, ssh_user, ssh_credential, synced_at)
 	      VALUES('foldtf','git','terraform','apply','','sha256:h','jobs/foldtf.yaml','svc','prod-key','t')`)
+	// 2.5.3: the built-in agency runs nothing; the jobs and their key are an
+	// ordinary agency's.
+	ownJobsByWorkAgency(t, pool, "foldjob", "foldans", "foldtf")
+	ownKeyByWorkAgency(t, pool, "c1")
 
 	client, csrf := devLoginWithCSRF(t, ts)
 

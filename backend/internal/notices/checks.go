@@ -43,7 +43,10 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindGlobalCredentialBound, checkGlobalCredentialBound},
 		{KindGlobalHostRecord, checkGlobalHostRecord},
 		{KindAgencyNoRepository, checkAgencyNoRepository},
+		{KindCentralHoldsWork, checkCentralHoldsWork},
+		{KindEnvironmentSettingsIgnored, checkEnvironmentSettingsIgnored},
 		{KindLocalRunnerServed, checkLocalRunnerServed},
+		{KindLocalRunnerUnassigned, checkLocalRunnerUnassigned},
 		{KindGlobalScriptJob, checkGlobalScriptJob},
 		{KindGlobalScheduleBound, checkGlobalScheduleBound},
 		{KindGlobalCalendarScope, checkCalendarAgencies},
@@ -146,6 +149,7 @@ var ownedKinds = []struct {
 // injected into Global's runs only), which the agency would otherwise never
 // see. The agency reads such a row, and its Usage, through heldByGlobalFor.
 func checkSharedOwnership(ctx context.Context, database *sql.DB) error {
+	central := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	var found []Finding
 	for _, k := range ownedKinds {
 		rows, err := database.QueryContext(ctx, `
@@ -174,16 +178,18 @@ func checkSharedOwnership(ctx context.Context, database *sql.DB) error {
 			if scope != "" {
 				where = " in scope " + scope
 			}
-			detail := fmt.Sprintf("The %s %s%s is owned by %s and listed for %s. ", k.noun, name, where, ownerName, members.String)
-			if owner == agencyid.Global {
-				detail += "Since 2.4.0 a row of Global's is used by Global's runs only, so those agencies' runs no longer use it. "
+			// A row the built-in agency owns is listed to global administrators
+			// by central_holds_work since 2.5.3 (CA-18); the agencies it lists
+			// are still told below. A row an agency owns and shares is told here.
+			if owner != agencyid.Global {
+				detail := fmt.Sprintf("The %s %s%s is owned by %s and listed for %s. ", k.noun, name, where, ownerName, members.String)
+				found = append(found, Finding{
+					AgencyID: agencyid.Global,
+					Subject:  k.kind + ":" + id,
+					Detail: detail + "To settle it, give it to one agency (set its agencies to that one); if several agencies " +
+						"need their own, create a copy in each first.",
+				})
 			}
-			found = append(found, Finding{
-				AgencyID: agencyid.Global,
-				Subject:  k.kind + ":" + id,
-				Detail: detail + "To settle it, give it to one agency (set its agencies to that one); if several agencies " +
-					"need their own, create a copy in each first.",
-			})
 			if owner != agencyid.Global {
 				continue
 			}
@@ -194,10 +200,10 @@ func checkSharedOwnership(ctx context.Context, database *sql.DB) error {
 				found = append(found, Finding{
 					AgencyID: member,
 					Subject:  k.kind + ":" + id + "@" + member,
-					Detail: fmt.Sprintf("The %s %s%s was shared with your agency before 2.3.0. Global holds it, and since "+
-						"2.4.0 only Global's runs use it: your agency's runs do not. You can see it, and which runs used it, "+
-						"under Held by Global. A global administrator can give it to your agency; until then, create your "+
-						"own %s if your jobs need one.", k.noun, name, where, k.noun),
+					Detail: fmt.Sprintf("The %s %s%s was shared with your agency before 2.3.0. %s holds it, and %s runs "+
+						"nothing since 2.5.3, so no run uses it: your agency's runs do not. You can see it, and which runs used it, "+
+						"under Held by %s. A global administrator can give it to your agency; until then, create your "+
+						"own %s if your jobs need one.", k.noun, name, where, central, central, central, k.noun),
 				})
 			}
 		}
@@ -241,7 +247,7 @@ func checkOrphaned(ctx context.Context, database *sql.DB) error {
 				AgencyID: agencyid.Global,
 				Subject:  k.kind + ":" + id,
 				Detail: fmt.Sprintf("The %s %s belongs to no agency, so nothing can use it and nobody but a global "+
-					"administrator can change it. Assign it to an agency, or to Global, from the agency editor.",
+					"administrator can change it. Assign it to an agency from the agency editor.",
 					k.noun, name),
 			})
 		}
@@ -429,7 +435,8 @@ func checkRecordKeyOutsideOwner(ctx context.Context, database *sql.DB) error {
 // prefix does not revoke what was written under it, and on the day of the
 // upgrade no agency has a prefix at all, so every agency-owned Vault-backed row
 // is listed until a global administrator assigns one. Filed under Global, whose
-// administrators assign prefixes. Rows that are Global's have no limit.
+// administrators assign prefixes. Rows that are the built-in agency's have no
+// limit (and since 2.5.3 they are leftovers that nothing uses: central_holds_work).
 func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
 	prefixes := map[string][]string{}
 	rows, err := database.QueryContext(ctx, `SELECT agency_id, prefix FROM agency_vault_prefixes ORDER BY agency_id, prefix`)

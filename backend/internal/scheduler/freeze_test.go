@@ -28,7 +28,7 @@ func TestI1_AGlobalCalendarFreezesItsAgencyAndTheFreezeEveryone(t *testing.T) {
 	}
 	verdict := func(agency string) calendar.Verdict {
 		t.Helper()
-		v, err := freezeTier(ctx, pool, agency, nil, nil, day, time.Now())
+		v, err := freezeTier(ctx, pool, agency, calendar.Bindings{}, day, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,7 +72,7 @@ func TestFZ_AFireIsJudgedAtItsMoment(t *testing.T) {
 		{"inside", from.Add(30 * time.Hour), true},
 		{"at until", until, false},
 	} {
-		v, err := freezeTier(ctx, pool, "global", nil, nil, calendar.DayOf(c.at, time.UTC), c.at)
+		v, err := freezeTier(ctx, pool, "global", calendar.Bindings{}, calendar.DayOf(c.at, time.UTC), c.at)
 		if err != nil {
 			t.Fatal(err)
 		}

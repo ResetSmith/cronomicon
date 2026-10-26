@@ -388,7 +388,7 @@ export function OwnerChip({ owner }: { owner?: string | null }) {
         // (§0a, IN-6). The text said Global's was every agency's, resolved after
         // an agency's own: an order that no longer exists.
         owner === globalAgencyName()
-          ? `Owned by ${owner}: used by ${owner}'s runs only, and changed only by global administrators.`
+          ? `Owned by ${owner}, which runs nothing, so no run uses it. Only global administrators change it or move it to the agency whose work it is (Move agency).`
           : `Owned by ${owner}: used by ${owner}'s runs only, and changed by its administrators.`
       }
       style={{
@@ -530,7 +530,11 @@ export function AgencyCell({ names, owner }: { names: string[] | undefined; owne
     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
       {ownerApart && (
         <span
-          title={`Owned by ${owner}: shared with the agencies beside it before 2.3.0, and used only by ${owner}'s runs. They read it; ${owner} changes it.`}
+          title={
+            owner === globalAgencyName()
+              ? `Owned by ${owner}: shared with the agencies beside it before 2.3.0. ${owner} runs nothing, so no run uses it. They read it; a global administrator changes it, or moves it to one of them (Move agency).`
+              : `Owned by ${owner}: shared with the agencies beside it before 2.3.0, and used only by ${owner}'s runs. They read it; ${owner} changes it.`
+          }
           style={{
             padding: "1px 7px",
             borderRadius: c.radiusChip,

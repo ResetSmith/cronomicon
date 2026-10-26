@@ -143,3 +143,32 @@ func TestRefuseDispatch(t *testing.T) {
 		t.Errorf("with a check that cannot be made: %+v and no error", got)
 	}
 }
+
+// 2.5.3 CA-5 (found by the review of CA1): a step with no scope is its job's
+// agency's run, and that job is its workflow's agency's, so the step is inside
+// the workflow's agency. Until 2.5.3 it was Global's run, and refused as
+// outside every agency's workflow; the job alone ran (stamped its agency's).
+// A step on another agency's scope is still refused.
+func TestRefuseDispatchAScopelessStepOfAnAgencysWorkflow(t *testing.T) {
+	f := newOwnerFixture(t) // agencies ag-a and ag-b
+	ctx := context.Background()
+	f.exec(`INSERT INTO scopes (id, name, source, created_at) VALUES ('s-b', 'b-hosts', 'cronomicon', 't')`)
+	f.exec(`DELETE FROM scope_agencies WHERE scope_id = 's-b'`)
+	f.exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-b', 'ag-b')`)
+	f.exec(`INSERT INTO jobs (uid, name, source, run_type, synced_at, command, owner_agency) VALUES
+	        ('j-a', 'a-free', 'cronomicon', 'bash', 't', 'true', 'ag-a')`)
+	f.exec(`INSERT INTO workflows (uid, name, source, steps, synced_at, owner_agency) VALUES
+	        ('w-a', 'a-flow', 'cronomicon', '[]', 't', 'ag-a')`)
+	f.exec(`INSERT INTO workflow_runs (id, workflow_name, workflow_uid, status, triggered_by, trigger_kind, created_at) VALUES
+	        ('wr-a', 'a-flow', 'w-a', 'running', 'u', 'manual', 't')`)
+	f.exec(`INSERT INTO runs (id, job_name, job_source, job_uid, run_type, scope, status, triggered_by, trigger_kind, created_at, workflow_run_id, agencies_json) VALUES
+	        ('r-none',  'a-free', 'cronomicon', 'j-a', 'bash', NULL,      'running', 'u', 'manual', 't', 'wr-a', '["TeamA"]'),
+	        ('r-other', 'a-free', 'cronomicon', 'j-a', 'bash', 'b-hosts', 'running', 'u', 'manual', 't', 'wr-a', '["TeamB"]')`)
+
+	if got, err := RefuseDispatch(ctx, f.pool, "r-none"); err != nil || got != nil {
+		t.Errorf("a scopeless step of the agency's own workflow: refused %+v (%v), want it to go ahead", got, err)
+	}
+	if got, err := RefuseDispatch(ctx, f.pool, "r-other"); err != nil || got == nil || got.Reason != ReasonWorkflowScopeMismatch {
+		t.Errorf("a step on another agency's scope: %+v (%v), want %s", got, err, ReasonWorkflowScopeMismatch)
+	}
+}

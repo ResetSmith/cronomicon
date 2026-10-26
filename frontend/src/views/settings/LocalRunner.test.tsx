@@ -7,13 +7,12 @@ import { MemoryRouter } from "react-router-dom";
 //
 // Turning it on makes this server hold SSH keys and run jobs, so both
 // directions are confirmed, each saying what changes; the host can forbid it;
-// and it serves Global only (2.4.0, IN-3).
+// and since 2.5.3 (CA-8 to CA-10) it belongs to one agency, chosen here, or to
+// none and is off.
 
 let LR: Record<string, unknown> = {};
 const puts: { path: string; body: unknown }[] = [];
 let putError: unknown = null;
-let getDelay = 0;
-let serveOnSave = false;
 
 const GLOBAL = { id: "global", name: "Global" };
 const FIN = { id: "ag-fin", name: "Finance" };
@@ -25,22 +24,21 @@ vi.mock("../../api/client", async (importOriginal) => {
     ...actual,
     api: {
       GET: vi.fn(async (path: string) => {
-        if (path === "/local-runner") {
-          const snapshot = LR;
-          if (getDelay) await new Promise((r) => setTimeout(r, getDelay));
-          return { data: snapshot };
-        }
+        if (path === "/local-runner") return { data: LR };
         if (path === "/agencies") return { data: [GLOBAL, FIN, TAX] };
         return { data: [] };
       }),
-      PUT: vi.fn(async (path: string, init?: { body?: unknown }) => {
+      PUT: vi.fn(async (path: string, init?: { body?: Record<string, unknown> }) => {
         puts.push({ path, body: init?.body });
         if (putError) return { error: putError };
-        if (path === "/local-runner") LR = { ...LR, ...(init?.body as object) };
-        if (path === "/runner-agencies" && serveOnSave) {
-          const ids = (init?.body as { agencyIds: string[] }[])[0].agencyIds;
-          LR = { ...LR, serves: [GLOBAL, FIN, TAX].filter((a) => ids.includes(a.id)) };
+        const body = init?.body ?? {};
+        if ("ownerAgency" in body) {
+          // The server: a change of agency turns it off (CA-10).
+          const owner = [FIN, TAX].find((a) => a.id === body.ownerAgency) ?? GLOBAL;
+          LR = { ...LR, owner, serves: [owner], enabled: false };
         }
+        const { ownerAgency: _ignored, ...rest } = body;
+        LR = { ...LR, ...rest };
         return { data: LR };
       }),
     } as unknown as typeof actual.api,
@@ -50,11 +48,18 @@ vi.mock("../../api/client", async (importOriginal) => {
 import { LocalRunnerSection } from "./LocalRunner";
 
 beforeEach(() => {
-  LR = { runnerId: "r-local", enabled: false, forbidden: false, status: "offline", maxConcurrent: 4, capabilities: ["bash", "perl", "powershell", "python"], serves: [GLOBAL] };
+  LR = {
+    runnerId: "r-local",
+    enabled: false,
+    forbidden: false,
+    status: "offline",
+    maxConcurrent: 4,
+    capabilities: ["bash", "perl", "powershell", "python"],
+    serves: [FIN],
+    owner: FIN,
+  };
   puts.length = 0;
   putError = null;
-  getDelay = 0;
-  serveOnSave = false;
 });
 afterEach(cleanup);
 
@@ -65,6 +70,7 @@ const show = (canWrite = true) =>
     </MemoryRouter>,
   );
 const button = (name: string | RegExp) => screen.getByRole("button", { name }) as HTMLButtonElement;
+const agencySelect = () => screen.findByRole("combobox", { name: "Agency" }) as Promise<HTMLSelectElement>;
 
 describe("Local runner card", () => {
   it("says what turning it on means, and turns it on only after a confirmation", async () => {
@@ -75,7 +81,7 @@ describe("Local runner card", () => {
     fireEvent.click(button("Turn on…"));
     expect(puts).toHaveLength(0);
     expect(await screen.findByText(/This server will hold SSH private keys in memory/)).toBeTruthy();
-    expect(screen.getByText(/queued shell runs of Global that no other runner has taken/)).toBeTruthy();
+    expect(screen.getByText(/queued shell runs of Finance that no other runner has taken/)).toBeTruthy();
     fireEvent.click(button("Turn on"));
     await waitFor(() => expect(puts).toEqual([{ path: "/local-runner", body: { enabled: true } }]));
     expect(await screen.findByText("On")).toBeTruthy();
@@ -113,14 +119,54 @@ describe("Local runner card", () => {
     await waitFor(() => expect(puts).toEqual([{ path: "/local-runner", body: { maxConcurrent: 8 } }]));
   });
 
-  // 2.4.0 (§0a, IN-3; migration 1380): it serves Global and nothing else, and
-  // the server refuses any other list. The card says so and offers no editor.
-  it("serves Global, with nothing to change", async () => {
+  // 2.5.3 CA-8: its agency is chosen here, among the agencies; never Central.
+  it("offers the agencies and Unassigned, never Global", async () => {
     show();
-    expect(await screen.findByText(/An agency's runs are claimed by an agent enrolled for that agency/)).toBeTruthy();
-    expect(screen.queryByRole("combobox", { name: "Serve another agency" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Stop serving/ })).toBeNull();
+    const sel = await agencySelect();
+    expect(sel.value).toBe("ag-fin");
+    expect(Array.from(sel.options).map((o) => o.textContent)).toEqual(["Unassigned (off)", "Finance", "Tax"]);
+  });
+
+  // CA-9: with no agency it is off and cannot be turned on.
+  it("is off with no agency, and says why it cannot be turned on", async () => {
+    LR = { ...LR, owner: GLOBAL, serves: [GLOBAL] };
+    show();
+    expect(await screen.findByText("Off: it belongs to no agency")).toBeTruthy();
+    expect((await agencySelect()).value).toBe("");
+    expect(button("Turn on…").disabled).toBe(true);
+    expect(button("Turn on…").title).toBe("Choose its agency first: with no agency it is off.");
+  });
+
+  // CA-10: changing its agency clears its host-key approvals and turns it off.
+  it("gives it to another agency only after a confirmation that says what changes", async () => {
+    LR = { ...LR, enabled: true, status: "online" };
+    show();
+    fireEvent.change(await agencySelect(), { target: { value: "ag-tax" } });
     expect(puts).toHaveLength(0);
+    expect(await screen.findByText(/It will claim Tax's shell runs instead of Finance's\./)).toBeTruthy();
+    expect(screen.getByText(/Its host-key approvals are\s+cleared/)).toBeTruthy();
+    expect(screen.getByText(/it is turned off/)).toBeTruthy();
+    fireEvent.click(button("Give it to Tax"));
+    await waitFor(() => expect(puts).toEqual([{ path: "/local-runner", body: { ownerAgency: "ag-tax" } }]));
+    expect(await screen.findByText("Off")).toBeTruthy();
+    expect((await agencySelect()).value).toBe("ag-tax");
+  });
+
+  it("unassigns it, which turns it off", async () => {
+    show();
+    fireEvent.change(await agencySelect(), { target: { value: "" } });
+    expect(await screen.findByText(/It will belong to no agency, and is turned off/)).toBeTruthy();
+    fireEvent.click(button("Unassign it"));
+    await waitFor(() => expect(puts).toEqual([{ path: "/local-runner", body: { ownerAgency: "" } }]));
+    expect(await screen.findByText("Off: it belongs to no agency")).toBeTruthy();
+  });
+
+  it("shows why a change of agency was refused", async () => {
+    putError = { code: "local_runner_busy", message: "the local runner is running a run: let it finish (or stop it) before it changes agency" };
+    show();
+    fireEvent.change(await agencySelect(), { target: { value: "ag-tax" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Give it to Tax" }));
+    expect(await screen.findByText(/let it finish \(or stop it\) before it changes agency/)).toBeTruthy();
   });
 
   it("disables every control, with the reason, for someone who is not a global administrator", async () => {
@@ -129,6 +175,7 @@ describe("Local runner card", () => {
     expect((await screen.findByRole("button", { name: "Turn on…" }) as HTMLButtonElement).title).toBe(why);
     expect(button("Turn on…").disabled).toBe(true);
     expect((screen.getByLabelText("Runs at once") as HTMLInputElement).disabled).toBe(true);
+    expect((await agencySelect()).disabled).toBe(true);
   });
 
   // 500 apply_failed means the setting WAS saved; the card must show that.

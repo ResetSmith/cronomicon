@@ -28,3 +28,18 @@ func (s *Server) validateCalendarBinding(ctx context.Context, agency string, ski
 	}
 	return calendar.ValidateBinding(skip, only, known, global)
 }
+
+// validateDefinitionCalendars is validateCalendarBinding for a job's or a
+// workflow's own Forbid and Allow calendars (2.5.3, CA-30): the same rules
+// (a name the agency lacks, a name in both, a freeze calendar as an Allow),
+// said in the definition's words.
+func (s *Server) validateDefinitionCalendars(ctx context.Context, agency string, forbid, allow []string) (outForbid, outAllow []string, verr string) {
+	if len(calendar.ParseNamesSlice(forbid)) == 0 && len(calendar.ParseNamesSlice(allow)) == 0 {
+		return nil, nil, ""
+	}
+	known, global, err := calendar.LoadFlagsFor(ctx, s.db, agency)
+	if err != nil {
+		return nil, nil, "calendar lookup failed: " + err.Error()
+	}
+	return calendar.ValidateDefinitionBinding(forbid, allow, known, global)
+}

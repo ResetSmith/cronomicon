@@ -114,12 +114,13 @@ func TestOneAgency_ASecretMovesWithItsOwner(t *testing.T) {
 	if rec := gateReq(t, h, http.MethodDelete, "/api/v1/env-secrets/"+sec, gFinAdmin, ""); rec.Code/100 == 2 {
 		t.Errorf("FIN's administrator deleted a secret that was moved to TAX (%d)", rec.Code)
 	}
-	// A global administrator makes it Global's, and takes it back out.
-	if code, _ := repair(gRoot, sec, "global"); code != http.StatusOK {
-		t.Errorf("a global administrator making the secret Global's = %d, want 200", code)
+	// A global administrator made it Global's until 2.5.3; since CA-4 nothing
+	// moves into Central, a repair included, and the secret stays TAX's.
+	if code, ec := repair(gRoot, sec, "global"); code != http.StatusUnprocessableEntity || ec != "central_runs_nothing" {
+		t.Errorf("a global administrator making the secret Global's = %d %s, want 422 central_runs_nothing", code, ec)
 	}
-	if got := state(sec); got != "global/global" {
-		t.Errorf("after the move to Global the secret is %s", got)
+	if got := state(sec); got != "ag:TAX/ag:TAX" {
+		t.Errorf("after the refused move to Global the secret is %s, want TAX's", got)
 	}
 
 	// A move must not land on a name the target already owns.

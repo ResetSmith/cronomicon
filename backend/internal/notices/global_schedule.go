@@ -47,6 +47,7 @@ func checkGlobalScheduleBound(ctx context.Context, database *sql.DB) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	central := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	var found []Finding
 	for _, e := range all {
 		var agency sql.NullString
@@ -59,10 +60,10 @@ func checkGlobalScheduleBound(ctx context.Context, database *sql.DB) error {
 		found = append(found, Finding{
 			AgencyID: agency.String,
 			Subject:  e.uid + ":" + e.name,
-			Detail: fmt.Sprintf("The %s %s is bound to Global's schedule %s. A schedule's edits reach its own agency's "+
+			Detail: fmt.Sprintf("The %s %s is bound to %s's schedule %s. A schedule's edits reach its own agency's "+
 				"definitions only: this one keeps the timing it copied (%s) and fires on it, and no longer follows the "+
 				"schedule. Bind it to a schedule of this agency's, or give it a timing of its own. This notice clears "+
-				"when it is done.", e.kind, e.owner, e.schedule, e.cron),
+				"when it is done.", e.kind, e.owner, central, e.schedule, e.cron),
 		})
 	}
 	return Reconcile(ctx, database, KindGlobalScheduleBound, found)

@@ -15,14 +15,34 @@ import (
 )
 
 // mintToken drives HandleMintRegistrationToken directly (the route's
-// requirePerm guard is middleware; identity is attribution-only here).
+// requirePerm guard is middleware; identity is attribution-only here). The
+// token is the Ops agency's: one minted with no agency is the built-in
+// agency's, which enrols nothing since 2.5.3 (CA-1; mintCentralToken).
 func mintToken(t *testing.T, svc *Service, label string) (id int64, plaintext string) {
 	t.Helper()
-	body := "{}"
-	if label != "" {
-		b, _ := json.Marshal(map[string]string{"label": label})
-		body = string(b)
+	if _, err := svc.db.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, '2026-10-07T00:00:00Z')`,
+		opsAgencyID, opsAgencyName); err != nil {
+		t.Fatalf("seed agency %s: %v", opsAgencyID, err)
 	}
+	fields := map[string]string{"agencyId": opsAgencyID}
+	if label != "" {
+		fields["label"] = label
+	}
+	return mintTokenBody(t, svc, fields)
+}
+
+// mintCentralToken mints with no agency named: the built-in agency's token,
+// which the handler still mints (the API's creation gate refuses it before
+// the handler since 2.5.3) and registration refuses (token_for_central).
+func mintCentralToken(t *testing.T, svc *Service) (id int64, plaintext string) {
+	t.Helper()
+	return mintTokenBody(t, svc, map[string]string{})
+}
+
+func mintTokenBody(t *testing.T, svc *Service, fields map[string]string) (id int64, plaintext string) {
+	t.Helper()
+	b, _ := json.Marshal(fields)
+	body := string(b)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/registration-tokens",
 		strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -224,26 +244,32 @@ func TestSingleUseRace(t *testing.T) {
 	}
 }
 
-// TestBootstrapTokenUnchanged: the env bootstrap token stays multi-use and
-// records no provenance/consumption (Phase 7 leaves it alone).
+// TestBootstrapTokenUnchanged: the env bootstrap token stayed multi-use and
+// recorded no provenance/consumption (Phase 7 left it alone). Since 2.5.3 it
+// enrols nothing (question 207: it enrolled agents as Global's, and the
+// built-in agency runs nothing): every presentation is refused with
+// bootstrap_token_retired, creates no runner row and consumes no token.
 func TestBootstrapTokenUnchanged(t *testing.T) {
 	svc := newTestService(t)
+	minted := opsToken(t, svc) // an agency's: one minted with none is the built-in agency's, which enrols nothing
 
 	for i := range 3 {
 		rec := registerWith(t, svc, "test-bootstrap-token", fmt.Sprintf("boot-%d", i))
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("bootstrap register #%d: got %d, want 201 (multi-use)", i, rec.Code)
+		if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "bootstrap_token_retired") {
+			t.Fatalf("bootstrap register #%d: got %d %s, want 401 bootstrap_token_retired", i, rec.Code, rec.Body.String())
 		}
-		var created struct {
-			Runner struct {
-				RegistrationTokenID *int64 `json:"registrationTokenId"`
-			} `json:"runner"`
-		}
-		_ = json.Unmarshal(rec.Body.Bytes(), &created)
-		if created.Runner.RegistrationTokenID != nil {
-			t.Errorf("bootstrap registration must carry no token provenance, got %v",
-				*created.Runner.RegistrationTokenID)
-		}
+	}
+	var runners int
+	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM runners`).Scan(&runners); err != nil || runners != 0 {
+		t.Errorf("%d runner rows after refused bootstrap registrations (err %v), want 0", runners, err)
+	}
+	var used int
+	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM registration_tokens WHERE used_at IS NOT NULL`).Scan(&used); err != nil || used != 0 {
+		t.Errorf("%d registration tokens consumed by the bootstrap token (err %v), want 0", used, err)
+	}
+	// The minted token it never touched still enrols.
+	if rec := registerWith(t, svc, minted, "minted-agent"); rec.Code != http.StatusCreated {
+		t.Errorf("a minted token after the refusals = %d %s, want 201", rec.Code, rec.Body.String())
 	}
 }
 
@@ -307,6 +333,36 @@ func mintTokenFor(t *testing.T, svc *Service, agencyID string) (int64, string, *
 	return resp.ID, resp.Token, rec
 }
 
+// The ordinary agency the enrolment and E2E fixtures enrol their agents in:
+// the environment's bootstrap token is refused since 2.5.3 (Central runs
+// nothing, question 207), so an agent is enrolled with a token minted in an
+// agency, serves exactly that agency, and claims only that agency's runs.
+const (
+	opsAgencyID   = "ag-ops"
+	opsAgencyName = "Ops"
+)
+
+// enrolToken seeds the agency (once) and mints a fresh single-use registration
+// token in it, for one agent's registration.
+func enrolToken(t *testing.T, svc *Service, agencyID, name string) string {
+	t.Helper()
+	if _, err := svc.db.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, '2026-10-07T00:00:00Z')`,
+		agencyID, name); err != nil {
+		t.Fatalf("seed agency: %v", err)
+	}
+	_, tok, rec := mintTokenFor(t, svc, agencyID)
+	if rec.Code != http.StatusCreated || tok == "" {
+		t.Fatalf("mint a registration token in %s = %d (body %s)", agencyID, rec.Code, rec.Body)
+	}
+	return tok
+}
+
+// opsToken is enrolToken in the fixtures' ordinary agency.
+func opsToken(t *testing.T, svc *Service) string {
+	t.Helper()
+	return enrolToken(t, svc, opsAgencyID, opsAgencyName)
+}
+
 func registeredID(t *testing.T, rec *httptest.ResponseRecorder) (runnerID, apiKey string) {
 	t.Helper()
 	if rec.Code != http.StatusCreated {
@@ -357,18 +413,26 @@ func TestRegistrationSetsTheOwnerAndTheOneServeRow(t *testing.T) {
 		}
 	}
 
-	// A token with no agency named is Global's, as is the bootstrap token's
-	// agent: Global-owned, serving Global.
-	_, gtok := mintToken(t, svc, "")
-	gid, _ := registeredID(t, registerWith(t, svc, gtok, "global-agent"))
-	bid, _ := registeredID(t, registerWith(t, svc, "test-bootstrap-token", "bootstrap-agent"))
-	for _, rid := range []string{gid, bid} {
-		if err := svc.db.QueryRow(`SELECT owner_agency FROM runners WHERE id = ?`, rid).Scan(&owner); err != nil {
-			t.Fatal(err)
-		}
-		if got := servedBy(t, svc, rid); owner != "global" || len(got) != 1 || got[0] != "global" {
-			t.Errorf("runner %s: owner %q serves %v, want Global and exactly Global", rid, owner, got)
-		}
+	// A token with no agency named is the built-in agency's. Until 2.5.3 it
+	// enrolled a Global-owned agent serving Global, as the bootstrap token did.
+	// The built-in agency runs nothing since (CA-1): the API mints no such token
+	// (the creation gate refuses it), and one minted before enrols nothing and
+	// is not consumed; nor does the bootstrap token (question 207).
+	gid, gtok := mintCentralToken(t, svc)
+	if rec := registerWith(t, svc, gtok, "global-agent"); rec.Code != http.StatusUnauthorized ||
+		!strings.Contains(rec.Body.String(), "token_for_central") {
+		t.Errorf("register with a token of the built-in agency's = %d %s, want 401 token_for_central", rec.Code, rec.Body)
+	}
+	if rec := registerWith(t, svc, "test-bootstrap-token", "bootstrap-agent"); rec.Code != http.StatusUnauthorized ||
+		!strings.Contains(rec.Body.String(), "bootstrap_token_retired") {
+		t.Errorf("register with the bootstrap token = %d %s, want 401 bootstrap_token_retired", rec.Code, rec.Body)
+	}
+	var central, used int
+	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM runners WHERE owner_agency = 'global' AND kind <> 'server'`).Scan(&central); err != nil || central != 0 {
+		t.Errorf("%d agents of the built-in agency's were enrolled (err %v), want 0", central, err)
+	}
+	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM registration_tokens WHERE id = ? AND used_at IS NOT NULL`, gid).Scan(&used); err != nil || used != 0 {
+		t.Errorf("the built-in agency's token was consumed (%d, err %v), want not", used, err)
 	}
 }
 

@@ -126,6 +126,7 @@ func TestFZ_TheUpcomingListMarksOnlyTheFiresInsideTheWindow(t *testing.T) {
 func TestFZ_ARunIsRefusedOnlyWhileTheWindowIsInEffect(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	jobID := createRHJob(t, ts, client, csrf, "billing")
 	setWindow := func(from, until time.Time) {

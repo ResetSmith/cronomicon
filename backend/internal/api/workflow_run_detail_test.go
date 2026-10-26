@@ -12,6 +12,7 @@ import (
 func TestWorkflowRunDetailGraphAndContext(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	const ts0 = "2026-01-01T00:00:00Z"
 
 	// A stored secret supplies the redaction dictionary. (Plain env_vars values
@@ -37,9 +38,9 @@ func TestWorkflowRunDetailGraphAndContext(t *testing.T) {
 	seedChild := func(id, name, status, env, outputs string) {
 		t.Helper()
 		if _, err := pool.Exec(
-			`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, created_at, workflow_run_id, env_json, outputs_json)
-			 VALUES (?, ?, 'bash', ?, 't@example.com', 'workflow', ?, ?, ?, ?)`,
-			id, name, status, ts0, wr, env, outputs); err != nil {
+			`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, created_at, workflow_run_id, env_json, outputs_json, owner_agency, agencies_json)
+			 VALUES (?, ?, 'bash', ?, 't@example.com', 'workflow', ?, ?, ?, ?, ?, ?)`,
+			id, name, status, ts0, wr, env, outputs, workAgency, `["`+workAgencyName+`"]`); err != nil { // the secret's agency's steps
 			t.Fatalf("seed child %s: %v", id, err)
 		}
 	}

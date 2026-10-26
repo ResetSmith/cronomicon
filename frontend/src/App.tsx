@@ -18,6 +18,7 @@ import { Scopes } from "./views/Scopes";
 import { Settings } from "./views/Settings";
 import { Runners } from "./views/Runners";
 import { Notices } from "./views/Notices";
+import { CentralGate } from "./components/CentralRunsNothing";
 import { TimezoneProvider } from "./timezone-context";
 import { AgencyProvider } from "./agency";
 import { useTheme } from "./theme-context";
@@ -50,20 +51,24 @@ export function App() {
       <AgencyProvider>
       <Routes>
       <Route element={<Shell />}>
+        {/* 2.5.3 CA-12: Central runs nothing; its work pages say so (Schedules
+            and Scopes keep Calendars and Agencies, which it does hold). */}
         <Route index element={<Dashboard />} />
-        <Route path="jobs" element={<Jobs />} />
-        <Route path="compose" element={<JobComposer />} />
-        <Route path="jobs/publish" element={<PublishBuilder />} />
-        <Route path="scripts" element={<Scripts />} />
+        <Route path="jobs" element={<CentralGate holds={["job"]}><Jobs /></CentralGate>} />
+        <Route path="compose" element={<CentralGate><JobComposer /></CentralGate>} />
+        <Route path="jobs/publish" element={<CentralGate><PublishBuilder /></CentralGate>} />
+        <Route path="scripts" element={<CentralGate><Scripts /></CentralGate>} />
         <Route path="schedules" element={<Schedules />} />
-        <Route path="schedule-builder" element={<ScheduleBuilder />} />
-        <Route path="workflows" element={<Workflows />} />
+        <Route path="schedule-builder" element={<CentralGate><ScheduleBuilder /></CentralGate>} />
+        <Route path="workflows" element={<CentralGate holds={["workflow"]}><Workflows /></CentralGate>} />
         <Route
           path="workflow-editor"
           element={
-            <Suspense fallback={<div style={{ padding: 24, color: c.textSec }}>Loading editor…</div>}>
-              <WorkflowEditor />
-            </Suspense>
+            <CentralGate>
+              <Suspense fallback={<div style={{ padding: 24, color: c.textSec }}>Loading editor…</div>}>
+                <WorkflowEditor />
+              </Suspense>
+            </CentralGate>
           }
         />
         <Route path="activity" element={<Activity />} />
@@ -71,8 +76,8 @@ export function App() {
         {/* The Schedule hub was dissolved — keep a redirect for stale bookmarks. */}
         <Route path="schedule" element={<Navigate to="/schedules" replace />} />
         <Route path="scopes" element={<Scopes />} />
-        <Route path="env-vars" element={<EnvVars />} />
-        <Route path="runners" element={<Runners />} />
+        <Route path="env-vars" element={<CentralGate holds={["secret", "env-var", "ssh-credential"]}><EnvVars /></CentralGate>} />
+        <Route path="runners" element={<CentralGate holds={["runner"]}><Runners /></CentralGate>} />
         <Route path="settings" element={<Settings />} />
         <Route path="notices" element={<Notices />} />
         {/* 2.5.2 OP-25 — the Operations overview is the Dashboard with All

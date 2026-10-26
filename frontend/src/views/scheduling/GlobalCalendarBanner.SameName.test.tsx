@@ -56,7 +56,7 @@ afterEach(() => {
 describe("the active-global banner, two agencies' calendars of one name", () => {
   it("reads each by its owner, and names only the agency whose calendar covers today", async () => {
     render(<GlobalCalendarBanner />);
-    expect(await screen.findByText(/Scheduled runs of Finance are suppressed today/)).toBeTruthy();
+    expect(await screen.findByText(/Nothing of Finance starts today/)).toBeTruthy();
     expect(screen.queryByText(/Tax/)).toBeNull();
     await waitFor(() => expect(gets.map((g) => g.agencyId).sort()).toEqual(["ag-fin", "ag-tax"]));
   });

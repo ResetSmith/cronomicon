@@ -685,23 +685,53 @@ func getManifest(t *testing.T, svc *Service, as *auth.Service, traceID, token st
 	return m
 }
 
+// The fixtures' ordinary agency's repository, for checkout runs. Since 2.5.3
+// the built-in agency has no repository and CRONOMICON_GITLAB_BASE_URL
+// configures nothing (question 207), so the URL an agent is sent to is the one
+// in the repository's row. A run pinned to an agency's repository runs on a
+// scope of that agency's (runref.PinOutsideRepository), and is that agency's.
+const (
+	opsRepoID    = "repo-ops"
+	opsRepoURL   = "https://gitlab.example/ops/job-defs.git"
+	opsScopeName = "ops-hosts"
+)
+
+// seedOpsRepo seeds the agency, its repository's row and a scope of its, with
+// a managed inventory (an ansible run on a scope with none is refused).
+func seedOpsRepo(t *testing.T, svc *Service) {
+	t.Helper()
+	for _, q := range []string{
+		`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES ('` + opsAgencyID + `', '` + opsAgencyName + `', 't')`,
+		`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('` + opsRepoID + `', '` + opsAgencyID + `', '` + opsRepoURL + `', 'main')`,
+		`INSERT INTO scopes (id, name, source, created_at, raw_inventory, inventory_format)
+		 VALUES ('sc-ops', '` + opsScopeName + `', 'cronomicon', 't', '[ops]
+web01
+', 'ini')`,
+		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-ops', '` + opsAgencyID + `')`,
+	} {
+		if _, err := svc.db.Exec(q); err != nil {
+			t.Fatalf("seed the agency's repository: %v", err)
+		}
+	}
+}
+
 // seedCheckoutRun inserts a project job + a claimed checkout run (pinned SHA +
-// entry snapshotted onto the run, as enqueue would). The job has no scope, so
-// the manifest skips the ansible-inventory attach and reaches the checkout path.
+// entry snapshotted onto the run, as enqueue would), pinned to the agency's
+// repository (seedOpsRepo) and on its scope.
 func seedCheckoutRun(t *testing.T, svc *Service, runnerID, sha, entry string) string {
 	t.Helper()
 	if _, err := svc.db.Exec(`
-		INSERT INTO jobs(name, run_type, command, script_path, project_root, synced_at)
-		VALUES ('proj', 'ansible', ?, ?, 'scripts/proj', ?)`,
-		"- hosts: all\n", entry, now()); err != nil {
+		INSERT INTO jobs(name, run_type, command, script_path, project_root, owner_agency, synced_at)
+		VALUES ('proj', 'ansible', ?, ?, 'scripts/proj', ?, ?)`,
+		"- hosts: all\n", entry, opsAgencyID, now()); err != nil {
 		t.Fatalf("insert project job: %v", err)
 	}
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
-		INSERT INTO runs(id, job_name, run_type, status, runner_id, executor,
-		                 checkout_sha, checkout_entry, triggered_by, trigger_kind, started_at, created_at)
-		VALUES (?, 'proj', 'ansible', 'running', ?, 'runner', ?, ?, 'test', 'manual', ?, ?)`,
-		traceID, runnerID, sha, entry, now(), now()); err != nil {
+		INSERT INTO runs(id, job_name, run_type, scope, status, runner_id, executor,
+		                 checkout_repo, checkout_sha, checkout_entry, triggered_by, trigger_kind, started_at, created_at, agencies_json)
+		VALUES (?, 'proj', 'ansible', ?, 'running', ?, 'runner', ?, ?, ?, 'test', 'manual', ?, ?, ?)`,
+		traceID, opsScopeName, runnerID, opsRepoID, sha, entry, now(), now(), `["`+opsAgencyName+`"]`); err != nil {
 		t.Fatalf("insert checkout run: %v", err)
 	}
 	return traceID
@@ -711,7 +741,7 @@ func seedCheckoutRun(t *testing.T, svc *Service, runnerID, sha, entry string) st
 // ManifestCheckout carrying the resolved repo URL + pinned SHA + entry.
 func TestManifestCheckout(t *testing.T) {
 	svc := newTestService(t)
-	svc.cfg.GitLabBaseURL = "https://gitlab.example/infra/job-defs.git"
+	seedOpsRepo(t, svc)
 	as := authSvc(t, svc)
 
 	runnerID, tok := "runner-co", "crn_run_co"
@@ -728,7 +758,7 @@ func TestManifestCheckout(t *testing.T) {
 	if m.Checkout == nil {
 		t.Fatalf("expected a checkout spec, got nil")
 	}
-	if m.Checkout.Repo != "https://gitlab.example/infra/job-defs.git" {
+	if m.Checkout.Repo != opsRepoURL {
 		t.Errorf("checkout repo = %q, want the resolved repo URL", m.Checkout.Repo)
 	}
 	if m.Checkout.SHA != sha {
@@ -748,7 +778,7 @@ func TestManifestCheckout(t *testing.T) {
 // from project_root.
 func TestManifestCheckoutVaultAndReqPath(t *testing.T) {
 	svc := newTestService(t)
-	svc.cfg.GitLabBaseURL = "https://gitlab.example/infra/job-defs.git"
+	seedOpsRepo(t, svc)
 	as := authSvc(t, svc)
 
 	runnerID, tok := "runner-cv", "crn_run_cv"
@@ -760,17 +790,17 @@ func TestManifestCheckoutVaultAndReqPath(t *testing.T) {
 
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	if _, err := svc.db.Exec(`
-		INSERT INTO jobs(name, run_type, command, script_path, project_root, requires_json, synced_at)
-		VALUES ('proj', 'ansible', ?, 'scripts/proj/site.yml', 'scripts/proj', '["vault"]', ?)`,
-		"- hosts: all\n", now()); err != nil {
+		INSERT INTO jobs(name, run_type, command, script_path, project_root, requires_json, owner_agency, synced_at)
+		VALUES ('proj', 'ansible', ?, 'scripts/proj/site.yml', 'scripts/proj', '["vault"]', ?, ?)`,
+		"- hosts: all\n", opsAgencyID, now()); err != nil {
 		t.Fatalf("insert project job: %v", err)
 	}
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
-		INSERT INTO runs(id, job_name, run_type, status, runner_id, executor,
-		                 checkout_sha, checkout_entry, requires_json, triggered_by, trigger_kind, started_at, created_at)
-		VALUES (?, 'proj', 'ansible', 'running', ?, 'runner', ?, 'scripts/proj/site.yml', '["vault"]', 'test', 'manual', ?, ?)`,
-		traceID, runnerID, sha, now(), now()); err != nil {
+		INSERT INTO runs(id, job_name, run_type, scope, status, runner_id, executor,
+		                 checkout_repo, checkout_sha, checkout_entry, requires_json, triggered_by, trigger_kind, started_at, created_at, agencies_json)
+		VALUES (?, 'proj', 'ansible', ?, 'running', ?, 'runner', ?, ?, 'scripts/proj/site.yml', '["vault"]', 'test', 'manual', ?, ?, ?)`,
+		traceID, opsScopeName, runnerID, opsRepoID, sha, now(), now(), `["`+opsAgencyName+`"]`); err != nil {
 		t.Fatalf("insert checkout run: %v", err)
 	}
 

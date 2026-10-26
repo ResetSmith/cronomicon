@@ -58,6 +58,11 @@ type workflowComposeInput struct {
 	// (question 52): read on a create only, as a job's and a schedule's are.
 	// A workflow's agency follows its jobs once it has any (GR-6).
 	OwnerAgency string `json:"ownerAgency,omitempty"`
+	// ForbidCalendars and AllowCalendars are the workflow's own calendars
+	// (2.5.3, CA-30): they decide whether it starts; its steps' jobs' do not
+	// (CA-33).
+	ForbidCalendars []string `json:"forbidCalendars,omitempty"`
+	AllowCalendars  []string `json:"allowCalendars,omitempty"`
 }
 
 // validateWorkflow is the dry-run endpoint (WB-A1): it runs the same structural,
@@ -449,6 +454,11 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
 		return
 	}
+	// The workflow's own calendars, as its entries' are (2.5.3, CA-30).
+	if in.ForbidCalendars, in.AllowCalendars, verr = s.validateDefinitionCalendars(r.Context(), ownerOrGlobal(owner), in.ForbidCalendars, in.AllowCalendars); verr != "" {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
+		return
+	}
 	// Reserved-namespace guard (W4, N-D1): no CRONOMICON_* key in any (inline or
 	// reusable) schedule env bound to this workflow.
 	for _, e := range entries {
@@ -493,19 +503,22 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 
 	_, err = tx.ExecContext(r.Context(), `
 		INSERT INTO workflows(name, source, description, steps, schedule, enabled,
-		                      created_by, created_at, last_modified_by, last_modified_at, layout_json, uid, owner_agency)
-		VALUES(?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                      created_by, created_at, last_modified_by, last_modified_at, layout_json, uid, owner_agency,
+		                      forbid_calendars, allow_calendars)
+		VALUES(?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uid) DO UPDATE SET
 			description=excluded.description, steps=excluded.steps, schedule=excluded.schedule,
 			enabled=excluded.enabled, last_modified_by=excluded.last_modified_by, last_modified_at=excluded.last_modified_at,
 			layout_json=COALESCE(excluded.layout_json, workflows.layout_json),
-			owner_agency=excluded.owner_agency`,
+			owner_agency=excluded.owner_agency,
+			forbid_calendars=excluded.forbid_calendars, allow_calendars=excluded.allow_calendars`,
 		in.Name, nullStrIf(in.Description), stepsJSON, nullStrIf(legacyMirror), enabled, actor, now, actor, now, layoutJSON,
 		// R2-5 — the identity IS the conflict target: create inserts fresh,
 		// edit collides on the existing uid and lands in DO UPDATE.
 		uid,
 		// GR-6 — the owner follows the steps, so it is written at every save.
-		owner)
+		owner,
+		nullStrIf(calendar.MarshalNames(in.ForbidCalendars)), nullStrIf(calendar.MarshalNames(in.AllowCalendars)))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -874,6 +887,19 @@ func (s *Server) workflowOwner(r *http.Request, steps []workflow.Step) (owner st
 // (the change was a repair), and any agency's composer could edit it. false
 // after a refusal is written.
 func (s *Server) workflowSaveOwner(w http.ResponseWriter, r *http.Request, id auth.Identity, steps []workflow.Step, named, stored string) (owner string, spans bool, ok bool) {
+	owner, spans, ok = s.workflowSaveOwnerInContext(w, r, id, steps, named, stored)
+	// 2.5.3 (CA-4): a workflow is never MADE Central's, new or by an edit. One
+	// that already is (an upgrade's leftover) may be edited, and moved out by
+	// pointing it at an agency's jobs. A spanning save is refused by the caller.
+	if ok && !spans && owner == agencyid.Global && stored != agencyid.Global {
+		failCentralRunsNothing(w, "workflow")
+		return "", false, false
+	}
+	return owner, spans, ok
+}
+
+// workflowSaveOwnerInContext is workflowSaveOwner before the 2.5.3 refusal.
+func (s *Server) workflowSaveOwnerInContext(w http.ResponseWriter, r *http.Request, id auth.Identity, steps []workflow.Step, named, stored string) (owner string, spans bool, ok bool) {
 	// 2.4.4 S3: a workflow being created in an agency context is that agency's:
 	// a jobless one takes it, and one whose jobs are another agency's is
 	// refused. An edit keeps the owner it has.

@@ -61,12 +61,20 @@ func TestRunJudgesTheEffectiveScope(t *testing.T) {
 	exec := mustExec(t, pool)
 	exec(`INSERT INTO scopes (id,name,source,created_at) VALUES ('s-open','open','cronomicon','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO scopes (id,name,source,created_at) VALUES ('s-dmz','dmz-web','cronomicon','2026-01-01T00:00:00Z')`)
-	// One agent, Global's like both scopes. dmz-web is bound to it; open is
+	// One agent, of the agency of both scopes (made the work agency's below).
+	// dmz-web is bound to it; open is
 	// bound to a runner that is gone, so nothing serves open.
 	exec(`INSERT INTO runners (id, name, status, registered_at, created_at) VALUES ('r-dmz','runner-dmz-01','online','t','t')`)
 	exec(`INSERT INTO scope_runners (scope_id,runner_id,runner_name,bound_at) VALUES ('s-dmz','r-dmz','runner-dmz-01','t')`)
 	exec(`INSERT INTO scope_runners (scope_id,runner_id,runner_name,bound_at) VALUES ('s-open','r-gone','runner-gone','t')`)
 	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled) VALUES ('deploy','git','bash','open',1)`)
+	// 2.5.3: the built-in agency runs nothing; the job and both scopes are an
+	// ordinary agency's.
+	ownScopesByWorkAgency(t, pool, "open", "dmz-web")
+	ownJobsByWorkAgency(t, pool, "deploy")
+	exec(`INSERT OR IGNORE INTO runner_agencies (runner_id, agency_id) VALUES ('r-dmz', ?)`, workAgency)
+	exec(`DELETE FROM runner_agencies WHERE runner_id = 'r-dmz' AND agency_id <> ?`, workAgency)
+	exec(`UPDATE runners SET owner_agency = ? WHERE id = 'r-dmz'`, workAgency)
 	if err := runref.ReplaceBindings(context.Background(), pool,
 		runref.Owner{Kind: "job", Source: "git", Name: "deploy"},
 		[]runref.Binding{{Kind: runref.KindKey, Name: "deploy_key"}}, "t"); err != nil {
@@ -111,6 +119,11 @@ func TestRunOfASameNamedJobIsItsOwn(t *testing.T) {
 	      VALUES ('uid-a','twin','cronomicon','bash','scope-a','runner','scripts/a.sh',1)`)
 	exec(`INSERT INTO jobs (uid, name, source, run_type, scope, executor, script_ref, enabled)
 	      VALUES ('uid-b','twin','cronomicon','bash','scope-b','ssh','scripts/b.sh',1)`)
+	// The twins are two ordinary agencies' (2.5.3: the built-in agency runs
+	// nothing).
+	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-twin-a','Twin A','t'), ('ag-twin-b','Twin B','t')`)
+	exec(`UPDATE jobs SET owner_agency = 'ag-twin-a' WHERE uid = 'uid-a'`)
+	exec(`UPDATE jobs SET owner_agency = 'ag-twin-b' WHERE uid = 'uid-b'`)
 
 	for uid, want := range map[string]struct{ scope, executor, script string }{
 		"uid-a": {"scope-a", "runner", "scripts/a.sh"},

@@ -71,7 +71,7 @@ func CheckoutNeedsAgent(ctx context.Context, database *sql.DB, jobUID, jobSource
 			   AND EXISTS (
 			       SELECT 1 FROM runner_agencies ra
 			        WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency -- its owner's work only (§0a, question 29)
-			          AND ((NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = ?1 AND sc.owner_agency = ?2) AND ra.agency_id = 'global')
+			          AND ((NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = ?1 AND sc.owner_agency = ?2) AND ra.agency_id = ?2)
 			               OR ra.agency_id IN (SELECT sa.agency_id FROM scope_agencies sa
 			                                     JOIN scopes sc ON sc.id = sa.scope_id
 			                                    WHERE sc.name = ?1 AND sc.owner_agency = ?2)))

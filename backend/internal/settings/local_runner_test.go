@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"slices"
 	"testing"
@@ -37,7 +38,9 @@ func TestEnsureLocalRunnerCreatesTheRowOnceAndSeedsOnce(t *testing.T) {
 	if got := serveList(t, pool, id); !slices.Equal(got, []string{"global"}) {
 		t.Errorf("it is born serving %v, want Global", got)
 	}
-	if on, err := LocalRunnerEnabled(ctx, pool, false); err != nil || !on {
+	// The STORED switch: since 2.5.3 an unassigned local runner is off
+	// whatever it says (CA-9), and the seed is what the switch was written.
+	if on, err := localRunnerSwitch(ctx, pool); err != nil || !on {
 		t.Errorf("the switch was seeded %v (err %v), want on: an upgrade arrives in the state it was running in", on, err)
 	}
 
@@ -47,7 +50,7 @@ func TestEnsureLocalRunnerCreatesTheRowOnceAndSeedsOnce(t *testing.T) {
 	if err != nil || id2 != id || seeded2 {
 		t.Fatalf("second ensure = %q, seeded %v, err %v; want the same row and no reseed", id2, seeded2, err)
 	}
-	if on, _ := LocalRunnerEnabled(ctx, pool, false); !on {
+	if on, _ := localRunnerSwitch(ctx, pool); !on {
 		t.Error("a later start turned the local runner off from the environment")
 	}
 	if err := pool.QueryRow(`SELECT max_concurrent FROM runners WHERE id = ?`, id).Scan(&conc); err != nil || conc != 7 {
@@ -80,6 +83,7 @@ func TestLocalRunnerIsOffByDefaultAndTheHostCanForbidIt(t *testing.T) {
 	}
 
 	on := true
+	giveLocalRunnerTo(t, pool, "ag-lr") // unassigned is off and is not turned on (2.5.3, CA-9)
 	if _, err := SetLocalRunner(ctx, pool, false, &on, nil, "root@example.com"); err != nil {
 		t.Fatalf("turning it on: %v", err)
 	}
@@ -110,9 +114,14 @@ func TestSetLocalRunnerIsAuditedAndBounded(t *testing.T) {
 	if _, _, err := EnsureLocalRunner(ctx, pool, false, 4); err != nil {
 		t.Fatal(err)
 	}
+	giveLocalRunnerTo(t, pool, "ag-lr") // unassigned is off and is not turned on (2.5.3, CA-9)
+	// The installation's rows (a change of the switch is written for the
+	// built-in agency and for the local runner's agency since 2.5.3), not the
+	// assignment's own.
 	rows := func() []string {
 		t.Helper()
-		rs, err := pool.Query(`SELECT actor || '|' || summary FROM activity WHERE runner_name = ? ORDER BY id`, LocalRunnerName)
+		rs, err := pool.Query(`SELECT actor || '|' || summary FROM activity
+		  WHERE runner_name = ? AND agency_id = 'global' AND summary NOT LIKE 'local runner given to%' ORDER BY id`, LocalRunnerName)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,7 +172,11 @@ func TestSetLocalRunnerIsAuditedAndBounded(t *testing.T) {
 // it was the ONE runner with a serve list (MA-11, MA-14): a global
 // administrator gave it any non-empty set. Its owner never changes, and it is
 // never a legacy placement.
-func TestTheLocalRunnerServesGlobalOnly(t *testing.T) {
+// Unassigned (2.5.3, CA-9: born the built-in agency's), its serve list is
+// that agency alone: it serves its owner and no other, and changes agency by
+// SetLocalRunnerOwner only (CA-8). Until 2.5.3 this was "it serves Global
+// only", the same rows.
+func TestAnUnassignedLocalRunnerServesItsOwnerOnly(t *testing.T) {
 	pool := placementDB(t) // agencies ag-dss, ag-nwd; agents r-dss, r-global, r-legacy
 	ctx := context.Background()
 	id, _, err := EnsureLocalRunner(ctx, pool, false, 4)
@@ -212,5 +225,17 @@ func TestTheLocalRunnerServesGlobalOnly(t *testing.T) {
 	}
 	if o := ownerOf(t, pool, id); o != "global" {
 		t.Errorf("the local runner's owner is %q", o)
+	}
+}
+
+// giveLocalRunnerTo gives the local runner to agency (made if it is not
+// there): since 2.5.3 an unassigned local runner is off (CA-9).
+func giveLocalRunnerTo(t *testing.T, pool *sql.DB, agency string) {
+	t.Helper()
+	if _, err := pool.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, 't')`, agency, "Agency "+agency); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := SetLocalRunnerOwner(context.Background(), pool, agency, "root@example.com"); err != nil {
+		t.Fatalf("give the local runner to %s: %v", agency, err)
 	}
 }

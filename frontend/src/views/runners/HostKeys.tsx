@@ -678,8 +678,8 @@ export function HostKeysDialog({
         {err && <div role="alert" style={{ color: c.danger, fontSize: c.fontSm }}>{err}</div>}
         {guest && local && (
           <div role="alert" style={{ color: c.textSec, fontSize: c.fontSm }}>
-            These are waiting for a global administrator. The local runner is this server, and the keys it trusts are the same for
-            every agency it serves, so its keys are approved by a global administrator and not by one agency's.
+            These are waiting for the administrators of the agency the local runner belongs to (Settings → Local runner): the
+            local runner is this server, and that agency&rsquo;s administrators approve the keys it trusts.
           </div>
         )}
         {guest && !local && chosenChanged > 0 && (
@@ -766,8 +766,7 @@ export function HostKeysDialog({
                 <InlineLoading what="scopes" />
               ) : scopes.length === 0 ? (
                 <div style={prose()}>
-                  There is no scope here that this runner serves. A scope takes a runner that serves its agency, and a scope that
-                  is Global's takes a runner that serves Global.
+                  There is no scope here that this runner serves. A scope takes a runner that serves its agency.
                 </div>
               ) : (
                 <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: c.fontSm, color: c.textSec }}>

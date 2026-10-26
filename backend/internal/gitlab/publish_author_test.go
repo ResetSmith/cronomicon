@@ -22,7 +22,7 @@ func TestAPublishCommitIsAuthoredByTheConnectionsBot(t *testing.T) {
 	head := base.SHA
 	published := func(what, file string) string {
 		t.Helper()
-		res, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/" + file + ".yaml", Content: jobYAML(file)}, head, "a@example.com")
+		res, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/" + file + ".yaml", Content: grScopedJob(file, fixtureScope)}, head, "a@example.com")
 		if err != nil {
 			t.Fatalf("%s: publish: %v", what, err)
 		}
@@ -46,20 +46,20 @@ func TestAPublishCommitIsAuthoredByTheConnectionsBot(t *testing.T) {
 		t.Errorf("with nothing set the author is %q, want %q", got, want)
 	}
 	// What the connection's form stores.
-	set("global", "Finance Scheduler", "fin-bot@example.com")
+	set(fixtureRepo, "Finance Scheduler", "fin-bot@example.com")
 	if got, want := published("the connection's bot", "p2"), "Finance Scheduler <fin-bot@example.com>"; got != want {
 		t.Errorf("the author is %q, want the connection's bot, %q", got, want)
 	}
 	// Emptied, or blank: the defaults, never an empty author.
-	set("global", "  ", "")
+	set(fixtureRepo, "  ", "")
 	if got, want := published("an emptied bot", "p3"), "cronomicon-bot <cronomicon-bot@cronomicon.io>"; got != want {
 		t.Errorf("with the bot emptied the author is %q, want the defaults, %q", got, want)
 	}
-	// Another repository's Service reads its own connection's, not Global's.
-	set("global", "Global Bot", "global-bot@example.com")
+	// Another repository's Service reads its own connection's, not the first's.
+	set(fixtureRepo, "First Bot", "first-bot@example.com")
 	set("repo-b", "Agency B Bot", "b-bot@example.com")
 	svc.repoID = "repo-b"
-	res, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p4.yaml", Content: jobYAML("p4")}, head, "a@example.com")
+	res, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p4.yaml", Content: grScopedJob("p4", fixtureScope)}, head, "a@example.com")
 	if err != nil {
 		t.Fatalf("another repository's publish: %v", err)
 	}

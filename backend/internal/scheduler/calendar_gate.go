@@ -62,6 +62,12 @@ func (s *Scheduler) calendarVerdict(ctx context.Context, source, ownerKind, owne
 	gate := calGate{Day: day, Loc: loc}
 
 	skip, only := s.calendarBindings(ctx, source, ownerKind, ownerName, ownerUID, scheduleName)
+	// And the definition's own Forbid and Allow calendars (2.5.3, CA-31): one
+	// rule for both levels.
+	// (A fire with no uid keeps the agency it had, as before 2.5.3: every
+	// registered fire carries one.)
+	b := DefinitionBindings(ctx, s.db, ownerKind, source, ownerName, ownerUID)
+	b.EntrySkip, b.EntryOnly = skip, only
 
 	// NOTE: this read happens even when the entry names no calendars, and that is
 	// not waste — the global tier (§2.8) unions a change-freeze calendar's days
@@ -71,7 +77,7 @@ func (s *Scheduler) calendarVerdict(ctx context.Context, source, ownerKind, owne
 	// Since §0a (2.4.0): the installation-wide freeze first, then the entry's
 	// own calendars and its agency's global ones (until then every global
 	// calendar, whoever's).
-	v, err := freezeTier(ctx, s.db, definitionAgency(ctx, s.db, ownerUID, ownerKind), skip, only, day, now)
+	v, err := freezeTier(ctx, s.db, definitionAgency(ctx, s.db, ownerUID, ownerKind), b, day, now)
 	if err != nil {
 		s.log.Error("scheduler: load calendars — firing without calendar suppression",
 			"owner", ownerName, "kind", ownerKind, "schedule", scheduleName, "err", err)

@@ -25,7 +25,7 @@ import {
   } from "../envvars/ui";
 import { BindingNotices, BoundRunnersCell, ScopeRunnersField, UnboundHostKeysNote, type BoundRunner } from "./ScopeRunners";
 import { ScopeKeyCoverage } from "../runners/HostKeys";
-import { globalAgencyName } from "../../globalName";
+import { useInCentral } from "../../components/CentralRunsNothing";
 
 
 export interface ScopeRow {
@@ -135,6 +135,7 @@ export function ScopesTab({
   /** The parent's list-load counter. A fresh load drops the optimistic tag overrides. */
   dep?: number;
 }) {
+  const inCentral = useInCentral(); // 2.5.3 CA-12: Central has no create actions
   const [search, setSearch] = useState("");
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [tagMatch, setTagMatch] = useState<"any" | "all">("any");
@@ -158,7 +159,8 @@ export function ScopesTab({
   const agencyOptionsFor = (current: { id: string; name: string }[]): AgencyRef[] => {
     const all = rows<{ id: string; name: string }>(agencyData);
     const out = new Map<string, string>();
-    out.set(GLOBAL_AGENCY, globalAgencyName());
+    // Never Central as a target: it owns no scope since 2.5.3 (CA-1); a scope
+    // it still holds shows it below, as its current agency, for the way out.
     for (const a of all) if (a.id !== GLOBAL_AGENCY) out.set(a.id, a.name);
     for (const a of current) if (!out.has(a.id)) out.set(a.id, a.name);
     return [...out].map(([id, name]) => ({ id, name }));
@@ -435,9 +437,11 @@ export function ScopesTab({
             >
               {resyncing ? "Re-syncing…" : syncable.length === 1 ? `↻ Re-sync from ${repoLabel(syncable[0])} repository` : "↻ Re-sync from the repository"}
             </Btn>
-            <Btn primary onClick={() => setAdding(true)}>
-              + Add Scope
-            </Btn>
+            {!inCentral && (
+              <Btn primary onClick={() => setAdding(true)}>
+                + Add Scope
+              </Btn>
+            )}
           </>
         )}
       </div>

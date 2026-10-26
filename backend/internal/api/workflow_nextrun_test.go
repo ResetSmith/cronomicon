@@ -31,6 +31,7 @@ func createWorkflowWithSchedule(t *testing.T, ts, name string, client *http.Clie
 func TestWorkflowListProjectsTheFullScheduleSpec(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	createRHJob(t, ts, client, csrf, "step-one")
 

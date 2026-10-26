@@ -6,8 +6,9 @@ import { AgencyCell } from "./ui";
 
 // The Agencies cell (2.5.1 SG-44): the owner chip left the name column, so a
 // row whose owner is not among the agencies it lists — a row several agencies
-// shared before 2.3.0, which is Global's and used by Global's runs only — says
-// whose it is here. Anywhere else the owner is one of the chips already.
+// shared before 2.3.0, which is the built-in agency's and, since 2.5.3, used by
+// no run (it runs nothing) — says whose it is here. Anywhere else the owner is
+// one of the chips already.
 
 afterEach(cleanup);
 
@@ -15,7 +16,7 @@ describe("AgencyCell", () => {
   it("names the owner of a shared row that does not list it", () => {
     render(<AgencyCell names={["FIN", "TAX"]} owner="Global" />);
     const owner = screen.getByText("Global (owner)");
-    expect(owner.getAttribute("title")).toMatch(/only by Global's runs/);
+    expect(owner.getAttribute("title")).toMatch(/Global runs nothing, so no run uses it\. They read it; a global administrator changes it, or moves it to one of them \(Move agency\)/);
     expect(screen.getByText("FIN")).toBeTruthy();
     expect(screen.getByText("TAX")).toBeTruthy();
   });

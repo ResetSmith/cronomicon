@@ -78,6 +78,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     script_uid         TEXT, -- which script script_ref means (migration 1290)
     repo_id            TEXT, -- the repository a Git job comes from (migration 1310)
     owner_agency       TEXT, -- whose a job built in the app is (migration 1400)
+    forbid_calendars   TEXT, -- a job's own calendars (migration 1710)
+    allow_calendars    TEXT,
     PRIMARY KEY (source, name)
 );
 -- Mirrors migration 1400's jobs_born_owned: a row written with no owner is
@@ -161,6 +163,8 @@ CREATE TABLE IF NOT EXISTS workflows (
     tags        TEXT NOT NULL DEFAULT '[]',
     repo_id     TEXT, -- migration 1310
     owner_agency TEXT NOT NULL DEFAULT 'global', -- migration 1360
+    forbid_calendars TEXT, -- migration 1710
+    allow_calendars  TEXT,
     PRIMARY KEY (source, name)
 );
 -- Migration 1320: a Git name is unique within its repository, and sync's

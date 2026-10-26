@@ -115,8 +115,8 @@ describe("BoundRunnersCell — the catalog column", () => {
 describe("ScopeRunnersField — the expanded row", () => {
   it("names the pool an unbound scope draws from, and offers to bind", () => {
     const { container } = render(<ScopeRunnersField scope={scope()} canEdit onSaved={vi.fn()} />);
-    // The local runner serves Global only (§0a, IN-3).
-    expect(container.textContent).toMatch(/Not bound — any runner that serves Finance may take this scope's runs: its agents, and, for a\s+scope of Global's, the local runner/);
+    // The local runner serves the one agency it belongs to (2.5.3, CA-8).
+    expect(container.textContent).toMatch(/Not bound — any runner that serves Finance may take this scope's runs: its agents, and the\s+local runner where it belongs to that agency/);
     expect(within(container).getByRole("button", { name: "Bind runners…" })).toBeTruthy();
   });
 
@@ -390,14 +390,14 @@ describe("RunsOn — the job detail's answer", () => {
     expect(shell.container.textContent).toBe("Any runner that serves its scope");
     // The finer print — the server may be that runner; a key binding makes it
     // an agent's only — is the tooltip's, since it is not true of every job.
-    expect(shell.container.querySelector("span")?.title).toMatch(/local runner \(this server\).*binds an SSH key is taken by an agent only/);
+    expect(shell.container.querySelector("span")?.title).toMatch(/local runner \(this server\) where it is switched on and belongs to the agency.*binds an SSH key is taken by an agent only/);
     cleanup();
     const ansible = render(<RunsOn bound={[]} scope="dmz-web" runType="ansible" />);
     expect(ansible.container.textContent).toBe("Any agent that serves its scope");
     cleanup();
-    // A job with no scope is the Global agency's.
+    // A job with no scope is its own agency's (2.5.3, CA-5).
     const unscoped = render(<RunsOn bound={[]} scope="" runType="bash" />);
-    expect(unscoped.container.textContent).toBe("Any runner that serves the Global agency");
+    expect(unscoped.container.textContent).toBe("Any runner that serves the job's agency");
   });
 
   it("names the bound runners, why one is not serving, and the scope that binds them", () => {
@@ -407,17 +407,17 @@ describe("RunsOn — the job detail's answer", () => {
 });
 
 describe("UnboundHostKeysNote — who reviews which runner's host keys", () => {
-  // An agency's administrator can do nothing about the local runner's keys
-  // (it is Global's), and until 2.3.2 the scope's row did not say so: the
+  // The local runner's keys are the administrators' of the agency it belongs
+  // to (2.5.3, CA-10), and until 2.3.2 the scope's row did not say who: the
   // coverage table renders nothing for a scope with no bound runner.
-  it("says that the local runner's keys are a global administrator's, where to look, and the agency's own remedy", () => {
+  it("says whose the local runner's keys are, where to look, and the agency's own remedy", () => {
     const { container } = render(
       <MemoryRouter>
         <UnboundHostKeysNote />
       </MemoryRouter>,
     );
     const text = container.textContent ?? "";
-    expect(text).toMatch(/only a global administrator approves its host keys/);
+    expect(text).toMatch(/belongs to the agency a global administrator chooses in Settings → Local runner: that agency’s administrators approve its host keys/);
     expect(text).toMatch(/approved for that runner/);
     expect(text).toMatch(/Binding this scope to the agency's own agents keeps its jobs off the local runner/);
     const links = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));

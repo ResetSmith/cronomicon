@@ -33,6 +33,7 @@ import {
   valueBoxStyle,
 } from "./ui";
 import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
+import { useInCentral } from "../../components/CentralRunsNothing";
 
 type Credential = components["schemas"]["SshCredential"];
 type CredentialInput = components["schemas"]["SshCredentialInput"];
@@ -103,6 +104,7 @@ function PubKeyDownload({ publicKey, label, onError }: { publicKey: string; labe
 }
 
 export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
+  const inCentral = useInCentral(); // 2.5.3 CA-12: Central has no create actions
   const [dep, setDep] = useState(0);
   // RB-22 — per-row agency membership; see SecretsTab.
   const entityAgencies = useEntityAgencies("ssh-credential", dep);
@@ -298,7 +300,7 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
         <TagFilterSelect items={creds} selected={tagFilter} onChange={setTagFilter} getTags={(v) => tagState.tagsFor(v)} matchMode={tagMatch} onMatchModeChange={setTagMatch} />
         <ColumnsMenu cols={cols} cw={cw} />
         <SecretsReportButton />
-        {canEdit && (
+        {canEdit && !inCentral && (
           <Btn primary onClick={() => setAdding(true)}>
             + Add SSH Key
           </Btn>
@@ -327,7 +329,7 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
                 No SSH key credentials yet. Once one exists, attach it to a host or bastion under Settings → SSH
                 Targets.
               </div>
-              {canEdit && (
+              {canEdit && !inCentral && (
                 <div style={{ marginTop: 12 }}>
                   <Btn small onClick={() => setAdding(true)}>
                     Add an SSH key

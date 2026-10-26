@@ -301,6 +301,7 @@ func TestUpdateWorkflowAnnotation(t *testing.T) {
 func TestAnnotationWritableOnBinnedDefinition(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	jobID := createRHJob(t, ts, client, csrf, "billing")

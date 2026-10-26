@@ -25,6 +25,26 @@ func openPool(t *testing.T) *sql.DB {
 	return pool
 }
 
+// opsAgency is the ordinary agency this package's fixtures run in (the
+// in-package tests have their own of the same id). Since 2.5.3 (CA-1) the
+// built-in agency runs nothing, and a definition inserted with no owner is born
+// its, so a fixture that means "a job" or "a workflow" must be an agency's.
+const opsAgency = "ag-ops"
+
+// seedOpsAgency writes opsAgency's row and its repository (repo-ops), for the
+// Git workflows (a Git workflow's agency is its repository's), once per database.
+func seedOpsAgency(t *testing.T, pool *sql.DB) {
+	t.Helper()
+	for _, q := range []string{
+		`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES ('` + opsAgency + `', 'Ops', 't')`,
+		`INSERT OR IGNORE INTO git_repos (id, agency_id, url, branch) VALUES ('repo-ops', '` + opsAgency + `', 'u', 'main')`,
+	} {
+		if _, err := pool.ExecContext(context.Background(), q); err != nil {
+			t.Fatalf("seed %s: %v", opsAgency, err)
+		}
+	}
+}
+
 func discardLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

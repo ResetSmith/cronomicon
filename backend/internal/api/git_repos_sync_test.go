@@ -11,7 +11,8 @@ import (
 // than Global's (2.4.0 Phase R6; GR-9, GR-26, GR-30).
 //
 // A sync is started by who may configure the repository: its agency's
-// administrator, and for Global's a global administrator, as before. The
+// administrator; Global's has none since 2.5.3 (CA-6), and a global
+// administrator asking for its sync is told so (404 not_connected). The
 // status, the history and the problems of a repository are read by its
 // agency's people and by those who reach every agency; Global's by every
 // session. A repository that is not there and one the caller may not read are
@@ -37,8 +38,10 @@ func TestARepositorysSyncAndHistoryAreItsAgencys(t *testing.T) {
 	}{
 		{gFinAdmin, fin, http.StatusAccepted},
 		{gRoot, fin, http.StatusAccepted},
-		{gRoot, "", http.StatusAccepted},
-		{gRoot, "global", http.StatusAccepted},
+		// The built-in agency has no repository to sync (2.5.3, CA-6): a
+		// global administrator is told so (404 not_connected).
+		{gRoot, "", http.StatusNotFound},
+		{gRoot, "global", http.StatusNotFound},
 		{gTaxAdmin, fin, http.StatusForbidden},
 		{gFinApprover, fin, http.StatusForbidden},
 		{gAllViewer, fin, http.StatusForbidden},
@@ -54,6 +57,15 @@ func TestARepositorysSyncAndHistoryAreItsAgencys(t *testing.T) {
 		}
 		if got := code(http.MethodPost, path, c.who); got != c.want {
 			t.Errorf("%s starting a sync of %q = %d, want %d", c.who, c.repo, got, c.want)
+		}
+	}
+	for _, repo := range []string{"", "global"} {
+		path := "/api/v1/git/sync"
+		if repo != "" {
+			path += "?repo=" + repo
+		}
+		if body := gateReq(t, h, http.MethodPost, path, gRoot, "").Body.String(); !strings.Contains(body, "not_connected") {
+			t.Errorf("a global administrator starting a sync of %q: %s, want not_connected", repo, body)
 		}
 	}
 
@@ -95,9 +107,16 @@ func TestARepositorysSyncAndHistoryAreItsAgencys(t *testing.T) {
 		}
 		// Global's: those who reach every agency (2.5.0 C2, question 77; it
 		// was every session's). To anyone else, as if it were not there.
+		// Since 2.5.3 (CA-6) no sync runs for it, so its sync status is
+		// 404 not_connected even to them; its past history and problems are
+		// still read.
 		for _, who := range []string{gAllViewer, gRoot} {
-			if got := code(http.MethodGet, path(tmpl, "global"), who); got != http.StatusOK {
-				t.Errorf("%s reading %s = %d, want 200", who, path(tmpl, "global"), got)
+			want := http.StatusOK
+			if strings.HasPrefix(tmpl, "/api/v1/git/sync") {
+				want = http.StatusNotFound
+			}
+			if got := code(http.MethodGet, path(tmpl, "global"), who); got != want {
+				t.Errorf("%s reading %s = %d, want %d", who, path(tmpl, "global"), got, want)
 			}
 		}
 		for _, who := range []string{gTaxAdmin, gFinViewer} {

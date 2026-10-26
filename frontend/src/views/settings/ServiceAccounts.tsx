@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, csrfHeader } from "../../api/client";
 import { c } from "../../theme";
 import { useAgencyOptional } from "../../agency";
+import { globalAgencyName } from "../../globalName";
 import { Btn, Card, SettingRow, StatusBadge, errMsg, fmtDateTime, inputStyle, lblStyle, tdStyle, thStyle } from "./ui";
 
 // Service Accounts (ET-A/ET-C, the prod-features plan §1).
@@ -224,7 +225,7 @@ export function ServiceAccountsSection({ canGrantEverywhere }: { canGrantEverywh
               {fixedWhere
                 ? `In ${ag?.agencyName}, the agency you are working in. To mint one elsewhere, switch to that agency.`
                 : canGrantEverywhere
-                  ? "Every agency (you are working in Global). To bind it to one agency, switch to that agency."
+                  ? `Every agency (you are working in ${globalAgencyName()}). To bind it to one agency, switch to that agency.`
                   : "Only a global administrator mints a token here: switch to an agency you administer."}
             </span>
           ) : (

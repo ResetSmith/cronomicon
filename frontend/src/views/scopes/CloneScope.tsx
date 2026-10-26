@@ -5,7 +5,6 @@ import { useGet, rows } from "../../hooks";
 import { Btn, Modal } from "../../components/ui";
 import { c } from "../../theme";
 import { inputStyle, labelStyle } from "../envvars/ui";
-import { globalAgencyName } from "../../globalName";
 
 /**
  * CloneScopeDialog — Scopes → a scope → "Clone to an agency" (2.4.0; R6 has
@@ -43,10 +42,9 @@ export function CloneScopeDialog({
   const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
   const catalog = rows<{ id: string; name: string }>(catalogQ.data);
   const targets: AgencyRef[] = (
-    globalAdmin
-      ? [{ id: GLOBAL_AGENCY, name: globalAgencyName() }, ...catalog.filter((a) => a.id !== GLOBAL_AGENCY)]
-      : agenciesFor(access ?? null, "configureApp")
-  ).filter((a) => a.id !== (currentAgency || GLOBAL_AGENCY));
+    // Never Central: it owns no scope since 2.5.3 (CA-1).
+    globalAdmin ? catalog : agenciesFor(access ?? null, "configureApp")
+  ).filter((a) => a.id !== GLOBAL_AGENCY && a.id !== (currentAgency || GLOBAL_AGENCY));
   const [target, setTarget] = useState("");
   const [name, setName] = useState(scopeName);
   const [busy, setBusy] = useState(false);

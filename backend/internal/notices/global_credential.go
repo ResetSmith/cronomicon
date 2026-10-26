@@ -72,6 +72,7 @@ func checkGlobalCredentialBound(ctx context.Context, database *sql.DB) error {
 		return yes, err
 	}
 	what := map[string]string{"secret": "secret", "var": "variable", "key": "SSH key"}
+	central := agencyid.CurrentGlobalName(ctx, database) // the built-in agency's name now (2.5.2 GR)
 	var found []Finding
 	for _, b := range all {
 		own, err := holds(b.kind, b.name, b.agency)
@@ -91,11 +92,11 @@ func checkGlobalCredentialBound(ctx context.Context, database *sql.DB) error {
 		found = append(found, Finding{
 			AgencyID: b.agency,
 			Subject:  b.uid + ":" + b.kind + ":" + b.name,
-			Detail: fmt.Sprintf("The job %s binds the %s %s, which only Global has. A %s of Global's is used by "+
-				"Global's runs only: this job's runs do not find it, and fail, naming it. Give this agency a %s of that "+
+			Detail: fmt.Sprintf("The job %s binds the %s %s, which only %s has. %s runs nothing since 2.5.3, so no "+
+				"run uses what it holds: this job's runs do not find it, and fail, naming it. Give this agency a %s of that "+
 				"name (for a secret two agencies need, each can point at the same Vault path), or change the binding. "+
 				"This notice clears when it is done.",
-				b.job, what[b.kind], b.name, what[b.kind], what[b.kind]),
+				b.job, what[b.kind], b.name, central, central, what[b.kind]),
 		})
 	}
 	return Reconcile(ctx, database, KindGlobalCredentialBound, found)

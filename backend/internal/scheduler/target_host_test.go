@@ -10,8 +10,9 @@ import (
 // (TG-1), mirroring seedJobRow's shape.
 func seedPinnedJobRow(t *testing.T, pool *sql.DB, name, targetHost string) {
 	t.Helper()
+	seedOpsAgency(t, pool)
 	if _, err := pool.ExecContext(context.Background(),
-		`INSERT INTO jobs (uid, name, run_type, concurrency_policy, enabled, target_host, synced_at)VALUES ('uid-'||?, ?, 'bash', 'Allow', 1, ?, 't')`, name, name, targetHost); err != nil {
+		`INSERT INTO jobs (uid, name, run_type, concurrency_policy, enabled, target_host, synced_at, owner_agency)VALUES ('uid-'||?, ?, 'bash', 'Allow', 1, ?, 't', ?)`, name, name, targetHost, opsAgency); err != nil {
 		t.Fatalf("seed pinned job %q: %v", name, err)
 	}
 }
@@ -67,8 +68,9 @@ func TestFireNoTargetHostStaysNull(t *testing.T) {
 func TestFireForbidSkipRecordCarriesTargetHostPin(t *testing.T) {
 	pool := mustPool(t)
 	ctx := context.Background()
+	seedOpsAgency(t, pool)
 	if _, err := pool.ExecContext(ctx,
-		`INSERT INTO jobs (uid, name, run_type, concurrency_policy, concurrency_key, enabled, target_host, synced_at)VALUES ('uid-'||'forbid-pinned', 'forbid-pinned', 'bash', 'Forbid', 'forbid-pinned', 1, 'db-2.internal', 't')`); err != nil {
+		`INSERT INTO jobs (uid, name, run_type, concurrency_policy, concurrency_key, enabled, target_host, synced_at, owner_agency)VALUES ('uid-'||'forbid-pinned', 'forbid-pinned', 'bash', 'Forbid', 'forbid-pinned', 1, 'db-2.internal', 't', ?)`, opsAgency); err != nil {
 		t.Fatalf("seed forbid job: %v", err)
 	}
 	seedRunningRun(t, pool, "forbid-pinned") // active blocker for the Forbid key

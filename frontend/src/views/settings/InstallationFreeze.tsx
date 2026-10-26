@@ -78,7 +78,7 @@ export function InstallationFreezeCard({ canWrite }: { canWrite: boolean }) {
       <div style={{ color: c.textSec, fontSize: c.fontSm, marginBottom: 12 }}>
         While the installation is frozen, no run starts in any agency: schedules, Run, tokens, reactions, deferred runs
         and file arrivals are all skipped, with the reason. Runs already going finish. An agency freezes its own schedules
-        with a global calendar of its own (Schedules → Calendars).
+        with a freeze calendar of its own (Schedules → Calendars).
       </div>
       {freeze == null ? null : state === "in_effect" ? (
         <SettingRow label="Frozen" hint={`${freeze.reason ?? ""}${freeze.until ? ` — until ${freezeWhen(freeze.until)} (${zone})` : ""}${setBy}`}>
@@ -157,11 +157,11 @@ export function InstallationFreezeCard({ canWrite }: { canWrite: boolean }) {
           {when === "now" && !until ? (
             <>
               <strong>No run will start in any agency until a global administrator lifts the freeze.</strong> This is
-              every agency's work, not only Global's.
+              every agency's work, not only one agency's.
             </>
           ) : (
             <>
-              <strong>No run will start in any agency {words}.</strong> This is every agency's work, not only Global's.
+              <strong>No run will start in any agency {words}.</strong> This is every agency's work, not only one agency's.
             </>
           )}
         </AlertBanner>

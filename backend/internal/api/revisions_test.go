@@ -46,11 +46,14 @@ func rhDo(t *testing.T, client *http.Client, method, url, csrf string, body any)
 }
 
 // createRHJob makes an cronomicon job with one schedule entry and returns its rowid.
+// Since 2.5.3 it is workAgency's, on workAgency's scope: the caller works in
+// workAgency (workInAgency), and a job on its agency's repository's script runs
+// on its agency's scope (runref.RepoScopeMismatch).
 func createRHJob(t *testing.T, ts *httptest.Server, client *http.Client, csrf, name string) int64 {
 	t.Helper()
 	code, body := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs", csrf, map[string]any{
 		"name": name, "scriptRef": "deploy.sh", "runType": "bash",
-		"scope":     "",
+		"scope":     workScope,
 		"schedules": []map[string]any{{"name": "default", "cron": "0 2 * * *"}},
 	})
 	if code != http.StatusCreated {
@@ -63,11 +66,15 @@ func createRHJob(t *testing.T, ts *httptest.Server, client *http.Client, csrf, n
 	return out.ID
 }
 
+// seedRHScript seeds deploy.sh in workAgency's repository: since 2.5.3 the
+// built-in agency composes nothing, so createRHJob's callers work in workAgency
+// (workInAgency), and an in-app job's script is its agency's repository's.
 func seedRHScript(t *testing.T, pool *sql.DB) {
 	t.Helper()
+	seedWorkAgency(t, pool)
 	if _, err := pool.Exec(
-		`INSERT OR IGNORE INTO scripts(name, run_type, content_hash, synced_at)
-		 VALUES('deploy.sh','bash','sha256:x','2026-08-11T00:00:00Z')`); err != nil {
+		`INSERT OR IGNORE INTO scripts(repo_id, name, run_type, content_hash, synced_at)
+		 VALUES(?, 'deploy.sh','bash','sha256:x','2026-08-11T00:00:00Z')`, workRepo); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
 }
@@ -76,6 +83,7 @@ func seedRHScript(t *testing.T, pool *sql.DB) {
 func TestRevisionsRecordEachWrite(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	id := createRHJob(t, ts, client, csrf, "billing")
 
@@ -123,6 +131,7 @@ func TestRevisionsRecordEachWrite(t *testing.T) {
 func TestRestoreRevisionRewritesTheDefinition(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	id := createRHJob(t, ts, client, csrf, "billing")
 
@@ -175,6 +184,7 @@ func TestRestoreRevisionRewritesTheDefinition(t *testing.T) {
 func TestSoftDeletedJobIsInertButRecoverable(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	id := createRHJob(t, ts, client, csrf, "billing")
 
@@ -218,7 +228,7 @@ func TestSoftDeletedJobIsInertButRecoverable(t *testing.T) {
 	// operator to guess.
 	code, body := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs", csrf, map[string]any{
 		"name": "billing", "scriptRef": "deploy.sh", "runType": "bash",
-		"scope": "",
+		"scope": workScope,
 	})
 	if code != http.StatusConflict {
 		t.Errorf("recreate = %d, want 409", code)
@@ -255,6 +265,7 @@ func TestSoftDeletedJobIsInertButRecoverable(t *testing.T) {
 func TestPurgeFreesTheNameAndRemovesTheRow(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	id := createRHJob(t, ts, client, csrf, "billing")
 
@@ -287,6 +298,7 @@ func TestPurgeFreesTheNameAndRemovesTheRow(t *testing.T) {
 func TestSoftDeleteCoversWorkflowsAndSchedules(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	createRHJob(t, ts, client, csrf, "step-one")
 
@@ -348,6 +360,7 @@ func TestSoftDeleteCoversWorkflowsAndSchedules(t *testing.T) {
 func TestBinnedWorkflowIsNotTriggerable(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	jobID := createRHJob(t, ts, client, csrf, "step-one")
 
@@ -365,7 +378,7 @@ func TestBinnedWorkflowIsNotTriggerable(t *testing.T) {
 
 	// ET-B: the name-addressed trigger authenticates as a service account, so the
 	// principal has to exist before the definitions go into the bin.
-	_, token := mintAccount(t, ts, client, csrf, map[string]any{
+	_, token := mintAccount(t, ts, namingNoAgency(client), csrf, map[string]any{
 		"name": "nagios", "role": "admin", "allScopes": true,
 	})
 	// PF-Q15's opt-in is set, so the job twin's 404 below can only come from the
@@ -436,8 +449,9 @@ func TestBinnedWorkflowIsNotTriggerable(t *testing.T) {
 // pool with no transaction at all, which was survivable only while it was a lone
 // statement — it now commits alongside the revision snapshot.
 func TestScheduleCreateWritesRevisionAtomically(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 
 	if code, b := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/schedule-defs", csrf, map[string]any{
 		"name": "nightly", "cron": "0 3 * * *", "description": "first",
@@ -479,6 +493,7 @@ func TestScheduleCreateWritesRevisionAtomically(t *testing.T) {
 func TestRestoringABinnedScheduleRebuildsItsBindings(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	if code, b := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/schedule-defs", csrf, map[string]any{
@@ -580,6 +595,7 @@ func TestRestoringABinnedScheduleRebuildsItsBindings(t *testing.T) {
 func TestDeletingAScheduleNamesItsBinnedReferrers(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	if code, b := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/schedule-defs", csrf, map[string]any{
@@ -641,6 +657,7 @@ func TestDeletingAScheduleNamesItsBinnedReferrers(t *testing.T) {
 func TestRestoringAScheduleReplaysBinnedOwnersButNotPurgedOnes(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	if code, b := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/schedule-defs", csrf, map[string]any{
@@ -739,6 +756,7 @@ func TestScheduleBindingSurvivesEitherRestoreOrder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ts, pool := newTestServer(t)
 			client, csrf := devLoginWithCSRF(t, ts)
+			workInAgency(t, pool, client)
 			seedRHScript(t, pool)
 
 			if code, b := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/schedule-defs", csrf, map[string]any{
@@ -805,6 +823,7 @@ func TestScheduleBindingSurvivesEitherRestoreOrder(t *testing.T) {
 func TestSubWorkflowCycleIsRefusedAtAuthoringTime(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	createRHJob(t, ts, client, csrf, "leaf")
 
@@ -840,6 +859,7 @@ func TestSubWorkflowCycleIsRefusedAtAuthoringTime(t *testing.T) {
 func TestSubWorkflowSelfReferenceIsRefused(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	code, body := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/workflows", csrf, map[string]any{
@@ -857,6 +877,7 @@ func TestSubWorkflowSelfReferenceIsRefused(t *testing.T) {
 func TestSubWorkflowUnknownReferenceIsRefused(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	code, body := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/workflows", csrf, map[string]any{

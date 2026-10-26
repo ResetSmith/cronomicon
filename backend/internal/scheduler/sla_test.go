@@ -641,9 +641,13 @@ func TestMissedDetectorWatchesWorkflowSchedules(t *testing.T) {
 			s.SetNotifier(alerts)
 
 			fireAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Minute)
+			// An agency's repository's workflow: one of the built-in agency's is
+			// not watched (2.5.3 CA1), and a Git workflow with no repository is
+			// the built-in agency's repository's.
+			seedOpsRepo(t, pool)
 			if _, err := pool.Exec(`
-				INSERT INTO workflows (name, source, steps, synced_at)
-				VALUES ('release', 'git', '[]', '2026-01-01T00:00:00Z')`); err != nil {
+				INSERT INTO workflows (name, source, steps, synced_at, repo_id)
+				VALUES ('release', 'git', '[]', '2026-01-01T00:00:00Z', ?)`, opsRepo); err != nil {
 				t.Fatalf("seed workflow: %v", err)
 			}
 			seedSchedule(t, pool, "workflow", "release", "nightly", dailyCronAt(fireAt, s.location()), 0)

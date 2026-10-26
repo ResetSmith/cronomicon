@@ -88,6 +88,7 @@ func binnedDefinitionRoutes() []defRoute {
 func TestDeletedFilterSites_EveryActingRouteRefusesABinnedDefinition(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	jobID := createRHJob(t, ts, client, csrf, "billing")
@@ -128,6 +129,7 @@ func TestDeletedFilterSites_EveryActingRouteRefusesABinnedDefinition(t *testing.
 func TestDeletedFilterSites_TheSameRoutesWorkWhenLive(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	jobID := createRHJob(t, ts, client, csrf, "billing")
@@ -164,6 +166,7 @@ func TestDeletedFilterSites_TheSameRoutesWorkWhenLive(t *testing.T) {
 func TestBinnedOwnerIsNotALiveScheduleReference(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	if code, b := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/schedule-defs", csrf, map[string]any{
@@ -226,6 +229,7 @@ func TestBinnedOwnerIsNotALiveScheduleReference(t *testing.T) {
 func TestBinnedDefinitionReactionsAreReadableAndRemovable(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	jobID := createRHJob(t, ts, client, csrf, "billing")

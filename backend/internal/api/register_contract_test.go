@@ -23,13 +23,16 @@ import (
 // This test is the pin in the other direction: it asserts the server behaviour
 // the spec now documents, so the two cannot drift apart again silently.
 func TestRegisterRequiresProtocolVersion(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, pool := newTestServer(t)
 
 	post := func(t *testing.T, body map[string]any) (int, string) {
 		t.Helper()
 		b, _ := json.Marshal(body)
 		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/runners/register", bytes.NewReader(b))
-		req.Header.Set("Authorization", "Bearer boot-token")
+		// A token minted in an agency: the environment's bootstrap token is
+		// refused since 2.5.3 (question 207). A fresh one each time, so no
+		// subtest leans on another's token being left unconsumed.
+		req.Header.Set("Authorization", "Bearer "+mintAgencyRegToken(t, pool))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {

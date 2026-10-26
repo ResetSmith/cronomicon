@@ -325,6 +325,11 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		allCalNames = append(allCalNames, calendar.ParseNames(sr.skipCals.String)...)
 		allCalNames = append(allCalNames, calendar.ParseNames(sr.onlyCals.String)...)
 	}
+	// The definitions' own calendars too (2.5.3, CA-31), as fire() reads them.
+	defBindings := s.definitionBindingsOf(ctx, srows)
+	for _, b := range defBindings {
+		allCalNames = append(allCalNames, b.Names()...)
+	}
 	// One Load per agency that owns an entry (I2: a calendar is its agency's
 	// and its name unique there), not per entry: a handful of agencies, each
 	// read once and kept for the request.
@@ -409,7 +414,9 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 			// a holiday suppresses one day's instant, not the whole entry.
 			v, frozen := calendar.FreezeVerdictAt(freeze, t)
 			if !frozen {
-				v = calendar.EvaluateFor(calSetsFor(ownerAgency), ownerAgency, skipCals, onlyCals, calendar.DayOf(t, appLoc))
+				b := defBindings[defBindingKey(sr)]
+				b.EntrySkip, b.EntryOnly = skipCals, onlyCals
+				v = calendar.EvaluateBindings(calSetsFor(ownerAgency), ownerAgency, b, calendar.DayOf(t, appLoc))
 			}
 			projections = append(projections, proj{sr.kind, sr.owner, sr.name, sr.cron, sr.source,
 				sr.ownerUID.String, splitAgencies(sr.ownerAgencies), t, v})
@@ -842,4 +849,28 @@ func (s *Server) pendingRunItems(ctx context.Context, id auth.Identity, hasID bo
 		}
 	}
 	return upcoming, missed
+}
+
+// defBindingKey files an entry's definition: by its uid, else its source and
+// name.
+func defBindingKey(sr scheduleRow) string {
+	if sr.ownerUID.String != "" {
+		return sr.kind + "\x00" + sr.ownerUID.String
+	}
+	return sr.kind + "\x00" + sr.source + "\x00" + sr.owner
+}
+
+// definitionBindingsOf reads, once per definition, the own Forbid and Allow
+// calendars of the definitions whose entries the projection walks (2.5.3,
+// CA-31): Upcoming and the overview's next fire judge a fire as fire() does.
+func (s *Server) definitionBindingsOf(ctx context.Context, srows []scheduleRow) map[string]calendar.Bindings {
+	out := map[string]calendar.Bindings{}
+	for _, sr := range srows {
+		k := defBindingKey(sr)
+		if _, ok := out[k]; ok {
+			continue
+		}
+		out[k] = scheduler.DefinitionBindings(ctx, s.db, sr.kind, sr.source, sr.owner, sr.ownerUID.String)
+	}
+	return out
 }

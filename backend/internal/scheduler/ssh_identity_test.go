@@ -12,8 +12,9 @@ import (
 
 func seedIdentityJobRow(t *testing.T, pool *sql.DB, name, runType, sshUser, sshCred string) {
 	t.Helper()
+	seedOpsAgency(t, pool)
 	if _, err := pool.ExecContext(context.Background(),
-		`INSERT INTO jobs (uid, name, run_type, concurrency_policy, enabled, ssh_user, ssh_credential, synced_at)VALUES ('uid-'||?, ?, ?, 'Allow', 1, ?, ?, 't')`, name, name, runType, sshUser, sshCred); err != nil {
+		`INSERT INTO jobs (uid, name, run_type, concurrency_policy, enabled, ssh_user, ssh_credential, synced_at, owner_agency)VALUES ('uid-'||?, ?, ?, 'Allow', 1, ?, ?, 't', ?)`, name, name, runType, sshUser, sshCred, opsAgency); err != nil {
 		t.Fatalf("seed identity job %q: %v", name, err)
 	}
 }

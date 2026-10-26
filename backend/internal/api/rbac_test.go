@@ -227,8 +227,11 @@ func TestRunPathScopeGuard(t *testing.T) {
 	// Two git jobs, one bound to each scope.
 	exec(`INSERT INTO jobs(name, source, run_type, command, scope, content_hash, source_path, synced_at)
 	      VALUES('job-a','git','bash','echo a','ScopeA','sha256:a','jobs/a.yaml','t')`)
-	exec(`INSERT INTO jobs(name, source, run_type, command, scope, content_hash, source_path, synced_at)
-	      VALUES('job-b','git','bash','echo b','ScopeB','sha256:b','jobs/b.yaml','t')`)
+	// job-b is another ordinary agency's (2.5.3: the built-in agency runs
+	// nothing, so an unrestricted administrator's run of it is refused).
+	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-b','agency-b','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO jobs(name, source, run_type, command, scope, content_hash, source_path, synced_at, owner_agency)
+	      VALUES('job-b','git','bash','echo b','ScopeB','sha256:b','jobs/b.yaml','t','ag-b')`)
 	rowid := func(name string) string {
 		t.Helper()
 		var id int64

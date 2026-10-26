@@ -55,12 +55,14 @@ describe("Clone to an agency", () => {
     expect(cloned).toHaveBeenCalledWith("Cloned edge-lab to Tax as edge-lab-tax");
   });
 
-  it("offers a global administrator Global and every other agency, and says why a clone is refused", async () => {
+  // 2.5.3 CA-1: Central owns no scope, so it is never a clone target.
+  it("offers a global administrator every other agency, never Global, and says why a clone is refused", async () => {
     answer = { error: { code: "scope_name_in_use", message: "jobs of another agency name a scope edge-lab" } };
     render(<CloneScopeDialog scopeId="s1" scopeName="edge-lab" currentAgency="ag-fin" globalAdmin onClose={vi.fn()} onCloned={vi.fn()} />);
     const select = (await screen.findByLabelText("Clone to agency")) as HTMLSelectElement;
-    await waitFor(() => expect(Array.from(select.options).map((o) => o.textContent)).toEqual(["Choose an agency…", "Global", "Tax"]));
-    fireEvent.change(select, { target: { value: "global" } });
+    await waitFor(() => expect(Array.from(select.options).map((o) => o.textContent)).toContain("Tax"));
+    expect(Array.from(select.options).map((o) => o.textContent)).not.toContain("Global");
+    fireEvent.change(select, { target: { value: "ag-tax" } });
     fireEvent.click(screen.getByRole("button", { name: "Clone" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/jobs of another agency name a scope/);
   });

@@ -710,6 +710,11 @@ var membershipCatalog = map[string]string{
 func (s *Server) requireCreationAgencies(w http.ResponseWriter, r *http.Request, id auth.Identity,
 	perm string, agencyIDs []string, label string) ([]string, bool) {
 
+	// Repeats of one id are one id, before anything is decided on the count
+	// (found by the review of 2.5.3 CA1: ["global","global"] skipped the
+	// context and Central checks, then compacted to Central).
+	agencyIDs = slices.Compact(slices.Sorted(slices.Values(agencyIDs)))
+
 	// 2.4.4 S3: in an agency context, a create that names no agency is that
 	// agency's, and one that names another is refused. (Several named is the
 	// one_agency refusal below.)
@@ -763,6 +768,12 @@ func (s *Server) requireCreationAgencies(w http.ResponseWriter, r *http.Request,
 	// is said as a membership now, so nothing downstream has to read an empty set.
 	if len(agencyIDs) == 0 {
 		agencyIDs = []string{agencyid.Global}
+	}
+	// 2.5.3 (CA-4): what runs is never Central's, named or defaulted. Only
+	// what CA-2 leaves it is placed there.
+	if !centralMayOwn[label] && len(agencyIDs) == 1 && agencyIDs[0] == agencyid.Global {
+		failCentralRunsNothing(w, label)
+		return nil, false
 	}
 	// One agency, or Global (LR-7, LR-54). Repeats of one id are one id.
 	agencyIDs = slices.Compact(slices.Sorted(slices.Values(agencyIDs)))

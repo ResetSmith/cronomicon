@@ -48,7 +48,7 @@ func checkJobScriptGone(ctx context.Context, database *sql.DB) error {
 			rows.Close()
 			return err
 		}
-		on := "no scope (it is Global's)"
+		on := "no scope (its runs are its agency's)"
 		if scope != "" {
 			on = "the scope " + scope
 		}

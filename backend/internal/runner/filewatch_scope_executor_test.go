@@ -26,6 +26,19 @@ func TestSightingIgnoresTheJobsExecutor(t *testing.T) {
 			insertScopeRow(t, svc, "s-dmz", "dmz-web")
 			bindScope(t, svc, "s-dmz", "r1", "one")
 			seedWatchJob(t, svc, "git", "ingest", "dmz-web", `[{"path":"/srv/incoming/*.csv"}]`)
+			// The job, its scope and the scope's runner are an ordinary agency's:
+			// Central runs nothing (2.5.3), and a job looks for its scope in its
+			// own agency (I2).
+			ownWatchJobs(t, svc)
+			for _, q := range []string{
+				`DELETE FROM scope_agencies WHERE scope_id = 's-dmz'`,
+				`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-dmz', 'ag-watch')`,
+			} {
+				if _, err := svc.db.Exec(q); err != nil {
+					t.Fatalf("seed: %v\n%s", err, q)
+				}
+			}
+			addRunnerAgency(t, svc, "r1", "ag-watch")
 			if tc.jobExecutor != "" {
 				if _, err := svc.db.Exec(`UPDATE jobs SET executor=? WHERE name='ingest'`, tc.jobExecutor); err != nil {
 					t.Fatal(err)

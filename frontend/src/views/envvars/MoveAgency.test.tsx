@@ -59,15 +59,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("MoveAgency — a repair", () => {
-  it("offers a global administrator every other agency, Global included, and sends the repair with its reason", async () => {
+  // 2.5.3 CA-1, CA-14: Central owns nothing that runs, so it is never a target.
+  it("offers a global administrator every other agency, never Global, and sends the repair with its reason", async () => {
     show();
     const el = await select();
-    await waitFor(() => expect(options(el)).toEqual(["Repair: move to another agency…", "Global", "Tax"]));
+    await waitFor(() => expect(options(el)).toEqual(["Repair: move to another agency…", "Tax"]));
 
     fireEvent.change(el, { target: { value: "ag-tax" } });
     expect(puts).toHaveLength(0);
     // The dialog says what stops working, and asks why.
-    expect(await screen.findByText(/Finance's runs that bind this secret will stop resolving it/)).toBeTruthy();
+    expect(await screen.findByText(/Finance's runs that use this secret will stop finding it the next time they start/)).toBeTruthy();
     const confirm = screen.getByRole("button", { name: "Move to Tax" }) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true); // no reason yet
     await repair("  created in the wrong agency  ", "Move to Tax");
@@ -92,11 +93,30 @@ describe("MoveAgency — a repair", () => {
     await waitFor(() => expect(puts[0]?.path).toBe("/env-var-agencies"));
   });
 
-  it("says what Global means", async () => {
-    show();
-    fireEvent.change(await select(), { target: { value: "global" } });
-    // §0a (IN-6): Global's is Global's runs' only (until 2.4.2 the dialog said every agency's).
-    expect(await screen.findByText(/It becomes Global's: only Global's runs may use it, and only global administrators change it\./)).toBeTruthy();
+  // 2.5.3 CA-17: what Central still holds is moved out to an agency; no run
+  // uses it meanwhile, so nothing stops.
+  it("moves what Global still holds to an agency, and says no run uses it there", async () => {
+    show({ ownerName: "Global" });
+    const el = await select();
+    await waitFor(() => expect(options(el)).toEqual(["Repair: move to another agency…", "Finance", "Tax"]));
+    fireEvent.change(el, { target: { value: "ag-fin" } });
+    expect(await screen.findByText(/No run uses it while Global holds it\./)).toBeTruthy();
+    await repair("left from before 2.5.3", "Move to Finance");
+    await waitFor(() => expect(puts[0]?.body).toEqual({ repair: true, reason: "left from before 2.5.3", assignments: [{ id: "s1", agencyIds: ["ag-fin"] }] }));
+  });
+
+  // A host record and a bastion are moved by their own update (CA-17): the
+  // caller's send carries it, and the assignments route is not used.
+  it("sends a host record's move through the caller's send", async () => {
+    const send = vi.fn(async () => ({}));
+    show({ kind: "host", id: "h1", name: "app-01", ownerName: "Global", send });
+    fireEvent.change(await screen.findByRole("combobox", { name: "Repair: move app-01 to another agency" }), { target: { value: "ag-tax" } });
+    expect(await screen.findByText(/Tax's administrators will manage it/)).toBeTruthy();
+    fireEvent.change(await screen.findByLabelText("Reason"), { target: { value: "its scope is Tax's" } });
+    fireEvent.click(screen.getByRole("button", { name: "Move to Tax" }));
+    await waitFor(() => expect(send).toHaveBeenCalledWith("ag-tax", { repair: true, reason: "its scope is Tax's" }));
+    expect(puts).toHaveLength(0);
+    await waitFor(() => expect(moved).toHaveBeenCalledWith("app-01 now belongs to Tax"));
   });
 
   it("is not offered to an agency's administrator, who reads that the agency does not change", async () => {
@@ -132,11 +152,11 @@ describe("MoveAgency — a repair", () => {
     putError = {
       code: "vault_changes",
       message: "moving it changes the Vault its path is read from",
-      rows: [{ kind: "secret", id: "s1", name: "DB_PASS", from: "ag-fin", fromName: "Finance", fromVault: "own", to: "global", toName: "Global", toVault: "installation" }],
+      rows: [{ kind: "secret", id: "s1", name: "DB_PASS", from: "ag-fin", fromName: "Finance", fromVault: "own", to: "ag-tax", toName: "Tax", toVault: "installation" }],
     };
     show();
-    fireEvent.change(await select(), { target: { value: "global" } });
-    await repair("wrong agency", "Move to Global");
+    fireEvent.change(await select(), { target: { value: "ag-tax" } });
+    await repair("wrong agency", "Move to Tax");
     expect(await screen.findByText(/DB_PASS: from Finance's own Vault to the installation's Vault/)).toBeTruthy();
     expect(failed).not.toHaveBeenCalled();
     expect(moved).not.toHaveBeenCalled();
@@ -148,8 +168,8 @@ describe("MoveAgency — a repair", () => {
       repair: true,
       reason: "wrong agency",
       confirmVaultChange: true,
-      assignments: [{ id: "s1", agencyIds: ["global"] }],
+      assignments: [{ id: "s1", agencyIds: ["ag-tax"] }],
     });
-    await waitFor(() => expect(moved).toHaveBeenCalledWith("DB_PASS now belongs to Global"));
+    await waitFor(() => expect(moved).toHaveBeenCalledWith("DB_PASS now belongs to Tax"));
   });
 });

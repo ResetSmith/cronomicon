@@ -170,23 +170,25 @@ func newStopHarness(t *testing.T, runnerName string) *stopHarness {
 
 	ts := now()
 	insertJobDef(t, h.svc, "long-job", "bash", "sleep 100", 0)
+	ownJobForOps(t, h.svc, "long-job")
 	scopeID := db.NewID()
 	if _, err := h.svc.db.Exec(`INSERT INTO scopes(id, name, source, created_at) VALUES (?, 'prod', 'cronomicon', ?)`, scopeID, ts); err != nil {
 		t.Fatal(err)
 	}
+	ownScopeForOps(t, h.svc, scopeID)
 	if _, err := h.svc.db.Exec(`INSERT INTO scope_hosts(scope_id, host) VALUES (?, 'web01')`, scopeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.svc.db.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
-		VALUES (?, 'web01', ?, ?, 'tester', 'AGENT_KEY', ?)`, db.NewID(), host, port, ts); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, owner_agency, created_at)
+		VALUES (?, 'web01', ?, ?, 'tester', 'AGENT_KEY', ?, ?)`, db.NewID(), host, port, opsAgencyID, ts); err != nil {
 		t.Fatal(err)
 	}
 	h.traceID = h.queueRun(t)
 
 	h.cfg = agent.Config{
 		ServerURL:         h.srv.URL,
-		RegistrationToken: "test-bootstrap-token",
+		RegistrationToken: opsToken(t, h.svc), // the bootstrap token is refused since 2.5.3
 		Name:              runnerName,
 		OS:                "Linux",
 		Capabilities:      []string{"bash"},
@@ -203,16 +205,10 @@ func newStopHarness(t *testing.T, runnerName string) *stopHarness {
 	return h
 }
 
-// queueRun queues one more run of the long job.
+// queueRun queues one more run of the long job, the agency's, as its agent is.
 func (h *stopHarness) queueRun(t *testing.T) string {
 	t.Helper()
-	traceID := db.NewTraceID()
-	if _, err := h.svc.db.Exec(`
-		INSERT INTO runs(id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES (?, 'long-job', 'bash', 'prod', 'queued', 'test', 'manual', 'runner', ?)`, traceID, now()); err != nil {
-		t.Fatal(err)
-	}
-	return traceID
+	return queueOpsRun(t, h.svc, "long-job", "prod")
 }
 
 func (h *stopHarness) run(traceID string) (status, reason string) {
