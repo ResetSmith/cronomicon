@@ -14,9 +14,9 @@ import (
 // them with the way out.
 //
 // One finding per agency, naming its jobs (the first ten, and how many more).
-// Subject: the agency's id. Filed under the agency. Editing a job with no
-// scope is a global administrator's (requireComposeScope's empty branch), so
-// the detail says so. Central's are listed by central_holds_work, and a job
+// Subject: the agency's id. Filed under the agency, whose composers edit
+// such a job to give it a scope (api requireComposeJobLeaving; the owner,
+// 2026-10-26). Central's are listed by central_holds_work, and a job
 // in the recycle bin is not listed (purging it is the way out). It clears
 // when the agency has none.
 const KindJobWithoutScope = "job_without_scope"
@@ -59,8 +59,8 @@ func checkJobWithoutScope(ctx context.Context, database *sql.DB) error {
 			Subject:  agency,
 			Detail: whose + ": " + list + ". Since 2.5.3 every job names one of its agency's scopes, and a job with no scope " +
 				"made before is refused when it starts on its own (a schedule, a reaction, a workflow step) if its script is in " +
-				"the agency's repository. A global administrator gives each a scope (Jobs → the job → Edit, working in " + name +
-				"): for work on the runner itself, a scope whose one host is the runner (an inventory line such as " +
+				"the agency's repository. Give each a scope (Jobs → the job → Edit, working in " + name + "; anyone who may create jobs in " + name +
+				" may): for work on the runner itself, a scope whose one host is the runner (an inventory line such as " +
 				"\"runner ansible_host=127.0.0.1 ansible_connection=local\"); for a job that pins its target host, a scope that " +
 				"lists no hosts. Until then, a person may run one on one of the agency's scopes from the Run dialog.",
 		})

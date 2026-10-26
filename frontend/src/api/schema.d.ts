@@ -8716,9 +8716,9 @@ export interface components {
              *       names one of its agency's scopes (the composer answers 422
              *       otherwise), and a start of one with no scope is refused when its
              *       script is the agency's. The detail names the jobs (the first
-             *       ten, and how many more) and the way out: a global administrator
-             *       gives each a scope; until then a person may run one on one of
-             *       the agency's scopes. Subject: the agency's id. Filed under that
+             *       ten, and how many more) and the way out: the agency's composers
+             *       give each a scope (editing one is compose on its agency); until
+             *       then a person may run one on one of the agency's scopes. Subject: the agency's id. Filed under that
              *       agency. It clears when the agency has none.
              *     - `grant_group_unlisted` — an access grant of an agency names a
              *       directory group that is not on the agency's group list (v2.5.0,
@@ -9035,7 +9035,7 @@ export interface components {
             triggerJobs: boolean;
             /** @description Union: the caller may stop runs SOMEWHERE. Never a route gate. */
             killJobs: boolean;
-            /** @description AF-2 — the caller may edit or delete a job with no scope. Only an unrestricted compose grant qualifies (RB-30). Since v2.5.3 (CA7) no job is authored with no scope, by anyone; the flag concerns the jobs with no scope made before. Until v2.5.3 the composer read it to offer the "No scope" option. */
+            /** @description AF-2 — the caller holds compose on an unrestricted grant: may save a workflow that runs a job with no scope (RB-30). Since v2.5.3 (CA7) no job is authored with no scope, by anyone, and a job with no scope made before is edited or deleted by compose on its own agency. Until v2.5.3 the composer read this flag to offer the "No scope" option. */
             composeUnbound: boolean;
             /** @description Scope REACH, not a permission: the caller holds a grant covering every scope. Drives the Run dialog's unscoped-job binding path (RB-26/RB-29). */
             unrestricted: boolean;
@@ -9921,7 +9921,7 @@ export interface components {
             agencies: string[];
             /** @description The shadowed global row's membership, for contrast. */
             globalAgencies: string[];
-            /** @description AF-2 — the caller may edit or delete a job with no scope. Only an unrestricted compose grant qualifies (RB-30). Since v2.5.3 (CA7) no job is authored with no scope, by anyone; the flag concerns the jobs with no scope made before. Until v2.5.3 the composer read it to offer the "No scope" option. */
+            /** @description AF-2 — the caller holds compose on an unrestricted grant: may save a workflow that runs a job with no scope (RB-30). Since v2.5.3 (CA7) no job is authored with no scope, by anyone, and a job with no scope made before is edited or deleted by compose on its own agency. Until v2.5.3 the composer read this flag to offer the "No scope" option. */
             composeUnbound?: boolean;
             /**
              * @description True when the shadowing row is Global's, so it wins for EVERY

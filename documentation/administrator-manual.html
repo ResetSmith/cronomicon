@@ -2349,9 +2349,10 @@
                     <code>publishSchedule</code>, and, <code>triggerJobs</code> and <code>killJobs</code>. The response
                     also contains <code>unrestricted</code>. That flag is not a permission. It is <strong>scope
                         reach</strong>: it tells you if the caller has an <em>All scopes</em> grant. A sibling flag,
-                    <code>composeUnbound</code>, says whether the caller may edit or delete a job with no scope
-                    made before 2.5.3 &mdash; only an unrestricted compose grant qualifies. Since 2.5.3 nobody
-                    authors a job with no scope, and the Job Composer offers no &ldquo;No scope&rdquo; option.</p>
+                    <code>composeUnbound</code>, says whether the caller holds compose on an unrestricted grant,
+                    which saving a workflow that runs a job with no scope needs. Since 2.5.3 nobody authors a job
+                    with no scope, and the Job Composer offers no &ldquo;No scope&rdquo; option; a job with no
+                    scope made before is edited or deleted by compose on its own agency.</p>
                 <p>From v2.2.2 the response also contains five flags that answer a different question: not
                     &ldquo;can the caller do this <em>somewhere</em>&rdquo; but &ldquo;can the caller do this to the
                     <em>installation</em>&rdquo;. They are <code>configureAppGlobal</code>,
@@ -2441,7 +2442,8 @@
                     stays as it was and is listed in the Notices inbox under <em>Jobs built in the app have no
                     scope</em>: its scheduled and automatic starts are refused when its script is in its agency's
                     repository, a person may still run it on one of the agency's scopes from the Run dialog, and
-                    only a global administrator may edit it, which is how it is given a scope. Authoring authority is decided per
+                    the agency's composers edit it, which is how it is given a scope, or delete it (until 2.5.3
+                    only a global administrator could). Authoring authority is decided per
                     definition, not by the flat flag: an edit is checked against <em>both</em> the scope the job is
                     leaving and the scope it is entering, and saving a workflow requires authority over every job in
                     its graph. Where two sources hold a job of the same name, the compose-time check resolves each
@@ -2721,7 +2723,7 @@
                     roles, and <strong>Create jobs &amp; workflows</strong> &mdash; the authoring
                     permission, which lets a role author jobs, workflows, schedule definitions, calendars and
                     reactions within the agencies it is granted, and use their revisions and recycle bin, while
-                    editing a job with no scope (made before 2.5.3) needs a compose grant that reaches every agency. There is
+                    a workflow that runs a job with no scope (one made before 2.5.3) needs a compose grant that reaches every agency. There is
                     no &ldquo;view&rdquo; permission, because no enforcement point for one is possible. Thus <code>viewer</code> has no permissions at
                     all. This is correct, not an error: a viewer's access is visibility, which comes from its granted
                     scopes, and visibility is not a verb.</p>

@@ -44,7 +44,7 @@ func TestAnAgencysJobsWithNoScopeAreToldToThatAgency(t *testing.T) {
 	if !ok || n.AgencyID != "ag-fin" {
 		t.Fatalf("the notice is %+v; want it Finance's, subject ag-fin", got)
 	}
-	for _, want := range []string{"2 of Finance's jobs", "fin-blank, fin-none", "global administrator", "ansible_connection=local", "lists no hosts", "Run dialog"} {
+	for _, want := range []string{"2 of Finance's jobs", "fin-blank, fin-none", "anyone who may create jobs in Finance", "ansible_connection=local", "lists no hosts", "Run dialog"} {
 		if !strings.Contains(n.Detail, want) {
 			t.Errorf("the detail does not say %q: %s", want, n.Detail)
 		}

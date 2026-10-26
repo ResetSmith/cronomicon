@@ -299,6 +299,56 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 	})
 }
 
+// 2.5.3 CA7 (the owner, 2026-10-26): a job with no scope made before 2.5.3 is
+// its agency's composers' to fix. FIN's composer edits FIN's leftover only to
+// give it a scope (keeping none is the rule's 422), and may delete it; TAX's
+// may not touch it, and Central's leftover stays a global administrator's.
+func TestAnAgencysComposersFixItsJobsWithNoScope(t *testing.T) {
+	h, pool := composeRBACServer(t)
+	mk := func(name string) string {
+		t.Helper()
+		if _, err := pool.Exec(`INSERT INTO jobs(uid, name, source, run_type, command, scope, content_hash, created_at, owner_agency)
+		      VALUES(?,?,'cronomicon','bash','pg_dump mydb',NULL,'sha256:bbb','2026-01-01T00:00:00Z','ag:FIN')`, "uid-"+name, name); err != nil {
+			t.Fatal(err)
+		}
+		return composeJobID(t, pool, name)
+	}
+	fix, gone := mk("fin-left"), mk("fin-left-del")
+
+	if rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+fix, "tax-composers",
+		`{"name":"fin-left","scriptRef":"backup-db","scope":"tax-prod"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("TAX's composer editing FIN's job with no scope = %d %s, want 403", rec.Code, rec.Body)
+	}
+	if rec := composeReq(t, h, http.MethodDelete, "/api/v1/jobs/"+gone, "tax-composers", ""); rec.Code != http.StatusForbidden {
+		t.Errorf("TAX's composer deleting FIN's job with no scope = %d, want 403", rec.Code)
+	}
+	if rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+fix, "fin-composers",
+		`{"name":"fin-left","scriptRef":"backup-db","scope":""}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("FIN's composer saving its job still with no scope = %d %s, want 422", rec.Code, rec.Body)
+	}
+	if rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+fix, "fin-composers",
+		`{"name":"fin-left","scriptRef":"backup-db","scope":"fin-prod"}`); rec.Code != http.StatusOK {
+		t.Fatalf("FIN's composer giving its job a scope = %d %s, want 200", rec.Code, rec.Body)
+	}
+	var n int
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM jobs WHERE name = 'fin-left'`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("%d rows named fin-left (%v), want the one, saved in place", n, err)
+	}
+	var scope, owner string
+	if err := pool.QueryRow(`SELECT COALESCE(scope,''), owner_agency FROM jobs WHERE uid = 'uid-fin-left'`).Scan(&scope, &owner); err != nil ||
+		scope != "fin-prod" || owner != "ag:FIN" {
+		t.Errorf("fin-left after the save: scope %q, owner %q (%v); want fin-prod, FIN's", scope, owner, err)
+	}
+	if rec := composeReq(t, h, http.MethodDelete, "/api/v1/jobs/"+gone, "fin-composers", ""); rec.Code != http.StatusNoContent {
+		t.Errorf("FIN's composer deleting its job with no scope = %d %s, want 204", rec.Code, rec.Body)
+	}
+	// Central's leftover (all-job, born the built-in agency's) is not FIN's.
+	if rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+composeJobID(t, pool, "all-job"), "fin-composers",
+		`{"name":"all-job","scriptRef":"backup-db","scope":"fin-prod"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("FIN's composer editing Central's job with no scope = %d, want 403", rec.Code)
+	}
+}
+
 // The shared authoring surfaces AF-2 left a global administrator's are gone:
 // schedules and calendars have owners (§0a, question 32, SO-1), reactions are
 // their definition's agency's (question 61), and the recycle bin and revisions

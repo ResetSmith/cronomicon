@@ -68,11 +68,10 @@ func (s *Server) mountJobCompose(mux *http.ServeMux) {
 // RB-30 warned about. Two things keep the bypass unreachable:
 //
 //  1. No job is composed unscoped since 2.5.3 (CA7): writeComposedJob refuses
-//     an empty scope for everyone. A leftover from before is edited or deleted
-//     only through requireComposeScope's empty branch, which asks
-//     Identity.CanUnbound, so a compose-granted non-admin cannot touch one or
-//     move a job to or from no scope, and never attaches a schedule to an
-//     unbound job.
+//     an empty scope for everyone, so nobody moves a job to no scope or keeps
+//     one there, and no schedule is attached to an unbound job. A leftover
+//     from before is edited (to give it a scope) or deleted by its agency's
+//     composers (requireComposeJobLeaving).
 //  2. The SHARED-object authoring surfaces (schedule-defs, calendars, reactions,
 //     revisions/recycle-bin) stay on requireComposeAdmin — see its note.
 //
@@ -107,8 +106,9 @@ func isComposeAdmin(id auth.Identity) bool {
 // The empty scope is NOT "no restriction" here — it is the All pool, and it routes
 // through CanUnbound so only an unrestricted grant passes (RB-30 item 1, and the
 // same rule RB-26 applies to running an unscoped job). Since 2.5.3 (CA7) no job
-// is written with an empty scope; the branch gates editing and deleting a
-// leftover job that has none. Every other scope asks
+// is written with an empty scope; the branch gates a workflow step that runs a
+// leftover job with none (a job's own edit and delete ask
+// requireComposeJobLeaving). Every other scope asks
 // Can(compose, scope), which is per-grant: a FIN composer passes for a FIN scope
 // and fails for a Tax one, rather than passing because they hold compose somewhere.
 //
@@ -127,6 +127,31 @@ func (s *Server) requireComposeScope(w http.ResponseWriter, r *http.Request, id 
 		return s.requireCan(w, r, id, auth.PermCompose, agency, auth.AllScopes)
 	}
 	return s.requireCan(w, r, id, auth.PermCompose, agency, scope)
+}
+
+// requireComposeJobLeaving is requireComposeScope for a job that is being
+// edited or deleted, asked of the scope it has now. A job with no scope (a
+// leftover from before 2.5.3, CA7) is its owner agency's composers' to edit or
+// delete, as the job_without_scope notice tells them (the owner, 2026-10-26):
+// an edit must give it a scope (writeComposedJob refuses an empty one), so
+// this never lets a departmental composer keep an unbound job or attach a
+// schedule to one (RB-30). Central's (owner global) stays a global
+// administrator's, through CanAgency. A workflow that runs such a job keeps
+// requireComposeScope's every-agency rule.
+func (s *Server) requireComposeJobLeaving(w http.ResponseWriter, r *http.Request, id auth.Identity, agency, scope string) bool {
+	if strings.TrimSpace(scope) != "" {
+		return s.requireComposeScope(w, r, id, agency, scope)
+	}
+	if id.CanAgency(auth.PermCompose, agency) {
+		return true
+	}
+	if s.auth != nil {
+		s.auth.AuditDenied(r, auditActor(r), "insufficient_permission", auth.PermCompose,
+			auditDetails(r, "insufficient permissions for "+auth.PermCompose+" on the agency of a job with no scope"))
+	}
+	httpx.Fail(w, http.StatusForbidden, "forbidden",
+		"insufficient permissions: "+auth.PermCompose+" is required on this job's agency")
+	return false
 }
 
 var composeNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
@@ -383,7 +408,7 @@ func (s *Server) updateJob(w http.ResponseWriter, r *http.Request) {
 	// arriving at; both must pass. Only the incoming check would let a FIN
 	// composer take over an All or Tax job by rewriting its scope to FIN, and only
 	// the existing check would let them push a FIN job out into All.
-	if !s.requireComposeScope(w, r, id, existing.OwnerAgency, deref(existing.Scope)) {
+	if !s.requireComposeJobLeaving(w, r, id, existing.OwnerAgency, deref(existing.Scope)) {
 		return
 	}
 	var in jobComposeInput
@@ -421,7 +446,7 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// AF-2 — deleting is authoring: same per-scope authority as editing.
-	if !s.requireComposeScope(w, r, id, existing.OwnerAgency, deref(existing.Scope)) {
+	if !s.requireComposeJobLeaving(w, r, id, existing.OwnerAgency, deref(existing.Scope)) {
 		return
 	}
 	// RX-24 — refuse while reactions WATCH this job, unless forced. Its own code,

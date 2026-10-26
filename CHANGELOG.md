@@ -88,8 +88,9 @@ Then, because Central runs nothing from this release on:
   listed per agency in the Notices inbox (*Jobs built in the app have no
   scope*). Its scheduled and automatic starts are refused when its script is
   in its agency's repository, as they already were; a person may still run it
-  on one of the agency's scopes from the Run dialog. A global administrator
-  gives each a scope (Jobs → Edit): for work on the runner itself, a scope
+  on one of the agency's scopes from the Run dialog. The agency's composers
+  (until 2.5.3 a global administrator only) give each a scope (Jobs → Edit),
+  or delete it: for work on the runner itself, a scope
   whose one host is the runner (`runner ansible_host=127.0.0.1
   ansible_connection=local`); for a job that pins its target host, a scope
   that lists no hosts.
