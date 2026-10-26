@@ -129,7 +129,7 @@ func TestGR1_AnInAppScheduleLeavesGitsScheduleOfThatNameAlone(t *testing.T) {
 	// An in-app job bound to the IN-APP schedule: the composer takes the in-app
 	// schedule of a name before Git's.
 	a.must(http.MethodPost, "/api/v1/jobs",
-		map[string]any{"name": "app-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"nightly"}}, http.StatusCreated)
+		map[string]any{"name": "app-job", "scriptRef": "backup-db", "scope": workScope, "scheduleRefs": []string{"nightly"}}, http.StatusCreated)
 	entryOf := func(source, job string) (cron string, n int) {
 		n = a.count(`SELECT COUNT(*) FROM definition_schedules WHERE owner_source=? AND owner_name=?`, source, job)
 		if n > 0 {
@@ -238,7 +238,7 @@ func TestGR1_TheComposerNeverBindsABinnedSchedule(t *testing.T) {
 	a.exec(`INSERT INTO schedules(uid, name, source, cron, content_hash, synced_at, repo_id, owner_agency) VALUES('s-git-weekly', 'weekly', 'git', '0 0 7 * * 1', 'h', 't', ?, ?)`, workRepo, workAgency)
 
 	a.must(http.MethodPost, "/api/v1/jobs",
-		map[string]any{"name": "weekly-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"weekly"}}, http.StatusCreated)
+		map[string]any{"name": "weekly-job", "scriptRef": "backup-db", "scope": workScope, "scheduleRefs": []string{"weekly"}}, http.StatusCreated)
 	if got := a.str(`SELECT cron FROM definition_schedules WHERE owner_name='weekly-job' AND name='weekly'`); got != "0 0 7 * * 1" {
 		t.Errorf("the job's entry is %q, want the live Git schedule's '0 0 7 * * 1'", got)
 	}
@@ -250,7 +250,7 @@ func TestGR1_TheComposerNeverBindsABinnedSchedule(t *testing.T) {
 	a.must(http.MethodPost, "/api/v1/schedule-defs", map[string]any{"name": "gone", "cron": "0 0 2 * * 1"}, http.StatusCreated)
 	a.must(http.MethodDelete, "/api/v1/schedule-defs/gone", nil, http.StatusNoContent)
 	if code, body := a.do(http.MethodPost, "/api/v1/jobs",
-		map[string]any{"name": "gone-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"gone"}}); code != http.StatusUnprocessableEntity {
+		map[string]any{"name": "gone-job", "scriptRef": "backup-db", "scope": workScope, "scheduleRefs": []string{"gone"}}); code != http.StatusUnprocessableEntity {
 		t.Errorf("binding a job to a schedule that is only in the recycle bin = %d (%s), want 422", code, body)
 	}
 }
@@ -263,7 +263,7 @@ func TestGR1_TheComposerNeverBindsABinnedSchedule(t *testing.T) {
 func TestGR1_ARestoredSchedulesBindingsAreBindings(t *testing.T) {
 	a := newGRSchedAPI(t)
 	a.must(http.MethodPost, "/api/v1/schedule-defs", map[string]any{"name": "rs", "cron": "0 0 2 * * *"}, http.StatusCreated)
-	job := map[string]any{"name": "rs-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"rs"}}
+	job := map[string]any{"name": "rs-job", "scriptRef": "backup-db", "scope": workScope, "scheduleRefs": []string{"rs"}}
 	a.must(http.MethodPost, "/api/v1/jobs", job, http.StatusCreated)
 	entries := func() int {
 		return a.count(`SELECT COUNT(*) FROM definition_schedules WHERE owner_source='cronomicon' AND owner_name='rs-job' AND name='rs'`)

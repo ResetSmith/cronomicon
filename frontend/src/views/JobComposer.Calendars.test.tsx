@@ -13,7 +13,7 @@ const JOB = {
   name: "nightly-backup",
   source: "cronomicon",
   scriptRef: "tools/backup.sh",
-  scope: "",
+  scope: "ops-local",
   env: {},
   prompts: [],
   schedules: [],
@@ -115,8 +115,10 @@ describe("JobComposer — the job's own calendars (2.5.3 CA-30)", () => {
     renderAt("/compose?script=tools%2Fbackup.sh");
     await waitFor(() => expect(screen.getAllByText("tools/backup.sh").length).toBeGreaterThan(0));
     fireEvent.change(screen.getByPlaceholderText("nightly-backup"), { target: { value: "new-job" } });
-    fireEvent.click(screen.getByRole("combobox", { name: "Scope" }));
-    fireEvent.click(screen.getByRole("option", { name: /^No scope/ }));
+    const combo = screen.getByRole("combobox", { name: "Scope" });
+    fireEvent.focus(combo);
+    fireEvent.change(combo, { target: { value: "ops-local" } });
+    fireEvent.keyDown(combo, { key: "Enter" });
     fireEvent.click(screen.getByRole("button", { name: "Create job" }));
     await waitFor(() => expect(jobWrite()).toBeTruthy());
     expect(jobWrite()!.body).toMatchObject({ forbidCalendars: [], allowCalendars: [] });

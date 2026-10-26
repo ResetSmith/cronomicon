@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// 2.5.3 CA6: a job with no scope is its own agency's (CA-5), so a workflow of
+// 2.5.3 CA6: a job with no scope (a leftover since CA7) is its own agency's (CA-5), so a workflow of
 // one agency that runs one does not span agencies. Until CA6 the span reading
 // (notices.SpanningWorkflows, which refuseNewSpan asks) took a scopeless job
 // for Global's: making a job a workflow runs scopeless, or saving a workflow
@@ -33,11 +33,15 @@ func TestAScopelessJobOfTheAgencyDoesNotMakeItsWorkflowSpan(t *testing.T) {
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/workflows", gFinAdmin, `{"name":"direct","steps":[`+stepA+`,`+stepB+`]}`)
 	must("FIN's workflow of two of its jobs", rec.Code, rec.Body.String())
 
-	// A job that FIN's workflow runs, made scopeless (a grant that reaches every
-	// agency authors one), working in FIN: it stays FIN's, and the save is taken.
+	// A job that FIN's workflow runs, scopeless. Since 2.5.3 (CA7) no save
+	// empties a job's scope, a global administrator's neither, so the job is a
+	// leftover from before, made here past the API. It stays FIN's.
 	finB := rowID(t, pool, `SELECT rowid FROM jobs WHERE name = 'fin-b' AND source = 'cronomicon'`)
 	rec = gateReqWithHeader(t, h, http.MethodPut, "/api/v1/jobs/"+finB, gRoot, job("fin-b", ""), "X-Cronomicon-Agency", "ag:FIN")
-	must("making fin-b, which FIN's workflow runs, scopeless", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("making fin-b scopeless through the API = %d (%s), want 422", rec.Code, rec.Body)
+	}
+	exec(`UPDATE jobs SET scope = NULL WHERE name = 'fin-b' AND source = 'cronomicon'`)
 	var owner, scope string
 	if err := pool.QueryRow(`SELECT COALESCE(owner_agency, ''), COALESCE(scope, '') FROM jobs WHERE name = 'fin-b'`).Scan(&owner, &scope); err != nil {
 		t.Fatal(err)

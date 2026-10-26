@@ -6501,14 +6501,16 @@ export interface components {
             /** @description Name of the Git Script to bind (its run_type and body are denormalized onto the job). */
             scriptRef: string;
             /**
-             * @description AF-1 — REQUIRED, and an empty string is a valid answer. A job's scope
-             *     decides which agencies can see it, so the assignment must be a choice:
-             *     a scope name places the job with that scope's agencies, and "" places
-             *     it in All (global — visible to every agency, stored as NULL). Omitting
-             *     the field, or sending null, is refused with a 422; only silence is
-             *     rejected, never a deliberate global job. Git-source jobs are a separate
-             *     contract: a YAML with no scope syncs as All with a warning rather than
-             *     being refused.
+             * @description REQUIRED, and a scope's name (v2.5.3, CA7): every job names one of
+             *     its agency's scopes. Omitting the field, sending null, or sending ""
+             *     is refused with 422 `validation_failed`, on create and on edit, for
+             *     every caller; the message names the shapes to use instead (for work
+             *     on the runner itself, a scope whose one host is the runner with
+             *     `ansible_connection=local`; for a job that pins its target host, a
+             *     scope that lists no hosts). From AF-1 until v2.5.3 "" was accepted
+             *     as a deliberate job with no scope; one made before is saved again
+             *     only with a scope, and is listed by the `job_without_scope` notice.
+             *     An agency's repository refuses a job with no scope too (GR-14).
              */
             scope: string;
             /** @description Pin the job to one host. It must be one of the hosts of the job's scope (422 `scope_membership`, v2.3.0, LR-71): a job runs only against hosts of its own scope. A scope that lists no hosts at all has no membership to check. A Git-source job that names a host outside its scope syncs with a warning and raises a `target_host_outside_scope` notice; it cannot be started by hand or by a token, and a scheduled run fails for that host wherever the server resolves the host itself. */
@@ -8709,6 +8711,15 @@ export interface components {
              *       when a script of that name is there for the job again (the next
              *       sync joins it), when the job is saved on another script, or when
              *       the job is removed.
+             *     - `job_without_scope` — v2.5.3: an agency's jobs built in the app
+             *       that have no scope, made before v2.5.3. Since v2.5.3 every job
+             *       names one of its agency's scopes (the composer answers 422
+             *       otherwise), and a start of one with no scope is refused when its
+             *       script is the agency's. The detail names the jobs (the first
+             *       ten, and how many more) and the way out: the agency's composers
+             *       give each a scope (editing one is compose on its agency); until
+             *       then a person may run one on one of the agency's scopes. Subject: the agency's id. Filed under that
+             *       agency. It clears when the agency has none.
              *     - `grant_group_unlisted` — an access grant of an agency names a
              *       directory group that is not on the agency's group list (v2.5.0,
              *       GA-2). The lists started empty, so on the upgrade every agency
@@ -9024,7 +9035,7 @@ export interface components {
             triggerJobs: boolean;
             /** @description Union: the caller may stop runs SOMEWHERE. Never a route gate. */
             killJobs: boolean;
-            /** @description AF-2 — the caller may author an ALL-scoped (unscoped) job or workflow. Only an unrestricted compose grant qualifies, because a scheduled fire of an unbound job runs scope-unchecked (RB-30). The composer reads this to withhold the "All agencies (global)" scope option rather than teaching the rule with a 403. */
+            /** @description AF-2 — the caller holds compose on an unrestricted grant: may save a workflow that runs a job with no scope (RB-30). Since v2.5.3 (CA7) no job is authored with no scope, by anyone, and a job with no scope made before is edited or deleted by compose on its own agency. Until v2.5.3 the composer read this flag to offer the "No scope" option. */
             composeUnbound: boolean;
             /** @description Scope REACH, not a permission: the caller holds a grant covering every scope. Drives the Run dialog's unscoped-job binding path (RB-26/RB-29). */
             unrestricted: boolean;
@@ -9910,7 +9921,7 @@ export interface components {
             agencies: string[];
             /** @description The shadowed global row's membership, for contrast. */
             globalAgencies: string[];
-            /** @description AF-2 — the caller may author an ALL-scoped (unscoped) job or workflow. Only an unrestricted compose grant qualifies, because a scheduled fire of an unbound job runs scope-unchecked (RB-30). The composer reads this to withhold the "All agencies (global)" scope option rather than teaching the rule with a 403. */
+            /** @description AF-2 — the caller holds compose on an unrestricted grant: may save a workflow that runs a job with no scope (RB-30). Since v2.5.3 (CA7) no job is authored with no scope, by anyone, and a job with no scope made before is edited or deleted by compose on its own agency. Until v2.5.3 the composer read this flag to offer the "No scope" option. */
             composeUnbound?: boolean;
             /**
              * @description True when the shadowing row is Global's, so it wins for EVERY

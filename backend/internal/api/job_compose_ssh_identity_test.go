@@ -52,7 +52,7 @@ func TestJobComposeSSHIdentity(t *testing.T) {
 	// Create with an identity: persisted + echoed in the create response.
 	resp, done := do(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
 		"name": "id-compose", "scriptRef": "backup-db", "sshUser": "deploy", "sshCredential": "prod-key",
-		"scope": "",
+		"scope": workScope,
 	})
 	var created struct {
 		ID            int64   `json:"id"`
@@ -79,7 +79,7 @@ func TestJobComposeSSHIdentity(t *testing.T) {
 	// Unknown label — hard 422 at authoring time (unlike the advisory Git sync).
 	resp, done = do(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
 		"name": "id-bad", "scriptRef": "backup-db", "sshCredential": "no-such-key",
-		"scope": "",
+		"scope": workScope,
 	})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("unknown label = %d, want 422", resp.StatusCode)
@@ -89,7 +89,7 @@ func TestJobComposeSSHIdentity(t *testing.T) {
 	// Bad username charset — hard 422.
 	resp, done = do(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
 		"name": "id-bad2", "scriptRef": "backup-db", "sshUser": "bad user;rm",
-		"scope": "",
+		"scope": workScope,
 	})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("bad username = %d, want 422", resp.StatusCode)
@@ -100,7 +100,7 @@ func TestJobComposeSSHIdentity(t *testing.T) {
 	// delivered as connection extra-vars, which beat the scope inventory.
 	resp, done = do(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
 		"name": "id-ans", "scriptRef": "site-play", "sshUser": "deploy",
-		"scope": "",
+		"scope": workScope,
 	})
 	if resp.StatusCode != http.StatusCreated {
 		t.Errorf("ansible job with identity = %d, want 201", resp.StatusCode)
@@ -119,7 +119,7 @@ func TestJobComposeSSHIdentity(t *testing.T) {
 	// could only no-op while the UI showed it as applied.
 	resp, done = do(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
 		"name": "id-tf", "scriptRef": "infra-tf", "sshUser": "deploy",
-		"scope": "",
+		"scope": workScope,
 	})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("terraform job with identity = %d, want 422", resp.StatusCode)
@@ -129,7 +129,7 @@ func TestJobComposeSSHIdentity(t *testing.T) {
 	// JC1 full-replace PUT with empty fields CLEARS the identity.
 	resp, done = do(http.MethodPut, ts.URL+"/api/v1/jobs/"+itoa(created.ID), map[string]any{
 		"name": "id-compose", "scriptRef": "backup-db",
-		"scope": "",
+		"scope": workScope,
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("clearing PUT = %d, want 200", resp.StatusCode)
@@ -183,7 +183,7 @@ func TestJobComposeEnvPassthrough(t *testing.T) {
 	// git sync path writes.
 	resp, done := do(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
 		"name": "ep-ans", "scriptRef": "site-play",
-		"scope":          "",
+		"scope":          workScope,
 		"envPassthrough": []string{"SITE_LICENCE_KEY", " VAULT_ADDR "},
 	})
 	if resp.StatusCode != http.StatusCreated {
@@ -202,7 +202,7 @@ func TestJobComposeEnvPassthrough(t *testing.T) {
 	// ssh-family: 422. A bash run's remote env is built entirely from its
 	// manifest, so accepting the field would be a silent no-op.
 	resp, done = do(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
-		"name": "ep-bash", "scriptRef": "backup-db", "scope": "", "envPassthrough": []string{"FOO"},
+		"name": "ep-bash", "scriptRef": "backup-db", "scope": workScope, "envPassthrough": []string{"FOO"},
 	})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("bash job with envPassthrough = %d, want 422", resp.StatusCode)
@@ -212,7 +212,7 @@ func TestJobComposeEnvPassthrough(t *testing.T) {
 	// CRONOMICON_* is reserved: those are references Cronomicon injects, not variables
 	// read from the runner's environment.
 	resp, done = do(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
-		"name": "ep-res", "scriptRef": "site-play", "scope": "", "envPassthrough": []string{"CRONOMICON_SECRET_X"},
+		"name": "ep-res", "scriptRef": "site-play", "scope": workScope, "envPassthrough": []string{"CRONOMICON_SECRET_X"},
 	})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("reserved envPassthrough name = %d, want 422", resp.StatusCode)
@@ -221,7 +221,7 @@ func TestJobComposeEnvPassthrough(t *testing.T) {
 
 	// Not a valid env-var name at all.
 	resp, done = do(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
-		"name": "ep-bad", "scriptRef": "site-play", "scope": "", "envPassthrough": []string{"9nope"},
+		"name": "ep-bad", "scriptRef": "site-play", "scope": workScope, "envPassthrough": []string{"9nope"},
 	})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("invalid envPassthrough name = %d, want 422", resp.StatusCode)

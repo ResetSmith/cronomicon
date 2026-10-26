@@ -225,7 +225,7 @@ func TestComposeRejectsBadCalendarBindings(t *testing.T) {
 
 	composeJob := func(name string, entry map[string]any) (int, map[string]any) {
 		return api.do(http.MethodPost, "/api/v1/jobs", map[string]any{
-			"name": name, "scriptRef": "s1", "scope": "", "schedules": []map[string]any{entry},
+			"name": name, "scriptRef": "s1", "scope": workScope, "schedules": []map[string]any{entry},
 		})
 	}
 

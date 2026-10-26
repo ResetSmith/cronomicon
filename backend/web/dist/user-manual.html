@@ -2604,8 +2604,9 @@
                         projection</strong> (groups + host vars) shown read-only, degrading loudly to a “Preview
                     unavailable” notice rather than guessing. Every scope <strong>belongs to exactly one
                         Agency</strong> — a department's own space — and only a runner that agency owns can execute
-                    its jobs. A scope's name is unique within its agency. A job with no scope at all is its own
-                    agency's, and so is its run: any runner that serves the agency may take it. Central owns no
+                    its jobs. A scope's name is unique within its agency. Every job names a scope (since 2.5.3);
+                    one made before with no scope at all is its own agency's, and so is its run: any runner that
+                    serves the agency may take it. Central owns no
                     scope (it runs nothing). Within its agency a scope can be narrowed further by
                     <strong>binding it to runners</strong>. The full Scopes view reference is in <a
                         href="#envvars">§11</a>.</p>
@@ -4018,8 +4019,8 @@
                     its chip (<em>offline</em>, <em>deregistered</em>, <em>not in this scope's agency</em>). When the
                     scope is not bound it states the rule instead: <em>“Any runner that serves its scope”</em> for a
                     shell job (an agent, or the local runner where it is given to the scope's agency and switched
-                    on), and <em>“Any agent that serves its scope”</em> for ansible. A job with no scope is its
-                    agency's, and any runner that serves the agency may take its run. The <strong>SSH key</strong> field
+                    on), and <em>“Any agent that serves its scope”</em> for ansible. A job with no scope (made
+                    before 2.5.3) is its agency's, and any runner that serves the agency may take its run. The <strong>SSH key</strong> field
                     beside it completes the answer: a job that binds a key is taken by an agent only.</p>
                 <p>It is <strong>reported here, not set here</strong>, and it is not set on the job at
                     all. Which runners reach a scope's machines is a fact about the scope, so an administrator records
@@ -4263,7 +4264,7 @@
                         <h4>Target scope</h4>
                         <p class="muted">Defaults to <em>“Job default ({scope})”</em>. Pick another of the job's agency's
                             scopes to redirect the run: it then targets that scope's hosts and is taken by a runner that
-                            serves <em>that</em> scope. A job with no scope of its own offers a <em>No scope</em>
+                            serves <em>that</em> scope. A job with no scope of its own (made before 2.5.3) offers a <em>No scope</em>
                             option to an unrestricted operator (the run is the job's agency's, taken by any runner
                             that serves the agency), and <em>Target scope (required)</em> to everyone else.
                             Overriding to a scope outside your <a
@@ -4306,8 +4307,8 @@
                             the local runner (this server, over SSH) where it is switched on and serves that
                             agency (it serves the one agency it is given to, <a href="#local-runner">§14.1</a>).</li>
                     </ul>
-                    <p class="muted">A run with no scope is the job's agency's: any runner that serves the agency
-                        may take it. The
+                    <p class="muted">A run with no scope (of a job made before 2.5.3) is the job's agency's: any
+                        runner that serves the agency may take it. The
                         collapsed <em>Method</em> summary (<em>on any runner</em> / <em>on an agent</em> / <em>on
                             runner-dmz-01</em>) and the <em>This run</em> rail (<strong>Runs on</strong>, with the note
                         <em>bound to the scope</em>) carry the same answer, so the destination is on screen before you
@@ -5459,7 +5460,14 @@
                                 <td>A <strong>searchable, creatable combobox</strong> (placeholder <em>“Pick or type a
                                         scope…”</em>): filter the agency's scopes, or type a custom one and commit it via
                                     the <strong>Use “…”</strong> row (Enter or click commits; Esc/blur reverts). A
-                                    scope name is looked up in the job's own agency at run time.
+                                    scope name is looked up in the job's own agency at run time. <strong>Every job
+                                        names a scope</strong> (since 2.5.3): there is no &ldquo;No scope&rdquo; option,
+                                    and a job is not saved without one. For work on the runner itself (an Ansible play
+                                    for <code>localhost</code>, a call to an API), use a scope whose one host is the
+                                    runner (<code>runner ansible_host=127.0.0.1 ansible_connection=local</code>); for a
+                                    job that pins its target host, a scope that lists no hosts. A job with no scope made
+                                    before 2.5.3 opens with the field empty and a warning, and is saved only once it has
+                                    a scope (anyone who may create jobs in its agency may edit one).
                                 </td>
                             </tr>
                             <tr>

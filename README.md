@@ -100,6 +100,17 @@ Every release publishes four images to the GitHub Container Registry. They are p
 
 Each image is tagged with its full version (`2.5.2`), its minor version (`2.5`) and `latest`. **Pin the full version** in production so that upgrades happen only when you choose.
 
+**Verifying a release.** Since 2.5.3 every image carries a build-provenance attestation and a signed SBOM, made by this repository's release workflow from the tag's commit, and the GitHub Release carries each image's SBOM and Trivy report and the source's `govulncheck` and `npm audit` reports. With the [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify oci://ghcr.io/resetsmith/cronomicon:2.5.3 --repo ResetSmith/cronomicon
+gh attestation verify oci://ghcr.io/resetsmith/cronomicon:2.5.3 --repo ResetSmith/cronomicon \
+  --predicate-type https://spdx.dev/Document/v2.3          # the SBOM
+gh attestation verify cronomicon-docs-2.5.3.zip --repo ResetSmith/cronomicon
+```
+
+The scan reports are as of the release; scan the image again for what has been found since.
+
 #### Step 1: Prepare the host
 
 Create a volume for Cronomicon's data and a directory for its configuration:

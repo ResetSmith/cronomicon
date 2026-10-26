@@ -118,7 +118,9 @@ RUN mkdir -p /out/var/lib/cronomicon && chown 65532:65532 /out/var/lib/cronomico
 # (deploy/ci-validate-template.yml) names it. A stage before the last, so a
 # plain build is still the server.
 FROM debian:bookworm-slim AS validate
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+# `apt-get upgrade` applies the security fixes Debian has published since the
+# base image was cut (C13: the first scan found perl-base's, fixed and pending).
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/cronomicon /usr/local/bin/cronomicon
 

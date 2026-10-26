@@ -56,7 +56,7 @@ func TestAnInAppJobOnAProjectIsACheckoutJob(t *testing.T) {
 
 	client, csrf := devLoginWithCSRF(t, ts)
 	workInAgency(t, pool, client)
-	b, _ := json.Marshal(map[string]any{"name": "proj-app", "scriptRef": "proj", "scope": ""})
+	b, _ := json.Marshal(map[string]any{"name": "proj-app", "scriptRef": "proj", "scope": workScope})
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/jobs", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrf)
@@ -111,7 +111,7 @@ func TestAnInAppJobOnAProjectIsACheckoutJob(t *testing.T) {
 	// marker follows the script the job is on.
 	exec(`INSERT INTO scripts(uid, repo_id, name, run_type, script_path, content_hash, synced_at)
 	      VALUES('s-plain',?,'plain','ansible','scripts/plain.yml','sha256:q','t')`, workRepo)
-	b, _ = json.Marshal(map[string]any{"name": "proj-app", "scriptRef": "plain", "scope": ""})
+	b, _ = json.Marshal(map[string]any{"name": "proj-app", "scriptRef": "plain", "scope": workScope})
 	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/jobs/"+job("cronomicon", "proj-app", "rowid"), bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrf)

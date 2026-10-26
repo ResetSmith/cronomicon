@@ -67,10 +67,11 @@ func (s *Server) mountJobCompose(mux *http.ServeMux) {
 // schedules are authored through THIS endpoint, so widening it is exactly the move
 // RB-30 warned about. Two things keep the bypass unreachable:
 //
-//  1. An All-scoped (unscoped) job is admin-only — requireComposeScope routes the
-//     empty scope through Identity.CanUnbound, which only an unrestricted grant
-//     satisfies. A compose-granted non-admin cannot create one, edit one, or move a
-//     job to or from All, so they can never attach a schedule to an unbound job.
+//  1. No job is composed unscoped since 2.5.3 (CA7): writeComposedJob refuses
+//     an empty scope for everyone, so nobody moves a job to no scope or keeps
+//     one there, and no schedule is attached to an unbound job. A leftover
+//     from before is edited (to give it a scope) or deleted by its agency's
+//     composers (requireComposeJobLeaving).
 //  2. The SHARED-object authoring surfaces (schedule-defs, calendars, reactions,
 //     revisions/recycle-bin) stay on requireComposeAdmin — see its note.
 //
@@ -104,7 +105,10 @@ func isComposeAdmin(id auth.Identity) bool {
 //
 // The empty scope is NOT "no restriction" here — it is the All pool, and it routes
 // through CanUnbound so only an unrestricted grant passes (RB-30 item 1, and the
-// same rule RB-26 applies to running an unscoped job). Every other scope asks
+// same rule RB-26 applies to running an unscoped job). Since 2.5.3 (CA7) no job
+// is written with an empty scope; the branch gates a workflow step that runs a
+// leftover job with none (a job's own edit and delete ask
+// requireComposeJobLeaving). Every other scope asks
 // Can(compose, scope), which is per-grant: a FIN composer passes for a FIN scope
 // and fails for a Tax one, rather than passing because they hold compose somewhere.
 //
@@ -123,6 +127,31 @@ func (s *Server) requireComposeScope(w http.ResponseWriter, r *http.Request, id 
 		return s.requireCan(w, r, id, auth.PermCompose, agency, auth.AllScopes)
 	}
 	return s.requireCan(w, r, id, auth.PermCompose, agency, scope)
+}
+
+// requireComposeJobLeaving is requireComposeScope for a job that is being
+// edited or deleted, asked of the scope it has now. A job with no scope (a
+// leftover from before 2.5.3, CA7) is its owner agency's composers' to edit or
+// delete, as the job_without_scope notice tells them (the owner, 2026-10-26):
+// an edit must give it a scope (writeComposedJob refuses an empty one), so
+// this never lets a departmental composer keep an unbound job or attach a
+// schedule to one (RB-30). Central's (owner global) stays a global
+// administrator's, through CanAgency. A workflow that runs such a job keeps
+// requireComposeScope's every-agency rule.
+func (s *Server) requireComposeJobLeaving(w http.ResponseWriter, r *http.Request, id auth.Identity, agency, scope string) bool {
+	if strings.TrimSpace(scope) != "" {
+		return s.requireComposeScope(w, r, id, agency, scope)
+	}
+	if id.CanAgency(auth.PermCompose, agency) {
+		return true
+	}
+	if s.auth != nil {
+		s.auth.AuditDenied(r, auditActor(r), "insufficient_permission", auth.PermCompose,
+			auditDetails(r, "insufficient permissions for "+auth.PermCompose+" on the agency of a job with no scope"))
+	}
+	httpx.Fail(w, http.StatusForbidden, "forbidden",
+		"insufficient permissions: "+auth.PermCompose+" is required on this job's agency")
+	return false
 }
 
 var composeNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
@@ -261,7 +290,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	// the one case the caller can already see: an exact same-scope binned row,
 	// where the recycle-bin hint is actionable rather than an oracle.
 	if in.Scope == nil {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "scope is required (use \"\" for All)")
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", scopeRequiredMessage)
 		return
 	}
 	owner, ok := s.composeOwnerFor(w, r, id, in)
@@ -323,6 +352,8 @@ func (s *Server) composeOwnerResolved(w http.ResponseWriter, r *http.Request, id
 	}
 	scope := in.scopeOf()
 	if strings.TrimSpace(scope) == "" {
+		// No agency named and no scope: Central's, which composeOwnerFor refuses
+		// (central_runs_nothing) before writeComposedJob refuses the empty scope.
 		return agencyid.Global, true
 	}
 	rows, err := s.db.QueryContext(r.Context(), `SELECT owner_agency FROM scopes WHERE name = ? ORDER BY owner_agency`, scope)
@@ -377,7 +408,7 @@ func (s *Server) updateJob(w http.ResponseWriter, r *http.Request) {
 	// arriving at; both must pass. Only the incoming check would let a FIN
 	// composer take over an All or Tax job by rewriting its scope to FIN, and only
 	// the existing check would let them push a FIN job out into All.
-	if !s.requireComposeScope(w, r, id, existing.OwnerAgency, deref(existing.Scope)) {
+	if !s.requireComposeJobLeaving(w, r, id, existing.OwnerAgency, deref(existing.Scope)) {
 		return
 	}
 	var in jobComposeInput
@@ -415,7 +446,7 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// AF-2 — deleting is authoring: same per-scope authority as editing.
-	if !s.requireComposeScope(w, r, id, existing.OwnerAgency, deref(existing.Scope)) {
+	if !s.requireComposeJobLeaving(w, r, id, existing.OwnerAgency, deref(existing.Scope)) {
 		return
 	}
 	// RX-24 — refuse while reactions WATCH this job, unless forced. Its own code,
@@ -474,10 +505,16 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// scopeOf reads the validated scope. Safe only AFTER writeComposedJob's nil check
-// (AF-1): every caller runs downstream of it, and a nil here would mean the guard
-// was bypassed rather than that the job is global — so it collapses to "" (All)
-// instead of panicking, matching what the storage layer does with an empty scope.
+// scopeRequiredMessage is the refusal of a job with no scope (2.5.3, CA7): it
+// names the two shapes a scopeless job was used for.
+const scopeRequiredMessage = "scope is required: every job names one of its agency's scopes (since 2.5.3). " +
+	"For work on the runner itself, use a scope whose one host is the runner " +
+	"(an inventory line such as \"runner ansible_host=127.0.0.1 ansible_connection=local\"); " +
+	"for a job that pins its target host, a scope that lists no hosts"
+
+// scopeOf reads the scope as sent. Before writeComposedJob's check it may be
+// nil or "" (the owner is placed first, composeOwnerFor); after it, it names
+// a scope. A nil collapses to "" rather than panicking.
 func (in jobComposeInput) scopeOf() string {
 	if in.Scope == nil {
 		return ""
@@ -510,16 +547,17 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "scriptRef is required")
 		return
 	}
-	// AF-1 — the agency assignment must be a CHOICE. A job's scope decides which
-	// agencies can see it (scopeWhereFragment filters restricted callers to their
-	// granted scopes, and a NULL scope passes for everyone), so a job that is
-	// global merely because nobody filled the field is invisible policy. Both
-	// answers are accepted — a named scope, or "" for a deliberate All — and only
-	// SILENCE is refused. The message names the escape so this never reads as
-	// "global jobs are banned".
-	if in.Scope == nil {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
-			`scope is required: name a scope, or send "" to place this job in All (global — visible to every agency)`)
+	// Every job names a scope (2.5.3, CA7). From AF-1 until 2.5.3 the scope had
+	// to be a CHOICE, and "" was accepted as a deliberate All. Since 2.5.3 a job
+	// with no scope has nowhere to run: its agency's repository refuses one
+	// (GR-14), and a job built here on its agency's script is refused at every
+	// run (runref.RepoScopeMismatch). So "" is refused like silence, on create
+	// and on edit, for everyone, before any grant is asked. What a scopeless
+	// job was for has a scope's shape: work on the runner itself is a scope
+	// whose one host is the runner (ansible_connection=local), and a job that
+	// pins its host is a scope that lists no hosts.
+	if in.Scope == nil || strings.TrimSpace(*in.Scope) == "" {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", scopeRequiredMessage)
 		return
 	}
 	// AF-2 — may this actor author INTO the scope being written? The route gate

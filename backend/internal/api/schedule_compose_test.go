@@ -125,7 +125,7 @@ func TestScheduleComposeCRUD(t *testing.T) {
 
 	// ── A referencing cronomicon job binds 'nightly' (so we can prove propagation) ─────
 	resp = do(http.MethodPost, ts.URL+"/api/v1/jobs",
-		map[string]any{"name": "backup-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"nightly"}}, true)
+		map[string]any{"name": "backup-job", "scriptRef": "backup-db", "scope": workScope, "scheduleRefs": []string{"nightly"}}, true)
 	code = resp.StatusCode
 	resp.Body.Close()
 	if code != http.StatusCreated {

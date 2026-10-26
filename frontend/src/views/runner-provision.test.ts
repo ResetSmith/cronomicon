@@ -183,6 +183,17 @@ describe("provisionDockerRun", () => {
     expect(provisionDockerRun(o, "dev").trim().endsWith("ghcr.io/resetsmith/cronomicon-runner:latest")).toBe(true);
   });
 
+  // 2.5.0 C13 (first shipped in 2.5.3): the fat image no longer carries terraform, so a command for a
+  // terraform agent says to build an image from it, or to use a host that has it.
+  it("says that no published image has terraform when terraform is chosen", () => {
+    const o = defaultProvisionOptions(ORIGIN);
+    const tf = provisionDockerRun({ ...o, capabilities: ["terraform"] }, "2.5.3");
+    expect(tf).toContain("# terraform: no published image has it (2.5.3)");
+    expect(tf.trim().endsWith("ghcr.io/resetsmith/cronomicon-runner-fat:2.5.3")).toBe(true);
+    expect(provisionDockerRun({ ...o, capabilities: ["ansible"] }, "2.5.3")).not.toContain("terraform");
+    expect(provisionDockerRun(o, "2.5.3")).toContain("only the -fat image has ansible.");
+  });
+
   it("default (auto-detect): slim image, no capabilities env, detection note", () => {
     const cmd = provisionDockerRun(defaultProvisionOptions(ORIGIN));
     expect(cmd).toContain("docker volume create cronomicon-runner-data");

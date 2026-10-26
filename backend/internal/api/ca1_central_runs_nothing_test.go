@@ -13,16 +13,28 @@ import (
 // moved into it, through the app (CA-4), and what it owns from before is
 // refused when it would run (CA-5).
 
-// The composer's scopeless job, as it stays (CA-5, first step): working in an
-// agency, a global administrator's job with no scope is that agency's. It never
-// was Central's there; only the fallback to Central goes.
-func TestCA1AScopelessJobComposedInAnAgencyIsThatAgencys(t *testing.T) {
+// The composer's scopeless job (CA-5, first step, until CA7): working in an
+// agency, a global administrator's job with no scope was that agency's. Since
+// CA7 every job names a scope, so it is refused, a global administrator's too,
+// and nothing is stored.
+func TestCA7AScopelessJobIsRefusedEvenForAGlobalAdministrator(t *testing.T) {
 	h, pool := gateServer(t)
 	seedRHScript(t, pool) // Work, and deploy.sh in its repository, where its in-app jobs find it
 	r := gateReqWithHeader(t, h, http.MethodPost, "/api/v1/jobs", gRoot,
 		`{"name":"ca1-work-noscope","scope":"","scriptRef":"deploy.sh"}`, agencyctx.Header, workAgency)
+	if r.Code != http.StatusUnprocessableEntity || errCode(r.Body.Bytes()) != "validation_failed" ||
+		!strings.Contains(r.Body.String(), "every job names one of its agency's scopes") {
+		t.Fatalf("a scopeless job composed in Work by a global administrator = %d %s, want 422 naming the rule", r.Code, r.Body)
+	}
+	var n int
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM jobs WHERE name = 'ca1-work-noscope'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("%d jobs stored (%v), want none", n, err)
+	}
+	// Its scope, named, is taken: the job is Work's.
+	r = gateReqWithHeader(t, h, http.MethodPost, "/api/v1/jobs", gRoot,
+		`{"name":"ca1-work-noscope","scope":"`+workScope+`","scriptRef":"deploy.sh"}`, agencyctx.Header, workAgency)
 	if r.Code != http.StatusCreated {
-		t.Fatalf("a scopeless job composed in Work by a global administrator = %d %s, want 201", r.Code, r.Body)
+		t.Fatalf("the same job on %s = %d %s, want 201", workScope, r.Code, r.Body)
 	}
 	var owner string
 	if err := pool.QueryRow(`SELECT owner_agency FROM jobs WHERE name = 'ca1-work-noscope'`).Scan(&owner); err != nil || owner != workAgency {
@@ -147,17 +159,15 @@ func TestCA1ALeftoverOfCentralsIsRefusedWhenRun(t *testing.T) {
 	}
 }
 
-// RB-30, as it stands after CA-5: a job with no scope is its agency's, and only
-// a grant that reaches every agency authors one (requireComposeScope). The
-// tests that pinned the 403 for a restricted composer now meet the Central
-// refusal first (the review of CA1), so it is pinned here, in the composer's
-// own agency, where the Central refusal does not apply.
+// RB-30, as it stands after CA7: no grant authors a job with no scope. The
+// restricted composer's 403 (requireComposeScope) became the rule's 422, asked
+// before any grant, in the composer's own agency as everywhere.
 func TestCA1ARestrictedComposerStillCannotAuthorAScopelessJob(t *testing.T) {
 	h, pool := gateServer(t)
 	seedSwitcher(t, pool)
 	r := gateReqWithHeader(t, h, http.MethodPost, "/api/v1/jobs", gFinAdmin,
 		`{"name":"ca1-fin-noscope","scope":"","scriptRef":"deploy.sh"}`, agencyctx.Header, "ag:FIN")
-	if r.Code != http.StatusForbidden {
-		t.Errorf("FIN's administrator composing a scopeless job in FIN = %d %s, want 403", r.Code, r.Body)
+	if r.Code != http.StatusUnprocessableEntity || errCode(r.Body.Bytes()) != "validation_failed" {
+		t.Errorf("FIN's administrator composing a scopeless job in FIN = %d %s, want 422 validation_failed", r.Code, r.Body)
 	}
 }
