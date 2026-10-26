@@ -29,7 +29,7 @@ func TestComposeAndPauseStampSatelliteUIDs(t *testing.T) {
 	body := `{
 		"name": "uid-sat-job",
 		"scriptRef": "backup-db",
-		"scope": "",
+		"scope": "work-hosts",
 		"schedules": [{"name": "nightly", "cron": "0 2 * * *"}]
 	}`
 	req, _ := http.NewRequest("POST", ts.URL+"/api/v1/jobs", strings.NewReader(body))

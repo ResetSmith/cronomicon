@@ -86,7 +86,7 @@ func TestScheduleWindowRoundTripAndPropagation(t *testing.T) {
 	resp = do(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
 		"name":         "nightly-backup",
 		"scriptRef":    "backup-db",
-		"scope":        "",
+		"scope":        workScope,
 		"scheduleRefs": []string{"deferred"},
 	})
 	if resp.StatusCode != http.StatusCreated {
@@ -151,7 +151,7 @@ func TestJobComposeInlineScheduleWindow(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"name":      "inline-window-job",
 		"scriptRef": "backup-db",
-		"scope":     "",
+		"scope":     workScope,
 		"schedules": []map[string]any{
 			{"name": "deferred", "cron": "0 17 * * 3", "startAt": "2026-08-05T00:00:00Z"},
 		},
@@ -311,7 +311,7 @@ func TestScheduleIntervalModes(t *testing.T) {
 		t.Fatalf("seed script: %v", err)
 	}
 	body, _ := json.Marshal(map[string]any{
-		"name": "interval-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"every-ten-days"},
+		"name": "interval-job", "scriptRef": "backup-db", "scope": workScope, "scheduleRefs": []string{"every-ten-days"},
 	})
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/jobs", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

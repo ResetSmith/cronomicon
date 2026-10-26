@@ -309,7 +309,7 @@ func TestExplicitJobDeleteMintsAFreshCodeOnRecreate(t *testing.T) {
 
 	createJob := func(name string) int64 {
 		t.Helper()
-		b, _ := json.Marshal(map[string]any{"name": name, "scriptRef": "body", "scope": ""})
+		b, _ := json.Marshal(map[string]any{"name": name, "scriptRef": "body", "scope": workScope})
 		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/jobs", bytes.NewReader(b))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-CSRF-Token", csrf)

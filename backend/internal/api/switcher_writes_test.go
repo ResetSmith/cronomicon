@@ -84,8 +84,8 @@ func TestSwitcherACreateInAnAgencyIsThatAgencys(t *testing.T) {
 		t.Errorf("the calendar created in Global is %q's", o)
 	}
 
-	// A job with no scope, composed in FIN, is FIN's.
-	if c, b := in(gRoot, "ag:FIN", http.MethodPost, "/api/v1/jobs", `{"name":"s3-job","scope":"","scriptRef":"s0-fin-script.sh"}`); c != http.StatusCreated {
+	// A job composed in FIN, on the scope created there, is FIN's.
+	if c, b := in(gRoot, "ag:FIN", http.MethodPost, "/api/v1/jobs", `{"name":"s3-job","scope":"s3-scope","scriptRef":"s0-fin-script.sh"}`); c != http.StatusCreated {
 		t.Fatalf("a job created in FIN = %d %s, want 201", c, b)
 	}
 	if o := ownerOf(`SELECT owner_agency FROM jobs WHERE name = 's3-job'`); o != "ag:FIN" {

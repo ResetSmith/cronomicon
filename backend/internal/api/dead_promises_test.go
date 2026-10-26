@@ -104,7 +104,7 @@ func TestJobListCarriesNextRunAt(t *testing.T) {
 	seedRHScript(t, pool)
 	if code, b := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs", csrf, map[string]any{
 		"name": "billing", "scriptRef": "deploy.sh", "runType": "bash",
-		"scope":     "",
+		"scope":     workScope,
 		"schedules": []map[string]any{{"name": "nightly", "cron": "0 0 2 * * *"}},
 	}); code != http.StatusCreated {
 		t.Fatalf("create job = %d: %s", code, b)

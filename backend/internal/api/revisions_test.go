@@ -90,7 +90,7 @@ func TestRevisionsRecordEachWrite(t *testing.T) {
 	edit := func(desc string) {
 		code, body := rhDo(t, client, http.MethodPut, ts.URL+"/api/v1/jobs/"+itoa(id), csrf, map[string]any{
 			"name": "billing", "scriptRef": "deploy.sh", "runType": "bash", "description": desc,
-			"scope":     "",
+			"scope":     workScope,
 			"schedules": []map[string]any{{"name": "default", "cron": "0 2 * * *"}},
 		})
 		if code != http.StatusOK {
@@ -137,7 +137,7 @@ func TestRestoreRevisionRewritesTheDefinition(t *testing.T) {
 
 	code, body := rhDo(t, client, http.MethodPut, ts.URL+"/api/v1/jobs/"+itoa(id), csrf, map[string]any{
 		"name": "billing", "scriptRef": "deploy.sh", "runType": "bash", "description": "the regrettable edit",
-		"scope":     "",
+		"scope":     workScope,
 		"schedules": []map[string]any{{"name": "default", "cron": "0 2 * * *"}},
 	})
 	if code != http.StatusOK {
@@ -215,7 +215,7 @@ func TestSoftDeletedJobIsInertButRecoverable(t *testing.T) {
 		{"run", http.MethodPost, "/api/v1/jobs/" + itoa(id) + "/run", http.StatusNotFound, map[string]any{}},
 		{"pause", http.MethodPost, "/api/v1/jobs/" + itoa(id) + "/pause", http.StatusNotFound, map[string]any{}},
 		{"edit", http.MethodPut, "/api/v1/jobs/" + itoa(id), http.StatusConflict,
-			map[string]any{"name": "billing", "scriptRef": "deploy.sh", "scope": "", "runType": "bash"}},
+			map[string]any{"name": "billing", "scriptRef": "deploy.sh", "scope": workScope, "runType": "bash"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if code, b := rhDo(t, client, tc.method, ts.URL+tc.path, csrf, tc.body); code != tc.want {
@@ -288,7 +288,7 @@ func TestPurgeFreesTheNameAndRemovesTheRow(t *testing.T) {
 	// The name is free again.
 	if code, b := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs", csrf, map[string]any{
 		"name": "billing", "scriptRef": "deploy.sh", "runType": "bash",
-		"scope": "",
+		"scope": workScope,
 	}); code != http.StatusCreated {
 		t.Errorf("recreate after purge = %d, want 201: %s", code, b)
 	}
@@ -503,7 +503,7 @@ func TestRestoringABinnedScheduleRebuildsItsBindings(t *testing.T) {
 	}
 	if code, b := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs", csrf, map[string]any{
 		"name": "backup-job", "scriptRef": "deploy.sh", "runType": "bash",
-		"scope":        "",
+		"scope":        workScope,
 		"scheduleRefs": []string{"nightly"},
 	}); code != http.StatusCreated {
 		t.Fatalf("create referencing job = %d: %s", code, b)
@@ -605,7 +605,7 @@ func TestDeletingAScheduleNamesItsBinnedReferrers(t *testing.T) {
 	}
 	code, body := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs", csrf, map[string]any{
 		"name": "archiver", "scriptRef": "deploy.sh", "runType": "bash",
-		"scope":        "",
+		"scope":        workScope,
 		"scheduleRefs": []string{"monthly"},
 	})
 	if code != http.StatusCreated {
@@ -669,7 +669,7 @@ func TestRestoringAScheduleReplaysBinnedOwnersButNotPurgedOnes(t *testing.T) {
 	for _, name := range []string{"survivor", "purged", "doomed"} {
 		code, body := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs", csrf, map[string]any{
 			"name": name, "scriptRef": "deploy.sh", "runType": "bash",
-			"scope":        "",
+			"scope":        workScope,
 			"scheduleRefs": []string{"weekly"},
 		})
 		if code != http.StatusCreated {
@@ -766,7 +766,7 @@ func TestScheduleBindingSurvivesEitherRestoreOrder(t *testing.T) {
 			}
 			code, body := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs", csrf, map[string]any{
 				"name": "importer", "scriptRef": "deploy.sh", "runType": "bash",
-				"scope":        "",
+				"scope":        workScope,
 				"scheduleRefs": []string{"nightly"},
 			})
 			if code != http.StatusCreated {

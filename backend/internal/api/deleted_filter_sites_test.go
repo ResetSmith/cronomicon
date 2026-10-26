@@ -40,7 +40,7 @@ func binnedDefinitionRoutes() []defRoute {
 			func(j, _ int64) string { return "/api/v1/jobs/" + itoa(j) }, nil},
 		{"edit a job", http.MethodPut,
 			func(j, _ int64) string { return "/api/v1/jobs/" + itoa(j) },
-			map[string]any{"name": "billing", "scriptRef": "deploy.sh", "scope": "", "runType": "bash"}},
+			map[string]any{"name": "billing", "scriptRef": "deploy.sh", "scope": workScope, "runType": "bash"}},
 		{"run a job", http.MethodPost,
 			func(j, _ int64) string { return "/api/v1/jobs/" + itoa(j) + "/run" }, map[string]any{}},
 		{"pause a job", http.MethodPost,
@@ -176,7 +176,7 @@ func TestBinnedOwnerIsNotALiveScheduleReference(t *testing.T) {
 	}
 	code, body := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs", csrf, map[string]any{
 		"name": "importer", "scriptRef": "deploy.sh", "runType": "bash",
-		"scope":        "",
+		"scope":        workScope,
 		"scheduleRefs": []string{"nightly"},
 	})
 	if code != http.StatusCreated {

@@ -269,11 +269,13 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 	})
 
 	t.Run("move its own job into All", func(t *testing.T) {
+		// Since 2.5.3 (CA7) every job names a scope: emptying one is refused
+		// for everyone (it was 403 for a departmental composer).
 		finID := composeJobID(t, pool, "fin-job")
 		rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+finID, "fin-composers",
 			`{"name":"fin-job","scriptRef":"backup-db","scope":""}`)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("departmental composer moving a job into All = %d, want 403", rec.Code)
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "validation_failed" {
+			t.Errorf("departmental composer moving a job into All = %d %s, want 422 validation_failed", rec.Code, rec.Body)
 		}
 	})
 

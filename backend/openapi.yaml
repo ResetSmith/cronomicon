@@ -10364,14 +10364,16 @@ components:
         scope:
           type: string
           description: |
-            AF-1 — REQUIRED, and an empty string is a valid answer. A job's scope
-            decides which agencies can see it, so the assignment must be a choice:
-            a scope name places the job with that scope's agencies, and "" places
-            it in All (global — visible to every agency, stored as NULL). Omitting
-            the field, or sending null, is refused with a 422; only silence is
-            rejected, never a deliberate global job. Git-source jobs are a separate
-            contract: a YAML with no scope syncs as All with a warning rather than
-            being refused.
+            REQUIRED, and a scope's name (v2.5.3, CA7): every job names one of
+            its agency's scopes. Omitting the field, sending null, or sending ""
+            is refused with 422 `validation_failed`, on create and on edit, for
+            every caller; the message names the shapes to use instead (for work
+            on the runner itself, a scope whose one host is the runner with
+            `ansible_connection=local`; for a job that pins its target host, a
+            scope that lists no hosts). From AF-1 until v2.5.3 "" was accepted
+            as a deliberate job with no scope; one made before is saved again
+            only with a scope, and is listed by the `job_without_scope` notice.
+            An agency's repository refuses a job with no scope too (GR-14).
         targetHost:
           type: string
           description: >-
@@ -12912,6 +12914,15 @@ components:
               when a script of that name is there for the job again (the next
               sync joins it), when the job is saved on another script, or when
               the job is removed.
+            - `job_without_scope` — v2.5.3: an agency's jobs built in the app
+              that have no scope, made before v2.5.3. Since v2.5.3 every job
+              names one of its agency's scopes (the composer answers 422
+              otherwise), and a start of one with no scope is refused when its
+              script is the agency's. The detail names the jobs (the first
+              ten, and how many more) and the way out: a global administrator
+              gives each a scope; until then a person may run one on one of
+              the agency's scopes. Subject: the agency's id. Filed under that
+              agency. It clears when the agency has none.
             - `grant_group_unlisted` — an access grant of an agency names a
               directory group that is not on the agency's group list (v2.5.0,
               GA-2). The lists started empty, so on the upgrade every agency
@@ -13299,11 +13310,11 @@ components:
         composeUnbound:
           type: boolean
           description: >-
-            AF-2 — the caller may author an ALL-scoped (unscoped) job or workflow.
-            Only an unrestricted compose grant qualifies, because a scheduled fire
-            of an unbound job runs scope-unchecked (RB-30). The composer reads this
-            to withhold the "All agencies (global)" scope option rather than
-            teaching the rule with a 403.
+            AF-2 — the caller may edit or delete a job with no scope. Only an
+            unrestricted compose grant qualifies (RB-30). Since v2.5.3 (CA7) no
+            job is authored with no scope, by anyone; the flag concerns the
+            jobs with no scope made before. Until v2.5.3 the composer read it to
+            offer the "No scope" option.
         unrestricted:
           type: boolean
           description: >-
@@ -14414,11 +14425,11 @@ components:
         composeUnbound:
           type: boolean
           description: >-
-            AF-2 — the caller may author an ALL-scoped (unscoped) job or workflow.
-            Only an unrestricted compose grant qualifies, because a scheduled fire
-            of an unbound job runs scope-unchecked (RB-30). The composer reads this
-            to withhold the "All agencies (global)" scope option rather than
-            teaching the rule with a 403.
+            AF-2 — the caller may edit or delete a job with no scope. Only an
+            unrestricted compose grant qualifies (RB-30). Since v2.5.3 (CA7) no
+            job is authored with no scope, by anyone; the flag concerns the
+            jobs with no scope made before. Until v2.5.3 the composer read it to
+            offer the "No scope" option.
         unrestricted:
           type: boolean
           description: |
