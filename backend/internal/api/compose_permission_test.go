@@ -347,6 +347,16 @@ func TestAnAgencysComposersFixItsJobsWithNoScope(t *testing.T) {
 		`{"name":"all-job","scriptRef":"backup-db","scope":"fin-prod"}`); rec.Code != http.StatusForbidden {
 		t.Errorf("FIN's composer editing Central's job with no scope = %d, want 403", rec.Code)
 	}
+	// A compose grant that reaches every agency still passes the gate on it, as
+	// before CA7: its save meets the rule (422, not 403), and it may delete it.
+	allID := composeJobID(t, pool, "all-job")
+	if rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+allID, "unrestricted-composers",
+		`{"name":"all-job","scriptRef":"backup-db","scope":""}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("an unrestricted composer saving Central's job with no scope = %d %s, want 422 (the rule, past the gate)", rec.Code, rec.Body)
+	}
+	if rec := composeReq(t, h, http.MethodDelete, "/api/v1/jobs/"+allID, "unrestricted-composers", ""); rec.Code != http.StatusNoContent {
+		t.Errorf("an unrestricted composer deleting Central's job with no scope = %d %s, want 204", rec.Code, rec.Body)
+	}
 }
 
 // The shared authoring surfaces AF-2 left a global administrator's are gone:
