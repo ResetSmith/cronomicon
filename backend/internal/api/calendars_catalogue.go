@@ -280,8 +280,9 @@ func (s *Server) refuseCopyWrite(w http.ResponseWriter, r *http.Request, owner, 
 	if !origin.Valid || origin.String == "" {
 		return false
 	}
+	central := s.centralName(r.Context())
 	httpx.Fail(w, http.StatusConflict, "calendar_from_central",
-		"this calendar is a copy of one from Central: it changes only by an update from Central. Make it our own to edit it")
+		"this calendar is a copy of one from "+central+": it changes only by an update from "+central+". Make it our own to edit it")
 	return true
 }
 
@@ -367,7 +368,7 @@ func propagateCatalogue(ctx context.Context, tx *sql.Tx, v *catalogueView, next 
 		if !applied {
 			continue // no longer this calendar's copy
 		}
-		if err := auditCalendarTx(ctx, tx, cp.OwnerAgency, actor, "Updated", cp.Name, "Updated from Central's "+next.Name+" automatically"); err != nil {
+		if err := auditCalendarTx(ctx, tx, cp.OwnerAgency, actor, "Updated", cp.Name, "Updated from "+agencyid.CurrentGlobalName(ctx, tx)+"'s "+next.Name+" automatically"); err != nil {
 			return res, err
 		}
 		res.updated = append(res.updated, cp)
@@ -383,11 +384,11 @@ func (s *Server) afterCatalogueSave(r *http.Request, catName string, res catalog
 	}
 	for _, cp := range res.updated {
 		s.raiseCalendarAlert(r, notify.TriggerCalendarUpdated, cp.OwnerAgency, cp.Name, catName,
-			"was updated automatically from Central's "+catName)
+			"was updated automatically from "+s.centralName(r.Context())+"'s "+catName)
 	}
 	for _, cp := range res.behind {
 		s.raiseCalendarAlert(r, notify.TriggerCalendarUpdateAvailable, cp.OwnerAgency, cp.Name, catName,
-			"is behind Central's "+catName+", which has changed: an update is available")
+			"is behind "+s.centralName(r.Context())+"'s "+catName+", which has changed: an update is available")
 	}
 	// Every copy, not only those the save touched: one the save brought level
 	// again (a change undone) has its notice resolved (the review of CA4a).
@@ -418,7 +419,7 @@ func (s *Server) settleCopyNotices(ctx context.Context, uids []string) {
 		switch {
 		case l != nil && l.State == copyUpdateAvailable:
 			err = notices.Upsert(ctx, s.db, notices.KindCalendarUpdateAvailable, notices.Finding{
-				AgencyID: c.OwnerAgency, Subject: subject, Detail: updateAvailableDetail(c, l),
+				AgencyID: c.OwnerAgency, Subject: subject, Detail: updateAvailableDetail(c, l, agencyid.CurrentGlobalName(ctx, s.db)),
 			})
 			if err == nil {
 				err = notices.Resolve(ctx, s.db, notices.KindCalendarNoLongerOffered, subject)
@@ -426,7 +427,7 @@ func (s *Server) settleCopyNotices(ctx context.Context, uids []string) {
 		case l != nil && l.State == copyNoLongerOffered:
 			err = notices.Upsert(ctx, s.db, notices.KindCalendarNoLongerOffered, notices.Finding{
 				AgencyID: c.OwnerAgency, Subject: subject,
-				Detail: "Central no longer offers the calendar " + c.Name + " was copied from. It stays as it is, and is " +
+				Detail: agencyid.CurrentGlobalName(ctx, s.db) + " no longer offers the calendar " + c.Name + " was copied from. It stays as it is, and is " +
 					"read-only: make it our own to edit it (Schedules → Calendars), or delete it.",
 			})
 			if err == nil {
@@ -444,7 +445,7 @@ func (s *Server) settleCopyNotices(ctx context.Context, uids []string) {
 	}
 }
 
-func updateAvailableDetail(c *calendarRow, l *calendarOrigin) string {
+func updateAvailableDetail(c *calendarRow, l *calendarOrigin, central string) string {
 	var changes []string
 	if n := len(l.Pending.DaysAdded); n > 0 {
 		changes = append(changes, strconv.Itoa(n)+" day(s) added")
@@ -472,7 +473,7 @@ func updateAvailableDetail(c *calendarRow, l *calendarOrigin) string {
 			changes = append(changes, "suppressed runs are no longer recorded")
 		}
 	}
-	d := fmt.Sprintf("Central has changed %s, which the calendar %s is a copy of (%s). ", l.CatalogueName, c.Name, strings.Join(changes, ", "))
+	d := fmt.Sprintf("%s has changed %s, which the calendar %s is a copy of (%s). ", central, l.CatalogueName, c.Name, strings.Join(changes, ", "))
 	switch {
 	case l.Blocked != "" && l.UpdateMode == "auto":
 		d += "It updates automatically, but this update was not applied: " + l.Blocked + "."
@@ -491,8 +492,8 @@ func (s *Server) raiseCalendarAlert(r *http.Request, trigger, agency, name, catN
 	notify.New(s.db, s.cfg, s.log).AlertRaised(notify.AlertEvent{
 		Trigger: trigger, OwnerKind: "calendar", Agency: agency,
 		Subject: fmt.Sprintf("[Cronomicon] Calendar %s of %s %s", name, agencyName, what),
-		Detail: fmt.Sprintf("The calendar %s of %s %s.\nIts state is on Schedules → Calendars, under From Central.",
-			name, agencyName, what),
+		Detail: fmt.Sprintf("The calendar %s of %s %s.\nIts state is on Schedules → Calendars, under From %s.",
+			name, agencyName, what, s.centralName(r.Context())),
 	})
 }
 
@@ -529,7 +530,7 @@ func (s *Server) listCalendarCatalogue(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.IdentityFrom(r.Context())
 	if !composesSomewhere(id) {
 		s.denyEntityAgency(w, r, id, auth.PermCompose, auth.AllScopes,
-			"Central's calendar catalogue is for the agencies' calendar editors")
+			s.centralName(r.Context())+"'s calendar catalogue is for the agencies' calendar editors")
 		return
 	}
 	v, err := s.loadCatalogueView(r.Context())
@@ -596,7 +597,7 @@ func (s *Server) addCalendarFromCentral(w http.ResponseWriter, r *http.Request) 
 	}
 	cat := v.byUID[strings.TrimSpace(in.CatalogueUID)]
 	if cat == nil || cat.OwnerAgency != agencyid.Global {
-		httpx.Fail(w, http.StatusNotFound, "not_found", "Central's catalogue has no such calendar")
+		httpx.Fail(w, http.StatusNotFound, "not_found", s.centralName(r.Context())+"'s catalogue has no such calendar")
 		return
 	}
 	name := strings.TrimSpace(in.Name)
@@ -617,7 +618,7 @@ func (s *Server) addCalendarFromCentral(w http.ResponseWriter, r *http.Request) 
 	if acting {
 		if !id.GlobalAdmin(auth.PermCompose) {
 			s.denyEntityAgency(w, r, id, auth.PermCompose, auth.AllScopes,
-				"adding a calendar from Central to agencies is a global administrator's; an agency adds one working in it")
+				"adding a calendar from "+s.centralName(r.Context())+" to agencies is a global administrator's; an agency adds one working in it")
 			return
 		}
 		for _, a := range in.AgencyIDs {
@@ -687,7 +688,7 @@ func (s *Server) addCalendarFromCentral(w http.ResponseWriter, r *http.Request) 
 			ctx = auditlog.WithActingAgency(ctx, a) // IN-9: acting in each
 		}
 		if err := auditCalendarTx(ctx, tx, a, id.Email, "Created", name,
-			"Added from Central's "+cat.Name+" ("+strconv.Itoa(len(cat.Days))+" day(s), updates: "+in.UpdateMode+")"); err != nil {
+			"Added from "+s.centralName(r.Context())+"'s "+cat.Name+" ("+strconv.Itoa(len(cat.Days))+" day(s), updates: "+in.UpdateMode+")"); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
@@ -730,15 +731,22 @@ func (s *Server) copyOrRefuse(w http.ResponseWriter, r *http.Request) (*catalogu
 	}
 	l := v.linkOf(c, v.catalogueOf(c))
 	if l == nil {
-		httpx.Fail(w, http.StatusConflict, "not_from_central", "this calendar is the agency's own, not a copy of one from Central")
+		httpx.Fail(w, http.StatusConflict, "not_from_central", "this calendar is the agency's own, not a copy of one from "+s.centralName(r.Context()))
 		return nil, nil, nil
 	}
 	return v, c, l
 }
 
-func failNoLongerOffered(w http.ResponseWriter) {
+// centralName is the built-in agency's name now, for a message: never the
+// literal (2.5.2 GR), since an installation may call it Global, Central,
+// Administration or anything a global administrator chose.
+func (s *Server) centralName(ctx context.Context) string {
+	return agencyid.CurrentGlobalName(ctx, s.db)
+}
+
+func failNoLongerOffered(w http.ResponseWriter, central string) {
 	httpx.Fail(w, http.StatusConflict, "calendar_no_longer_offered",
-		"Central no longer offers the calendar this one was copied from: it can be made our own, or deleted")
+		central+" no longer offers the calendar this one was copied from: it can be made our own, or deleted")
 }
 
 // updateCalendarFromCentral is Update (CA-28): the copy takes the catalogue
@@ -752,7 +760,7 @@ func (s *Server) updateCalendarFromCentral(w http.ResponseWriter, r *http.Reques
 	}
 	switch {
 	case l.State == copyNoLongerOffered:
-		failNoLongerOffered(w)
+		failNoLongerOffered(w, s.centralName(r.Context()))
 		return
 	case l.State == copyUpToDate:
 		s.settleCopyNotices(r.Context(), []string{c.UID}) // a notice left from before is resolved
@@ -777,7 +785,7 @@ func (s *Server) updateCalendarFromCentral(w http.ResponseWriter, r *http.Reques
 		failCopyChanged(w)
 		return
 	}
-	if err := auditCalendarTx(r.Context(), tx, c.OwnerAgency, id.Email, "Updated", c.Name, "Updated from Central's "+cat.Name); err != nil {
+	if err := auditCalendarTx(r.Context(), tx, c.OwnerAgency, id.Email, "Updated", c.Name, "Updated from "+s.centralName(r.Context())+"'s "+cat.Name); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -806,7 +814,7 @@ func (s *Server) setCalendarUpdateMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if l.State == copyNoLongerOffered {
-		failNoLongerOffered(w)
+		failNoLongerOffered(w, s.centralName(r.Context()))
 		return
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
@@ -825,7 +833,7 @@ func (s *Server) setCalendarUpdateMode(w http.ResponseWriter, r *http.Request) {
 		failCopyChanged(w)
 		return
 	}
-	summary := "Updates from Central: " + map[string]string{"ask": "ask", "auto": "automatic"}[body.UpdateMode]
+	summary := "Updates from " + s.centralName(r.Context()) + ": " + map[string]string{"ask": "ask", "auto": "automatic"}[body.UpdateMode]
 	if body.UpdateMode == "auto" && l.State == copyUpdateAvailable && l.Blocked == "" {
 		cat := v.catalogueOf(c)
 		if applied, err := applyFrom(r.Context(), tx, c, cat, id.Email, now); err != nil {
@@ -835,7 +843,7 @@ func (s *Server) setCalendarUpdateMode(w http.ResponseWriter, r *http.Request) {
 			failCopyChanged(w)
 			return
 		}
-		summary += "; updated from Central's " + cat.Name
+		summary += "; updated from " + s.centralName(r.Context()) + "'s " + cat.Name
 	}
 	if err := auditCalendarTx(r.Context(), tx, c.OwnerAgency, id.Email, "Updated", c.Name, summary); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -865,9 +873,9 @@ func (s *Server) detachCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	from := "a calendar Central no longer offers"
+	from := "a calendar " + s.centralName(r.Context()) + " no longer offers"
 	if l.CatalogueName != "" {
-		from = "Central's " + l.CatalogueName
+		from = s.centralName(r.Context()) + "'s " + l.CatalogueName
 	}
 	s.auditCalendar(r, c.OwnerAgency, id.Email, "Updated", c.Name, "Made our own (it was a copy of "+from+")")
 	s.settleCopyNotices(r.Context(), []string{c.UID})
@@ -881,7 +889,7 @@ func (s *Server) detachCalendar(w http.ResponseWriter, r *http.Request) {
 func (s *Server) pushCatalogueCalendar(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.IdentityFrom(r.Context())
 	if !id.GlobalAdmin(auth.PermCompose) {
-		s.denyEntityAgency(w, r, id, auth.PermCompose, auth.AllScopes, "pushing an update from Central is a global administrator's")
+		s.denyEntityAgency(w, r, id, auth.PermCompose, auth.AllScopes, "pushing an update from "+s.centralName(r.Context())+" is a global administrator's")
 		return
 	}
 	var body struct {
@@ -898,7 +906,7 @@ func (s *Server) pushCatalogueCalendar(w http.ResponseWriter, r *http.Request) {
 	}
 	cat := v.byUID[r.PathValue("uid")]
 	if cat == nil || cat.OwnerAgency != agencyid.Global {
-		httpx.Fail(w, http.StatusNotFound, "not_found", "Central's catalogue has no such calendar")
+		httpx.Fail(w, http.StatusNotFound, "not_found", s.centralName(r.Context())+"'s catalogue has no such calendar")
 		return
 	}
 	type pushed struct {
@@ -960,7 +968,7 @@ func (s *Server) pushCatalogueCalendar(w http.ResponseWriter, r *http.Request) {
 			}
 			done = append(done, cp)
 			ctx := auditlog.WithActingAgency(r.Context(), cp.OwnerAgency) // IN-9
-			if err := auditCalendarTx(ctx, tx, cp.OwnerAgency, id.Email, "Updated", cp.Name, "Updated from Central's "+cat.Name+" (pushed)"); err != nil {
+			if err := auditCalendarTx(ctx, tx, cp.OwnerAgency, id.Email, "Updated", cp.Name, "Updated from "+s.centralName(r.Context())+"'s "+cat.Name+" (pushed)"); err != nil {
 				httpx.Fail500(w, s.log, "db_error", err)
 				return
 			}
@@ -979,7 +987,7 @@ func (s *Server) pushCatalogueCalendar(w http.ResponseWriter, r *http.Request) {
 	for _, cp := range apply {
 		uids = append(uids, cp.UID)
 		s.raiseCalendarAlert(r, notify.TriggerCalendarUpdated, cp.OwnerAgency, cp.Name, cat.Name,
-			"was updated from Central's "+cat.Name+" by a global administrator")
+			"was updated from "+s.centralName(r.Context())+"'s "+cat.Name+" by a global administrator")
 	}
 	s.settleCopyNotices(r.Context(), uids)
 	httpx.JSON(w, http.StatusOK, out)
