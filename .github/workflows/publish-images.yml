@@ -122,10 +122,13 @@ jobs:
           images: ${{ env.IMAGE_NS }}/${{ matrix.image }}
           flavor: |
             latest=${{ inputs.test && 'false' || 'auto' }}
+          # Each enable= must render true or false: on a tag push inputs.test is
+          # empty, and the bare inputs.test expression renders "enable=", which the
+          # action refuses (the v2.5.3 tag's first run). env.TEST is always one.
           tags: |
             type=semver,pattern={{version}},enable=${{ !inputs.test }}
             type=semver,pattern={{major}}.{{minor}},enable=${{ !inputs.test }}
-            type=sha,prefix=test-,format=short,enable=${{ inputs.test }}
+            type=sha,prefix=test-,format=short,enable=${{ env.TEST }}
           labels: |
             org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.description=${{ matrix.description }}
