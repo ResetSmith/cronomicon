@@ -108,12 +108,13 @@ var (
 )
 
 // NewInstallationAgencyName is what a new installation calls the built-in
-// agency (2.5.2 GR, the owner, 2026-10-21): the central team, not "everyone".
-// An existing installation keeps "Global" until a global administrator
-// renames it.
-const NewInstallationAgencyName = "Central"
+// agency: the installation's administration, which runs nothing (2.5.3, the
+// owner, 2026-10-27; 2.5.2 called it "Central"). An existing installation
+// keeps its name ("Global" from before 2.5.2, "Central" from 2.5.2) until a
+// global administrator renames it.
+const NewInstallationAgencyName = "Administration"
 
-// NameNewInstallationAgency names the built-in agency "Central" on a new
+// NameNewInstallationAgency names the built-in agency "Administration" on a new
 // installation: called once, at the first start, when the database was created
 // by that start (a migration cannot tell a new database from an empty one, so
 // boot does, from the schema version it started at). Through UpdateAgency, so
@@ -126,8 +127,9 @@ func NameNewInstallationAgency(ctx context.Context, database *sql.DB) error {
 }
 
 // GlobalAgencyName is the built-in agency's name now (2.5.2 GR): "Global" on
-// an installation from before 2.5.2 that has not renamed it, "Central" on a new
-// one, or whatever a global administrator called it. agencyid.GlobalName when
+// an installation from before 2.5.2 that has not renamed it, "Central" on one
+// made by 2.5.2, "Administration" on a new one, or whatever a global
+// administrator called it. agencyid.GlobalName when
 // the catalog cannot be read, as before.
 func GlobalAgencyName(ctx context.Context, database *sql.DB) string {
 	return agencyid.CurrentGlobalName(ctx, database)

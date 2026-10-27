@@ -15,11 +15,13 @@ before 1.0.0 are kept in their original prose form.
 
 ## [2.5.3] - 2026-10-24
 
-Central administers, agencies run. The built-in agency (*Central*, *Global* on
-an older installation) becomes the installation's administration and runs
-nothing: every job, workflow, schedule, scope, secret, variable, key, host
-record, runner and repository is an agency's. A new installation starts with
-one agency, *Operations*, to work in. Calendars gain a catalogue in Central
+The built-in agency administers, agencies run. It becomes the installation's
+administration and runs nothing: every job, workflow, schedule, scope, secret,
+variable, key, host record, runner and repository is an agency's. A new
+installation calls it *Administration* (2.5.2 called it *Central*); an existing
+one keeps its name (*Global* or *Central*) until a global administrator renames
+it, and this entry calls it Administration. A new installation starts with one
+agency, *Operations*, to work in. Calendars gain a catalogue in Administration
 that agencies copy from, with updates they take or that come by themselves, and
 jobs and workflows gain calendars of their own to Forbid and Allow days. Three
 migrations (1670, 1700, 1710; schema v1710); runner protocol 14 is unchanged.
@@ -34,9 +36,9 @@ start it; the three migrations run at the first start. Nothing is one-way
 beyond what 2.5.1 already did. **From 2.2.3:** follow 2.5.1's upgrade below
 with the 2.5.3 image (the schema goes from 1210 to 1710).
 
-Then, because Central runs nothing from this release on:
+Then, because Administration runs nothing from this release on:
 
-- **Nothing moves by itself.** What Central owns at the upgrade stays where it
+- **Nothing moves by itself.** What Administration owns at the upgrade stays where it
   is and no longer runs. The notice *The administration still holds work that
   no longer runs* lists it, one finding per kind, each with its way out, and
   every Dashboard tells a global administrator what is left until nothing is:
@@ -45,28 +47,28 @@ Then, because Central runs nothing from this release on:
   - scopes built in the app: Scopes → the scope's agency (a repair);
   - host records and bastions: Settings → SSH Targets → Edit → *Repair: move
     to another agency*;
-  - agents that serve Central alone: deregister them and enrol them again with
+  - agents that serve Administration alone: deregister them and enrol them again with
     a registration token minted in their agency;
   - jobs and workflows built in the app: their names are the installation's,
-    and Central's copy keeps the name, in the recycle bin too. Note each one's
-    settings, delete it in Central and then for good (Settings → Recycle Bin →
+    and Administration's copy keeps the name, in the recycle bin too. Note each one's
+    settings, delete it in Administration and then for good (Settings → Recycle Bin →
     *Delete forever*), then make it again in its agency (or publish it into
     its repository);
   - schedules built in the app: make them again in their agency, then delete
-    them in Central;
-  - Central's repository: Settings → Repositories, working in Central →
+    them in Administration;
+  - Administration's repository: Settings → Repositories, working in Administration →
     *Remove the leftover repository* (a repair), then connect the same URL and
     branch to the agency whose work it is; its next sync brings the
     definitions in as that agency's, except a job with no scope, which an
     agency's sync refuses: give each one of that agency's scopes first
     (`cronomicon validate -agency` on a checkout lists them). Their run
-    history stays Central's.
-- **An installation with no agency but Central gets one**, *Operations*, at
+    history stays Administration's.
+- **An installation with no agency but Administration gets one**, *Operations*, at
   the first start. Rename it, or make your own and delete it.
 - **The local runner belongs to no agency and is off.** Choose its agency in
   Settings → Local runner, then turn it on; its host keys are approved again
   by that agency's administrators. A notice says so if it was on.
-- **Environment settings that configured Central's work no longer apply.**
+- **Environment settings that configured Administration's work no longer apply.**
   `CRONOMICON_GITLAB_BASE_URL`, `_TOKEN`, `_WEBHOOK_SECRET` and
   `_WRITE_BRANCH` are ignored (a notice and a warning at start name any that
   is set): connect each agency's repository in Settings → Repositories.
@@ -75,10 +77,10 @@ Then, because Central runs nothing from this release on:
   that agency). After a database restore, enrol again each agent enrolled
   since the backup.
 - **An agency's job with no scope that uses a secret, variable or key of
-  Central's no longer runs** ("unbound references"): a job with no scope is
+  Administration's no longer runs** ("unbound references"): a job with no scope is
   its own agency's, so the credential must be too. Move it (above).
-- Creating anything that runs in Central is refused with 422
-  `central_runs_nothing`, also for an agency's administrator who names Central
+- Creating anything that runs in Administration is refused with 422
+  `central_runs_nothing`, also for an agency's administrator who names Administration
   (until now 403). A global administrator's Vault-backed secret or key is made
   in an agency, inside that agency's Vault paths.
 - **Every job names a scope.** The Job Composer has no "No scope" option, and
@@ -100,8 +102,8 @@ Then, because Central runs nothing from this release on:
   says `global`: change it to `agency`.
 - A global administrator, and a reader of every agency, starts in the one
   agency there is, or on the All-agencies Dashboard when there are several
-  (until now in Central); a stored default still wins.
-- Central's existing calendars become its **catalogue**: no run reads them.
+  (until now in Administration); a stored default still wins.
+- Administration's existing calendars become its **catalogue**: no run reads them.
   The copies 2.4.0 made in the agencies stay theirs, unlinked. A calendar named
   `catalogue` can no longer be opened by name (the name is now the
   catalogue's), and a calendar cannot be renamed: make one with its days under
@@ -130,16 +132,16 @@ Then, because Central runs nothing from this release on:
   that has a fix, closed by the next scan that no longer finds it. This was
   built for 2.5.0 and recorded there, but never reached the branch that v2.5.2
   was published from: v2.5.2's images are not attested.
-- **Operations.** A new installation (and an upgrade with only Central) makes
+- **Operations.** A new installation (and an upgrade with only Administration) makes
   one agency, *Operations*, once; its Dashboard offers a global administrator
   **Name your agency**: its name and, optionally, the AD group that
   administers it. With every agency deleted, the All-agencies Dashboard offers
   **Create your first agency**, with the same optional group.
-- **The calendar catalogue.** Working in Central, Schedules → Calendars is the
+- **The calendar catalogue.** Working in Administration, Schedules → Calendars is the
   catalogue: global administrators create, edit and import calendars there,
   and **Add to agencies…** or **Push the update…** to chosen agencies (the
   result says what happened in each). An agency's calendar editors take one
-  with **Add from Central**. A copy is the agency's own calendar, read-only
+  with **Add from Administration**. A copy is the agency's own calendar, read-only
   there and deletable; **Make it our own** detaches it. Each copy updates
   **Ask before updating** (the default: *update available*, a notice, the
   alert event `calendar-update-available`, **Update**) or **Update
@@ -158,22 +160,26 @@ Then, because Central runs nothing from this release on:
   dropped, never postponed, and recorded. A day both forbidden and allowed is
   forbidden. In a workflow, a step's job calendars do not apply.
 - Settings → Local runner chooses its agency, or *Unassigned (off)*.
-- Repairs for what Central holds: host records and bastions (SSH Targets),
-  and Central's leftover repository (Repositories).
+- Repairs for what Administration holds: host records and bastions (SSH Targets),
+  and Administration's leftover repository (Repositories).
 - Notices: *The administration still holds work that no longer runs*, *The
   local runner belongs to no agency and is off*, *Environment settings that no
-  longer apply are set*, *A calendar from Central has an update*, *A calendar
-  from Central is no longer offered*, and *Jobs built in the app have no
+  longer apply are set*, *A calendar from Administration has an update*, *A calendar
+  from Administration is no longer offered*, and *Jobs built in the app have no
   scope* (one per agency, `job_without_scope`).
 
 ### Changed
 
-- Central is labelled *Central · administration* in the switcher. Its work
-  pages say *Central runs nothing. Switch to an agency to work.*, and list
+- A new installation calls the built-in agency *Administration*, not
+  *Central* as 2.5.2 did; an existing one keeps its name until a global
+  administrator renames it (Scopes → Agencies → Rename).
+- The switcher lists the built-in agency as the administration: under its name
+  when the name says so (*Administration*), else as *Global · administration*.
+  Its work pages say *Administration runs nothing. Switch to an agency to work.*, and list
   what it still holds, for its way out, under a banner; its change log,
   Activity, Notices and Settings are the installation's, as before. The
   agency catalog shows it apart, with Rename.
-- Nothing offers Central when something is created or moved: the agency
+- Nothing offers Administration when something is created or moved: the agency
   pickers, SSH Targets, a registration token, the repair moves, a scope's
   clone.
 - Every job names one of its agency's scopes: the composer and the API no
@@ -185,22 +191,25 @@ Then, because Central runs nothing from this release on:
   workflow of an agency that runs one does not span agencies, so saving it is
   no longer refused with `409 crosses_agencies`; and the notices about shell
   jobs with no runner, and about requirements no agent advertises, look at
-  that agency's runners (the first no longer files one under Central, which
+  that agency's runners (the first no longer files one under Administration, which
   runs nothing).
 - The schedule entry's calendars are called Forbid and Allow on screen (the
   YAML keys stay `skipCalendars` and `onlyCalendars`).
+- In the Score's readout, a run's job name opens the run in History, as its
+  *View run* link does, and *View run* is set at the readout's text size
+  instead of the small muted one.
 - The validate and fat images apply Debian's published security fixes
   when they are built (`apt-get upgrade`), instead of waiting for a new base
   image.
 - The manuals, the courses, the runner and language guides and the security
-  review describe 2.5.3, and call the built-in agency Central.
+  review describe 2.5.3, and call the built-in agency Administration.
 
 ### Removed
 
 - The notices `global_job_on_agency_scope`, `global_calendar_scope`,
-  `local_runner_served` and `agency_placed`, and Central's part of
+  `local_runner_served` and `agency_placed`, and Administration's part of
   `shared_ownership`: `central_holds_work` lists what they reported.
-- Central's repository sync, the environment's repository settings and the
+- Administration's repository sync, the environment's repository settings and the
   bootstrap registration token (above).
 - **Terraform from the `cronomicon-runner-fat` image.** The project no longer
   describes or supports Terraform, and its binary brought findings of its own
@@ -222,7 +231,7 @@ Then, because Central runs nothing from this release on:
 - Settings → Repositories, for a global administrator working in an agency,
   offered a *Connect* card for every other agency (since 2.4.4): it shows the
   agency in use.
-- The demo data recorded its last sync on Central's repository, which raised
+- The demo data recorded its last sync on Administration's repository, which raised
   the leftover notice on every demo.
 
 ## [2.5.2] - 2026-10-22

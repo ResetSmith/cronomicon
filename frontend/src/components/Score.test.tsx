@@ -197,6 +197,11 @@ describe("Score — coincident marks (VU-21)", () => {
     ]);
     fireEvent.click(links[0]);
     expect(onOpenRun).toHaveBeenCalledWith(links[0].getAttribute("href")!.replace("/runs?trace=", ""));
+    // The job's name opens the same run as its row's "View run".
+    const name = within(readout()).getByRole("link", { name: "nightly-backup" });
+    expect(name.getAttribute("href")).toBe("/runs?trace=0192abcd-2222-7000-8000-000000000002");
+    fireEvent.click(name);
+    expect(onOpenRun).toHaveBeenLastCalledWith("0192abcd-2222-7000-8000-000000000002");
   });
 
   it("never merges tenses, so a projection cannot absorb a completed run at the same instant", () => {

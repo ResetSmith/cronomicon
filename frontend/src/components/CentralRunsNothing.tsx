@@ -47,7 +47,7 @@ export function useCentralHolds(kinds: string[]): { held: string[]; known: boole
 /** CentralRunsNothing is the empty state of a work page while in Central. */
 export function CentralRunsNothing() {
   const ag = useAgencyOptional();
-  const name = ag?.agencyName ?? "Central";
+  const name = ag?.agencyName ?? "Administration";
   // Before the first agency exists (CA-16) there is none to switch to.
   const none = !!ag && !ag.choices.some((ch) => ch.kind === "agency" && ch.id !== GLOBAL_AGENCY);
   if (none) {
@@ -97,7 +97,7 @@ export function CentralRunsNothing() {
 
 /** CentralLeftovers is the banner over what Central still holds from before 2.5.3. */
 export function CentralLeftovers() {
-  const name = useAgencyOptional()?.agencyName ?? "Central";
+  const name = useAgencyOptional()?.agencyName ?? "Administration";
   return (
     <AlertBanner type="warning">
       <span data-testid="central-leftovers">
@@ -145,7 +145,7 @@ export function CentralHoldsBanner() {
     .filter((n) => n.kind === "central_holds_work" && n.agencyId === GLOBAL_AGENCY && !n.resolvedAt)
     .map((n) => HELD_NOUN[n.subject.replace(/^central:/, "")] ?? "work");
   if (!ag || held.length === 0) return null;
-  const name = ag.globalName ?? "Central";
+  const name = ag.globalName ?? "Administration";
   const list = held.length === 1 ? held[0] : `${held.slice(0, -1).join(", ")} and ${held[held.length - 1]}`;
   return (
     <AlertBanner type="warning">

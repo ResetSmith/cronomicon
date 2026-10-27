@@ -502,3 +502,27 @@ func TestCA4a_ACopyLevelAgainHasNoNotice(t *testing.T) {
 		t.Errorf("%d notices open after the change was undone, want none", n)
 	}
 }
+
+// The catalogue's messages name the built-in agency as it is called now (2.5.2
+// GR), never a literal: CA4a wrote "Central" into them, which an installation
+// that kept Global, or a new one (Administration since 2.5.3), does not call it.
+func TestCA4a_TheCatalogueSpeaksOfTheBuiltInAgencyByItsName(t *testing.T) {
+	f := newCatalogueFixture(t)
+	if _, err := f.pool.Exec(`UPDATE agencies SET name = 'Head Office' WHERE id = 'global'`); err != nil {
+		t.Fatal(err)
+	}
+	uid := f.catalogue("holidays", "2026-12-25")
+	if rec := f.in("ag:FIN", gFinAdmin, http.MethodPost, "/api/v1/calendars/from-central", `{"catalogueUid":"`+uid+`"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("add = %d (%s)", rec.Code, rec.Body)
+	}
+	rec := gateReq(t, f.h, http.MethodPut, "/api/v1/calendars/holidays?agencyId=ag:FIN", gFinAdmin, `{"description":"ours"}`)
+	if body := rec.Body.String(); errCode(rec.Body.Bytes()) != "calendar_from_central" || !strings.Contains(body, "from Head Office") || strings.Contains(body, "Central") {
+		t.Errorf("editing a copy = %d %s, want the refusal to name Head Office", rec.Code, body)
+	}
+	if rec := f.setDays("global", "holidays", "2026-12-25", "2026-12-26"); rec.Code != http.StatusOK {
+		t.Fatalf("change the catalogue's calendar = %d (%s)", rec.Code, rec.Body)
+	}
+	if _, detail, open := f.openNotice("calendar_update_available", "calendar:"+f.get("ag:FIN", "holidays").UID); !open || !strings.HasPrefix(detail, "Head Office has changed holidays") {
+		t.Errorf("the update notice (open %v) = %q, want it to name Head Office", open, detail)
+	}
+}

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { allReadable, api } from "../../api/client";
 import { GLOBAL_AGENCY } from "../../api/access";
-import { globalAgencyName } from "../../globalName";
+import { administrationLabel, globalAgencyName } from "../../globalName";
 import { globalOnly } from "../../api/globalAdmin";
 import { useGet, rows, useTableSort } from "../../hooks";
 import { type SortColumn } from "../../utils/sort";
@@ -151,7 +151,7 @@ export function AgenciesTab({
           style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, padding: "10px 14px", border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, background: c.panel }}
         >
           <div style={{ flex: 1, fontSize: c.fontSm, color: c.textSec, lineHeight: 1.5 }}>
-            <strong style={{ color: c.text }}>{central.name} · administration</strong> — the installation&rsquo;s own: it
+            <strong style={{ color: c.text }}>{administrationLabel(central.name)}</strong> — the installation&rsquo;s own: it
             runs nothing, and holds the installation&rsquo;s notices, change log, alert rules and calendar catalogue. It
             may be renamed, never deleted.
           </div>

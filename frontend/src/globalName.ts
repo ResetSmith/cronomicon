@@ -1,6 +1,7 @@
 // The built-in agency's name (2.5.2 GR). Its id is fixed ("global"); its name
-// is "Central" on an installation made with 2.5.2 or later, "Global" on an
-// older one until a global administrator renames it. Rows report owners by
+// is "Administration" on an installation made with 2.5.3 or later, "Central"
+// on one made with 2.5.2, "Global" on an older one, until a global
+// administrator renames it. Rows report owners by
 // NAME, so a comparison with the literal "Global" stops matching the day it is
 // renamed, and a label that says "Global" says the wrong thing.
 //
@@ -19,4 +20,14 @@ export function setGlobalAgencyName(name: string | null | undefined): void {
 /** The built-in agency's name now. */
 export function globalAgencyName(): string {
   return _name;
+}
+
+/**
+ * 2.5.3 CA-12: the built-in agency runs nothing, so where it is listed beside
+ * the agencies it reads as the administration: "Global · administration". A
+ * name that already says so (a new installation's "Administration") stands
+ * alone.
+ */
+export function administrationLabel(name: string): string {
+  return /administration/i.test(name) ? name : `${name} · administration`;
 }
