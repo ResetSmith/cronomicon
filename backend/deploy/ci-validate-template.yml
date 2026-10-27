@@ -42,7 +42,7 @@
 # convenience, not a second gate.
 
 variables:
-  CRONOMICON_VALIDATE_IMAGE: "ghcr.io/resetsmith/cronomicon-validate:2.5.0"
+  CRONOMICON_VALIDATE_IMAGE: "ghcr.io/resetsmith/cronomicon-validate:2.5.3"
   CRONOMICON_REPO_KIND: "agency"
 
 validate-job-definitions:

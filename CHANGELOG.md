@@ -13,7 +13,7 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
-## [2.5.3] - 2026-10-24
+## [2.5.3] - 2026-10-27
 
 The built-in agency administers, agencies run. It becomes the installation's
 administration and runs nothing: every job, workflow, schedule, scope, secret,
