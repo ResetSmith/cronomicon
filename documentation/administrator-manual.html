@@ -2146,16 +2146,16 @@
                                 and nothing that one agency runs depends on another agency.</td>
                         </tr>
                         <tr>
-                            <td>Central</td>
-                            <td>The built-in agency (on an installation made before 2.5.2 it is called Global until
-                                a global administrator renames it). Since 2.5.3 it is the installation's
-                                administration and runs nothing: it keeps the settings, the agency catalog, the
+                            <td>Administration</td>
+                            <td>The built-in agency (an installation made before 2.5.3 keeps its earlier name, Global
+                                or Central, until a global administrator renames it). Since 2.5.3 it is the
+                                installation's administration and runs nothing: it keeps the settings, the agency catalog, the
                                 installation's notices and change log, its alert rules and the calendar catalogue.
                                 All work belongs to an ordinary agency (&sect;6.1c).</td>
                         </tr>
                         <tr>
                             <td>Repository</td>
-                            <td>The Git repository of one agency's definitions. Each agency may have one; Central
+                            <td>The Git repository of one agency's definitions. Each agency may have one; Administration
                                 has none (&sect;5.6).</td>
                         </tr>
                         <tr>
@@ -2286,12 +2286,12 @@
                     <li><strong>Remove the environment variable and deploy again.</strong> The server writes a clear
                         warning to the log for the full time that the bypass is active.</li>
                 </ol>
-                <p id="first-agency"><strong>The first agency: Operations (since 2.5.3).</strong> Central, the
+                <p id="first-agency"><strong>The first agency: Operations (since 2.5.3).</strong> Administration, the
                     built-in agency, is the installation's administration and runs nothing (&sect;6.1c), so work
-                    needs an ordinary agency. At its first start, if no agency but Central exists, Cronomicon makes
+                    needs an ordinary agency. At its first start, if no agency but Administration exists, Cronomicon makes
                     one named <strong>Operations</strong>, with no repository, recorded as made by <em>system (first
-                        start)</em>. It is made once: an upgrade that had only Central gets it too, an installation
-                    that already has an agency gets nothing, and a deleted Operations never comes back. If Central
+                        start)</em>. It is made once: an upgrade that had only Administration gets it too, an installation
+                    that already has an agency gets nothing, and a deleted Operations never comes back. If Administration
                     itself is called Operations, nothing is made. A global administrator with no stored default
                     starts in that agency (&sect;3).</p>
                 <ul>
@@ -2308,7 +2308,7 @@
                         is refused, the agency stands, and the card says so. Until then the work pages say
                         <em>There is no agency yet.</em></li>
                     <li><strong>The agency catalog</strong> (Scopes &rarr; Agencies) lists the agencies, and shows
-                        Central apart as <em>Central &middot; administration</em>, with <strong>Rename</strong> and
+                        Administration apart, with <strong>Rename</strong> and
                         never Delete.</li>
                 </ul>
                 <div class="callout warn">
@@ -2409,10 +2409,10 @@
                     union, because such a union would let a user's strongest verb apply to their widest reach.</p>
                 <p id="reading-rule"><strong>The reading rule (since 2.5.0).</strong> One rule decides who reads a
                     row, on every list and every single read: <strong>an agency's rows are read by its own people and
-                        by those whose access reaches every agency. Central's rows are read by the second group
+                        by those whose access reaches every agency. Administration's rows are read by the second group
                         only.</strong> &ldquo;Its own people&rdquo; are those who hold a grant on that agency.
                     &ldquo;Access that reaches every agency&rdquo; is a grant on <em>All scopes</em>: a global
-                    administrator, or a viewer of every agency. Thus a person of one agency does not see Central's
+                    administrator, or a viewer of every agency. Thus a person of one agency does not see Administration's
                     notices, change log or activity, nor what it held before 2.5.3. The Activity feed and the Change Log apply
                     the same rule, by the agency of each row's object. A request that names one object the caller
                     may not read is answered <strong><code>404</code></strong>, the same as an object that does not
@@ -2426,7 +2426,7 @@
                     check), reference bindings (a 404/403 split), and tags (a binned definition may still be
                     tagged). Writes go through the applicable <code>ScopeWritable</code>
                     predicate. A restricted actor can write only into its own agency's scopes, and nobody writes
-                    a runnable row into Central (since 2.5.3).
+                    a runnable row into Administration (since 2.5.3).
                     The signal comes from data, not from the role, so a scope-restricted <em>admin</em> stays
                     restricted.</p>
                 <p><strong>Composing follows the same rule, per object.</strong> An Cronomicon-composed job must name a
@@ -2510,17 +2510,18 @@
                         ordinary agency, and the Dashboard with <strong>All agencies</strong> chosen when there are
                         several (since 2.5.3; the agency that the lists use underneath is the first ordinary agency
                         by name); else the first of their agencies by name.</li>
-                    <li><strong>Central is the administration</strong> (since 2.5.3). For global administrators
-                        and readers of every agency it stays a choice, after <strong>All agencies</strong>, labelled
-                        <em>Central &middot; administration</em>. Its work pages (Jobs, Workflows, Scripts,
+                    <li><strong>Administration runs nothing</strong> (since 2.5.3). For global administrators
+                        and readers of every agency it stays a choice, after <strong>All agencies</strong>, under its
+                        name (an earlier name has <em>&middot; administration</em> added: <em>Global &middot;
+                        administration</em>). Its work pages (Jobs, Workflows, Scripts,
                         Schedules except Calendars, the Scopes tab, Env Vars, Runners, SSH Targets, and the
                         composer, publisher, schedule builder and workflow editor) show one message:
-                        <em>&ldquo;Central runs nothing. Switch to an agency to work.&rdquo;</em> While Central still
+                        <em>&ldquo;Administration runs nothing. Switch to an agency to work.&rdquo;</em> While Administration still
                         holds rows of a page's kind from before 2.5.3, the page lists those rows under a banner
-                        (<em>&ldquo;Central runs nothing. What is listed here is left from before 2.5.3 and no longer
+                        (<em>&ldquo;Administration runs nothing. What is listed here is left from before 2.5.3 and no longer
                             runs: move each to the agency whose work it is, or delete it. Notices lists each and its
                             way out.&rdquo;</em>) with only the actions that clear them (move to an agency, delete,
-                        deregister) and no create. Schedules &rarr; Calendars in Central is the calendar catalogue
+                        deregister) and no create. Schedules &rarr; Calendars in Administration is the calendar catalogue
                         (&sect;4.4b). Its Change Log, Activity, Notices and Settings show the installation's. Before
                         the first agency exists, the work pages say <em>There is no agency yet.</em></li>
                     <li><strong>What is created is the agency in use's.</strong> A create form says where, and has
@@ -2530,7 +2531,7 @@
                     <li><strong>&ldquo;Acting in&rdquo;.</strong> A global administrator's change made while
                         working in an agency is recorded in the Change Log as <em>acting in</em> that agency (the
                         <code>actingAgency</code> column). A change to the installation (the Installation group of
-                        Settings) is Central's wherever it is made.</li>
+                        Settings) is Administration's wherever it is made.</li>
                     <li><strong>The switcher narrows; the reading rule gates.</strong> The switcher shows the agency
                         in use. Since 2.5.0 the reading rule above decides what a person can read at all. A
                         request that names no agency (a script, a service account, the CI template) is answered
@@ -2556,7 +2557,7 @@
                     workflow (its annotation) and whether it is critical. Where the definition names no contact,
                     they show the <strong>agency's contact</strong>, marked &ldquo;(agency)&rdquo;: a free-text
                     line that the agency's administrators (<code>configureApp</code> on it) keep on Settings &rarr;
-                    Alerts, and Central's a global administrator (<code>PUT /api/v1/agencies/{id}/contact</code>, at
+                    Alerts, and Administration's a global administrator (<code>PUT /api/v1/agencies/{id}/contact</code>, at
                     most 256 characters, recorded in the agency's Change Log). A run's detail also has
                     <strong>Open job</strong> (or <strong>Open workflow</strong>), which opens the definition on its
                     page (<code>/jobs?job=&lt;uid&gt;</code>, <code>/workflows?workflow=&lt;uid&gt;</code>).</p>
@@ -2589,7 +2590,7 @@
                 <p><strong>An agency administers itself.</strong> Each scope, secret, variable, SSH key, host
                     record, bastion, runner, calendar, alert rule and push target belongs to exactly one agency
                     (&sect;6.1c), and the administrators of that agency manage it with no help from a global
-                    administrator. <strong>Central</strong> runs nothing (since 2.5.3): what it keeps is the
+                    administrator. <strong>Administration</strong> runs nothing (since 2.5.3): what it keeps is the
                     administration's (the installation's settings, notices, change log, alert rules and the
                     calendar catalogue), and a global administrator changes it.</p>
                 <table>
@@ -2611,7 +2612,7 @@
                         <tr>
                             <td>Create, rename or delete an agency (an agency's repository is connected at creation
                                 or later, and deleted with the agency, when it is empty). Set an agency's Vault path prefixes, its
-                                group list and its concurrency cap (&sect;6.1e). Move or delete a row that Central
+                                group list and its concurrency cap (&sect;6.1e). Move or delete a row that Administration
                                 still holds from before 2.5.3. Name the first agency (<em>Name your agency</em>,
                                 &sect;2).</td>
                             <td>Create a scope (it is put in the agency), and edit, delete, tag and bind runners to
@@ -2636,8 +2637,8 @@
                                 (&sect;7.12).</td>
                         </tr>
                         <tr>
-                            <td>Edit Central's alert rules and push targets (Settings &rarr; Alerts, working in
-                                Central). A rule of Central's matches each agency's runs (&sect;8.11). Keep the
+                            <td>Edit Administration's alert rules and push targets (Settings &rarr; Alerts, working in
+                                Administration). A rule of Administration's matches each agency's runs (&sect;8.11). Keep the
                                 calendar catalogue: create, edit and delete its calendars, add them to agencies,
                                 and push an update (&sect;4.4b).</td>
                             <td>Create, edit and delete the agency's alert rules and push targets (Settings &rarr;
@@ -2666,11 +2667,11 @@
                             <td>Compose jobs, workflows, schedule definitions, calendars and reactions in the
                                 agency, use the agency's revisions and recycle bin, publish to the agency's
                                 repository, and put schedule entries on the agency's own jobs and workflows. Add a
-                                calendar from Central's catalogue, update a copy, choose its update mode, and make
+                                calendar from Administration's catalogue, update a copy, choose its update mode, and make
                                 it the agency's own (&sect;4.4b).</td>
                         </tr>
                         <tr>
-                            <td>Remove Central's leftover repository (&sect;5.6).</td>
+                            <td>Remove Administration's leftover repository (&sect;5.6).</td>
                             <td>Run, stop, tag and annotate the definitions that the agency can read. Read and
                                 dismiss the agency's notices (&sect;8.10).</td>
                         </tr>
@@ -2802,7 +2803,7 @@
                 <ol>
                     <li><strong>Agency.</strong> The runner is owned by the run's agency and serves it: a runner
                         takes its owner's work only (since 2.4.0). A run with no scope belongs to its job's (or
-                        workflow's) agency (since 2.5.3). Central runs nothing, and no runner serves it
+                        workflow's) agency (since 2.5.3). Administration runs nothing, and no runner serves it
                         (&sect;6.1c).</li>
                     <li><strong>Scope binding.</strong> If the scope is bound to runners (&sect;7.10), the runner
                         is one of them. You can bind the local runner in the same way as an agent.</li>
@@ -2895,7 +2896,7 @@
                         the new agency's administrators approve the keys of their own hosts (&sect;7.12), and
                         <strong>turns it off</strong>: turn it on again once they are approved. Runs of the old
                         agency that waited for it wait on, as for a runner that was removed. The change is recorded
-                        in Central's change log and in each agency's.</li>
+                        in Administration's change log and in each agency's.</li>
                     <li><strong>State</strong>: <em>On</em>, <em>Off</em>, <em>Off: it belongs to no agency</em>,
                         or <em>Forbidden on this host</em>, with <strong>Turn on&hellip;</strong> / <strong>Turn
                             off&hellip;</strong>. Each direction asks for a confirmation, and the server records the
@@ -3133,18 +3134,18 @@
                     or secret that contains the private key). A scope member with no matching host record becomes
                     a <em>reported per-host failure</em>, never a silent skip.</p>
                 <p><strong>A host record and a bastion have an owner.</strong> A record that an administrator
-                    wrote manually belongs to one agency (never to Central since 2.5.3), and the SSH Targets
+                    wrote manually belongs to one agency (never to Administration since 2.5.3), and the SSH Targets
                     tables show it in an <strong>Owner</strong> column. A record that was imported for a scope follows that scope's
                     agency. The owner decides three things:</p>
                 <ul>
                     <li><strong>Who changes it.</strong> The administrators of the owner agency create, edit, test
-                        and delete the record. A record or bastion that Central holds from before 2.5.3 is a global
+                        and delete the record. A record or bastion that Administration holds from before 2.5.3 is a global
                         administrator's: <strong>Edit</strong> &rarr; <em>Repair: move to another
                             agency&hellip;</em> gives it to an agency (a repair, with a reason).</li>
                     <li><strong>Which runs resolve it.</strong> A scope resolves the records that were imported for
                         it and the manually written records of its own agency. A host routes only through a bastion
-                        of its own agency. Central's records and bastions resolve for no run (since 2.5.3): an
-                        agency's run on a host for which only Central wrote a record finds no record and fails on
+                        of its own agency. Administration's records and bastions resolve for no run (since 2.5.3): an
+                        agency's run on a host for which only Administration wrote a record finds no record and fails on
                         that host, and a notice lists such hosts (<code>global_host_record</code>,
                         &sect;8.10).</li>
                     <li><strong>Which key it can name.</strong> A record's auth key must be a key of its owner
@@ -3472,7 +3473,7 @@
                     own agency only. Writes need the Compose capability on the calendar's agency, on the same
                     argument as schedule definitions &mdash; whoever can edit a calendar can lift a change freeze or,
                     in only-mode, halt production automation. Reads follow the reading rule (&sect;3). An agency gets
-                    a calendar of another agency as a copy, not a link, and a calendar that Central offers as a copy
+                    a calendar of another agency as a copy, not a link, and a calendar that Administration offers as a copy
                     that follows the catalogue (&sect;4.4b). An assignment refuses a definition whose calendar the
                     target agency does not have (&sect;5.7). Calendars do not become Git files in 2.6.0: they stay
                     in the app.</p>
@@ -3498,12 +3499,12 @@
                         freeze calendar raises the same banner its active state does. <strong>Put annual
                             renewal in your operations calendar with a named owner.</strong> Treat a freeze calendar's
                         expiry as a change-control event: an unrenewed freeze lifts itself. A holiday list that
-                        Central keeps in its catalogue is renewed once there, and reaches every agency's copy
+                        Administration keeps in its catalogue is renewed once there, and reaches every agency's copy
                         (&sect;4.4b).</p>
                 </div>
 
                 <h4 id="calendar-catalogue">4.4b The calendar catalogue and the agencies' copies (since 2.5.3)</h4>
-                <p><strong>Central keeps a catalogue of calendars.</strong> Working in Central, Schedules &rarr;
+                <p><strong>Administration keeps a catalogue of calendars.</strong> Working in Administration, Schedules &rarr;
                     Calendars is the catalogue: global administrators create, edit and delete calendars there (name,
                     description, days, the <code>.ics</code> import, <em>freeze</em> and <em>Record a schedule's
                         Allow misses in History</em>), as for any calendar. <strong>No run reads them</strong>: a
@@ -3514,22 +3515,22 @@
                 <p><strong>An agency takes a copy.</strong> One action, two hands:</p>
                 <ul>
                     <li>an agency's calendar editor (<em>compose</em> on the agency), working in the agency, uses
-                        <strong>Add from Central</strong> on Schedules &rarr; Calendars: choose a catalogue
+                        <strong>Add from Administration</strong> on Schedules &rarr; Calendars: choose a catalogue
                         calendar, a name (the catalogue's unless you give another; a name the agency already holds
-                        is refused), and <em>When Central changes it</em>: <strong>Ask before updating</strong> (the
+                        is refused), and <em>When Administration changes it</em>: <strong>Ask before updating</strong> (the
                         default) or <strong>Update automatically</strong>;</li>
-                    <li>a global administrator, working in Central, uses <strong>Add to agencies&hellip;</strong>
+                    <li>a global administrator, working in Administration, uses <strong>Add to agencies&hellip;</strong>
                         on the catalogue row: choose the agencies and the update mode. Each agency chosen gets its
                         own copy, recorded as done in that agency.</li>
                 </ul>
                 <p>A copy is the agency's own calendar, with the catalogue calendar's days and settings and a link to
                     it. It is <strong>read-only in the agency</strong>: its days, description and flags change only
-                    by an update from Central (an edit answers <code>409 calendar_from_central</code>). It can be
+                    by an update from Administration (an edit answers <code>409 calendar_from_central</code>). It can be
                     deleted, and bound like any calendar of the agency. A freeze calendar added to an agency
                     freezes that agency on its days, as the agency's own would. <strong>Make it our own</strong>
                     detaches it: it becomes an ordinary calendar of the agency, editable, with no link and no more
                     updates; its days and bindings stay as they are. The agency's Calendars tab shows <strong>Our
-                        calendars</strong> and <strong>From Central</strong> apart, each copy with its state:
+                        calendars</strong> and <strong>From Administration</strong> apart, each copy with its state:
                     <em>up to date</em>, <em>update available</em> (with what changed), <em>updates
                         automatically</em>, <em>update blocked</em> (with why), or <em>no longer offered</em>. The
                     catalogue row shows its copies, for example <em>2 agencies &middot; 1 behind</em>.</p>
@@ -3539,14 +3540,14 @@
                 <ul>
                     <li><strong>Ask before updating</strong> (the default): the copy shows <em>update
                             available</em> with the days added and removed and any flag change; the agency gets the
-                        notice <em>A calendar from Central has an update</em> and the alert event
+                        notice <em>A calendar from Administration has an update</em> and the alert event
                         <code>calendar-update-available</code> (&sect;8.11). Its calendar editors press
                         <strong>Update</strong>. Several catalogue changes while it is behind are one update, to
                         the latest. Until it is updated, the agency's runs keep the days the copy has.</li>
                     <li><strong>Update automatically</strong> (an agency's opt-in): the copy changes in the same
                         save as the catalogue, and each such agency gets a change-log row, an Activity entry
-                        (updated from Central automatically) and the alert event <code>calendar-updated</code>.
-                        The agency's runs follow Central's edits from that moment, with nobody in the agency
+                        (updated from Administration automatically) and the alert event <code>calendar-updated</code>.
+                        The agency's runs follow Administration's edits from that moment, with nobody in the agency
                         looking at them first: choose it for a calendar whose owner you trust to keep it, such as
                         a company holiday list. Setting a copy that is behind to update automatically takes the
                         pending update at once.</li>
@@ -3562,7 +3563,7 @@
                     Allow binding, and update.</p>
                 <p><strong>When the catalogue calendar is deleted</strong>, its copies stay, marked <em>no longer
                         offered</em>, read-only until made their own, and each agency gets the notice <em>A
-                        calendar from Central is no longer offered</em>. A calendar made again in the catalogue
+                        calendar from Administration is no longer offered</em>. A calendar made again in the catalogue
                     under the same name is another calendar: the old copies stay no longer offered. Bindings are by
                     name, so neither a deletion nor <strong>Make it our own</strong> changes them.</p>
                 <p class="muted">The name <code>catalogue</code> is reserved for calendars since 2.5.3: a calendar of
@@ -3573,7 +3574,7 @@
                 <h4 id="definition-calendars">4.4c Forbid and Allow on jobs and workflows (since 2.5.3)</h4>
                 <p>A job and a workflow may name calendars to <strong>Forbid</strong> (do not start on these
                     days) and to <strong>Allow</strong> (start only on days in one of these), any number of each,
-                    from its own agency's calendars (its own and its copies from Central). In YAML they are
+                    from its own agency's calendars (its own and its copies from Administration). In YAML they are
                     <code>spec.forbidCalendars</code> and <code>spec.allowCalendars</code>; in the job composer and
                     the workflow editor, the field <em>Calendars (optional)</em> with the two pickers. A schedule
                     entry's own calendars are called Forbid and Allow on screen too (the YAML keeps
@@ -3882,7 +3883,7 @@
             <!-- ====================== 5. GITOPS ====================== -->
             <section id="gitops" class="chap alt">
                 <h2><span class="secnum">5</span> GitOps &amp; GitLab Sync</h2>
-                <p class="lead-p">Each agency can have its own repository of definitions (&sect;5.6); Central has
+                <p class="lead-p">Each agency can have its own repository of definitions (&sect;5.6); Administration has
                     none (since 2.5.3). Cronomicon keeps a local clone of each one. On each sync of a repository, it makes
                     that agency's runtime tables from the clone again. For Git definitions, the flow goes in one
                     direction: <em>Git wins on read</em>. A separate Publish path writes back, and a global
@@ -4233,7 +4234,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                     agency's definitions live, where its publishes are committed, and where the definitions that it
                     is given are committed (&sect;5.7). Nothing in it is resolved for another agency, and a job in
                     it runs on its agency's scopes only. Each agency's repository syncs on its own, with its own
-                    status, history, problems and webhook. <strong>Central has no repository</strong> (since
+                    status, history, problems and webhook. <strong>Administration has no repository</strong> (since
                     2.5.3): it runs nothing, so there is nothing for one to supply.</p>
                 <ul>
                     <li><strong>Connected at creation or later</strong> (since 2.5.1; from 2.4.0 to 2.5.0 an agency
@@ -4254,11 +4255,11 @@ cronomicon validate .                # any checkout, without the -agency checks
                         before 2.4.0, has none until one is connected. It works as it does, it cannot be given a
                         definition or published to (<code>422 no_repository</code>), and a notice says so
                         (<code>agency_no_repository</code>, &sect;8.10).</li>
-                    <li id="leftover-repository"><strong>Central's leftover repository.</strong> At the upgrade to
+                    <li id="leftover-repository"><strong>Administration's leftover repository.</strong> At the upgrade to
                         2.4.0 the single GitLab connection of 2.2.x became the built-in agency's repository. Since
                         2.5.3 such a connection is a leftover: it no longer syncs, and nothing it supplied runs
-                        (<code>central_holds_work</code> lists it with its counts). Working in Central, Settings
-                        &rarr; Repositories shows it as <em>Central's repository, left from before 2.5.3</em>, with
+                        (<code>central_holds_work</code> lists it with its counts). Working in Administration, Settings
+                        &rarr; Repositories shows it as <em>Administration's repository, left from before 2.5.3</em>, with
                         its URL, branch, last sync and what it supplied, and <strong>Remove the leftover
                             repository</strong>: a global administrator's repair, with a reason, recorded. It is
                         refused while one of its scopes has work queued, and it removes the connection and what it
@@ -4273,8 +4274,8 @@ cronomicon validate .                # any checkout, without the -agency checks
                 <p><strong>Settings &rarr; Repositories</strong> (the Agency group) shows the repository of the
                     agency in use: its card, or a Connect card when it has none (since 2.5.3; before, a global
                     administrator saw a card for every agency). To work on another agency's repository, switch to
-                    that agency. Working in Central, the section shows the <strong>Allowed hosts</strong> card and,
-                    while there is one, Central's leftover repository (above). Each
+                    that agency. Working in Administration, the section shows the <strong>Allowed hosts</strong> card and,
+                    while there is one, Administration's leftover repository (above). Each
                     card has the connection (<em>Repository URL</em>, <em>Token</em>, <em>Working Branch</em>,
                     <em>Bot Name</em>, <em>Bot Email</em>), the webhook (<em>Webhook URL</em>, <em>Webhook
                         Enabled</em>, <em>Webhook Events</em>, and <em>Webhook Secret</em> with <strong>Rotate
@@ -4323,7 +4324,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                 <p>Nothing that an agency runs is shared with another. To hand a job or a workflow to an agency, a
                     global administrator <strong>gives it as one commit into that agency's repository</strong>
                     (since 2.5.0). The agency then owns a copy, which its own sync, CI and review see. A definition
-                    can be given from any agency's repository; Central has none (a definition of its leftover is
+                    can be given from any agency's repository; Administration has none (a definition of its leftover is
                     refused, <code>422 central_runs_nothing</code>). Templates live in an ordinary agency
                     (<a href="#template-agency">below</a>).</p>
                 <p>To give one, open a Git job's or workflow's panel and use <strong>Give to an
@@ -4353,9 +4354,9 @@ cronomicon validate .                # any checkout, without the -agency checks
                         that the copy names, on a schedule entry or on the job or workflow itself
                         (<code>forbidCalendars</code>, <code>allowCalendars</code>), and that the target agency does
                         not have, refuses the assignment (<code>422 calendar_missing</code>), because the target's
-                        sync would refuse the definition. Where Central's catalogue has a calendar of that name,
+                        sync would refuse the definition. Where Administration's catalogue has a calendar of that name,
                         the answer says so (<code>catalogueCalendars</code>): add it to the agency (<strong>Add from
-                            Central</strong>), and give the definition again. So does an Allow
+                            Administration</strong>), and give the definition again. So does an Allow
                         (<code>onlyCalendars</code>, <code>allowCalendars</code>) of a calendar that the target has
                         as a freeze calendar, which may forbid and never allow (<code>422
                             calendar_not_bindable</code>).</li>
@@ -4379,7 +4380,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                     <code>409 up_to_date</code>. The assignment ends when either side removes the definition.</p>
 
                 <h4 id="template-agency">A template agency (since 2.5.3)</h4>
-                <p>Central has no repository, so templates live in an ordinary agency and are handed out by
+                <p>Administration has no repository, so templates live in an ordinary agency and are handed out by
                     assignment. A recipe:</p>
                 <ol class="steps">
                     <li><strong>Create an agency for the templates</strong>, for example <em>Templates</em>
@@ -4393,9 +4394,9 @@ cronomicon validate .                # any checkout, without the -agency checks
                         assignment copies the file as it is, so a template that is disabled stays disabled in the
                         target until the agency turns it on, and does not fire and wait in the template agency
                         either.</li>
-                    <li><strong>Add the calendars that the templates name from Central's catalogue</strong>, for
+                    <li><strong>Add the calendars that the templates name from Administration's catalogue</strong>, for
                         example the holiday calendar: working in the template agency, Schedules &rarr; Calendars
-                        &rarr; <strong>Add from Central</strong> (&sect;4.4b). Each target agency needs the same
+                        &rarr; <strong>Add from Administration</strong> (&sect;4.4b). Each target agency needs the same
                         calendar before an assignment that names it; the refusal names the catalogue calendar to
                         add, or a global administrator adds it to the agencies first (<strong>Add to
                             agencies&hellip;</strong> on the catalogue row).</li>
@@ -4505,7 +4506,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                     agency's people: a secret's or key's <strong>Usage</strong> (Env Vars, in the row's detail: what
                     refers to it, which runs used it, every change and reveal and who made it), the agency's
                     <strong>secrets report</strong> (a CSV or JSON download with no values), and <strong>Held by
-                        Central</strong> (the secrets and keys shared with an agency before 2.3.0 that Central still
+                        Administration</strong> (the secrets and keys shared with an agency before 2.3.0 that Administration still
                     holds, and that no run uses). Three alert
                     triggers act on it (&sect;8.11).</p>
                 <div class="callout note">
@@ -4660,7 +4661,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                     &mdash; identifies the job by the <em>uid</em> frozen onto the run. Since two departments may hold
                     same-named jobs (&sect;6.1h), a name lookup could hand one twin the other's credentials; the uid
                     cannot. A script is its repository's: a job takes a script of its own agency's repository only
-                    (since 2.4.0), and a job that is still built on a script of Central's leftover repository (&sect;5.6) is refused at
+                    (since 2.4.0), and a job that is still built on a script of Administration's leftover repository (&sect;5.6) is refused at
                     run time and listed in a notice (<code>global_script_job</code>, &sect;8.10).</p>
 
                 <p><strong>The alias &mdash; injecting under a different name.</strong> A binding can name the
@@ -4676,7 +4677,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                     binding counts (jobs scope-filtered to the caller's grants; scripts unscoped): counts only, never
                     which job.</p>
 
-                <h3 id="agencies">6.1c Agencies, Central, and one agency for each row</h3>
+                <h3 id="agencies">6.1c Agencies, Administration, and one agency for each row</h3>
                 <p>An <strong>agency</strong> is a department. Since 2.4.0 agencies are <strong>independent</strong>:
                     an agency owns everything that it runs (its repository, scopes, secrets, variables, SSH keys,
                     host records, bastions, runners, calendars, alert rules and push targets), and nothing that it
@@ -4684,27 +4685,27 @@ cronomicon validate .                # any checkout, without the -agency checks
                     Agencies), each with its repository if it has one (&sect;5.6); a new installation starts with
                     one, <strong>Operations</strong> (&sect;2). Each agency then administers what it owns
                     (&sect;3).</p>
-                <p><strong>Central is the installation's administration, and runs nothing</strong> (since 2.5.3).
+                <p><strong>Administration, the installation's own agency, runs nothing</strong> (since 2.5.3).
                     It is the built-in agency (id <code>global</code>), and you cannot delete it. Since 2.5.2 a
                     global administrator can rename it (Scopes &rarr; Agencies, the row <em>&lt;name&gt; &middot;
-                        administration</em> &rarr; <strong>Rename</strong>), and an installation made with 2.5.2 or
-                    later calls it <em>Central</em>; an installation upgraded from an earlier version keeps its
+                        administration</em> &rarr; <strong>Rename</strong>), and an installation made with 2.5.3 or
+                    later calls it <em>Administration</em> (one made with 2.5.2, <em>Central</em>); an installation upgraded from an earlier version keeps its
                     earlier name until a global administrator renames it (&sect;1). The id stays
                     <code>global</code>. A run still waiting
                     for a runner follows the rename; a run that has started keeps the name it was started with.
-                    <strong>This manual says &ldquo;Central&rdquo; for the built-in agency, whatever it is
+                    <strong>This manual says &ldquo;Administration&rdquo; for the built-in agency, whatever it is
                         called.</strong> It has no members: authority over it is a global administrator's, a grant
-                    on every agency that carries the verb. No access grant and no service account can name Central.
-                    Two rules make Central what it is:</p>
+                    on every agency that carries the verb. No access grant and no service account can name Administration.
+                    Two rules make Administration what it is:</p>
                 <ul>
-                    <li><strong>Central runs nothing.</strong> It owns no scope, runner, registration token,
+                    <li><strong>Administration runs nothing.</strong> It owns no scope, runner, registration token,
                         schedule, script, job, workflow, reaction, secret, variable, SSH key, host record, bastion
-                        or repository connection. Creating any of these in Central, by working in it or by naming
+                        or repository connection. Creating any of these in Administration, by working in it or by naming
                         it, is refused: <code>422 central_runs_nothing</code>, <em>&ldquo;this &lt;thing&gt; would
                             belong to the built-in administration agency, which runs nothing: switch to an agency, or
-                            name one, to create it there&rdquo;</em>. Nothing moves into Central by a repair either.
+                            name one, to create it there&rdquo;</em>. Nothing moves into Administration by a repair either.
                         The local runner belongs to an agency, or to none and is then off (&sect;4.1b).</li>
-                    <li><strong>Central keeps the administration.</strong> The installation settings, the agency
+                    <li><strong>Administration keeps the installation.</strong> The installation settings, the agency
                         catalog, the installation's change log and Activity, the notices filed to it, the
                         installation freeze (&sect;4.4), its alert rules (which match every agency's runs), push
                         targets and contact (&sect;8.11), and the calendar catalogue (&sect;4.4b), whose calendars
@@ -4713,11 +4714,11 @@ cronomicon validate .                # any checkout, without the -agency checks
                 <p><strong>A run's agency comes from its definition.</strong> A job with no scope is its own
                     agency's, and so are its runs, which keep no scope; only a runner that serves that agency takes
                     one (&sect;4.1). Before 2.5.3 such a job and its run were the built-in agency's.</p>
-                <p><strong>What Central held before 2.5.3 stays, and does not run.</strong> The upgrade moves
-                    nothing (<a href="#upgrade-2-5-3">&sect;8.7</a>). A schedule of Central's does not fire, a Run
-                    of Central's job is refused, and an agency's job that binds a row only Central holds fails, with
+                <p><strong>What Administration held before 2.5.3 stays, and does not run.</strong> The upgrade moves
+                    nothing (<a href="#upgrade-2-5-3">&sect;8.7</a>). A schedule of Administration's does not fire, a Run
+                    of Administration's job is refused, and an agency's job that binds a row only Administration holds fails, with
                     the reason. The notice <code>central_holds_work</code> lists each kind with its way out, and
-                    the kind's page in Central lists the rows with only the actions that clear them: move to an
+                    the kind's page in Administration lists the rows with only the actions that clear them: move to an
                     agency (a repair), delete, deregister.</p>
                 <p><strong>What is the installation's, and no agency's.</strong> Sign-in (OIDC, trusted headers, the
                     bootstrap group); the encryption key, backups and restore; the time zone; the hosts that a
@@ -4733,7 +4734,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                         form says which, and has no agency picker. A request that names another agency is refused
                         (<code>422 agency_context_mismatch</code>).</li>
                     <li><strong>To share: make a copy.</strong> A row cannot be in two agencies (<code>422
-                            one_agency</code>, or <code>422 global_mixed</code> for one that names Central with an
+                            one_agency</code>, or <code>422 global_mixed</code> for one that names Administration with an
                         agency). What two agencies need is a copy in each: a scope by its clone
                         (<strong>Clone to an agency</strong>), a definition by assignment (&sect;5.7), and a
                         credential by creating it again. A secret that two agencies need is shared through a common
@@ -4766,7 +4767,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                     <p>The upgrade to 2.3.0 changes no such row. A scope, secret, variable or key that was in more
                         than one agency <strong>keeps working as it did</strong>, and the Notices inbox lists it
                         (&sect;8.10): <code>scope_several_agencies</code> for a scope, and
-                        <code>shared_ownership</code> for a secret, variable or key that Central owns and only
+                        <code>shared_ownership</code> for a secret, variable or key that Administration owns and only
                         some agencies can use (since 2.5.3 nothing uses it). No write can create that condition
                         again. To settle a row, a global
                         administrator sets its one agency, as a repair: the row is narrowed to the agency that you
@@ -4792,13 +4793,13 @@ cronomicon validate .                # any checkout, without the -agency checks
                     <li><strong>Dispatch.</strong> The claim matches the run's agency (frozen at enqueue in
                         <code>runs.agencies_json</code>, materialized into <code>run_agencies</code>) against the
                         agencies that the runner serves <em>and owns</em>: a runner takes its owner's work only
-                        (since 2.4.0). No runner serves Central since 2.5.3. There is no fallback pool: a run that carries no agency at all is an error, and
+                        (since 2.4.0). No runner serves Administration since 2.5.3. There is no fallback pool: a run that carries no agency at all is an error, and
                         no runner claims it. A scope's bound runners (&sect;7.10) are a second condition in the
                         same query, joined on the run's scope name and read at claim time, not frozen; they can
                         only narrow what the agency rule permits.</li>
                     <li><strong>Reference resolution.</strong> A secret or variable resolves when the row is in the
-                        run's agency <strong>and</strong> the scope rule also holds. A row of Central's resolves for
-                        no run (since 2.5.3). A job of an agency that binds a name that only Central holds does not
+                        run's agency <strong>and</strong> the scope rule also holds. A row of Administration's resolves for
+                        no run (since 2.5.3). A job of an agency that binds a name that only Administration holds does not
                         find it: its run fails and names it, and a notice lists the binding
                         (<code>global_credential_bound</code>, &sect;8.10).</li>
                     <li><strong>SSH keys</strong> sit on the same axis: agency-filtered, and not scope-filtered.
@@ -4874,9 +4875,9 @@ cronomicon validate .                # any checkout, without the -agency checks
                         working in that agency. To anyone but a global administrator, the counts are of what they
                         may read.</li>
                 </ul>
-                <p>A global administrator can also use the view to add one of Central's rows to the agency
-                    (<strong>+ Add one of Central's&hellip;</strong>), which makes the agency its owner: the way
-                    out for a row that Central held before 2.5.3. That changes
+                <p>A global administrator can also use the view to add one of Administration's rows to the agency
+                    (<strong>+ Add one of Administration's&hellip;</strong>), which makes the agency its owner: the way
+                    out for a row that Administration held before 2.5.3. That changes
                     the row's agency, so it is a repair, and the view asks for the reason first. Runners are shown
                     and are not edited here: an agent serves the agency that owns it, so the Runners page is where
                     you enrol or deregister one (&sect;7.7). The view writes through
@@ -4901,7 +4902,7 @@ cronomicon validate .                # any checkout, without the -agency checks
 
                 <h3>6.1f Membership is not paperwork</h3>
                 <p>A row that a global administrator creates is the agency's that they work in (or name): never
-                    Central's, since 2.5.3. A row that an agency's administrator creates is that agency's. Inside one
+                    Administration's, since 2.5.3. A row that an agency's administrator creates is that agency's. Inside one
                     agency, one shadow is still possible, and it is worth knowing.</p>
                 <div class="callout gotcha">
                     <div class="ct"><span class="em">🫥</span> The silent shadow</div>
@@ -4922,7 +4923,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                     stores the agency <strong>id</strong>, so a renamed department cannot orphan its rows. A run
                     resolves only the rows whose owner is the <strong>run's</strong> agency: &ldquo;your
                     department's row&rdquo;. Until 2.4.0 there was a second tier, the rows that the built-in agency
-                    owned. That tier is gone, and since 2.5.3 a row of Central's resolves for no run.</p>
+                    owned. That tier is gone, and since 2.5.3 a row of Administration's resolves for no run.</p>
                 <p>Among those rows, the pre-existing rule holds (scope-exact wins over global). Thus each
                     department's copy of a playbook asks for <code>BECOME_PASSWORD</code>, and each department's run
                     gets its own department's value, with no naming convention. The run's <strong>scope</strong>
@@ -4985,7 +4986,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                     This is identical for every runner. The dictionary contains: each <strong>env-var value in the
                         run's scope, plus the global <code>*</code>/&ldquo;All&rdquo; scope</strong>; the
                     <strong>decrypted plaintext of the stored secrets and SSH keys of the run's own agency and
-                        Central</strong>, the installation's sealed settings and, of an agency's own (a repository's
+                        Administration</strong>, the installation's sealed settings and, of an agency's own (a repository's
                     token, its Vault credentials), the run's agency's only; and the run's <strong>ad-hoc per-run env
                         override values</strong>. (Until 2.5.1 it held every agency's secrets, which let a run test a
                     guess at another agency's secret by printing it and seeing whether it was masked.) Thus a secret pasted into a run override in error is also masked.
@@ -5174,7 +5175,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                             vault_path_not_allowed</code>, and the message names the prefixes for a caller who
                         administers the agency). A run never fails because of a prefix.</li>
                     <li><strong>An agency with no prefix can create no Vault-backed row.</strong> A new agency has
-                        an empty list. Central has no list: since 2.5.3 it holds no new Vault-backed row, so a
+                        an empty list. Administration has no list: since 2.5.3 it holds no new Vault-backed row, so a
                         global administrator creates one in an agency, inside that agency's prefixes, like anyone
                         else.</li>
                     <li><strong>A row that is already outside keeps working.</strong> After an upgrade, no agency
@@ -5194,7 +5195,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                 <h4 id="agency-vault">6.4.1 A Vault of its own for an agency (since 2.5.1)</h4>
                 <p>An agency that wants its secrets apart from the installation's can connect a Vault of its own,
                     under <strong>Settings &rarr; Agency Vault</strong> (<code>configureApp</code> on the agency).
-                    One that does not uses the installation's, as before. Central has no Vault of its own.</p>
+                    One that does not uses the installation's, as before. Administration has no Vault of its own.</p>
                 <ul>
                     <li><strong>The rule: a row resolves in its owner's Vault.</strong> A Vault-backed secret or SSH
                         key is read in the Vault of the agency that owns it: its own when it has one, else the
@@ -5273,7 +5274,7 @@ cronomicon validate .                # any checkout, without the -agency checks
                         suppressed_by_calendar</code> with the reason, and is recorded as a skipped run
                     (<code>webhook</code>), an Allow miss included. It is dropped, not postponed: the caller sends
                     it again on a day the definition may start. A deferred start (<code>runAt</code>) is judged on
-                    the day it names, and refused at once. A definition of Central's is refused (<code>409
+                    the day it names, and refused at once. A definition of Administration's is refused (<code>409
                         run_refused</code>).</p>
 
                 <h3 id="security-posture">6.6 Recommended security posture</h3>
@@ -5385,7 +5386,7 @@ docker exec &lt;cronomicon&gt; cronomicon rewrap-secrets             # move it a
                         registration token is no longer accepted: the built-in agency runs nothing. Enrol this agent
                         with a registration token minted in its agency (Runners)&rdquo;</em>). A server that still
                     has it set logs a warning at start and raises the notice <em>Environment settings that no longer
-                        apply are set</em>: remove it. An agent enrolled with it before 2.5.3 serves Central alone
+                        apply are set</em>: remove it. An agent enrolled with it before 2.5.3 serves Administration alone
                     and takes no work: deregister it and enrol it again with a token of its agency.</p>
                 <p>The cost is in recovery. <strong>After restoring the database from a backup, any runner enrolled
                         after that backup was taken will find its row missing</strong>, discard its identity, and
@@ -5541,7 +5542,7 @@ ExecStart=/usr/local/bin/cronomicon-runner -config /etc/cronomicon-runner/config
 
                 <h3>7.1 When you need an agent, and which image</h3>
                 <p><strong>Every agency needs an agent of its own</strong> to run anything, except the one agency
-                    that a global administrator gives the local runner (since 2.5.3; Central runs nothing and needs
+                    that a global administrator gives the local runner (since 2.5.3; Administration runs nothing and needs
                     none). That agency needs an agent too when one of these is true:</p>
                 <ul>
                     <li>it runs <strong>Ansible</strong>, which the local runner cannot do;</li>
@@ -5600,12 +5601,12 @@ ExecStart=/usr/local/bin/cronomicon-runner -config /etc/cronomicon-runner/config
                     agency's runs and no other's (&sect;7.7). The agent never declares its agency. An agency
                     administrator mints tokens for their own agency. A global administrator can mint for any
                     agency, and that is how a central team gives a department an agent: it deploys an agent that
-                    the department owns. Since 2.5.3 no token is minted for Central, and the environment's
+                    the department owns. Since 2.5.3 no token is minted for Administration, and the environment's
                     bootstrap token is refused (&sect;6.6).</p>
                 <p><strong>One-click:</strong> the <strong>+ Add Runner</strong> button in the Runners view opens
                     <em>Add a Runner</em>. The <em>Agency the runner is for</em> picker shows the agency in use:
                     the token is minted for the agency that you work in, so switch to the agency first.
-                    Working in Central, Runners mints nothing (Central runs nothing). <strong>Mint &amp; build
+                    Working in Administration, Runners mints nothing (Administration runs nothing). <strong>Mint &amp; build
                         command</strong> then mints a
                     token and gives you one command with no flags:
                     <code>curl -fsSL https://cronomicon.example.com/install/&lt;token&gt; | sudo bash</code>. The
@@ -5904,8 +5905,8 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                     <li><strong>The local runner belongs to one agency, or to none</strong> (since 2.5.3): a
                         global administrator chooses, and it serves that agency only; unassigned, it is off
                         (&sect;4.1b).</li>
-                    <li><strong>No agent serves Central</strong> (since 2.5.3): Central runs nothing, and no token
-                        is minted for it. An agent that Central owns from before (one enrolled with the
+                    <li><strong>No agent serves Administration</strong> (since 2.5.3): Administration runs nothing, and no token
+                        is minted for it. An agent that Administration owns from before (one enrolled with the
                         environment's bootstrap token, now refused) takes no work: deregister it and enrol it again
                         with a token of its agency (<code>central_holds_work</code> lists it).</li>
                 </ul>
@@ -5916,14 +5917,14 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                     settings, secret-injection, host-key scans and approvals, the host-key record, deregistration, tags,
                     and the connection test), the
                     caller must hold the <em>configure app</em> permission on the agency that <strong>owns</strong>
-                    the runner. A runner that Central owns (a leftover agent, a legacy placement, and the local
+                    the runner. A runner that Administration owns (a leftover agent, a legacy placement, and the local
                     runner while it is unassigned) is a global administrator's; the local runner's switch,
                     <em>Runs at once</em> and agency are a global administrator's whatever its agency. For a caller
                     who is not the owner, the controls on the
                     row are disabled, and the reason is on each control. Three related rules:</p>
                 <ul>
                     <li><strong>Registration tokens</strong>: to mint or revoke one, the caller needs
-                        <em>configure app</em> on the agency that the token is for. No token is minted for Central
+                        <em>configure app</em> on the agency that the token is for. No token is minted for Administration
                         (<code>422 central_runs_nothing</code>).</li>
                     <li><strong>Binding a scope to runners</strong> needs authority over the <em>scope</em>, and
                         a runner that serves the scope's agency. It does not need authority over the runner
@@ -5953,12 +5954,12 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                             </tr>
                             <tr>
                                 <td>no agency (the &ldquo;general pool&rdquo;)</td>
-                                <td>The built-in agency (Central) owns it, and it serves Central. Since 2.5.3 it
+                                <td>The built-in agency (Administration) owns it, and it serves Administration. Since 2.5.3 it
                                     takes no work: deregister it and enrol it again in its agency.</td>
                             </tr>
                             <tr>
                                 <td>several agencies</td>
-                                <td>Central owns it, and its serve list is unchanged. This is a <strong>legacy
+                                <td>Administration owns it, and its serve list is unchanged. This is a <strong>legacy
                                         placement</strong>.</td>
                             </tr>
                         </tbody>
@@ -5967,7 +5968,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                 <div class="callout danger">
                     <div class="ct"><span class="em">&#9888;&#65039;</span> A legacy placement takes no work</div>
                     <p><strong>A runner takes its owner's work only.</strong> A legacy placement is owned by
-                        Central, which since 2.5.3 runs nothing, so it claims no run. The agencies on its serve
+                        Administration, which since 2.5.3 runs nothing, so it claims no run. The agencies on its serve
                         list are listed, and not served: <strong>their runs wait</strong> until an agent that each
                         of those agencies owns
                         serves them. On an upgrade from 2.2.3, a runner that served several agencies thus stops
@@ -5981,7 +5982,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                     badge in the expanded row, and the Notices inbox lists the runner
                     (<code>legacy_placement</code>). You can <strong>narrow</strong> its serve list, and you can
                     never widen it.</p>
-                <p>To settle a legacy placement, do these steps <strong>in this order</strong>. Until step 1 is done for an agency, that agency's runs on the old runner wait. The order does not by itself keep runs from failing: a new agent takes its agency's unbound scopes from the moment it enrols, and a re-bound scope's runs go to it alone, so until it has its auth keys and approved host keys those runs fail (<code>host_key_unverified</code>). Nothing stops you doing step 3 straight after step 1, and that is the safer sequence. The copy reads the old runner's record, which is Central's, so a global administrator makes it; an agency can instead scan its scopes from its new agent.</p>
+                <p>To settle a legacy placement, do these steps <strong>in this order</strong>. Until step 1 is done for an agency, that agency's runs on the old runner wait. The order does not by itself keep runs from failing: a new agent takes its agency's unbound scopes from the moment it enrols, and a re-bound scope's runs go to it alone, so until it has its auth keys and approved host keys those runs fail (<code>host_key_unverified</code>). Nothing stops you doing step 3 straight after step 1, and that is the safer sequence. The copy reads the old runner's record, which is Administration's, so a global administrator makes it; an agency can instead scan its scopes from its new agent.</p>
                 <ol class="steps">
                     <li><strong>Enrol an agent for each agency</strong> that the runner serves (&sect;7.2). The
                         new agents can be on the machine that the agencies already share: install each one as a
@@ -6627,12 +6628,12 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                     because
                     the record names the hosts of the scopes that a runner serves. The fleet-wide list of keys
                     awaiting review shows only the runners that the caller has authority over. The record of a
-                    deregistered runner, like that of a runner that Central owns, takes a global administrator. The
+                    deregistered runner, like that of a runner that Administration owns, takes a global administrator. The
                     scope coverage also needs read access to the scope.</p>
                 <p><strong>The local runner's keys are its agency's</strong> (since 2.5.3). It serves exactly the
                     agency that owns it, so that agency's administrators scan its hosts and approve, replace and
                     remove its keys, as for an agent of theirs. Unassigned, it is a global administrator's.</p>
-                <p><strong>One exception: a guest.</strong> A legacy placement, which Central owns, can serve
+                <p><strong>One exception: a guest.</strong> A legacy placement, which Administration owns, can serve
                     agencies that do not own it. Since 2.5.3 it takes no work (&sect;7.7), but an administrator of
                     an agency that it serves can still <strong>scan a scope of their own agency</strong> on it and
                     see what the scan found:</p>
@@ -6653,8 +6654,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                     a single Go binary that serves an embedded UI. Its data is SQLite on one volume, behind your reverse
                     proxy and identity provider. It is a <strong>control plane</strong>: it schedules the work and monitors the
                     work, but the runners do the work. The server does work itself only when you turn on its
-                    local runner. The upgrade from 2.2.3 to 2.5.3 is one step, and from 2.5.2 to 2.5.3 Central stops
-                    running work (&sect;8.7); the Notices inbox lists
+                    local runner. The upgrade from 2.2.3 to 2.5.3 is one step, and from 2.5.2 to 2.5.3 the built-in agency stops running work (&sect;8.7); the Notices inbox lists
                     what an upgrade leaves for a person (&sect;8.10), and alerts are per agency (&sect;8.11).</p>
 
                 <h3>8.1 Topology</h3>
@@ -6781,7 +6781,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                                 <td><code>CRONOMICON_VAULT_*</code></td>
                                 <td>Optional integration, off when unset. An env value overrides the matching DB
                                     setting. <code>CRONOMICON_GITLAB_*</code> is <strong>ignored since 2.5.3</strong>
-                                    (it addressed the built-in agency's repository, and Central has none): each
+                                    (it addressed the built-in agency's repository, and Administration has none): each
                                     agency's repository is set in the app (&sect;5.6), and a set one raises a
                                     notice. <code>CRONOMICON_RUNNER_BOOTSTRAP_TOKEN</code> is refused since 2.5.3
                                     (&sect;6.6).</td>
@@ -7179,7 +7179,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             <tr>
                                 <td>Upgrade</td>
                                 <td><strong>From 2.5.2, follow <a href="#upgrade-2-5-3">From 2.5.2 to
-                                            2.5.3</a>: replace the image, then settle what Central holds. From
+                                            2.5.3</a>: replace the image, then settle what Administration holds. From
                                         2.2.3, follow <a href="#upgrade-2-5-1">Upgrading from 2.2.3 to 2.5.3</a>:
                                         it is one step, and one-way. From a build of 2.5.1, see <a
                                             href="#upgrade-2-5-2">From a 2.5.1 build to 2.5.2</a>: replace the
@@ -7221,10 +7221,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     <code>unscopedJobShare</code>, <code>totalJobs</code>,
                                     <code>unscopedSchedules</code>, <code>pendingUnbound</code>,
                                     <code>pendingRevoked</code>, <code>usersEvaluated</code> and
-                                    <code>grantsEvaluated</code>. A scope that belongs to Central (a leftover from
+                                    <code>grantsEvaluated</code>. A scope that belongs to Administration (a leftover from
                                     before 2.5.3) is reached only by an <em>All scopes</em> grant, so review
                                     Settings &rarr; Users &amp; Access &rarr; Access Grants when a scope is repaired
-                                    out of Central into an agency.</td>
+                                    out of Administration into an agency.</td>
                             </tr>
                             <tr>
                                 <td>Shutdown</td>
@@ -7237,26 +7237,28 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                 </div>
 
                 <h4 id="upgrade-2-5-3">From 2.5.2 to 2.5.3</h4>
-                <p>2.5.3 makes <strong>Central the installation's administration, which runs nothing</strong>
-                    (&sect;6.1c). Every job, workflow, schedule, script, scope, runner, secret, variable, SSH key,
+                <p>2.5.3 makes <strong>the built-in agency the installation's administration, which runs nothing</strong>
+                    (&sect;6.1c). This section calls it Administration, the name a new installation gives it;
+                    yours keeps its name (Global, or Central from 2.5.2) until a global administrator renames it
+                    (Scopes &rarr; Agencies, <strong>Rename</strong>). Every job, workflow, schedule, script, scope, runner, secret, variable, SSH key,
                     host record, bastion and repository belongs to an ordinary agency. It adds three migrations
                     (<strong>1670</strong>, <strong>1700</strong> and <strong>1710</strong>), which run at the first
                     start; the schema goes from 1660 to <strong>1710</strong>, and the runner protocol stays at
                     <strong>14</strong>. Take a snapshot as for every release (&sect;8.6), replace the image, upgrade
                     the agents with the server, and start it. This also applies after an upgrade from 2.2.3 or from
                     a build of 2.5.0 or 2.5.1, which arrive at 2.5.3 in the same step.</p>
-                <p><strong>Nothing moves automatically.</strong> What Central owns at the upgrade stays where it
+                <p><strong>Nothing moves automatically.</strong> What Administration owns at the upgrade stays where it
                     is, does not run, and is listed in one notice, <em>The administration still holds work that no
-                        longer runs</em> (<code>central_holds_work</code>, &sect;8.10), filed under Central, one
+                        longer runs</em> (<code>central_holds_work</code>, &sect;8.10), filed under Administration, one
                     finding for each kind with its rows and its way out. While it is open, every Dashboard tells
-                    global administrators <em>&ldquo;Central still holds &lt;kinds&gt;, which stopped running in
-                        2.5.3. Review them &rarr;&rdquo;</em>. A schedule of Central's does not fire (its fire is
+                    global administrators <em>&ldquo;Administration still holds &lt;kinds&gt;, which stopped running in
+                        2.5.3. Review them &rarr;&rdquo;</em>. A schedule of Administration's does not fire (its fire is
                     recorded as skipped: <em>the built-in administration agency runs nothing; move this definition
-                        to an agency</em>), a person's Run or a token's start of Central's definition is refused
-                    (<code>409 run_refused</code>), and a reaction of Central's does not fire. A run of Central's
+                        to an agency</em>), a person's Run or a token's start of Administration's definition is refused
+                    (<code>409 run_refused</code>), and a reaction of Administration's does not fire. A run of Administration's
                     still queued at the upgrade is taken by no runner, and its reason says so: <em>&ldquo;this run
-                        belongs to Central, which runs nothing since 2.5.3, so no runner takes it &mdash; cancel it
-                        and run the job in the agency whose work it is (Notices lists what Central still
+                        belongs to Administration, which runs nothing since 2.5.3, so no runner takes it &mdash; cancel it
+                        and run the job in the agency whose work it is (Notices lists what Administration still
                         holds)&rdquo;</em>.</p>
                 <ol class="steps">
                     <li><strong>Before you start 2.5.3, remove the environment settings that no longer
@@ -7268,14 +7270,14 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         A set one is named in a warning at start and in the notice <em>Environment settings that no
                             longer apply are set</em>. An automated install that enrols agents with the bootstrap
                         token must mint an agency's token instead.</li>
-                    <li><strong>Start 2.5.3, and find your agency.</strong> If no agency but Central exists,
+                    <li><strong>Start 2.5.3, and find your agency.</strong> If no agency but Administration exists,
                         the first start makes one ordinary agency named <strong>Operations</strong> (&sect;2), a
-                        ready place for Central's work. A global administrator with no stored default starts in
+                        ready place for Administration's work. A global administrator with no stored default starts in
                         the one agency there is, or on the All-agencies Dashboard when there are several. An
                         installation that already has an agency gets nothing new.</li>
-                    <li><strong>Settle what Central holds</strong>, kind by kind. Open the notice (the
-                        Dashboard's <em>Review them</em>, or Notices working in Central). Each finding links to
-                        its kind's page in Central, where the rows are listed under the banner <em>&ldquo;Central
+                    <li><strong>Settle what Administration holds</strong>, kind by kind. Open the notice (the
+                        Dashboard's <em>Review them</em>, or Notices working in Administration). Each finding links to
+                        its kind's page in Administration, where the rows are listed under the banner <em>&ldquo;Administration
                             runs nothing. What is listed here is left from before 2.5.3 and no longer runs: move
                             each to the agency whose work it is, or delete it.&rdquo;</em>, with only the actions
                         that clear them:
@@ -7290,21 +7292,21 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             <li><strong>Hand-written host records and bastions:</strong> SSH Targets &rarr;
                                 <strong>Edit</strong> &rarr; <em>Repair: move to another agency&hellip;</em>, or
                                 make them again in the agency. A record imported for a scope follows its scope.</li>
-                            <li><strong>Agents that serve Central alone</strong> (an agent enrolled with the
+                            <li><strong>Agents that serve Administration alone</strong> (an agent enrolled with the
                                 bootstrap token is one): they take no work. Deregister each and enrol it again with
                                 a registration token minted in its agency (Runners &rarr; <strong>+ Add
                                     Runner</strong>, working in that agency).</li>
                             <li><strong>Jobs and workflows built in the app:</strong> they are not moved, and
-                                their names are the installation's: Central's copy keeps the name, in the recycle bin
-                                too. Note each one's settings, delete it in Central and then for good (Settings
+                                their names are the installation's: Administration's copy keeps the name, in the recycle bin
+                                too. Note each one's settings, delete it in Administration and then for good (Settings
                                 &rarr; Recycle Bin &rarr; <strong>Delete forever</strong>), then make it again in its
                                 agency (or publish it into that agency's repository). Their run history stays
-                                Central's.</li>
+                                Administration's.</li>
                             <li><strong>Schedules built in the app:</strong> make each again in its agency, then
-                                delete it in Central.</li>
-                            <li><strong>Central's repository:</strong> Central has no repository since 2.5.3. A
+                                delete it in Administration.</li>
+                            <li><strong>Administration's repository:</strong> Administration has no repository since 2.5.3. A
                                 connection left from before no longer syncs, and nothing it supplied runs. Working
-                                in Central, Settings &rarr; Repositories shows it with <strong>Remove the leftover
+                                in Administration, Settings &rarr; Repositories shows it with <strong>Remove the leftover
                                     repository</strong> (a repair, with a reason; refused while one of its scopes
                                 has work queued; it removes the definitions, scripts and scopes it synced, and
                                 their run history stays). Then connect the same URL and branch to the agency whose
@@ -7313,7 +7315,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 &sect;5.6): give each such job one of that agency's scopes first (<code>cronomicon
                                     validate -agency</code> on a checkout lists them).</li>
                         </ul>
-                        A finding clears when Central holds none of its kind. Central's calendars are not
+                        A finding clears when Administration holds none of its kind. Administration's calendars are not
                         leftovers: they are the calendar catalogue as they stand (&sect;4.4b).</li>
                     <li><strong>Give the local runner an agency, if you use it.</strong> At the upgrade it belongs
                         to no agency and is off; if it was on, the notice <em>The local runner belongs to no agency
@@ -7325,19 +7327,19 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         the built-in agency's repository with such jobs fails until each names a scope.</li>
                     <li><strong>Upgrade every agent with the server</strong>, as for every release.</li>
                 </ol>
-                <p><strong>What reads differently.</strong> The switcher lists Central after <em>All
-                        agencies</em> as <em>Central &middot; administration</em> (&sect;3). Its work pages show
-                    <em>&ldquo;Central runs nothing. Switch to an agency to work.&rdquo;</em>; its change log,
+                <p><strong>What reads differently.</strong> The switcher lists Administration after <em>All
+                        agencies</em> as <em>Administration</em> (&sect;3). Its work pages show
+                    <em>&ldquo;Administration runs nothing. Switch to an agency to work.&rdquo;</em>; its change log,
                     Activity, Notices and Settings are the installation's. A job with no scope is its own agency's,
                     and so are its runs, which any runner that serves that agency may take. A calendar's <code>global</code> flag
                     is called <strong>freeze</strong> on screen, and the freeze banner says that a freeze stops a
                     person's Run too, as it did before 2.5.3 (the banner of earlier releases said, wrongly, that a
-                    person's Run was not affected). Central's calendars are the calendar catalogue, which agencies take copies
+                    person's Run was not affected). Administration's calendars are the calendar catalogue, which agencies take copies
                     of (&sect;4.4b), and a job or workflow may name Forbid and Allow calendars of its own
-                    (&sect;4.4c). A job's run that binds a secret of Central's no
+                    (&sect;4.4c). A job's run that binds a secret of Administration's no
                     longer resolves it: the secret must be the job's agency's (move it, above). Retired notices clear
                     at their first check (&sect;8.10).</p>
-                <p><strong>API clients.</strong> Creating a runnable row in Central is <code>422
+                <p><strong>API clients.</strong> Creating a runnable row in Administration is <code>422
                         central_runs_nothing</code>; <code>PUT /local-runner</code> takes
                     <code>ownerAgency</code>; <code>DELETE /agencies/global/git-repo</code> removes the leftover
                     repository; <code>/git/sync</code> and <code>/scopes/resync</code> without a repository answer
@@ -7354,7 +7356,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     as well (and then <a href="#upgrade-2-5-3">From 2.5.2 to 2.5.3</a>):</p>
                 <ul>
                     <li><strong>The built-in agency keeps its name.</strong> An upgraded installation still calls it
-                        <em>Global</em>; only a new installation calls it <em>Central</em>. To rename it, Scopes
+                        <em>Global</em>; only a new installation names it (<em>Administration</em> since 2.5.3,
+                        <em>Central</em> in 2.5.2). To rename it, Scopes
                         &rarr; Agencies, the row <em>&lt;name&gt; &middot; administration</em> &rarr;
                         <strong>Rename</strong> (&sect;6.1c).</li>
                     <li><strong>Check the alert link address after the first visit.</strong> It fills itself in
@@ -7431,7 +7434,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <li><strong>Read the Notices inbox</strong> (&sect;8.10). Every conversion that needs a person is
                         listed there, by agency: what was in no agency or shared before 2.4.0 stays the built-in
                         agency's, where since 2.5.3 it does not run (<code>central_holds_work</code> and
-                        <code>workflow_spans_agencies</code>, Central's), and what an agency's definitions depend on
+                        <code>workflow_spans_agencies</code>, Administration's), and what an agency's definitions depend on
                         of it or lack (<code>reaction_other_agency</code>, <code>global_script_job</code>,
                         <code>global_schedule_bound</code>, <code>global_credential_bound</code>,
                         <code>global_host_record</code>, <code>agency_no_repository</code>, each the agency's);
@@ -7446,12 +7449,12 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         grants already made keep working.</li>
                     <li><strong>Give each agency its repository</strong> (Settings &rarr; Repositories, working in
                         the agency, &sect;5.6). Every agency syncs its own. The single GitLab connection of 2.2.x
-                        becomes the built-in agency's, and since 2.5.3 Central has no repository: the connection is
+                        becomes the built-in agency's, and since 2.5.3 Administration has no repository: the connection is
                         a leftover that no longer syncs, and <strong>no Git job of 2.2.x runs</strong> until its
                         file is in its agency's repository. Put each agency's job files (each naming one of that
                         agency's scopes) in that agency's repository. If the 2.2.x repository holds one agency's
                         work, remove the leftover (<strong>Remove the leftover repository</strong>, working in
-                        Central) and connect the same URL and branch to that agency. The connection's token must
+                        Administration) and connect the same URL and branch to that agency. The connection's token must
                         be able to push.</li>
                     <li><strong>Assign Vault path prefixes</strong> (Scopes &rarr; Agencies) to each agency that
                         holds Vault-backed secrets or keys. Until it has one, an agency's administrators cannot
@@ -7462,17 +7465,17 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         configured) is left readable, and the start tries again next time: configure the missing KEK
                         version. Optionally, add backup keys (&sect;8.6.2), list the hosts an agency's own Vault may
                         be on (&sect;6.4.1), and read the Notices inbox again: each agency also sees its former secrets
-                        that Central holds (<strong>Held by Central</strong>).</li>
+                        that Administration holds (<strong>Held by Administration</strong>).</li>
                 </ol>
                 <p><strong>What reads differently after the upgrade.</strong> People of one agency no longer see
-                    Central's rows (its jobs, runs, scopes, runners, notices and the rest), nor its activity; only a
+                    Administration's rows (its jobs, runs, scopes, runners, notices and the rest), nor its activity; only a
                     global administrator and a viewer of every agency do (&sect;3). A request that names an object
                     that the caller may not read is answered <code>404</code>. <strong>The run history of 2.2.x
-                        Git jobs is Central's</strong>, with the activity of those runs: a run belongs to its job's
+                        Git jobs is Administration's</strong>, with the activity of those runs: a run belongs to its job's
                     agency (2.4.0), and every 2.2.x Git job was the built-in agency's repository's, so an agency's
                     people no longer see their own history of those runs (a global administrator and a viewer of
                     every agency do). The history of jobs built in the app stays their agency's. An existing alert
-                    rule is Central's, and so is every existing push target; each rule pushes where it pushed before
+                    rule is Administration's, and so is every existing push target; each rule pushes where it pushed before
                     (&sect;8.11). The
                     audit export's rows and stream lines gain two columns at the end: <code>actingAgency</code>
                     (2.4.4), then <code>agency</code> (2.5.0); a reader that takes columns by position sees two
@@ -7480,21 +7483,21 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                 <p><strong>Three results of the independent model are easy to miss.</strong></p>
                 <ul>
                     <li><strong>A Git job does not run</strong> until its file is in its agency's repository (step
-                        6). The upgrade does not move it: the 2.2.x connection is Central's leftover, and Central
+                        6). The upgrade does not move it: the 2.2.x connection is Administration's leftover, and Administration
                         runs nothing.</li>
                     <li><strong>An agency's shell jobs need a runner of the agency.</strong> The local runner
                         belongs to no agency after the upgrade, and is off: a global administrator gives it to one
                         agency (&sect;4.1b). Any other agency whose shell jobs the server ran in 2.2.x waits for an
                         agent of its own (<code>no_runner_for_shell_jobs</code>).</li>
                     <li><strong>A runner that served several agencies takes no work.</strong> It becomes a legacy
-                        placement, owned by Central, and a runner takes its owner's work only, so every agency's
+                        placement, owned by Administration, and a runner takes its owner's work only, so every agency's
                         runs on it wait (&sect;7.7). Enrol an agent for each of those agencies. A runner that was in
-                        no agency serves Central alone, and takes no work either: enrol it again in its agency.</li>
+                        no agency serves Administration alone, and takes no work either: enrol it again in its agency.</li>
                 </ul>
                 <p><strong>Routes and fields removed in 2.5.0.</strong> <code>GET</code>/<code>PUT
                         /settings/gitlab</code> and <code>POST /settings/gitlab/webhook-secret/rotate</code>: use
                     <code>/agencies/{agencyId}/git-repo</code> and its <code>webhook-secret/rotate</code> for the
-                    agency whose repository it is (&sect;5.6; Central has none since 2.5.3).
+                    agency whose repository it is (&sect;5.6; Administration has none since 2.5.3).
                     The run request's <code>executor</code> field: a body that still sends it is accepted, and the
                     key is not read. <code>/settings/notifications</code> no longer carries push targets: a
                     <code>targets</code> key sent is ignored (&sect;8.11).</p>
@@ -7531,19 +7534,19 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         From then on, a change to an access grant, a role or an agency is in force on the next
                         request, and no access change signs anyone out (&sect;3).</li>
                     <li><strong>&ldquo;No agency&rdquo; becomes the built-in agency.</strong> Each scope, secret,
-                        variable, key and runner that was in no agency is put in the built-in agency (Central), and
-                        a global administrator changes it. <strong>Since 2.5.3 Central runs nothing</strong>, so
+                        variable, key and runner that was in no agency is put in the built-in agency (Administration), and
+                        a global administrator changes it. <strong>Since 2.5.3 Administration runs nothing</strong>, so
                         none of these is used until it is moved to an agency (<code>central_holds_work</code>,
                         <a href="#upgrade-2-5-3">From 2.5.2 to 2.5.3</a>); an agency's job that binds a name that
-                        only Central holds fails, and is listed (<code>global_credential_bound</code>,
+                        only Administration holds fails, and is listed (<code>global_credential_bound</code>,
                         <code>global_host_record</code>). A secret, variable or key that was in exactly one agency
-                        becomes that agency's own, unless that would change which row a run resolves; then Central
+                        becomes that agency's own, unless that would change which row a run resolves; then Administration
                         keeps it and a notice lists it (<code>shared_ownership</code>). A row that was in several
                         agencies is not changed (<code>scope_several_agencies</code>,
                         <code>shared_ownership</code>). Manually written host records and all bastions become
-                        Central's, which is what they were.</li>
+                        Administration's, which is what they were.</li>
                     <li><strong>Each runner gets an owner.</strong> A runner in one agency is owned by that
-                        agency. A runner in no agency is Central's and serves Central, so since 2.5.3 it takes no
+                        agency. A runner in no agency is Administration's and serves Administration, so since 2.5.3 it takes no
                         work. A runner in several agencies becomes a <strong>legacy placement</strong>: only a
                         global administrator manages it, and it takes no work either
                         (<code>legacy_placement</code>, &sect;7.7). An unused registration token of 2.2.x enrols
@@ -7892,7 +7895,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     which shows the number of open notices. The button is not in the sidebar navigation, and the
                     console shows it only to a person who holds <em>configure app</em> somewhere: an operator
                     with no such grant never sees it. The inbox is a page of its own
-                    (<code>/notices</code>), grouped by agency, with Central first.</p>
+                    (<code>/notices</code>), grouped by agency, with Administration first.</p>
                 <ul>
                     <li><strong>A notice is a condition, not a message.</strong> Each notice has a kind and a
                         subject (a scope, a runner, a job, an agency). The server looks at the conditions again
@@ -7903,12 +7906,12 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <li><strong>You see the notices of the agencies that you administer.</strong> A notice
                         belongs to one agency. The administrators of that agency (<em>configure app</em> on it)
                         read it and dismiss it. A notice about the installation, or about a row that only a
-                        global administrator can change, belongs to Central. The page and the button list the
-                        notices of the agency in use (since 2.4.4), so a global administrator reads Central's
-                        working in Central. While Central still holds work from before 2.5.3, every Dashboard
-                        tells global administrators so: <em>&ldquo;Central still holds &lt;kinds&gt;, which stopped
-                            running in 2.5.3. Review them &rarr;&rdquo;</em>, a link to Central's notices. It goes
-                        when Central holds nothing.</li>
+                        global administrator can change, belongs to Administration. The page and the button list the
+                        notices of the agency in use (since 2.4.4), so a global administrator reads Administration's
+                        working in Administration. While Administration still holds work from before 2.5.3, every Dashboard
+                        tells global administrators so: <em>&ldquo;Administration still holds &lt;kinds&gt;, which stopped
+                            running in 2.5.3. Review them &rarr;&rdquo;</em>, a link to Administration's notices. It goes
+                        when Administration holds nothing.</li>
                     <li>Each notice says what is the case and what settles it, shows when it was first seen, and
                         has a link to the page where you correct it. The API is <code>GET /api/v1/notices</code>
                         and <code>POST /api/v1/notices/dismiss</code>.</li>
@@ -7926,26 +7929,26 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             <tr id="notice-central-holds-work">
                                 <td><em>The administration still holds work that no longer runs</em>
                                     (<code>central_holds_work</code>, from 2.5.3)</td>
-                                <td>Central runs nothing since 2.5.3, and the upgrade moved nothing: what it owned
+                                <td>Administration runs nothing since 2.5.3, and the upgrade moved nothing: what it owned
                                     stays, and none of it runs. One finding for each kind (subject
                                     <code>central:&lt;kind&gt;</code>) names the rows (the first ten, and how many
                                     more) and the way out. The kinds are jobs, workflows and schedules built in the
                                     app, scopes built in the app, secrets, variables, SSH keys, hand-written host
-                                    records, bastions, agents that serve Central alone, and Central's old
-                                    repository. Central's calendars are not listed: they are the catalogue
-                                    (&sect;4.4b). Central's.</td>
-                                <td>Each finding's link opens its kind's page, working in Central, where the rows
+                                    records, bastions, agents that serve Administration alone, and Administration's old
+                                    repository. Administration's calendars are not listed: they are the catalogue
+                                    (&sect;4.4b). Administration's.</td>
+                                <td>Each finding's link opens its kind's page, working in Administration, where the rows
                                     are listed under a banner with only the actions that clear them (&sect;8.7, <a
                                         href="#upgrade-2-5-3">From 2.5.2 to 2.5.3</a>, gives the way out of each
-                                    kind). A finding clears when Central holds none of its kind; the notice clears
-                                    when Central holds nothing.</td>
+                                    kind). A finding clears when Administration holds none of its kind; the notice clears
+                                    when Administration holds nothing.</td>
                             </tr>
                             <tr>
                                 <td><em>The local runner belongs to no agency and is off</em>
                                     (<code>local_runner_unassigned</code>, from 2.5.3)</td>
                                 <td>The local runner's switch was on, and it belongs to no agency: an installation
                                     whose local runner was on before 2.5.3 (it served the built-in agency, which
-                                    runs nothing now). With no agency it is off. Central's.</td>
+                                    runs nothing now). With no agency it is off. Administration's.</td>
                                 <td>A global administrator gives it an agency in Settings &rarr; Local runner
                                     (&sect;4.1b) and turns it on once that agency has approved its hosts' keys, or
                                     leaves it off.</td>
@@ -7959,13 +7962,13 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     <code>CRONOMICON_RUNNER_BOOTSTRAP_TOKEN</code>. They configured the built-in
                                     agency's repository and enrolled its agents; since 2.5.3 they are ignored (the
                                     bootstrap token is refused at enrolment). The notice names what is set.
-                                    Central's.</td>
+                                    Administration's.</td>
                                 <td>Remove the settings from the server's environment and restart. Connect each
                                     agency's repository in Settings &rarr; Repositories, and enrol agents with a
                                     token minted in their agency (&sect;7.2).</td>
                             </tr>
                             <tr>
-                                <td><em>A calendar from Central has an update</em>
+                                <td><em>A calendar from Administration has an update</em>
                                     (<code>calendar_update_available</code>, from 2.5.3)</td>
                                 <td>A copy of a catalogue calendar is behind the catalogue: it asks before
                                     updating, or it updates automatically and its agency's bindings forbid the
@@ -7977,7 +7980,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     deleted, or when the copy is level again.</td>
                             </tr>
                             <tr>
-                                <td><em>A calendar from Central is no longer offered</em>
+                                <td><em>A calendar from Administration is no longer offered</em>
                                     (<code>calendar_no_longer_offered</code>, from 2.5.3)</td>
                                 <td>A global administrator deleted the catalogue calendar that a copy came from. The
                                     copy stays, read-only, with its days, and its bindings still work. The copy's
@@ -8038,10 +8041,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             <tr>
                                 <td><em>A runner that serves agencies it is not owned by</em>
                                     (<code>legacy_placement</code>)</td>
-                                <td>A runner that served several agencies before 2.3.0. Central owns it, and a
-                                    runner takes its owner's work only; since 2.5.3 Central runs nothing, so it
+                                <td>A runner that served several agencies before 2.3.0. Administration owns it, and a
+                                    runner takes its owner's work only; since 2.5.3 Administration runs nothing, so it
                                     takes no work, and the other agencies' runs wait. You can narrow it and never
-                                    widen it. Central's.</td>
+                                    widen it. Administration's.</td>
                                 <td>Settle it in the order given in &sect;7.7: an agent for each agency, re-bind
                                     the scopes, copy the host keys, then narrow or deregister the old runner. When
                                     it serves one agency, hand it to that agency.</td>
@@ -8067,29 +8070,29 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     (<code>scope_several_agencies</code>)</td>
                                 <td>A scope that was in more than one agency before 2.3.0. It still runs for each
                                     of them, but a name that two of them hold (a secret, a variable, a key) is
-                                    refused for its runs. Central's.</td>
+                                    refused for its runs. Administration's.</td>
                                 <td>A global administrator sets the scope's agency to the one that owns its hosts (a
                                     repair). If several agencies run against the same hosts, give each a scope of its
                                     own (<strong>Clone to an agency</strong>).</td>
                             </tr>
                             <tr>
                                 <td><em>Shared by several agencies</em> (<code>shared_ownership</code>)</td>
-                                <td>A secret, variable or SSH key that Central owns and only some agencies can use:
+                                <td>A secret, variable or SSH key that Administration owns and only some agencies can use:
                                     a row that several agencies shared before 2.3.0, or a row that the upgrade
                                     did not give to its one agency because that would have changed what a run
-                                    resolves. Since 2.4.0 no agency's run uses it, and since 2.5.3 Central runs
+                                    resolves. Since 2.4.0 no agency's run uses it, and since 2.5.3 Administration runs
                                     nothing, so nothing uses it. Filed under each agency that shared it, which sees
-                                    the row under <strong>Held by Central</strong> with its Usage, read only:
+                                    the row under <strong>Held by Administration</strong> with its Usage, read only:
                                     revealing it, making it unrevealable, editing or deleting it is a global
-                                    administrator's. Since 2.5.3 Central's own finding of the row is in
+                                    administrator's. Since 2.5.3 Administration's own finding of the row is in
                                     <code>central_holds_work</code>.</td>
                                 <td>A global administrator gives it to one agency (a repair). If several agencies
-                                    need it, make a copy in each first: a row of Central's is used by no run.</td>
+                                    need it, make a copy in each first: a row of Administration's is used by no run.</td>
                             </tr>
                             <tr>
                                 <td><em>In no agency</em> (<code>orphaned</code>)</td>
                                 <td>A scope, runner, secret, variable or SSH key that belongs to no agency. This is
-                                    damage. Nothing can use the row. Central's.</td>
+                                    damage. Nothing can use the row. Administration's.</td>
                                 <td>A global administrator gives it an agency in Scopes &rarr; Agencies (a repair,
                                     with a reason).</td>
                             </tr>
@@ -8106,7 +8109,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 <td>A Vault-backed secret or SSH key that an agency owns, with a path that is not
                                     inside the agency's Vault path prefixes. After an upgrade, that is each such
                                     row, until you assign prefixes. The row still works, and it cannot be edited
-                                    or repaired. Central's; for an agency with a Vault of its own and prefixes it
+                                    or repaired. Administration's; for an agency with a Vault of its own and prefixes it
                                     set, the agency's (one with no prefixes is never listed).</td>
                                 <td>Add a prefix that covers the path to the agency (&sect;6.4), or correct the
                                     path.</td>
@@ -8148,7 +8151,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     (<code>leftover_executor_key</code>)</td>
                                 <td>Git job files, or the script sidecars that the jobs take the key from, still
                                     say <code>executor:</code>. One notice for each agency lists the jobs. A job
-                                    with no scope, or in a scope of several agencies, is listed under Central.</td>
+                                    with no scope, or in a scope of several agencies, is listed under Administration.</td>
                                 <td>Remove the line from the job's file, or from the script's sidecar when the job's
                                     own file has none. The notice clears at the next sync. To decide where the
                                     jobs run, bind their scopes.</td>
@@ -8217,7 +8220,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     (<code>agency_no_repository</code>)</td>
                                 <td>An agency created without a repository (since 2.5.1), or one from before 2.4.0.
                                     The agency works as it does now, and it cannot be given a definition (&sect;5.7)
-                                    or published to. Central has no repository and is never listed (since 2.5.3).
+                                    or published to. Administration has no repository and is never listed (since 2.5.3).
                                     The agency's.</td>
                                 <td>The agency's administrator connects its repository (Settings &rarr;
                                     Repositories).</td>
@@ -8226,9 +8229,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 <td><em>A workflow runs jobs of more than one agency</em>
                                     (<code>workflow_spans_agencies</code>)</td>
                                 <td>A workflow built in the app whose jobs are several agencies'. The upgrade to
-                                    2.4.0 made it the built-in agency's, and nobody may save it. Since 2.5.3 Central
+                                    2.4.0 made it the built-in agency's, and nobody may save it. Since 2.5.3 Administration
                                     runs nothing, so it does not run at all, and <code>central_holds_work</code>
-                                    lists it too. Central's.</td>
+                                    lists it too. Administration's.</td>
                                 <td>Copy the workflow into each agency that needs it, with that agency's own jobs.
                                     It clears when the workflow's jobs are all one agency's.</td>
                             </tr>
@@ -8241,42 +8244,42 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 <td>Remove the reaction, or point it at a definition of its own agency.</td>
                             </tr>
                             <tr>
-                                <td><em>A job is built on a script of Central's repository</em>
+                                <td><em>A job is built on a script of Administration's repository</em>
                                     (<code>global_script_job</code>)</td>
                                 <td>An agency's job that takes its script from the built-in agency's old
                                     repository. A definition takes nothing from another agency's repository, and
-                                    Central's no longer syncs, so the job's runs are refused, with the reason. The
+                                    Administration's no longer syncs, so the job's runs are refused, with the reason. The
                                     job's agency's.</td>
                                 <td>Build the job on a script of its own agency's repository.</td>
                             </tr>
                             <tr>
-                                <td><em>A job or workflow is bound to a schedule of Central's</em>
+                                <td><em>A job or workflow is bound to a schedule of Administration's</em>
                                     (<code>global_schedule_bound</code>)</td>
-                                <td>An agency's definition is bound to a schedule of Central's. It keeps the timing
+                                <td>An agency's definition is bound to a schedule of Administration's. It keeps the timing
                                     that it copied and fires on it, but no longer follows the schedule's edits. The
                                     definition's agency's.</td>
                                 <td>Bind the entry to a schedule of its own agency, give it a timing of its own, or
                                     remove it.</td>
                             </tr>
                             <tr>
-                                <td><em>A job binds a secret, variable or key only Central has</em>
+                                <td><em>A job binds a secret, variable or key only Administration has</em>
                                     (<code>global_credential_bound</code>)</td>
-                                <td>An agency's job binds a name that only Central holds. No agency's run uses a row
-                                    of Central's, so the job's run fails, naming it (&sect;6.1d). The job's
-                                    agency's. (Central's own list of the row is in
+                                <td>An agency's job binds a name that only Administration holds. No agency's run uses a row
+                                    of Administration's, so the job's run fails, naming it (&sect;6.1d). The job's
+                                    agency's. (Administration's own list of the row is in
                                     <code>central_holds_work</code>; this one tells the agency whose run
                                     fails.)</td>
                                 <td>Create the row in the job's agency (for a shared secret, point it at a common
                                     Vault path, &sect;6.4), or remove the binding.</td>
                             </tr>
                             <tr>
-                                <td><em>A host only Central has a record for</em>
+                                <td><em>A host only Administration has a record for</em>
                                     (<code>global_host_record</code>)</td>
-                                <td>A host of an agency's scope has a hand-written record of Central's and none of the
+                                <td>A host of an agency's scope has a hand-written record of Administration's and none of the
                                     agency's own. The agency's runs on that host find no record and fail on that host.
                                     The agency's.</td>
                                 <td>Write a record for the host in the agency (Settings &rarr; SSH Targets), or have
-                                    a global administrator move Central's record to the agency (a repair).</td>
+                                    a global administrator move Administration's record to the agency (a repair).</td>
                             </tr>
                         </tbody>
                     </table>
@@ -8287,7 +8290,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     it), <code>global_calendar_scope</code> (a freeze calendar of the built-in agency: its
                     calendars are the catalogue now, which no run reads), <code>local_runner_served</code> and
                     <code>agency_placed</code> (the local runner serves the one agency it is given), and
-                    Central's own finding of <code>shared_ownership</code>.</p>
+                    Administration's own finding of <code>shared_ownership</code>.</p>
                 <p class="muted">Later releases add kinds. A kind that the console does not know shows under the
                     title <em>Notice</em>, with its own sentence.</p>
 
@@ -8297,10 +8300,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <strong>Settings &rarr; Alerts</strong> (the Agency group), for the agency in use. Anyone else
                     sees them read-only, with the reason.</p>
                 <ul>
-                    <li><strong>A rule matches its own agency's runs only.</strong> A rule of Central's matches every
-                        agency's runs: Central runs nothing itself (since 2.5.3), and keeps its alert rules and
+                    <li><strong>A rule matches its own agency's runs only.</strong> A rule of Administration's matches every
+                        agency's runs: Administration runs nothing itself (since 2.5.3), and keeps its alert rules and
                         push targets to watch the installation. A rule that names a job names one of its own
-                        agency's jobs (<code>422 unknown_job</code> otherwise); a rule of Central's that names a
+                        agency's jobs (<code>422 unknown_job</code> otherwise); a rule of Administration's that names a
                         job matches that name in every agency.</li>
                     <li><strong>A push goes to the targets that the rule names.</strong> A rule's target picker
                         offers its own agency's push targets, and shows when the rule's channel is Apprise (<code>422
@@ -8316,23 +8319,23 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         Telegram, &hellip;) and self-hosted ones (ntfy, Gotify, Mattermost) are the agency's to
                         name; the self-hosted ones reach the host they are given, so keep the gateway's own
                         egress narrow.</li>
-                    <li><strong>The relay's default recipients</strong> are added to the mail of Central's rules
+                    <li><strong>The relay's default recipients</strong> are added to the mail of Administration's rules
                         only.</li>
                     <li><strong>An agency that owns a rule or a target is not deleted</strong> (&sect;6.1c).</li>
                     <li><strong>Three triggers are not about runs</strong> (since 2.5.1): <em>a secret revealed</em>,
                         <em>a secret changed</em> (created, rotated, updated, moved, deleted, migrated to Vault), and
                         <em>the backup keys changed</em>. A secret event belongs to the secret's agency, so an
-                        agency's rule hears its own agency's secrets and a rule of Central's hears every agency's; a
+                        agency's rule hears its own agency's secrets and a rule of Administration's hears every agency's; a
                         move is told to the agency it leaves and the one it reaches. The message names who acted and
                         says when they were outside the agency, a global administrator included. <em>The backup
-                            keys changed</em> is Central's alone (<code>422 trigger_global_only</code> on an agency's
+                            keys changed</em> is Administration's alone (<code>422 trigger_global_only</code> on an agency's
                         rule), and none of the three can name a job (<code>422 invalid_target_mode</code>).</li>
                     <li><strong>Two triggers are about calendars</strong> (since 2.5.3, <a
                             href="#calendar-catalogue">&sect;4.4b</a>): <code>calendar-update-available</code>, when
                         a copy of a catalogue calendar that asks before updating falls behind, or an automatic one
                         is held back by its agency's bindings; and <code>calendar-updated</code>, when a copy
                         changed with the catalogue automatically or by a global administrator's push. Each belongs
-                        to the copy's agency, so the agency's rules hear it, and Central's rules hear every
+                        to the copy's agency, so the agency's rules hear it, and Administration's rules hear every
                         agency's. Neither names a job.</li>
                     <li><strong>A push target's URL is encrypted at rest</strong> (since 2.5.1), as the push service's
                         credential it is.</li>
@@ -8357,7 +8360,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     carry no link and no visit records one again until someone sets it. The address must be an
                     absolute <code>http</code> or <code>https</code> address with a host and no query (a path is
                     kept). It is a global administrator's (<code>GET</code>/<code>PUT
-                        /api/v1/settings/alert-link-address</code>; each change in Central's Change Log).</p>
+                        /api/v1/settings/alert-link-address</code>; each change in Administration's Change Log).</p>
                 <div class="callout warn">
                     <div class="ct"><span class="em">⚠️</span> The first global administrator's visit decides where
                         every alert link points</div>
@@ -8379,11 +8382,11 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                 </div>
                 <p><strong>Settings &rarr; Notifications is the relay alone</strong> (the Installation group, a
                     global administrator's): the mail and Apprise transport, and the default recipients. It shows
-                    Central's push targets read-only, with a link to Alerts working in Central, where they are edited
+                    Administration's push targets read-only, with a link to Alerts working in Administration, where they are edited
                     by id; an edit there keeps the rules that name the target. <code>/settings/notifications</code>
                     no longer carries targets, and a <code>targets</code> key sent to it is ignored.</p>
                 <p><strong>At the upgrade to 2.5.0</strong>, every existing alert rule became the built-in agency's,
-                    and so did every existing push target; they stay Central's through 2.5.3, which moves nothing.
+                    and so did every existing push target; they stay Administration's through 2.5.3, which moves nothing.
                     Each rule pushes where it pushed before. To give an agency rules of its own, its
                     administrators create them under Alerts, working in that agency. The API is
                     <code>/api/v1/alerts</code> and <code>/api/v1/alert-targets</code> (both with
@@ -8586,7 +8589,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         <p class="faq-cause"><strong>Cause:</strong> an <strong>unbound</strong> run (the job has no
                             scope, and none was given at trigger) declares a binding to a row that its agency cannot
                             use. Since 2.5.3 a run with no scope belongs to its <strong>job's agency</strong>, and
-                            resolves that agency's rows only. A row of another agency, a leftover of Central's, or a
+                            resolves that agency's rows only. A row of another agency, a leftover of Administration's, or a
                             row of a scope the run is not on resolves for <strong>nobody</strong>. The refusal is
                             <code>422 scope_required</code>, and its message names the first such binding: <em>&ldquo;&hellip; is not one its agency can use when the
                                 run has no scope: create it in the job's agency, or bind the job to the scope it
@@ -8595,7 +8598,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         <p><strong>Correction:</strong> create the row in the job's agency, or give the job (or the
                             Run dialog) the scope that the row belongs to. <strong>Operational rule: bind a
                                 scope</strong>, not for permissions, but for credential resolution and runner
-                            eligibility. A job whose secrets were Central's before 2.5.3 meets this at the upgrade:
+                            eligibility. A job whose secrets were Administration's before 2.5.3 meets this at the upgrade:
                             move the secret to the job's agency (<a href="#upgrade-2-5-3">&sect;8.7</a>). On the
                             scheduled path, the same condition records a
                             <span class="pill mut"><span class="dot"></span>skipped</span> run with reason
@@ -8622,9 +8625,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 no agent of its own is online, and the local runner does not serve it or is off.
                                 This is <code>onlineRunners: 0</code> from <a href="#secrets">&sect;6.1e</a>, stated
                                 on the run.</li>
-                            <li><em>this run belongs to Central, which runs nothing since 2.5.3, so no runner takes
+                            <li><em>this run belongs to Administration, which runs nothing since 2.5.3, so no runner takes
                                     it &mdash; cancel it and run the job in the agency whose work it is (Notices
-                                    lists what Central still holds)</em>: a run of Central's that was queued before
+                                    lists what Administration still holds)</em>: a run of Administration's that was queued before
                                 the upgrade to 2.5.3. Do as it says (<a href="#upgrade-2-5-3">&sect;8.7</a>). Since
                                 2.5.3 a run of an agency's job with no scope is that agency's, and waits for that
                                 agency's runner like any other.</li>
@@ -8953,7 +8956,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             administer more than one agency and named none), <code>one_agency</code> /
                             <code>global_mixed</code> (a row belongs to exactly one agency), and
                             <code>vault_path_not_allowed</code> (a Vault path outside the agency's prefixes,
-                            &sect;6.4). Since 2.5.3 a row created in Central is refused with <code>422
+                            &sect;6.4). Since 2.5.3 a row created in Administration is refused with <code>422
                                 central_runs_nothing</code> (<em>&ldquo;&hellip; would belong to the built-in
                                 administration agency, which runs nothing: switch to an agency, or name one, to
                                 create it there&rdquo;</em>): switch to the agency whose row it is.</p>
@@ -9212,7 +9215,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <dd>A department, independent of every other since 2.4.0: it owns everything that it runs (its
                         repository, scopes, secrets, variables, SSH keys, host records, bastions, runners, calendars,
                         alert rules and push targets), and nothing that it runs depends on another agency. Since
-                        2.5.3 all work is an agency's: Central runs nothing. Grants are authored against agencies.
+                        2.5.3 all work is an agency's: Administration runs nothing. Grants are authored against agencies.
                         An agent serves the agency that owns it, set by
                         its registration token (the agent <em>never</em> self-declares). Dispatch is
                         <strong>hard-isolated</strong>: a run goes only to a runner that its agency owns. Names are
@@ -9220,7 +9223,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         administrator's repair changes one). The catalog is on the <a
                             href="user-manual.html#scopes">Scopes page</a>; a runner's owner is on <a
                             href="user-manual.html#runners">Runners</a> (<a href="#agencies">&sect;6.1c</a>).</dd>
-                    <dt>Central (the built-in agency)</dt>
+                    <dt>Administration (the built-in agency)</dt>
                     <dd>The built-in agency, id <code>global</code>: since 2.5.3 the installation's
                         administration, which runs nothing. It owns no scope, runner, registration token,
                         schedule, script, job, workflow, reaction, secret, variable, SSH key, host record, bastion
@@ -9228,13 +9231,13 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         keeps the installation settings, the agency catalog, the installation's change log,
                         Activity and notices, the installation freeze, its alert rules (which match every agency's
                         runs), push targets and contact, and the calendar catalogue. It is renamable and never
-                        deleted; an installation made before 2.5.2 keeps its earlier name until a global
-                        administrator renames it. A job with no scope is its own agency's. What Central held at the upgrade to
+                        deleted; an installation made before 2.5.3 keeps its earlier name (Global, or Central from 2.5.2)
+                        until a global administrator renames it. A job with no scope is its own agency's. What Administration held at the upgrade to
                         2.5.3 stays, does not run, and is listed by <code>central_holds_work</code> (<a
                             href="#agencies">&sect;6.1c</a>, <a href="#upgrade-2-5-3">&sect;8.7</a>).</dd>
                     <dt>Operations (the first agency)</dt>
-                    <dd>The ordinary agency that Cronomicon makes at its first start when no agency but Central
-                        exists (also at an upgrade that had only Central), so that there is somewhere to work. It is
+                    <dd>The ordinary agency that Cronomicon makes at its first start when no agency but Administration
+                        exists (also at an upgrade that had only Administration), so that there is somewhere to work. It is
                         made once: deleted, it does not come back. Rename it and grant people on it; its Dashboard
                         shows <em>Name your agency</em> to global administrators until then (<a
                             href="#bootstrap">&sect;2</a>).</dd>
@@ -9242,8 +9245,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <dd>The one agency that a person works in at a time, picked with the switcher under the
                         wordmark and carried in the address (<code>?agency=</code>). Lists show its rows, and what is
                         created is its own. A global administrator's change in an agency is logged as <em>acting
-                            in</em> it. Since 2.5.3 Central is listed after <em>All agencies</em> as
-                        <em>Central &middot; administration</em>, for global administrators and readers of every
+                            in</em> it. Since 2.5.3 Administration is listed after <em>All agencies</em> as
+                        <em>Administration</em>, for global administrators and readers of every
                         agency; its work pages create nothing (<a href="#agency-switcher">&sect;3</a>).</dd>
                     <dt>Assignment (Give to an agency)</dt>
                     <dd>A global administrator's hand-over of a Git job or workflow to an agency, as one commit
@@ -9333,18 +9336,18 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         Forbid and Allow too. A calendar belongs to one agency (since 2.4.0). A <strong>freeze
                         calendar</strong> (the key <code>global</code> in the API) unions its days into the Forbid
                         set of every start of its own agency, and is refused as an Allow in both directions. To
-                        freeze every agency, use the installation-wide freeze. Central keeps a <strong>catalogue</strong>
+                        freeze every agency, use the installation-wide freeze. Administration keeps a <strong>catalogue</strong>
                         of calendars that no run reads; an agency takes a <strong>copy</strong> of one, read-only
-                        there, updated from Central when it asks or automatically, until it is made its own (<a
+                        there, updated from Administration when it asks or automatically, until it is made its own (<a
                             href="#calendar-catalogue">&sect;4.4b</a>). Days match in the <strong>application
                             time zone</strong>, never UTC. Operator-authored only &mdash; never Git-synced, though
                         Git-authored jobs and workflows may bind one by name. Suppressed fires are recorded as <span
                             class="pill mut"><span class="dot"></span>skipped</span> runs carrying
                         <code>suppressed_by_calendar</code>. See &sect;4.4.</dd>
-                    <dt>Calendar catalogue / copy (from Central)</dt>
-                    <dd>Since 2.5.3, the calendars that global administrators keep in Central (Schedules &rarr;
-                        Calendars, working in Central). No run reads them. An agency takes a <strong>copy</strong>
-                        (<em>Add from Central</em>, or a global administrator's <em>Add to agencies&hellip;</em>):
+                    <dt>Calendar catalogue / copy (from Administration)</dt>
+                    <dd>Since 2.5.3, the calendars that global administrators keep in Administration (Schedules &rarr;
+                        Calendars, working in Administration). No run reads them. An agency takes a <strong>copy</strong>
+                        (<em>Add from Administration</em>, or a global administrator's <em>Add to agencies&hellip;</em>):
                         its own calendar, read-only there, that follows the catalogue calendar by
                         <em>Ask before updating</em> (the default; its editors press <em>Update</em>) or
                         <em>Update automatically</em>. <em>Make it our own</em> detaches it. A copy whose catalogue
@@ -9363,8 +9366,11 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         <em>Freeze: forbid its days to every start of &lt;agency&gt;</em>, the badge
                         <em>freeze</em>). Its days are forbidden to every start of its own agency, a person's Run
                         included; other agencies are unaffected. It can never be an Allow. A freeze calendar in
-                        Central's catalogue freezes nothing until an agency adds a copy (<a
+                        Administration's catalogue freezes nothing until an agency adds a copy (<a
                             href="#freeze">&sect;4.4</a>).</dd>
+                    <dt>Central, Global (agency)</dt>
+                    <dd>The built-in agency&rsquo;s name on an installation made with 2.5.2 (Central) or before it
+                        (Global), kept until a global administrator renames it. See <em>Administration</em>.</dd>
                     <dt>Change Log</dt>
                     <dd>The audited record of in-app configuration changes (Timestamp, User, Category, Action, Target,
                         Details). View it in History &rarr; Change Log. It is CSV-exportable. Retention is the
@@ -9480,7 +9486,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         the agent resolves it against its own inventory (for isolated segments).</dd>
                     <dt>Job-definitions repo</dt>
                     <dd>An agency's repository: the source of truth for that agency's job, script, schedule,
-                        workflow, and inventory definitions. Each agency may have one; Central has none (since
+                        workflow, and inventory definitions. Each agency may have one; Administration has none (since
                         2.5.3). Cronomicon keeps a
                         local clone of each and parses it again on each sync. Its token must be able to push (<a
                             href="#repositories">&sect;5.6</a>).</dd>
@@ -9491,7 +9497,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         agency before 2.4.0 (<a href="#freeze">&sect;4.4</a>).</dd>
                     <dt>Reading rule</dt>
                     <dd>Since 2.5.0: an agency's rows are read by its own people and by those whose access reaches
-                        every agency; Central's rows by the second group only. An unreadable object answers
+                        every agency; Administration's rows by the second group only. An unreadable object answers
                         <code>404</code> (<a href="#reading-rule">&sect;3</a>).</dd>
                     <dt>Repair</dt>
                     <dd>The one way to change an existing object's agency: a global administrator's correction of
@@ -9571,7 +9577,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         SHA-256 hash; the plaintext shows one time at mint. It is for first contact only: resync and all
                         later calls use the runner's long-lived key, and a revoke of an unused token never affects
                         registered runners. To mint or revoke a token, the caller needs <em>configure app</em> on
-                        the token's agency. Since 2.5.3 no token is minted for Central, and the environment's
+                        the token's agency. Since 2.5.3 no token is minted for Administration, and the environment's
                         bootstrap token (<code>CRONOMICON_RUNNER_BOOTSTRAP_TOKEN</code>) is refused
                         (<code>bootstrap_token_retired</code>).</dd>
                     <dt>Reserved reference prefixes</dt>
@@ -9650,8 +9656,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         <code>CRONOMICON_LOCAL_RUNNER=forbid</code> keeps it off for good (<a
                             href="#local-runner">&sect;4.1b</a>).</dd>
                     <dt>Legacy placement</dt>
-                    <dd>A runner that served several agencies before 2.3.0. Central owns it, and a runner takes
-                        its owner's work only; since 2.5.3 Central runs nothing, so it takes no work at all. Its
+                    <dd>A runner that served several agencies before 2.3.0. Administration owns it, and a runner takes
+                        its owner's work only; since 2.5.3 Administration runs nothing, so it takes no work at all. Its
                         serve list can be narrowed and never widened, and once it serves one agency it is handed
                         to that agency (<a href="#legacy-placement">&sect;7.7</a>).</dd>
                     <dt>Notice</dt>
@@ -9897,7 +9903,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     reason, <code>noCopy</code>); a write to a copy's days or settings is <code>409
                                         calendar_from_central</code></td>
                                 <td>session; authoring = Compose on the schedule's or calendar's agency; the
-                                    catalogue (calendars of Central's) and a push = a global administrator; the
+                                    catalogue (calendars of Administration's) and a push = a global administrator; the
                                     catalogue read = Compose on some agency</td>
                             </tr>
                             <tr>
@@ -9930,7 +9936,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 <td>Git</td>
                                 <td><code>GET/POST /git/sync?repo=</code>, <code>GET /git/history?repo=</code>,
                                     <code>POST /scopes/resync?repo=</code> (since 2.5.3, without <code>?repo=</code>
-                                    or naming <code>global</code>: <code>404 not_connected</code>, as Central has no
+                                    or naming <code>global</code>: <code>404 not_connected</code>, as Administration has no
                                     repository; <code>GET /git/history</code> still reads its past syncs),
                                     <code>POST /webhooks/gitlab/{repoId}</code> (since 2.5.3
                                     <code>/webhooks/gitlab</code> with no id answers <code>401</code>, as an unknown
@@ -9958,8 +9964,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     <code>upstream_missing</code> / <code>name_taken</code> /
                                     <code>changed_by_agency</code>, <code>409 up_to_date</code>; since 2.5.3
                                     <code>calendar_missing</code> lists in <code>catalogueCalendars</code> the
-                                    missing calendars that Central's catalogue offers, and an assignment from a
-                                    leftover of Central's is <code>422 central_runs_nothing</code>)</td>
+                                    missing calendars that Administration's catalogue offers, and an assignment from a
+                                    leftover of Administration's is <code>422 central_runs_nothing</code>)</td>
                                 <td>ConfigureApp on the repository's agency; the leftover's removal and an
                                     assignment = a global administrator</td>
                             </tr>
@@ -10005,7 +10011,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     <code>GET/PUT /agencies/{agencyId}/groups</code> (&sect;3);
                                     <code>PUT /agencies/{agencyId}/concurrency</code> (&sect;6.1e);
                                     since 2.5.2 <code>PUT /agencies/{agencyId}/contact</code> (the agency's
-                                    administrators, Central's a global administrator);
+                                    administrators, Administration's a global administrator);
                                     since 2.5.1 <code>GET/PUT/DELETE /agencies/{agencyId}/vault</code>,
                                     <code>POST &hellip;/vault/test</code> and <code>&hellip;/vault/preview</code>
                                     (&sect;6.4.1; <code>409 references_unresolved</code> / <code>vault_in_use</code>,
@@ -10015,7 +10021,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 <td>The catalog, the group lists and the caps = a global administrator; the Vault
                                     prefixes too, except an agency's with a Vault of its own, which are
                                     <code>configureApp</code> on it, as its Vault connection is. The secrets report
-                                    and Held by Central = the agency's people and everywhere-readers. A change of an object's agency = a global administrator's repair
+                                    and Held by Administration = the agency's people and everywhere-readers. A change of an object's agency = a global administrator's repair
                                     (<code>repair: true</code> and a reason; <code>409 repair_required</code>). A
                                     clone = the permission on both agencies</td>
                             </tr>
@@ -10033,8 +10039,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     Writes and reveal = Admin (ManageEnvVars), scope-checked (<code>403</code> on a
                                     target scope that is not permitted) <strong>and</strong> checked against the
                                     entity's <em>agency</em> (departmental: a row is for its own agency's runs only;
-                                    a row is created in an agency, never in Central, <code>422
-                                    central_runs_nothing</code>; a leftover of Central's from before 2.5.3 is a global
+                                    a row is created in an agency, never in Administration, <code>422
+                                    central_runs_nothing</code>; a leftover of Administration's from before 2.5.3 is a global
                                     administrator's to move or delete; a Vault path must be inside the agency's
                                     prefixes, <code>422 vault_path_not_allowed</code>). Binding PUTs = ManageEnvVars (+CSRF), also
                                     agency-checked. Reveals are audited and fail-closed</td>
@@ -10046,7 +10052,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     <code>DELETE</code> = <code>409</code> + the hosts that reference it, unless
                                     <code>?force=true</code>), <code>GET /ssh/credentials/{id}/usage</code></td>
                                 <td>Read = session. Writes = Admin (ConfigureApp), checked against the key's agency
-                                    (a key is created in an agency, never in Central; a leftover key of Central's
+                                    (a key is created in an agency, never in Administration; a leftover key of Administration's
                                     is a global administrator's). Private material is never returned</td>
                             </tr>
                             <tr>
@@ -10060,10 +10066,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     to that agency)
                                 </td>
                                 <td>session (+CSRF). The extended actions = ConfigureApp (+CSRF), audited, and checked
-                                    against the runner's <strong>owner</strong> agency (a runner that Central owns,
+                                    against the runner's <strong>owner</strong> agency (a runner that Administration owns,
                                     a leftover from before 2.5.3, is a global administrator's). A registration
                                     token = ConfigureApp on the agency that the token is for; since 2.5.3 none is
-                                    minted for Central (<code>422 central_runs_nothing</code>), and one minted for
+                                    minted for Administration (<code>422 central_runs_nothing</code>), and one minted for
                                     it before is refused at enrolment (<code>401 token_for_central</code>)</td>
                             </tr>
                             <tr>
@@ -10117,7 +10123,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     = <code>403 not_requestable</code>; since 2.5.3 a start that the definition's
                                     Forbid or Allow calendars refuse = <code>409 suppressed_by_calendar</code> with
                                     the reason, recorded as a skipped run, <a href="#definition-calendars">&sect;4.4c</a>;
-                                    a leftover definition of Central's = <code>409 run_refused</code>)</td>
+                                    a leftover definition of Administration's = <code>409 run_refused</code>)</td>
                                 <td>account management = <code>manageRoles</code> (+CSRF); triggers =
                                     <code>Authorization: Bearer crnsvc_&hellip;</code>, no cookie, no CSRF</td>
                             </tr>
@@ -10284,7 +10290,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 <td><strong>Ignored since 2.5.3</strong>, with the other
                                     <code>CRONOMICON_GITLAB_*</code> settings (<code>BASE_URL</code>,
                                     <code>TOKEN</code>, <code>WRITE_BRANCH</code>). They configured the built-in
-                                    agency's repository only, and Central has none. A set one is named in a warning at
+                                    agency's repository only, and Administration has none. A set one is named in a warning at
                                     start and in the notice <em>Environment settings that no longer apply are
                                     set</em>; remove it. Each agency's repository has its own webhook secret
                                     (Settings &rarr; Repositories)</td>
@@ -10294,7 +10300,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 <td><em>(empty)</em></td>
                                 <td><strong>Refused since 2.5.3</strong>: an agent that presents it is answered
                                     <code>401 bootstrap_token_retired</code>. It named no agency and enrolled agents
-                                    as the built-in agency's, and Central runs nothing. A set one is named in a
+                                    as the built-in agency's, and Administration runs nothing. A set one is named in a
                                     warning at start and in the same notice; remove it. Agents enrol with a
                                     registration token minted in their agency (&sect;7.2)</td>
                             </tr>

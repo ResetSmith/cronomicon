@@ -235,7 +235,7 @@ Group names are case-sensitive and must match your directory exactly.
 
 #### Step 6: Next steps
 
-- **Name your agency.** A new installation starts with one agency, **Operations**, and opens in it: its Dashboard offers **Name your agency** (a name and, optionally, the directory group that administers it). Add more agencies under **Scopes → Agencies**. The built-in **Central** is the installation's administration and runs nothing.
+- **Name your agency.** A new installation starts with one agency, **Operations**, and opens in it: its Dashboard offers **Name your agency** (a name and, optionally, the directory group that administers it). Add more agencies under **Scopes → Agencies**. The built-in agency, **Administration**, keeps the installation's settings and runs nothing.
 - **Connect each agency's Git repository** of job definitions under **Settings → Repositories**, working in that agency, or start composing jobs in the app. See [Defining jobs as code](#defining-jobs-as-code).
 - **Add your servers** as scopes on the **Scopes** page.
 - **Decide what runs your jobs.** On a new installation nothing does, and runs wait in the queue. Turn on the local runner so that the server runs shell jobs itself, enrol agents, or both: see [Adding runners](#adding-runners).
@@ -343,7 +343,7 @@ Cronomicon is built from a few pieces that combine:
 | **Scope** | Where a job runs: a named group of hosts, such as `Production`. |
 | **Job** | A script bound to a scope, one or more schedules and its settings: timeouts, retries, concurrency, notifications. |
 | **Workflow** | Jobs run in a defined order, with parallel groups, branches and values passed between steps. |
-| **Agency** | A department. Every scope, secret, variable, SSH key, host record and runner belongs to exactly one, and access is granted per agency. **Central** (on an installation made before 2.5.2, **Global** until it is renamed) is the installation's administration: since 2.5.3 it runs nothing, and its global administrators keep the installation's settings, the agency catalog, the calendar catalogue and the alert rules that hear every agency. Agencies are independent: nothing in one agency is another's to use, and an agency's rows are read by its own people and by those whose access reaches every agency. |
+| **Agency** | A department. Every scope, secret, variable, SSH key, host record and runner belongs to exactly one, and access is granted per agency. **Administration** (on an installation made before 2.5.3, **Global** or **Central**, until it is renamed) is the installation's administration: since 2.5.3 it runs nothing, and its global administrators keep the installation's settings, the agency catalog, the calendar catalogue and the alert rules that hear every agency. Agencies are independent: nothing in one agency is another's to use, and an agency's rows are read by its own people and by those whose access reaches every agency. |
 | **Runner** | What executes a run: an **agent** installed inside a network the server cannot reach directly, or the **local runner**, which is the server itself running shell jobs over SSH. |
 
 Jobs, workflows, schedules and scopes can be **defined in Git** and synchronized automatically, or **created in the app**. The two kinds live side by side, each labelled with its source, and run through the same scheduler. Scripts always come from Git.
@@ -353,7 +353,7 @@ Jobs, workflows, schedules and scopes can be **defined in Git** and synchronized
 ### Scheduling and triggers
 
 - **Flexible schedules.** Cron expressions, fixed intervals and one-time runs, with activation windows and a forward view of everything due to run.
-- **Working calendars.** Holidays and maintenance freezes stop automatic starts, on a job, a workflow or a schedule (Forbid and Allow), and each stop is recorded. Central keeps a catalogue of calendars that agencies copy, taking its updates when they choose or as they come.
+- **Working calendars.** Holidays and maintenance freezes stop automatic starts, on a job, a workflow or a schedule (Forbid and Allow), and each stop is recorded. Administration keeps a catalogue of calendars that agencies copy, taking its updates when they choose or as they come.
 - **Six triggers.** A schedule, a manual run (optionally deferred to a later time), a Git push, an API call from a service account, the completion of another job or workflow (a *reaction*), or a file arriving on a watched host.
 - **Concurrency control.** Allow overlapping runs, skip them, or queue them, with shared concurrency keys across related jobs.
 - **Service-level expectations.** Flag a run that is taking longer than usual, one that will miss a deadline, or one that never started.
@@ -378,7 +378,7 @@ Jobs, workflows, schedules and scopes can be **defined in Git** and synchronized
 ### Security and access
 
 - **Directory-driven access.** Grants pair a directory group with a role and a department. Roles are editable, and a department can administer its own access. A change to a grant takes effect within seconds, with no need to sign in again, and **My access** shows each user which permissions they hold in which agency.
-- **Self-sufficient departments.** An agency's administrators manage its scopes, host records, bastions, Vault-backed secrets, agents, Git repository, alerts, recycle bin and the access grants of the directory groups listed for it. What belongs to the whole installation is kept apart in Central, which runs nothing, and changed only by a global administrator, who can also hand a job or workflow to an agency as one commit into its repository.
+- **Self-sufficient departments.** An agency's administrators manage its scopes, host records, bastions, Vault-backed secrets, agents, Git repository, alerts, recycle bin and the access grants of the directory groups listed for it. What belongs to the whole installation is kept apart in Administration, which runs nothing, and changed only by a global administrator, who can also hand a job or workflow to an agency as one commit into its repository.
 - **Same name, different departments.** Two departments can each own a job called `monthly-close` without conflict.
 - **Secrets by reference.** Jobs name the secrets they need; the values are injected at run time, masked in logs and audited. With HashiCorp Vault, each agency may point only at the Vault paths assigned to it, or connect a Vault of its own.
 - **Secrets an agency can review.** Each secret and key shows which runs used it, what refers to it, and who changed or revealed it, marked when that was someone outside the agency. An agency can download a report of its secrets, be alerted when one is revealed or changed, and make a secret unrevealable for everyone, global administrators included.

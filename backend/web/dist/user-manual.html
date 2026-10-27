@@ -2259,8 +2259,8 @@
                                 secrets, variables, SSH keys, host records, runners and repository are its own, and
                                 nothing it runs uses another agency's. You work in one agency at a time, picked in
                                 the <strong>agency switcher</strong> under the wordmark. Beside the agencies there is
-                                <strong>Central</strong> (on an installation made before 2.5.2 it is called Global
-                                until a global administrator renames it): the installation's administration. Central
+                                <strong>Administration</strong> (an installation made before 2.5.3 keeps its earlier name, Global
+                                or Central, until a global administrator renames it): the installation's administration. It
                                 runs nothing; its people are the global administrators.</td>
                         </tr>
                         <tr>
@@ -2558,7 +2558,7 @@
                         touched by Git sync.</li>
                     <li><strong>“Git” means the agency's own repository.</strong> Every agency syncs its definitions
                         from a repository of its own (Settings → Repositories). A definition in an agency's repository
-                        is that agency's, and so is one built in the app while you work in the agency. Central has no
+                        is that agency's, and so is one built in the app while you work in the agency. Administration has no
                         repository (since 2.5.3): it runs nothing, so it has no definitions to sync.</li>
                 </ul>
                 <div class="callout note" id="agency-independence">
@@ -2570,7 +2570,7 @@
                         case-sensitive (<code>Nightly</code> and <code>nightly</code> are two names), so two agencies
                         may each have a <code>backup</code> job without meeting. <strong>An agency's runs use only the
                         agency's own</strong> &mdash; its scripts and schedules, its secrets, its runners; nothing of
-                        another agency's or of Central's. A job in an agency's repository must name one of that agency's scopes; sync refuses
+                        another agency's or of Administration's. A job in an agency's repository must name one of that agency's scopes; sync refuses
                         the file otherwise, and the repository's problems say why.</p>
                     <p>Two things that used to run no longer do: a <strong>workflow whose jobs span
                         agencies</strong>, and a <strong>reaction to another agency's definition</strong>. Each is
@@ -2606,7 +2606,7 @@
                         Agency</strong> — a department's own space — and only a runner that agency owns can execute
                     its jobs. A scope's name is unique within its agency. Every job names a scope (since 2.5.3);
                     one made before with no scope at all is its own agency's, and so is its run: any runner that
-                    serves the agency may take it. Central owns no
+                    serves the agency may take it. Administration owns no
                     scope (it runs nothing). Within its agency a scope can be narrowed further by
                     <strong>binding it to runners</strong>. The full Scopes view reference is in <a
                         href="#envvars">§11</a>.</p>
@@ -2958,7 +2958,7 @@
                 <ul>
                     <li><strong>The menu</strong> lists your choices: <strong>All agencies</strong> first if your access
                         reaches every agency (the Dashboard across every agency, <a href="#ops-overview">§3.6</a>), then
-                        <strong>Central · administration</strong> if you may read it (a global administrator, a reader
+                        <strong>Administration</strong> if you may read it (a global administrator, a reader
                         of every agency), then your agencies. Beside each agency
                         are two small counts &mdash; its failed runs in the last 24 hours (red) and its open notices
                         (amber) &mdash; and a dot on the closed switcher says another of your agencies has something
@@ -2975,14 +2975,14 @@
                         Without one, a global administrator and a reader of every agency start in the agency when
                         there is exactly one, and otherwise on the Dashboard with All agencies chosen; the lists
                         underneath show the first agency by name. Anyone else starts in the first of their agencies by
-                        name (since 2.5.3; a global administrator used to start in Central).</li>
+                        name (since 2.5.3; a global administrator used to start in Administration).</li>
                     <li><strong>What you create belongs to the agency in use.</strong> A create form says where
                         (<em>This … will belong to …, the agency you are working in</em>) and offers no agency picker;
                         to create in another agency, switch to it first. A request that names another agency is
                         refused (<code>422 agency_context_mismatch</code>). A global administrator creates for an agency
                         the same way, and their changes there are recorded in the change log as acting in that
                         agency. That holds for SSH targets, runner tokens, access grants and service accounts too; a
-                        grant or service account on <em>every</em> agency is made while working in Central. Create,
+                        grant or service account on <em>every</em> agency is made while working in Administration. Create,
                         Edit and Delete on Jobs and Workflows are offered where you compose in the agency in use.</li>
                 </ul>
                 <div class="callout note">
@@ -2990,25 +2990,25 @@
                     <p>An agency's rows &mdash; its jobs, runs, scopes, runners, notices, activity and the rest &mdash;
                         are read by <strong>its own people</strong> (anyone holding a grant on it) and by those whose
                         access reaches <strong>every</strong> agency (a global administrator, a viewer of every agency).
-                        <strong>Central's rows</strong> &mdash; the installation's notices, change log and Activity
+                        <strong>Administration's rows</strong> &mdash; the installation's notices, change log and Activity
                         &mdash; <strong>are only for the latter.</strong> Nobody else sees them, in a list or by
                         asking for them directly: an object you may not read is answered as <em>not found</em>
                         (<code>404</code>), the same as one that does not exist.</p>
                 </div>
                 <div class="callout note" id="central-administration">
-                    <div class="ct"><span class="em">🏛️</span> Central is the administration, and runs nothing (since 2.5.3)</div>
-                    <p><strong>Central</strong> is the installation's own, beside the agencies; the app always shows
+                    <div class="ct"><span class="em">🏛️</span> Administration runs nothing (since 2.5.3)</div>
+                    <p><strong>Administration</strong> is the installation's own, beside the agencies; the app always shows
                         its name as it is (a global administrator renames it under Scopes &rarr; Agencies &rarr;
                         Rename; it is never deleted). It holds the installation's settings, notices, change log and
                         Activity, the installation freeze, the alert rules that match every agency's runs, and the
                         calendar catalogue (<a href="#calendars">§9.2</a>). It owns no job, workflow, script,
                         schedule, scope, runner, secret, variable, SSH key, host record or repository, and creating
                         one there is refused: <em>switch to an agency, or name one, to create it there</em>.</p>
-                    <p>Working in Central, the work pages (Jobs, Workflows, Scripts, Schedules but its Calendars tab,
+                    <p>Working in Administration, the work pages (Jobs, Workflows, Scripts, Schedules but its Calendars tab,
                         the Scopes tab, Env Vars, Runners, SSH Targets, the composer, the publisher, the schedule
-                        builder and the workflow editor) show one message: <em>Central runs nothing. Switch to an
+                        builder and the workflow editor) show one message: <em>Administration runs nothing. Switch to an
                         agency to work.</em> Change log, Activity, Notices and Settings there show the
-                        installation's. If Central still holds rows of a page's kind from before 2.5.3, the page lists
+                        installation's. If Administration still holds rows of a page's kind from before 2.5.3, the page lists
                         them under a banner (<em>What is listed here is left from before 2.5.3 and no longer runs:
                         move each to the agency whose work it is, or delete it.</em>) with only the actions that clear
                         them; that is a global administrator's clean-up (<a href="#notices">§14.2</a>).</p>
@@ -3048,7 +3048,7 @@
                 <p>With every agency deleted, a global administrator's All-agencies Dashboard shows <strong>Create
                         your first agency</strong> (a name, an optional repository, and the optional administrators'
                     group), and the work pages say there is no agency yet. The banner of <a
-                        href="#dashboard-admin-cards">§5</a> about what Central still holds is shown here too.</p>
+                        href="#dashboard-admin-cards">§5</a> about what Administration still holds is shown here too.</p>
                 <p>Every line opens its item <strong>in its own agency</strong>: the switcher moves there and says so.
                     Every other page &mdash; Jobs, History, Settings &mdash; keeps showing the agency you last worked
                     in while All agencies is chosen. Acknowledging is the one thing changed from here.</p>
@@ -3196,7 +3196,7 @@
                                 Grants</strong> cards (reads included).</li>
                         <li><strong>Publish</strong> (Admin <em>or</em> Approver) — the Publish-to-the-repository builder
                             (<code>POST /schedules/publish</code>), on the agency whose repository it writes to.
-                            Central has no repository to publish to.</li>
+                            Administration has no repository to publish to.</li>
                         <li><strong>Trigger jobs / Kill jobs</strong> (Admin, Approver, Operator) —, enforced on
                             <em>every</em> execution route: run, kill, pause, resume, workflow trigger/pause/cancel. The
                             caller needs the verb <em>on the run's scope</em>, from the same grant. <strong>A Viewer
@@ -3216,12 +3216,12 @@
                     is the union across all your grants; your <em>authority</em> on any given scope is only what the
                     grant covering that scope carries. “Operator, but only for Tax” is one row.</p>
 
-                <h4 id="agency-ownership">Agencies, Central, and who administers what</h4>
+                <h4 id="agency-ownership">Agencies, Administration, and who administers what</h4>
                 <p>An <strong>agency</strong> is a department's own space. Every job, workflow, script, schedule,
                     calendar, scope, secret, variable, SSH key, host record, bastion and runner belongs to
                     <strong>exactly one agency</strong>, and each agency may connect a repository of its own. Agencies are
                     <strong>independent</strong>: nothing an agency runs depends on another agency's things.
-                    <strong>Central</strong> is not one of them: it is the installation's administration and
+                    <strong>Administration</strong> is not one of them: it is the installation's administration and
                     <strong>runs nothing</strong> (since 2.5.3; <a href="#central-administration">§3.5</a>). It
                     holds the installation's settings, notices, change log and Activity, the installation freeze,
                     the alert rules that match every agency's runs, and the calendar catalogue, and they are read
@@ -3229,9 +3229,9 @@
                 <ul>
                     <li>A <strong>global administrator</strong> holds an administering role on <em>All scopes</em>.
                         Only a global administrator changes the installation (the Installation group of Settings,
-                        the agency catalog, an agency's concurrency cap and group list) and what Central holds. No
-                        grant can name Central itself: a global administrator is a grant on every agency, not a
-                        member of Central. A global administrator works in an agency by switching to it (<a
+                        the agency catalog, an agency's concurrency cap and group list) and what Administration holds. No
+                        grant can name Administration itself: a global administrator is a grant on every agency, not a
+                        member of Administration. A global administrator works in an agency by switching to it (<a
                             href="#agency-switcher">§3.5</a>).</li>
                     <li>An <strong>agency administrator</strong> holds the role on one agency and administers that
                         agency's own things: its scopes, host records and bastions, its Vault-backed secrets (inside
@@ -3265,7 +3265,7 @@
                     required — and only an unrestricted operator may run it unbound, as a run of the job's own
                     agency, which any runner serving that agency may take. The rule is enforced on <strong>reads
                         across the board</strong>: an agency's rows are read by its own people and by those whose
-                    access reaches every agency, and Central's by the latter only. Every list (Activity and the change log included)
+                    access reaches every agency, and Administration's by the latter only. Every list (Activity and the change log included)
                     drops what you may not read, and a single object you may not read &mdash; a job
                     (<code>GET /jobs/{id}</code>), a run and its log, a workflow run, a schedule &mdash; answers
                     <code>404</code>, exactly as one that does not exist. Your <a href="#envvars">Env Vars and
@@ -3331,16 +3331,16 @@
                     <ul>
                         <li><strong>Name your agency</strong> &mdash; on a new installation, Cronomicon makes one
                             ordinary agency named <strong>Operations</strong> at its first start (an upgrade that had
-                            only Central gets one too), and the work happens there. Its Dashboard shows this card to
+                            only Administration gets one too), and the work happens there. Its Dashboard shows this card to
                             global administrators until the agency is renamed or an access grant names it: a
                             <strong>Name</strong>, and optionally the <strong>Administrators' AD group</strong> (that
                             group is granted the admin role on the agency). <strong>Dismiss</strong> hides it for you,
                             in this browser. People are added with grants on the agency in Settings → Users &amp;
                             Access.</li>
-                        <li><strong>Central still holds …</strong> &mdash; while Central still holds work from before
-                            2.5.3, every Dashboard tells global administrators <em>Central still holds &lt;kinds&gt;,
-                            which stopped running in 2.5.3. Review them →</em>, linking to Central's notice (<a
-                                href="#notices">§14.2</a>). It goes when Central holds nothing.</li>
+                        <li><strong>Administration still holds …</strong> &mdash; while Administration still holds work from before
+                            2.5.3, every Dashboard tells global administrators <em>Administration still holds &lt;kinds&gt;,
+                            which stopped running in 2.5.3. Review them →</em>, linking to Administration's notice (<a
+                                href="#notices">§14.2</a>). It goes when Administration holds nothing.</li>
                     </ul>
                     <p>Nobody else sees either.</p>
                 </div>
@@ -4640,9 +4640,9 @@
                     <div class="ct"><span class="em">🏛️</span> A workflow's steps are its own agency's</div>
                     <p>A workflow runs only its own agency's jobs and sub-workflows: each step resolves by name within
                         the workflow's agency. A save that would make a workflow span agencies is refused, for everyone.
-                        A workflow that already spanned agencies before 2.4.0 was left with Central; since 2.5.3
-                        Central runs nothing, so it does not run at all. It is listed in <a href="#notices">Notices</a>
-                        (<code>workflow_spans_agencies</code>, and among what Central still holds) until it is made
+                        A workflow that already spanned agencies before 2.4.0 was left with Administration; since 2.5.3
+                        Administration runs nothing, so it does not run at all. It is listed in <a href="#notices">Notices</a>
+                        (<code>workflow_spans_agencies</code>, and among what Administration still holds) until it is made
                         again in the agency whose work it is. A step that is refused, or whose job is not found, is
                         the workflow's failure, filed under the workflow's agency. A workflow with no jobs yet is the
                         agency's you created it in.</p>
@@ -4873,9 +4873,9 @@
                         <h4>🗓 Calendars</h4>
                         <p class="muted">Working calendars — named sets of dates, such as your company holidays or a
                             change freeze — that jobs, workflows and schedule entries name to Forbid or Allow days. A
-                            calendar is its agency's: <em>Our calendars</em>, and the copies <em>From Central</em>.
+                            calendar is its agency's: <em>Our calendars</em>, and the copies <em>From Administration</em>.
                             Authoring needs the Compose capability; anyone who may read the agency can look. Working in
-                            Central, this tab is the installation's calendar catalogue. See <a
+                            Administration, this tab is the installation's calendar catalogue. See <a
                                 href="#calendars">§9.2</a>.</p>
                     </div>
                     <div class="card">
@@ -4966,41 +4966,41 @@
                     both name some. A start that passes both checks runs.</p>
                 <p>Calendars themselves are never Git-defined: a YAML key names a calendar that exists in the app.
                     <strong>A calendar belongs to one agency</strong>, and a job, workflow or entry names only its own
-                    agency's calendars (its own and its copies from Central, below): a job or workflow of Tax is
-                    judged by Tax's calendars, never by another agency's or by Central's catalogue. A name the agency
+                    agency's calendars (its own and its copies from Administration, below): a job or workflow of Tax is
+                    judged by Tax's calendars, never by another agency's or by Administration's catalogue. A name the agency
                     does not have is refused when you save, and at sync.</p>
 
-                <h4 id="calendars-from-central">Our calendars, and calendars from Central (since 2.5.3)</h4>
+                <h4 id="calendars-from-central">Our calendars, and calendars from Administration (since 2.5.3)</h4>
                 <p>The Calendars tab of an agency shows two groups: <strong>Our calendars</strong>, the agency's own,
-                    and <strong>From Central</strong>, its copies of calendars from Central's
-                    <strong>catalogue</strong>. A global administrator keeps the catalogue in Central (Schedules →
-                    Calendars, working in Central); no run reads a catalogue calendar. An agency uses one by taking a
+                    and <strong>From Administration</strong>, its copies of calendars from Administration's
+                    <strong>catalogue</strong>. A global administrator keeps the catalogue in Administration (Schedules →
+                    Calendars, working in Administration); no run reads a catalogue calendar. An agency uses one by taking a
                     copy.</p>
                 <ul>
-                    <li><strong>Add from Central</strong> (the agency's calendar editors, those who compose in it):
+                    <li><strong>Add from Administration</strong> (the agency's calendar editors, those who compose in it):
                         choose a catalogue calendar, the name it has here (the catalogue's unless you give another; a
-                        name the agency already has is refused), and <em>When Central changes it</em>: <strong>Ask
+                        name the agency already has is refused), and <em>When Administration changes it</em>: <strong>Ask
                             before updating</strong> (the default) or <strong>Update automatically</strong>. A global
                         administrator can also add a catalogue calendar to chosen agencies at once from the catalogue
                         (<strong>Add to agencies…</strong>).</li>
                     <li><strong>A copy is the agency's own calendar</strong>: its jobs, workflows and entries name it
                         like any other, and it can be deleted. It is <strong>read-only</strong> here: its days,
-                        description and settings change only by an update from Central. Opened, it says so
-                        (<em>Read-only. This calendar is a copy of … from Central</em>).</li>
+                        description and settings change only by an update from Administration. Opened, it says so
+                        (<em>Read-only. This calendar is a copy of … from Administration</em>).</li>
                     <li><strong>Its state</strong>, on the list: <span class="tag">up to date</span>, <span
                             class="tag">update available</span> (its tooltip says what changed: days added, removed or
                         relabelled, the description, the freeze setting), <span class="tag">updates
                             automatically</span>, <span class="tag">update blocked</span> (with the reason), or <span
                             class="tag">no longer offered</span>.</li>
                     <li><strong>Ask before updating</strong>: when the catalogue calendar changes, the copy shows
-                        <em>update available</em>, the agency gets the notice <em>A calendar from Central has an
+                        <em>update available</em>, the agency gets the notice <em>A calendar from Administration has an
                             update</em>, and the alert event <code>calendar-update-available</code> is raised (see
                         the note below on alert rules).
                         <strong>Update</strong> takes it; several changes while you wait are one update to the
                         latest. A global administrator may also push the update to chosen agencies.</li>
                     <li><strong>Update automatically</strong>: the copy changes when the catalogue calendar does. Each
                         change is written to the agency's change log and Activity, and the alert event
-                        <code>calendar-updated</code> is raised. Your runs then follow a change made in Central without
+                        <code>calendar-updated</code> is raised. Your runs then follow a change made in Administration without
                         anyone in the agency looking at it; that is the choice this mode makes. Switching a copy that
                         is behind to this mode takes the waiting update at once.</li>
                     <li><strong>Update blocked</strong>: an update is not applied, in either mode, when the agency's own
@@ -5011,14 +5011,14 @@
                         agency, which its calendar editors change, with no link to the catalogue and no more updates.
                         Its days and bindings stay as they are.</li>
                     <li><strong>No longer offered</strong>: when a global administrator deletes the catalogue calendar,
-                        the copies stay and keep working, read-only, with the notice <em>A calendar from Central is no
+                        the copies stay and keep working, read-only, with the notice <em>A calendar from Administration is no
                             longer offered</em>. Make it your own to change it, or delete it.</li>
                 </ul>
                 <p>The <strong>Update</strong> button, the update mode and <strong>Make it our own</strong> are on the
                     copy's row. Bindings are by name, so neither an update nor making a copy your own changes what
                     names it.</p>
                 <p class="muted" style="font-size:13.5px">The two alert events are heard by an alert rule whose
-                    condition names them, the agency's own rules for its copies and Central's for every agency's. In
+                    condition names them, the agency's own rules for its copies and Administration's for every agency's. In
                     2.5.3 the condition picker of Settings → Alerts does not offer them; such a rule is made through
                     the API (<code>POST /alerts</code> with the trigger <code>calendar-update-available</code> or
                     <code>calendar-updated</code>). The notice in Notices does not depend on any rule.</p>
@@ -5037,7 +5037,7 @@
                         working when it runs out of days</div>
                     <p>There is no built-in holiday list, no seeded calendar and no importable file of ours, in any
                         edition. Every date is <strong>yours</strong> (or your installation's, when a global
-                        administrator puts a calendar in Central's catalogue), which is the point: a list we supplied
+                        administrator puts a calendar in Administration's catalogue), which is the point: a list we supplied
                         could be silently wrong for your organisation, your country or your industry, and you would
                         have no reason to check it.</p>
                     <p>The consequence is the thing to plan for. When a calendar's last date passes, it does not warn
@@ -5057,7 +5057,7 @@
                     rather than an edit to everything you own — and one un-tick to lift. It stops a person's
                     <strong>Run</strong> too: the run is refused (<code>409 suppressed_by_calendar</code>) with the
                     calendar named, and a run parked for later is held when it comes due. It does not reach another
-                    agency. A copy from Central that is a freeze calendar freezes the agency that took it, as its own
+                    agency. A copy from Administration that is a freeze calendar freezes the agency that took it, as its own
                     would. (In YAML or JSON the flag's key is <code>global</code>.)</p>
                 <p>Stopping every agency's starts at once is the <strong>installation-wide freeze</strong>, a
                     global administrator's switch with a reason (Settings &rarr; General); while it is on no run of
@@ -5071,7 +5071,7 @@
                 <p>A freeze calendar is <strong>Forbid only</strong>: it can never be an Allow calendar, and a calendar
                     already named as an Allow calendar cannot be made a freeze calendar. That combination would mean
                     a job permitted to run only on days it is also forbidden from running on — an outage reachable by
-                    two individually sensible clicks. The same rule holds an update from Central back (<em>update
+                    two individually sensible clicks. The same rule holds an update from Administration back (<em>update
                         blocked</em>, above).</p>
                 <p>Because a freeze that nobody can see looks exactly like an outage, when a freeze calendar of the
                     agency in use covers <em>today</em> both the <a href="#dashboard">Dashboard</a> and the Schedules
@@ -5200,7 +5200,7 @@
                     and they fail in the direction each was written for: a dangling <em>Forbid</em> binding lets the
                     start <strong>happen</strong> (a visible, correctable policy breach), while a dangling
                     <em>Allow</em> binding means it <strong>never starts again</strong> (silence). Both are flagged as
-                    <em>missing</em> in the Inventory tab and in the editors. A copy from Central is deleted the same
+                    <em>missing</em> in the Inventory tab and in the editors. A copy from Administration is deleted the same
                     way.</p>
 
                 <div class="callout note">
@@ -5717,7 +5717,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
 
                 <h4 id="compose-calendars">Calendars (optional) — the job's own Forbid and Allow (since 2.5.3)</h4>
                 <p>The <strong>Calendars (optional)</strong> field names the job's own calendars, from its agency's
-                    (its own and its copies from Central): <strong>Forbid — never on days in</strong> and
+                    (its own and its copies from Administration): <strong>Forbid — never on days in</strong> and
                     <strong>Allow — only on days in</strong>. The job never starts on a day in a Forbid calendar, and
                     starts only on days in one of its Allow calendars. They gate every automatic start &mdash; its
                     schedules, a service account's trigger, a reaction, a file arrival &mdash; and a start on a
@@ -5870,7 +5870,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 </p>
                 <ul>
                     <li><strong>A publish goes to an agency's repository</strong>, and is that agency's publishers'
-                        (the Publish permission on the agency). Central has no repository, so nothing is published
+                        (the Publish permission on the agency). Administration has no repository, so nothing is published
                         there. The
                         Repository picker offers the repositories you may publish to, and is fixed when there is one.
                         With none, the builder says so: <em>You may publish to no repository…</em></li>
@@ -5961,8 +5961,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <li><strong>Refused</strong>, saying why: a definition built in the app (only a file of a
                         repository can be given), a calendar the copy names (on a schedule entry, or on the job or
                         workflow itself) that the agency lacks (<code>calendar_missing</code> &mdash; create it in the
-                        agency and give again; where Central's catalogue has a calendar of that name, the refusal says
-                        so, and the agency adds it <a href="#calendars-from-central">from Central</a> first), a copy
+                        agency and give again; where Administration's catalogue has a calendar of that name, the refusal says
+                        so, and the agency adds it <a href="#calendars-from-central">from Administration</a> first), a copy
                         that names as an Allow a calendar the agency has as a freeze calendar
                         (<code>calendar_not_bindable</code>), a
                         reaction to a definition the agency would not have (<code>upstream_missing</code> &mdash; give
@@ -5997,7 +5997,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         vars</strong>, and both permissions are held only by Admin. The permission must be held
                     <em>on the agency that owns the row</em>: an agency administrator changes their own agency's scopes,
                     secrets, variables and keys, and only a global administrator changes the agency catalog itself
-                    (and clears what Central still holds from before 2.5.3). A non-admin sees the data but no
+                    (and clears what Administration still holds from before 2.5.3). A non-admin sees the data but no
                     mutation controls (the endpoints <code>403</code> regardless). All three Env Vars tabs also carry
                     <strong>operator-authored tags</strong> — a <strong>Tags</strong> column, a <strong>Tag</strong>
                     filter dropdown, and a click-to-edit tag editor in the expanded row, matching the
@@ -6017,8 +6017,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     (the first, then <em>+N</em>), or reads <em>any eligible</em> for a scope with no binding; a
                     <span style="color:var(--warning)">⚠</span> beside it means no bound runner can take work right now
                     and the scope's runs are waiting. <strong>Agencies</strong> shows the one agency the scope
-                    belongs to. Central owns no scope (since 2.5.3); one left with it from before is listed under a
-                    banner while you work in Central, for a global administrator to move to its agency. A scope's
+                    belongs to. Administration owns no scope (since 2.5.3); one left with it from before is listed under a
+                    banner while you work in Administration, for a global administrator to move to its agency. A scope's
                     name is unique within its agency, so
                     two agencies may each have a <code>prod-web</code>. A cell reading <em>no agency</em> is damage,
                     not a meaning: no runner can take that scope's jobs until a global administrator sets its agency, and it
@@ -6254,7 +6254,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         and the agency's own administrator connects it later under Settings → Repositories (since
                         2.5.1); until then the agency cannot be given a job or published to. A connected repository is
                         changed there afterwards, never disconnected; it goes when the agency is deleted.</li>
-                    <li><strong>Central</strong> is shown apart, above the agencies, as <em>Central ·
+                    <li><strong>Administration</strong> is shown apart, above the agencies, as <em>Administration ·
                             administration</em>: the installation's own. It runs nothing, and holds the
                         installation's notices, change log, alert rules and calendar catalogue (<a
                             href="#central-administration">§3.5</a>). It can be renamed (<strong>Rename</strong>),
@@ -6263,7 +6263,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             happens in an agency: create the first one.</em>
                     </li>
                     <li><strong>Operations</strong> &mdash; a new installation starts with one agency of that name,
-                        made at its first start, so that there is somewhere to work (an upgrade that had only Central
+                        made at its first start, so that there is somewhere to work (an upgrade that had only Administration
                         gets one too; once deleted it is not made again). Rename it to your team's name, here or from
                         the <a href="#dashboard-admin-cards">Name your agency</a> card on its Dashboard, and add
                         people with grants on it in Settings → Users &amp; Access.</li>
@@ -6300,7 +6300,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <li>A <strong>scope</strong> belongs to one agency. A run inherits it and is taken only by a runner
                         that agency owns.</li>
                     <li>A <strong>secret or variable</strong> is injectable only into runs of the agency that owns it,
-                        <em>and</em> the scope rule applies as well. Both must pass. Central's are injected into no
+                        <em>and</em> the scope rule applies as well. Both must pass. Administration's are injected into no
                         run. A
                         secret two agencies both need is kept in a common <strong>Vault</strong>: a global administrator
                         gives both agencies the same Vault path prefix, and each agency keeps its own record pointing at
@@ -6321,7 +6321,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="ct"><span class="em">🧳</span> What was shared before 2.4.0</div>
                     <p>Before 2.4.0 the built-in agency's rows were every agency's to use, and a workflow, a reaction
                         or a job could reach across agencies. That sharing is gone. What was shared stayed with the
-                        built-in agency, now Central, which since 2.5.3 runs nothing at all; each case is listed in <a
+                        built-in agency, which since 2.5.3 runs nothing at all; each case is listed in <a
                             href="#notices">Notices</a> for an administrator to copy into the agency that needs it. A
                         scope that was in several agencies before 2.3.0 reads <em>“This scope is still in several
                             agencies, from before 2.3.0. It runs for each of them until a global administrator settles
@@ -6341,8 +6341,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         creating it again there.</li>
                     <li><strong>A repair</strong> — a global administrator's only: changing the agency of a row placed
                         by mistake, or of one in no agency, from the row itself or by <strong>+ Add one of
-                            Central's…</strong> on an agency's panel (what Central still holds from before 2.5.3). It
-                        asks for a reason, written to the audit log. Nothing is ever moved <em>into</em> Central.
+                            Administration's…</strong> on an agency's panel (what Administration still holds from before 2.5.3). It
+                        asks for a reason, written to the audit log. Nothing is ever moved <em>into</em> Administration.
                         Everyone else reads <em>“Its agency does not change: another agency gets one by a copy. A
                             global administrator can repair a placement that was a mistake.”</em></li>
                     <li><strong>&ldquo;What is in this agency?&rdquo;</strong> — the <strong>Agencies</strong> tab.
@@ -6365,7 +6365,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         is written, never at run time</strong>; a row that already falls outside keeps working, cannot
                     be edited until a prefix covers it, and is listed in Notices. An agency with no prefix cannot create
                     a Vault-backed secret or key; that includes a global administrator creating one in the agency
-                    (since 2.5.3 nothing is created in Central). Prefixes are checked within an
+                    (since 2.5.3 nothing is created in Administration). Prefixes are checked within an
                     agency only, so two agencies may be given the same prefix to share a secret.</p>
 
                 <h4 id="agency-panel">Expanding an agency</h4>
@@ -6432,7 +6432,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <li><strong>Scope</strong> spells out <strong>global</strong> for an unscoped row instead of leaving
                         the cell blank. The distinction matters: a global row is visible from — and injectable into —
                         <em>every</em> scope of its agency, whereas a blank cell would be indistinguishable from “not
-                        loaded”. (Unscoped is not the same as Central's: a row Central still holds serves no run.)
+                        loaded”. (Unscoped is not the same as Administration's: a row Administration still holds serves no run.)
                     </li>
                     <li><strong>Used by</strong> counts the jobs and scripts that <em>declare a binding</em> to that row
                         (see <a href="#refbindings">§11.6</a>). Read it before you re-scope or rename anything: those
@@ -6448,7 +6448,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="ct"><span class="em">🏛️</span> Variables, Secrets and SSH Keys are departmental</div>
                     <p>Beyond the permission gates, <strong>writes — and secret reveal — are checked against the agency
                             that owns the row</strong>: an operator may change (or reveal) only what belongs to a
-                        department they hold the permission in. Central owns none since 2.5.3: one it still holds from
+                        department they hold the permission in. Administration owns none since 2.5.3: one it still holds from
                         before is read only by those whose access reaches every agency, changed, revealed or moved to
                         an agency only by a global administrator, and injected into no run. When
                         you <strong>create</strong> a variable, secret or SSH key it belongs to the agency in use, and
@@ -6509,8 +6509,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <p><strong>Download report</strong> (on the Secrets and SSH Keys tabs, for the agency in use) gives a CSV
                     or JSON file of every secret and key the agency owns: source and Vault path, last rotated, last used,
                     uses and reveals in the window, references, and changes made from outside the agency. It never holds a
-                    value. <strong>Held by Central</strong>, under each tab, lists the agency's former secrets and keys
-                    that several agencies shared before 2.3.0 and that Central holds now: Central runs nothing, so no
+                    value. <strong>Held by Administration</strong>, under each tab, lists the agency's former secrets and keys
+                    that several agencies shared before 2.3.0 and that Administration holds now: Administration runs nothing, so no
                     run uses them (a global administrator can give one to your agency with <em>Repair: move to another agency…</em>;
                     until then, create your own if your jobs need one), and each
                     opens its Usage. They are read only: revealing one, making it unrevealable, editing or deleting it
@@ -6734,7 +6734,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             <tr>
                                 <td><strong>✗ missing</strong></td>
                                 <td>No row of that name is visible to you anywhere in the job's agency. A row of the name
-                                    that another agency or Central owns does not count: it is never injected
+                                    that another agency or Administration owns does not count: it is never injected
                                     into this agency's runs.</td>
                                 <td>Check the spelling, or create the row under <a href="#envvars">Env Vars</a>.</td>
                             </tr>
@@ -6801,9 +6801,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
 
                 <h3>12.1 Activity feed</h3>
                 <p><strong>Activity is the agency's</strong>: its runs, its repository's syncs and pushes, and the
-                    changes made to its things. A change to the installation (Settings → Installation) is Central's
-                    wherever it is made, and is read by working in Central. Activity recorded before 2.4.4 names no
-                    agency and shows under Central.</p>
+                    changes made to its things. A change to the installation (Settings → Installation) is Administration's
+                    wherever it is made, and is read by working in Administration. Activity recorded before 2.4.4 names no
+                    agency and shows under Administration.</p>
                 <p>Reverse-chronological cards, each tagged with a <strong>kind</strong> — <code>run-start</code>,
                     <code>run-end</code>, <code>config</code>, <code>push</code>, <code>gitsync</code>,
                     <code>ssh-test</code> — and color-coded by outcome on a 3px left border (green success / red failure
@@ -7021,7 +7021,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <li><strong>Add a note</strong> on any run: what changed, who you spoke to, what the next shift
                         should do. At most 1,000 characters.</li>
                     <li>Each entry shows when, who, and how they stood to the run's agency: the agency's name for one of
-                        its people, <em>Global administrator</em>, or Central's name for the operations team (someone
+                        its people, <em>Global administrator</em>, or the built-in agency's name (<em>Administration</em>) for the operations team (someone
                         whose access reaches every agency).</li>
                     <li>Entries are <strong>never edited or deleted</strong>; they go when the run does (retention).
                         Each is also written to the agency's <strong>Change Log</strong> (category <em>Runs</em>, with the
@@ -7192,9 +7192,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <li><strong>The local runner</strong> belongs to one agency and serves that agency only, like an
                         agent of it; or to none, and is off (since 2.5.3; <a href="#local-runner">§14.1</a>).</li>
                     <li><strong>A legacy placement</strong> is a runner that served several agencies before 2.3.0. It
-                        is Central's, carries a <em>Legacy placement</em> chip linking to <a
+                        is Administration's, carries a <em>Legacy placement</em> chip linking to <a
                             href="#notices">Notices</a>, and since 2.4.0 claims its owner's runs only: the other
-                        agencies it lists are not served, and since 2.5.3 Central runs nothing, so it takes no work
+                        agencies it lists are not served, and since 2.5.3 Administration runs nothing, so it takes no work
                         until it is handed to an agency. It can be <strong>narrowed and never widened</strong>: an
                         <strong>×</strong> on a served agency takes it off (it cannot be added back), and once the
                         runner serves a single agency <strong>Hand to &lt;agency&gt;</strong> makes that agency its
@@ -7385,8 +7385,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         &lt;agency&gt;</em>, fixed to <strong>the agency you are working in</strong>: a token is minted in
                     the agency the runner is for, so to enrol a runner for another agency, switch to it first. An
                     agency administrator mints for their own agency; a global administrator for any agency, by
-                    working in it. Working in Central, minting is refused (<em>Central runs nothing: mint the token
-                        working in the agency the runner is for</em>): since 2.5.3 an agent of Central's would take no
+                    working in it. Working in Administration, minting is refused (<em>Administration runs nothing: mint the token
+                        working in the agency the runner is for</em>): since 2.5.3 an agent of Administration's would take no
                     work, and an agent enrolled with the retired environment bootstrap token is refused. A
                     global administrator serves an agency that has no machine of its own by deploying an agent
                     <em>that agency owns</em>. An agent per agency does not have to mean a machine per agency: the
@@ -7675,9 +7675,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         <em>Compose</em> for the Recycle Bin, <em>Configure app</em> for the others; Audit Export is
                         not listed for a global administrator, who has the whole trail under Audit &amp; Compliance);
                         inside a section, a control that needs a global administrator stays visible and disabled, with
-                        the reason. Working in Central, the Agency group shows the installation's own: Central's alert
+                        the reason. Working in Administration, the Agency group shows the installation's own: Administration's alert
                         rules, and under Repositories only the allowed hosts and any repository left from before 2.5.3;
-                        SSH Targets says <em>Central runs nothing</em>, or lists what it still holds from before. A chip above the rail says
+                        SSH Targets says <em>Administration runs nothing</em>, or lists what it still holds from before. A chip above the rail says
                         who you are here (<em>Global admin</em>, or your role and agency). Someone who administers
                         nothing sees <em>“You don't administer anything here…”</em> and a pointer to <strong>My
                             access</strong> (<a href="#my-access">§3.2</a>).</p>
@@ -7729,7 +7729,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 <td><strong>Installation →</strong> Notifications</td>
                                 <td><strong>The relay alone</strong>: the installation's <strong>SMTP</strong> relay
                                     and its default recipients, and the Apprise transport. Alert rules and push targets
-                                    are an agency's and live under <a href="#alerts">Agency → Alerts</a>; Central's push
+                                    are an agency's and live under <a href="#alerts">Agency → Alerts</a>; Administration's push
                                     targets are shown here read-only. The Run Notifications card reports delivery per
                                     transport —
                                     <em>“Email — sent 10:00”</em> — with a failed send called out in red and “never
@@ -7833,8 +7833,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 <td><strong>Agency →</strong> Repositories</td>
                                 <td>The repository of the agency in use, or its <strong>Connect</strong> card when it
                                     has none (since 2.5.3 only that agency's, a global administrator's view included;
-                                    working in Central the section shows the <strong>Allowed hosts</strong> card, and
-                                    Central's old connection while one is left from before 2.5.3, below):
+                                    working in Administration the section shows the <strong>Allowed hosts</strong> card, and
+                                    Administration's old connection while one is left from before 2.5.3, below):
                                     <strong>Repository URL</strong> (its host must be on the
                                     allowed hosts), a <strong>Token</strong> that must be able to push,
                                     <strong>Working Branch</strong> (synced from and published to), the bot's name and
@@ -7844,8 +7844,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                     and whether the token may push, and what that check cannot see: a protected
                                     branch. Each repository shows its sync status, history and problems (file, kind,
                                     message, since when). A repository is changed, never disconnected; it goes with its
-                                    agency. <strong>Central has no repository</strong> since 2.5.3. While it still has
-                                    one from before, a global administrator working in Central sees it with
+                                    agency. <strong>Administration has no repository</strong> since 2.5.3. While it still has
+                                    one from before, a global administrator working in Administration sees it with
                                     <strong>Remove the leftover repository</strong> (a repair, with a reason, recorded):
                                     then connect the same URL and branch to the agency whose work it is, and its sync
                                     brings the definitions in as that agency's, except a job with no scope, which an
@@ -7893,7 +7893,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <p><strong>Settings → Alerts</strong> (Agency group) holds the alert rules and push targets of
                     <strong>the agency in use</strong>. Its administrators (<em>Configure app</em> on it) change them;
                     anyone else who opens it sees them read-only, with the reason (<em>Only …'s administrators can
-                        change its alerts</em>; Central's are a global administrator's, working in Central). The relay that carries the mail
+                        change its alerts</em>; Administration's are a global administrator's, working in Administration). The relay that carries the mail
                     and the pushes stays the installation's, on Settings → Notifications.</p>
                 <ul>
                     <li><strong>Push Targets</strong> — the agency's Apprise destinations (Slack, Discord, webhooks
@@ -7902,13 +7902,13 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <li><strong>Alert Rules</strong> — <em>Specific Job</em> or <em>All Jobs</em> × a condition ×
                         channels (<strong>Email</strong> and/or <strong>Apprise</strong>). <strong>A rule matches only
                             its own agency's runs</strong> (<em>Its rules match its own runs only, and push to its own
-                            targets</em>); a rule of Central's matches the runs of every agency. A specific-job rule names
-                        a job of its own agency (a rule of Central's naming a job matches that name in every
+                            targets</em>); a rule of Administration's matches the runs of every agency. A specific-job rule names
+                        a job of its own agency (a rule of Administration's naming a job matches that name in every
                         agency). With Apprise ticked, the rule's <strong>Push to</strong> picker offers
                         the agency's push targets, and the rule pushes to the targets it names &mdash; a push no longer
                         goes to every target; until it names one, <em>Apprise sends nothing for this rule</em>.
                         <strong>Recipients</strong> are the rule's email addresses; the relay's default recipients are
-                        added to Central's rules' mail only.</li>
+                        added to Administration's rules' mail only.</li>
                     <li>The condition column is headed <strong>When</strong> (“Job fails”), since <em>trigger</em> is the
                         verb this app uses for <em>starting</em> a run; the conditions also include a run suppressed
                         (calendar, pause, or concurrency), a job that runs late (past its deadline) and a scheduled run
@@ -7919,7 +7919,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         condition and its channels.</li>
                 </ul>
                 <p class="muted" style="font-size:13.5px">Upgrading from before 2.5.0: every existing rule and push
-                    target is Central's, and each rule pushes where it pushed before. An agency that owns a rule or a
+                    target is Administration's, and each rule pushes where it pushed before. An agency that owns a rule or a
                     target is not deleted.</p>
 
                 <h4 id="ssh-targets">SSH Targets: owners, host keys and Test connection</h4>
@@ -7927,9 +7927,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <li><strong>Every host record and bastion has an Owner</strong> — one agency, chosen when the
                         record is added and fixed afterwards (the <strong>Owner</strong> column). An agency
                         administrator adds and changes records for their own agency, and a record that is not yours
-                        shows its controls disabled with whose it is. Central owns none since 2.5.3: a hand-written
+                        shows its controls disabled with whose it is. Administration owns none since 2.5.3: a hand-written
                         record or bastion it still holds from before is listed under a banner while a global
-                        administrator works in Central, and moved to its agency from <strong>Edit</strong>, by a
+                        administrator works in Administration, and moved to its agency from <strong>Edit</strong>, by a
                         repair with a reason.
                         A record imported from a scope's inventory reads <em>its scope's</em>: it follows that scope's
                         agency. A record may name only an SSH key of its owner's agency. An agency's runs use only its
@@ -7981,7 +7981,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="ct"><span class="em">🔗</span> The <code>CRONOMICON_GITLAB_*</code> settings no longer apply (since 2.5.3)</div>
                     <p>The environment settings <code>CRONOMICON_GITLAB_BASE_URL</code>, <code>_TOKEN</code>,
                         <code>_WEBHOOK_SECRET</code> and <code>_WRITE_BRANCH</code> configured the built-in agency's
-                        repository, which Central no longer has. They are ignored: set, one raises the notice
+                        repository, which Administration no longer has. They are ignored: set, one raises the notice
                         <em>Environment settings that no longer apply are set</em> and a warning at start. Every
                         agency's repository has its own secret, managed under Settings → Repositories.</p>
                 </div>
@@ -8073,8 +8073,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <ul>
                     <li><strong>You see the notices of the agency in use</strong>, when you administer it; the agency
                         switcher's menu shows each of your agencies' open notices. Every notice is filed under one
-                        agency; Central's are about the installation and are a global administrator's, read by
-                        working in Central.</li>
+                        agency; Administration's are about the installation and are a global administrator's, read by
+                        working in Administration.</li>
                     <li><strong>A notice goes away by itself</strong> when its cause is put right. The checks run when
                         the page is opened (at most every thirty seconds); <strong>Refresh</strong> asks again.</li>
                     <li><strong>Dismiss</strong> hides a notice that has been read and is being left as it is, and
@@ -8097,7 +8097,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 <td>Jobs in Git still declare an executor, which is ignored</td>
                                 <td>One notice per agency, listing the Git jobs that still carry
                                     <code>executor:</code>, each under its own agency (one whose repository is gone, and
-                                    so belongs to no agency, is listed under Central). The key no longer decides
+                                    so belongs to no agency, is listed under Administration). The key no longer decides
                                     anything.</td>
                                 <td>Remove the line from the job's file, or from the script's sidecar when the job took
                                     it from there. Clears at the next sync.</td>
@@ -8152,7 +8152,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             <tr>
                                 <td>A runner that serves agencies it is not owned by</td>
                                 <td>A <em>legacy placement</em>: a runner that served several agencies before 2.3.0.
-                                    Since 2.4.0 it claims its owner's (Central's) runs only, and since 2.5.3 Central
+                                    Since 2.4.0 it claims its owner's (Administration's) runs only, and since 2.5.3 Administration
                                     runs nothing.</td>
                                 <td>Narrow it, or replace it with agents each agency owns, in the order given in <a
                                         href="#runner-owner">§13.1</a>.</td>
@@ -8167,7 +8167,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             <tr>
                                 <td>Shared by several agencies</td>
                                 <td>A secret, variable or SSH key that one agency owns and others still share — what
-                                    several agencies shared before 2.3.0. (One Central holds is listed by <em>The
+                                    several agencies shared before 2.3.0. (One Administration holds is listed by <em>The
                                         administration still holds work that no longer runs</em>, below.)</td>
                                 <td>Create a copy in each agency that needs it (for a secret, both can point at one
                                     Vault path); a global administrator can repair the row into the one agency that
@@ -8200,7 +8200,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             <tr>
                                 <td>A workflow runs jobs of more than one agency<br><code>workflow_spans_agencies</code></td>
                                 <td>A workflow from before 2.4.0 whose steps reach another agency's jobs. It was left
-                                    with Central, and since 2.5.3 it does not run at all.</td>
+                                    with Administration, and since 2.5.3 it does not run at all.</td>
                                 <td>Copy what the agency needs into it (<a href="#give-to-agency">§10.4</a>), and
                                     make the workflow's steps its own agency's.</td>
                             </tr>
@@ -8211,22 +8211,22 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 <td>Point it at a definition of its own agency, or remove it.</td>
                             </tr>
                             <tr>
-                                <td>A job is built on a script of Central's repository<br><code>global_script_job</code><br>A
-                                    job or workflow is bound to a schedule of Central's<br><code>global_schedule_bound</code></td>
+                                <td>A job is built on a script of Administration's repository<br><code>global_script_job</code><br>A
+                                    job or workflow is bound to a schedule of Administration's<br><code>global_schedule_bound</code></td>
                                 <td>An agency's job that borrowed a script, or a job or workflow that used a schedule,
-                                    of the built-in agency's. Nothing of Central's is resolved for an agency.</td>
+                                    of the built-in agency's. Nothing of Administration's is resolved for an agency.</td>
                                 <td>Add the script or schedule to the agency's own repository (or build the schedule in
                                     the agency).</td>
                             </tr>
                             <tr>
-                                <td>A job binds a secret, variable or key only Central has<br><code>global_credential_bound</code></td>
-                                <td>An agency's job binds a credential that exists only as Central's. It is not injected
+                                <td>A job binds a secret, variable or key only Administration has<br><code>global_credential_bound</code></td>
+                                <td>An agency's job binds a credential that exists only as Administration's. It is not injected
                                     into the agency's runs (since 2.5.3 that includes a job with no scope: its run is the
                                     agency's).</td>
                                 <td>Create the secret, variable or key in the agency.</td>
                             </tr>
                             <tr>
-                                <td>A host only Central has a record for<br><code>global_host_record</code></td>
+                                <td>A host only Administration has a record for<br><code>global_host_record</code></td>
                                 <td>An agency's scope reaches a host that has a host record the built-in agency wrote by
                                     hand and none of the agency's own. The agency's runs on that host fail (<em>no SSH host
                                         record</em>).</td>
@@ -8234,21 +8234,21 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             </tr>
                             <tr>
                                 <td>The administration still holds work that no longer runs<br><code>central_holds_work</code></td>
-                                <td>Filed under Central, for global administrators, one per kind: the jobs, workflows,
+                                <td>Filed under Administration, for global administrators, one per kind: the jobs, workflows,
                                     schedules and scopes built in the app, secrets, variables, SSH keys, host records,
-                                    bastions, agents serving Central alone, or the repository that Central held at the
+                                    bastions, agents serving Administration alone, or the repository that Administration held at the
                                     upgrade to 2.5.3. They stay, and none of them runs. Every Dashboard says so to
                                     global administrators (<a href="#dashboard-admin-cards">§5</a>).</td>
                                 <td>The notice names the rows and the way out for the kind, on that kind's page
-                                    working in Central: move a secret, variable, key, scope, host record or bastion to
+                                    working in Administration: move a secret, variable, key, scope, host record or bastion to
                                     its agency (a repair, with a reason); deregister an agent and enrol it again with a
-                                    token minted in its agency; for a job or workflow, whose name Central's copy keeps
+                                    token minted in its agency; for a job or workflow, whose name Administration's copy keeps
                                     until it is deleted for good, note its settings, delete it here and in the <a
                                         href="#recycle-bin">Recycle Bin</a> (<strong>Delete forever</strong>), then make
                                     it again in its agency (or publish it into that agency's repository); make a
                                     schedule again in its agency, then delete it here; remove the leftover repository
                                     and connect it to the agency (<a href="#recipe-repository">§15.4</a>).
-                                    Each finding clears when Central holds none of its kind.</td>
+                                    Each finding clears when Administration holds none of its kind.</td>
                             </tr>
                             <tr>
                                 <td>The local runner belongs to no agency and is off<br><code>local_runner_unassigned</code></td>
@@ -8264,8 +8264,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 <td>Remove it from the server's environment.</td>
                             </tr>
                             <tr>
-                                <td>A calendar from Central has an update<br><code>calendar_update_available</code></td>
-                                <td>A copy of a calendar from Central's catalogue is behind it (<a
+                                <td>A calendar from Administration has an update<br><code>calendar_update_available</code></td>
+                                <td>A copy of a calendar from Administration's catalogue is behind it (<a
                                         href="#calendars-from-central">§9.2</a>), or an automatic update could not be
                                     applied, with the reason.</td>
                                 <td>The agency's calendar editors press <strong>Update</strong> on the copy (or a
@@ -8273,7 +8273,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                     it too.</td>
                             </tr>
                             <tr>
-                                <td>A calendar from Central is no longer offered<br><code>calendar_no_longer_offered</code></td>
+                                <td>A calendar from Administration is no longer offered<br><code>calendar_no_longer_offered</code></td>
                                 <td>The catalogue calendar a copy came from was deleted. The copy stays, read-only.</td>
                                 <td><strong>Make it our own</strong>, or delete it.</td>
                             </tr>
@@ -8313,7 +8313,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             <tr>
                                 <td>An agency was renamed by the upgrade</td>
                                 <td>An earlier upgrade found an agency already called <em>Global</em> and renamed it,
-                                    because that was then the name of the built-in agency (Central, since 2.5.2).</td>
+                                    because that was then the name of the built-in agency (renamable since 2.5.2).</td>
                                 <td>Give the agency a name of its own.</td>
                             </tr>
                         </tbody>
@@ -8346,7 +8346,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <p class="muted">Views: Scripts → Scopes → Compose → Jobs → Dashboard → History</p>
                 <ol class="steps">
                     <li>Pick the agency in the <a href="#agency-switcher">agency switcher</a>: the job will be that
-                        agency's, and so must its script and scope be. Not Central: it runs nothing. (On a new
+                        agency's, and so must its script and scope be. Not Administration: it runs nothing. (On a new
                         installation the one agency is <strong>Operations</strong> until a global administrator
                         renames it.)</li>
                     <li>Decide the origin. The fastest first job is an <strong>in-app (cronomicon-source)</strong> job —
@@ -8431,7 +8431,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <h3 id="recipe-repository">15.4 Connect an agency's repository and sync definitions</h3>
                 <p class="muted">Views: Settings → Repositories · GitLab · Scripts · History → Git Sync</p>
                 <ol class="steps">
-                    <li>Each agency connects a repository of its own (Central has none since 2.5.3); it is connected
+                    <li>Each agency connects a repository of its own (Administration has none since 2.5.3); it is connected
                         when the agency is created (Scopes → Agencies → <strong>+ Add Agency</strong>) or later by the
                         agency's administrator. Lay it out with
                         <code>jobs/ scripts/ schedules/ workflows/ inventory/</code> directories. Add
@@ -8464,9 +8464,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         (Administrator Manual).</li>
                 </ol>
                 <div class="callout note" id="recipe-repository-central">
-                    <div class="ct"><span class="em">🧳</span> If Central still has a repository from before 2.5.3</div>
-                    <p>Central syncs nothing since 2.5.3, so its old repository no longer runs anything. A global
-                        administrator working in Central opens Settings → Repositories, presses <strong>Remove the
+                    <div class="ct"><span class="em">🧳</span> If Administration still has a repository from before 2.5.3</div>
+                    <p>Administration syncs nothing since 2.5.3, so its old repository no longer runs anything. A global
+                        administrator working in Administration opens Settings → Repositories, presses <strong>Remove the
                             leftover repository</strong> (a repair: it asks for a reason, and is recorded; it removes the
                         connection and what it synced, and leaves the repository itself untouched), then
                         connects the same URL and branch to the agency whose work it is, as above. That agency's sync
@@ -8502,7 +8502,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <li>In <a href="#runners">Runners → + Add Runner</a> (or the <em>Register New Runner</em> panel),
                         choose the <strong>Agency the runner is for</strong> — it becomes the agent's owner, and the
                         agent will serve that agency's runs and no other's. The select is fixed to the agency you are
-                        working in, so switch to the runner's agency first (a token is not minted in Central). Then <strong>Mint &amp; build command</strong>
+                        working in, so switch to the runner's agency first (a token is not minted in Administration). Then <strong>Mint &amp; build command</strong>
                         (<strong>Mint token</strong> on the panel) creates a single-use
                         token (optionally labeled with the runner's name); <strong>Reveal</strong>/<strong>Copy</strong>
                         it immediately (shown only once). If the machine already runs an agent for another agency,
@@ -8707,7 +8707,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> it is another agency's, and you may not read that
                             agency: an object you may not read is answered as not found (<code>404</code>), the same as
-                            one that does not exist. Or it is Central's, left from before 2.5.3: Central's rows are
+                            one that does not exist. Or it is Administration's, left from before 2.5.3: Administration's rows are
                             read only by those whose access reaches every agency. Or you are simply working in another agency: lists show the
                             agency in use only.</p>
                         <p><strong>Fix:</strong> check the agency switcher (<a href="#agency-switcher">§3.5</a>) and
@@ -8720,7 +8720,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         its script, schedule or secret is missing</summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> it reached into another agency or into the
-                            built-in agency (Central), which nothing does since 2.4.0: a workflow's steps, a reaction's upstream, a job's script,
+                            built-in agency (Administration), which nothing does since 2.4.0: a workflow's steps, a reaction's upstream, a job's script,
                             schedules, calendars and credentials resolve within its own agency (<a
                                 href="#agency-independence">§2.2</a>). Each case is listed in <a
                                 href="#notices">Notices</a> (<code>workflow_spans_agencies</code>,
@@ -8745,32 +8745,32 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
 
                 <h3>Jobs that don't run</h3>
                 <details class="faq" id="faq-central-leftovers">
-                    <summary>A job, workflow or schedule left in Central no longer runs (since 2.5.3)</summary>
+                    <summary>A job, workflow or schedule left in Administration no longer runs (since 2.5.3)</summary>
                     <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> since 2.5.3 Central is the installation's
+                        <p class="faq-cause"><strong>Cause:</strong> since 2.5.3 Administration is the installation's
                             administration and <strong>runs nothing</strong>. What it held at the upgrade &mdash; jobs,
                             workflows and schedules built in the app, its old repository's definitions, its scopes,
                             secrets, variables, SSH keys, host records, bastions and the agents serving it alone
                             &mdash; stays, and none of it runs: its schedules do not fire, a trigger is refused, Run is
                             not offered on its jobs, and a fire is recorded as skipped with the reason <em>the built-in
                                 administration agency runs nothing; move this definition to an agency</em>. Nothing was
-                            moved automatically. Creating anything runnable in Central is refused too (<code>422
+                            moved automatically. Creating anything runnable in Administration is refused too (<code>422
                                 central_runs_nothing</code>: <em>switch to an agency, or name one, to create it
                                 there</em>).</p>
                         <p><strong>Fix:</strong> make the work an agency's. A global administrator reads the notice
                             <em>The administration still holds work that no longer runs</em> (<a
                                 href="#notices">§14.2</a>), which names each row and its way out: a job or workflow
-                            keeps its name while Central's copy exists, in the <a href="#recycle-bin">Recycle Bin</a>
-                            too, so delete it in Central and then for good (<strong>Delete forever</strong>), having
+                            keeps its name while Administration's copy exists, in the <a href="#recycle-bin">Recycle Bin</a>
+                            too, so delete it in Administration and then for good (<strong>Delete forever</strong>), having
                             noted its settings, and make it again in its agency or publish it into the agency's
-                            repository; make a schedule again in its agency, then delete it in Central; for Central's
+                            repository; make a schedule again in its agency, then delete it in Administration; for Administration's
                             old repository, remove the leftover and connect the same URL and branch to the agency, with
                             a scope on every job (<a href="#recipe-repository">§15.4</a>). If there is no agency yet,
                             the first start made one, <strong>Operations</strong>; rename it and work there.</p>
-                        <p>A run that was already queued at the upgrade and is stamped with Central waits, with the
-                            reason <em>this run belongs to Central, which runs nothing since 2.5.3, so no runner takes
+                        <p>A run that was already queued at the upgrade and is stamped with Administration waits, with the
+                            reason <em>this run belongs to Administration, which runs nothing since 2.5.3, so no runner takes
                                 it &mdash; cancel it and run the job in the agency whose work it is (Notices lists what
-                                Central still holds)</em>. No runner can be given to Central, so cancel it.</p>
+                                Administration still holds)</em>. No runner can be given to Administration, so cancel it.</p>
                     </div>
                 </details>
                 <details class="faq" id="faq-scope-required">
@@ -8779,7 +8779,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> the job binds a secret, variable or SSH key, and
                             the run has no scope. Since 2.5.3 such a run is the job's agency's, so it can use only that
-                            agency's own unscoped rows; a row of another agency, one Central still holds, or one of a
+                            agency's own unscoped rows; a row of another agency, one Administration still holds, or one of a
                             scope the run is not on resolves for nobody. The sentence names the first one: <em>this job
                                 consumes credentials its run cannot use &mdash; &lt;kind&gt; &lt;name&gt; is not one its
                                 agency can use when the run has no scope: create it in the job's agency, or bind the job
@@ -8848,7 +8848,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             job's agency), or the job's agency's own cap (<a href="#concepts">§2.7</a>). Or a freeze is
                             on today: a freeze calendar of the job's agency, or the installation freeze
                             (<code>409 suppressed_by_calendar</code>, naming it; <a href="#calendar-freeze">§9.2</a>).
-                            (A job Central holds from before 2.5.3 is not offered Run at all; a trigger through the API
+                            (A job Administration holds from before 2.5.3 is not offered Run at all; a trigger through the API
                             answers <code>409 run_refused</code>, <a href="#faq-central-leftovers">above</a>.) A job's own Forbid and Allow calendars never
                             refuse a person's Run.</p>
                         <p><strong>Fix:</strong> for a cap, wait for active runs to finish or kill stale/queued ones of
@@ -9226,12 +9226,22 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <dt>Activity feed</dt>
                     <dd>The reverse-chronological event stream (<code>/activity</code>) of run starts/ends, config
                         changes, pushes, Git syncs and SSH tests, color-coded by outcome.</dd>
+                    <dt>Administration (the built-in agency)</dt>
+                    <dd>The built-in agency, the installation's own (an installation made before 2.5.3 keeps its earlier name, Global or Central, until it is renamed; its id, <code>global</code>, never changes).
+                        Since 2.5.3 it <strong>runs nothing</strong>: it owns no job, workflow, script, schedule, scope,
+                        runner, secret, variable, SSH key, host record or repository, and creating one there is refused.
+                        It holds the installation's settings, notices, change log and Activity, the installation
+                        freeze, the alert rules that match every agency's runs, and the calendar catalogue. It appears
+                        in the switcher as <em>Administration</em> for global administrators and readers of
+                        every agency; no access grant can name it. What it held before 2.5.3 stays, does not run, and
+                        is listed for global administrators to move out. See <a
+                            href="#central-administration">§3.5</a>.</dd>
                     <dt>Agency</dt>
                     <dd>A department's own space, <strong>independent</strong> of every other. Every job, workflow,
                         script, schedule, calendar, scope, secret, variable, SSH key, host record, bastion, alert rule
                         and runner belongs to <strong>exactly one</strong> agency, each agency may connect a repository
                         of its own, and a reference resolves within the agency that makes it (names are unique per agency and
-                        case-sensitive). Nothing an agency runs uses another agency's or Central's. An agent serves the
+                        case-sensitive). Nothing an agency runs uses another agency's or Administration's. An agent serves the
                         agency that owns it (set by its registration token, <em>never</em> self-declared by the agent).
                         Dispatch is <strong>hard-isolated</strong>: a job dispatches only to a runner its scope's agency
                         owns, and a job with no scope only to one its own agency owns. You work in one agency at a time
@@ -9252,7 +9262,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         that agency's own scopes, host records and bastions, Vault-backed secrets (inside its Vault
                         paths), grants, service accounts, alerts, repository and agents. A <strong>global
                             administrator</strong> holds the role on <em>All scopes</em>, alone changes the installation
-                        and what Central holds, and works in another agency by switching to it. See <a
+                        and what Administration holds, and works in another agency by switching to it. See <a
                             href="#agency-ownership">§4.3</a>.</dd>
                     <dt>Agent</dt>
                     <dd>An installed <code>cronomicon-runner</code>: one of the two kinds of runner. It has an owner
@@ -9339,7 +9349,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         <em>entry</em> (<code>skipCalendars</code>, <code>onlyCalendars</code>) name calendars in two
                         roles: <strong>Forbid</strong> vetoes a start on one of their days, <strong>Allow</strong>
                         makes their days the only days it may start; both together are legal and <strong>Forbid
-                            wins</strong>. A calendar belongs to one agency: its own, or a copy of one from Central's
+                            wins</strong>. A calendar belongs to one agency: its own, or a copy of one from Administration's
                         catalogue. A <strong>freeze calendar</strong> (the key <code>global</code>) forbids its days to
                         every start of its agency, a person's Run included, and may never be an Allow. A job's,
                         workflow's or entry's calendars gate <strong>automatic starts</strong> (a schedule, a trigger, a
@@ -9349,24 +9359,16 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         days silently stops suppressing. See <a href="#calendars">§9.2</a>.
                     </dd>
                     <dt>Catalogue (calendars) / copy</dt>
-                    <dd>Since 2.5.3, the calendars a global administrator keeps in Central (Schedules → Calendars,
-                        working in Central). No run reads them. An agency takes a <strong>copy</strong> with
-                        <strong>Add from Central</strong> (or a global administrator adds one to chosen agencies): its
-                        own calendar, listed under <em>From Central</em>, read-only there, updated from the catalogue
+                    <dd>Since 2.5.3, the calendars a global administrator keeps in Administration (Schedules → Calendars,
+                        working in Administration). No run reads them. An agency takes a <strong>copy</strong> with
+                        <strong>Add from Administration</strong> (or a global administrator adds one to chosen agencies): its
+                        own calendar, listed under <em>From Administration</em>, read-only there, updated from the catalogue
                         either when its editors press <strong>Update</strong> (<em>Ask before updating</em>, the
                         default) or by itself (<em>Update automatically</em>). <strong>Make it our own</strong> detaches
                         it into an ordinary calendar. See <a href="#calendars-from-central">§9.2</a>.</dd>
-                    <dt>Central (the administration)</dt>
-                    <dd>The built-in agency, the installation's own (its older name is Global, which an older
-                        installation keeps until it is renamed; its id, <code>global</code>, never changes).
-                        Since 2.5.3 it <strong>runs nothing</strong>: it owns no job, workflow, script, schedule, scope,
-                        runner, secret, variable, SSH key, host record or repository, and creating one there is refused.
-                        It holds the installation's settings, notices, change log and Activity, the installation
-                        freeze, the alert rules that match every agency's runs, and the calendar catalogue. It appears
-                        in the switcher as <em>Central · administration</em> for global administrators and readers of
-                        every agency; no access grant can name it. What it held before 2.5.3 stays, does not run, and
-                        is listed for global administrators to move out. See <a
-                            href="#central-administration">§3.5</a>.</dd>
+                    <dt>Central (agency)</dt>
+                    <dd>The name an installation made with 2.5.2 gives the built-in agency, kept until a global
+                        administrator renames it. See <em>Administration</em>.</dd>
                     <dt>Change Log</dt>
                     <dd>The audited record of in-app configuration changes (Timestamp, User, Category, Action, Target,
                         Details). Viewed in History → Change Log; CSV-exportable; retention is the <em>Change Log</em>
@@ -9472,7 +9474,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             href="#calendar-freeze">§9.2</a>.</dd>
                     <dt>Global (agency)</dt>
                     <dd>The name of the built-in agency before 2.5.2, kept on an older installation until a global
-                        administrator renames it. See <em>Central</em>.</dd>
+                        administrator renames it. See <em>Administration</em>.</dd>
                     <dt>Honest View / Recent Logins</dt>
                     <dd>The Settings → Users &amp; Access list of users who have actually signed in at least once.
                         Cronomicon never enumerates the directory.</dd>
@@ -9487,7 +9489,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         resolves it against its own inventory (for isolated segments).</dd>
                     <dt>Job-definitions repo</dt>
                     <dd>An agency's repository: the source of truth for that agency's job, script, schedule, workflow
-                        and inventory definitions. Each agency connects its own (Settings → Repositories); Central has none.
+                        and inventory definitions. Each agency connects its own (Settings → Repositories); Administration has none.
                         Cronomicon keeps a local clone of each and re-parses it on each sync.</dd>
                     <dt>Job-level env</dt>
                     <dd>A plaintext env map declared on a Job (Composer → <em>Environment (job-level)</em>) and injected
@@ -9500,7 +9502,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             backup</strong> — losing it makes stored secrets unrecoverable.</dd>
                     <dt>Legacy placement</dt>
                     <dd>A runner that served several agencies before 2.3.0. Since 2.4.0 it claims its owner's
-                        (Central's) runs only, so since 2.5.3 none. See <em>Runner owner / serves</em>.</dd>
+                        (Administration's) runs only, so since 2.5.3 none. See <em>Runner owner / serves</em>.</dd>
                     <dt>Local runner</dt>
                     <dd>The Cronomicon server running shell jobs itself (bash, perl, powershell, python) over SSH,
                         direct or via a bastion. One row in the Runners view, never deregistered or reaped. It belongs
@@ -9526,8 +9528,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         dismissing hides it until the condition goes away and comes back. See <a
                             href="#notices">§14.2</a>.</dd>
                     <dt>Operations (agency)</dt>
-                    <dd>The ordinary agency Cronomicon makes at first start when no agency but Central exists (an
-                        upgrade that had only Central gets one too; once deleted it is not made again). Rename it and
+                    <dd>The ordinary agency Cronomicon makes at first start when no agency but Administration exists (an
+                        upgrade that had only Administration gets one too; once deleted it is not made again). Rename it and
                         work there; its Dashboard offers <em>Name your agency</em> to global administrators. See <a
                             href="#agencies">§11.2</a>.</dd>
                     <dt>Operations overview</dt>
@@ -9587,7 +9589,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             agency</em>, which becomes the owner of the agent it enrols; it dies on its
                         first successful registration and records which runner consumed it. Stored only as a SHA-256
                         hash; plaintext shown once at mint. Revoking an unused token never affects registered runners.
-                        Since 2.5.3 it is never minted in Central, and the environment's bootstrap token
+                        Since 2.5.3 it is never minted in Administration, and the environment's bootstrap token
                         (<code>CRONOMICON_RUNNER_BOOTSTRAP_TOKEN</code>) is refused.
                     </dd>
                     <dt>Reveal</dt>
@@ -9635,7 +9637,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         <strong>serves</strong> is the agencies whose runs it claims. For an agent the two are the same
                         one agency, fixed by its registration token; the local runner's is the agency a global
                         administrator gives it to. A runner that served several agencies before 2.3.0 is a <em>legacy
-                            placement</em>: it is Central's, claims Central's runs only (none, since 2.5.3), and can be
+                            placement</em>: it is Administration's, claims Administration's runs only (none, since 2.5.3), and can be
                         narrowed but never widened. See <a href="#runner-owner">§13.1</a>.</dd>
                     <dt>Runner host keys (trusted host keys)</dt>
                     <dd>The SSH host keys approved for one runner; it connects to no host without one, and nothing is
@@ -9897,8 +9899,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                     <code>GET/PUT /agencies/{id}/git-repo</code> (an agency's repository;
                                     <code>…/test</code>, <code>…/webhook-secret/rotate</code>),
                                     <code>POST /webhooks/gitlab/{repoId}</code> (<code>/webhooks/gitlab</code> with no
-                                    id answers 401 since 2.5.3: Central has no repository).
-                                    <code>DELETE /agencies/global/git-repo</code> removes Central's leftover
+                                    id answers 401 since 2.5.3: Administration has no repository).
+                                    <code>DELETE /agencies/global/git-repo</code> removes Administration's leftover
                                     repository (a global administrator's repair, with a reason; 2.5.3).
                                     The <code>/settings/gitlab</code> routes are gone (2.5.0).
                                 </td>
@@ -9927,8 +9929,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                     <code>PUT /runner-agencies</code> (narrowing a legacy placement)
                                 </td>
                                 <td>ConfigureApp / ManageEnvVars on the agencies concerned; the catalog, Vault
-                                    prefixes, group lists, caps, repairs, assignments and what Central holds = global
-                                    administrator. Creating a runnable thing in Central is <code>422
+                                    prefixes, group lists, caps, repairs, assignments and what Administration holds = global
+                                    administrator. Creating a runnable thing in Administration is <code>422
                                         central_runs_nothing</code> (2.5.3)</td>
                             </tr>
                             <tr>
@@ -9958,7 +9960,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                     <code>/{id}/migrate-to-vault</code>
                                 </td>
                                 <td>read = session; writes/reveal = Admin (ManageEnvVars) <strong>on the entity's owning
-                                        agency</strong> (a row Central still holds is a global administrator's for
+                                        agency</strong> (a row Administration still holds is a global administrator's for
                                     writes/reveal); reveals audited &amp; fail-closed</td>
                             </tr>
                             <tr>
@@ -9999,7 +10001,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 <td>GET: any session; PUT: global administrator</td>
                             </tr>
                             <tr>
-                                <td>Calendars from Central (2.5.3)</td>
+                                <td>Calendars from Administration (2.5.3)</td>
                                 <td><code>GET /calendars/catalogue</code>, <code>POST /calendars/from-central</code>,
                                     <code>POST /calendars/{name}/update</code>, <code>PUT
                                         /calendars/{name}/update-mode</code>, <code>POST
@@ -10132,7 +10134,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 <td><em>(empty)</em></td>
                                 <td><strong>Ignored since 2.5.3</strong>, with <code>CRONOMICON_GITLAB_BASE_URL</code>,
                                     <code>_TOKEN</code> and <code>_WRITE_BRANCH</code>: they configured the built-in
-                                    agency's repository, which Central no longer has. One that is set raises the
+                                    agency's repository, which Administration no longer has. One that is set raises the
                                     notice <em>Environment settings that no longer apply are set</em>. (The
                                     environment's runner bootstrap token is refused too: an agent enrols with a token
                                     minted in its agency.)</td>
@@ -10232,7 +10234,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                     installation freeze; the calendar is named), since 2.5.3 a service account's
                                     trigger or a released waiting run the definition's own calendars stopped, a fire
                                     the <em>Forbid</em> overlap policy suppressed, or that was refused with a stated reason &mdash; an SSH key
-                                    binding no agent can deliver, a definition Central holds (<em>the built-in
+                                    binding no agent can deliver, a definition Administration holds (<em>the built-in
                                         administration agency runs nothing</em>). It is dropped, never run later.</td>
                             </tr>
                             <tr>
@@ -10303,11 +10305,11 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         (The local runner runs the shell types only.)</li>
                     <li><em>no online runner serves &lt;agency&gt;</em> — your department's runner is down, or it has
                         none.</li>
-                    <li><em>this run belongs to Central, which runs nothing since 2.5.3, so no runner takes it &mdash;
-                            cancel it and run the job in the agency whose work it is (Notices lists what Central still
-                            holds)</em> — seen only on a run queued before 2.5.3 and stamped with Central. Since 2.5.3
+                    <li><em>this run belongs to Administration, which runs nothing since 2.5.3, so no runner takes it &mdash;
+                            cancel it and run the job in the agency whose work it is (Notices lists what Administration still
+                            holds)</em> — seen only on a run queued before 2.5.3 and stamped with Administration. Since 2.5.3
                         a run with no scope is its job's agency's, so this reason no longer appears for an agency's
-                        job, and no runner can be given to Central (<a href="#faq-central-leftovers">§16</a>).</li>
+                        job, and no runner can be given to Administration (<a href="#faq-central-leftovers">§16</a>).</li>
                     <li><em>this job binds an SSH key, which the local runner cannot deliver, and no agent that could
                             take the run is online</em> — only an agent delivers a bound key as a file; the agency's
                         agent is offline.</li>
@@ -10341,7 +10343,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         when the run has no scope: create it in the job's agency, or bind the job to the scope it
                         belongs to&rdquo;</strong>. The job binds a Secret, Variable or key, and the run has no scope.
                     Since 2.5.3 such a run is the job's agency's, so it can use only the agency's own unscoped rows: a
-                    row of another agency, one Central still holds, or one of a scope the run is not on resolves for
+                    row of another agency, one Administration still holds, or one of a scope the run is not on resolves for
                     nobody. Create the row in the job's agency, or give the job (or this run, under
                     <strong>Targets</strong>) the scope the row belongs to. (Until 2.5.3 a run with no scope was the
                     built-in agency's, and the sentence asked you to bind a scope.)
