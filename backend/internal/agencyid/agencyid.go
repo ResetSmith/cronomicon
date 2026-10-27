@@ -23,7 +23,8 @@ const (
 	Global = "global"
 
 	// GlobalName is the name migration 1220 gave it. Since 2.5.2 (GR) the name
-	// may change — a new installation calls it "Central", and a global
+	// may change — a new installation calls it "Administration" (2.5.2's
+	// "Central"), and a global
 	// administrator may rename it — so code that writes or compares the
 	// agency's name reads it by id (CurrentGlobalName); this is only what an
 	// installation from before 2.5.2 calls it until then, and the fallback

@@ -1336,7 +1336,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * What Central's calendar catalogue offers (v2.5.3)
+         * What the built-in agency's calendar catalogue offers (v2.5.3)
          * @description The catalogue is the built-in agency's calendars, which global
          *     administrators write with the ordinary calendar routes while working in
          *     it; no run reads them. Any agency's calendar editor (compose on some
@@ -1365,7 +1365,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Add a calendar from Central's catalogue to an agency (v2.5.3)
+         * Add a calendar from the built-in agency's catalogue to an agency (v2.5.3)
          * @description A copy of a catalogue calendar: the agency's own row with its days,
          *     description and flags, linked to it, and read-only in the agency until
          *     it is made the agency's own (POST /calendars/{name}/detach). In the
@@ -1399,7 +1399,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Update a copy from Central's catalogue (v2.5.3)
+         * Update a copy from the built-in agency's catalogue (v2.5.3)
          * @description The copy takes the catalogue calendar's content as it is now: several
          *     changes made while it was behind are one update. Compose on the copy's
          *     agency. Answered as it is when up to date. 409 `not_from_central` for a
@@ -1429,7 +1429,7 @@ export interface paths {
         };
         get?: never;
         /**
-         * How a copy takes Central's changes (v2.5.3)
+         * How a copy takes the built-in agency's changes (v2.5.3)
          * @description `ask`: a change to the catalogue calendar puts the copy behind, with the
          *     notice `calendar_update_available` and the alert event
          *     `calendar-update-available`, until its agency updates it. `auto`: the
@@ -4979,8 +4979,8 @@ export interface paths {
          *     94): calendars are not files before 2.6.0, and the agency's sync would
          *     refuse the schedule naming it, and the definition with it. Create the
          *     calendars in the agency and assign again; since v2.5.3
-         *     `catalogueCalendars` lists those of them Central's catalogue offers,
-         *     which the agency adds from Central. So does, for the same reason
+         *     `catalogueCalendars` lists those of them the built-in agency's catalogue offers,
+         *     which the agency adds from the built-in agency. So does, for the same reason
          *     (2.5.0 C11), a schedule that keeps to (`onlyCalendars`) a calendar the
          *     agency has as global (422 `calendar_not_bindable`, `calendars`), and a
          *     reaction whose upstream the agency would not have: a Git one not in its
@@ -7364,7 +7364,7 @@ export interface components {
          *     agency a copy of every global calendar of Global's, and of each
          *     calendar its entries named of another agency's, under the same name.
          *
-         *     Since v2.5.3 the built-in agency's calendars are Central's catalogue:
+         *     Since v2.5.3 the built-in agency's calendars are the built-in agency's catalogue:
          *     global administrators write them, no run reads them, and an agency
          *     adds a copy (POST /calendars/from-central). A copy carries
          *     `fromCentral`; it is read-only in its agency (409
@@ -7422,7 +7422,7 @@ export interface components {
             readonly createdAt?: string;
         };
         /**
-         * @description A copy's link to Central's catalogue (v2.5.3). `state`: `up_to_date`;
+         * @description A copy's link to the built-in agency's catalogue (v2.5.3). `state`: `up_to_date`;
          *     `update_available`, with `pending` (what an update would change) and,
          *     when the agency's bindings forbid it (CAL-27), `blocked`;
          *     `no_longer_offered`, once the catalogue calendar was deleted.
@@ -7458,7 +7458,7 @@ export interface components {
             state?: "up_to_date" | "update_available" | "no_longer_offered";
             blocked?: string;
         };
-        /** @description One calendar Central's catalogue offers (v2.5.3). */
+        /** @description One calendar the built-in agency's catalogue offers (v2.5.3). */
         CatalogueCalendar: {
             uid?: string;
             name?: string;
@@ -8644,7 +8644,7 @@ export interface components {
              *       which it no longer reads. Subject `environment`. Filed under the
              *       built-in agency. It clears at a start without them.
              *     - `calendar_update_available` — v2.5.3: a calendar an agency copied
-             *       from Central's catalogue is behind it: the agency's Update applies
+             *       from the built-in agency's catalogue is behind it: the agency's Update applies
              *       it, or an automatic update was refused by the agency's bindings
              *       (the detail says why). Subject `calendar:<the copy's uid>`. Filed
              *       under the copy's agency. It clears when the copy is up to date,
@@ -9208,7 +9208,7 @@ export interface components {
             readonly maxConcurrent?: number | null;
             /** @description 2.5.2 (OP-28) — who the central team calls about the agency's runs when the job or workflow names no contact of its own; empty is none. Free text, display-only. Set with PUT /agencies/{agencyId}/contact. */
             readonly contact?: string;
-            /** @description True for the built-in agency (id `global`), the one agency every installation has (v2.3.0, LR-21): "Central" on an installation made with 2.5.2 or later, "Global" on an older one until it is renamed (2.5.2 GR: it may be renamed; it cannot be deleted, 422 `builtin_agency`). No access grant or service account may name it: it belongs to the global administrators, and the way to be one is an all-scopes grant. */
+            /** @description True for the built-in agency (id `global`), the one agency every installation has (v2.3.0, LR-21): "Administration" on an installation made with 2.5.3 or later, "Central" with 2.5.2, "Global" before, until it is renamed (2.5.2 GR: it may be renamed; it cannot be deleted, 422 `builtin_agency`). No access grant or service account may name it: it belongs to the global administrators, and the way to be one is an all-scopes grant. */
             readonly builtin?: boolean;
         } & components["schemas"]["AuditFields"];
         AgencyInput: {
@@ -10711,7 +10711,7 @@ export interface components {
              *     `sla-breach` and `missed-run` (SL) are NOT run outcomes: one fires mid-run when a job passes its `warnAfterSeconds` or `mustFinishBy` deadline, the other when a schedule expected a fire and none appeared. `any` deliberately does NOT cover them — an operator with an "any run" rule asked about run outcomes, and silently widening it would have turned every such rule into a pager the day SL shipped.
              *
              *     `secret-revealed`, `secret-changed` and `backup-key-changed` (v2.5.1) are not about runs either: a stored secret was revealed; a secret or SSH key was created, rotated, updated, moved, deleted or migrated to Vault; the installation's backup keys changed. They are matched by a rule whose target is `all` only. An agency's rule hears of its own agency's secrets, Global's of every agency's, and `backup-key-changed` is Global's alone. The message names the actor and says when they are outside the agency.
-             *     `calendar-update-available` and `calendar-updated` (v2.5.3) are an agency's copy of a calendar from Central's catalogue falling behind it (update mode ask, or an automatic update its bindings refused), and being updated from it (automatically, or pushed by a global administrator). Matched by a rule whose target is `all`; an agency's rule hears of its own copies, the built-in agency's of every agency's.
+             *     `calendar-update-available` and `calendar-updated` (v2.5.3) are an agency's copy of a calendar from the built-in agency's catalogue falling behind it (update mode ask, or an automatic update its bindings refused), and being updated from it (automatically, or pushed by a global administrator). Matched by a rule whose target is `all`; an agency's rule hears of its own copies, the built-in agency's of every agency's.
              * @enum {string}
              */
             trigger: "failure" | "success" | "warning" | "killed" | "skipped" | "any" | "sla-breach" | "missed-run" | "secret-revealed" | "secret-changed" | "backup-key-changed" | "calendar-update-available" | "calendar-updated";
@@ -11119,7 +11119,7 @@ export interface components {
             workingAgency: string;
             /** @description True when the caller's grant reaches every agency. */
             canOverview: boolean;
-            /** @description 2.5.2 (GR) — the built-in agency's name now (id `global`): Central on a new installation, Global on an older one until renamed. */
+            /** @description 2.5.2 (GR) — the built-in agency's name now (id `global`): Administration on a new installation (2.5.3; Central on one made with 2.5.2, Global before), until renamed. */
             globalName?: string;
         };
         /** @description The Operations overview (v2.4.4; GET /overview). */

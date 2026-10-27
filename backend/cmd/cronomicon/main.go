@@ -176,7 +176,7 @@ func run() error {
 	}
 	defer pool.Close()
 	// 2.5.2 GR: the schema version this start found. 0 is a database this start
-	// creates — a new installation, whose built-in agency is named "Central"
+	// creates — a new installation, whose built-in agency is named "Administration"
 	// below — which a migration cannot tell from an existing empty one.
 	startVersion, _, _ := db.Status(pool)
 	if err := db.Migrate(pool); err != nil {
@@ -193,8 +193,9 @@ func run() error {
 	// degraded build once per outage as an `Audit / redactor-unavailable` row.
 	redactdict.Install(pool, cfg, logger)
 
-	// 2.5.2 GR: a new installation calls its built-in agency "Central"; an
-	// existing one keeps "Global" until a global administrator renames it.
+	// 2.5.2 GR: a new installation names its built-in agency
+	// (settings.NewInstallationAgencyName, "Administration" since 2.5.3); an
+	// existing one keeps its name until a global administrator renames it.
 	// After the masker (the rename is audited) and before the seed (whose runs
 	// carry the agency's name).
 	if startVersion == 0 {

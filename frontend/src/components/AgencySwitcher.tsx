@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { OVERVIEW, useAgency, type AgencyChoice } from "../agency";
 import { GLOBAL_AGENCY } from "../api/access";
+import { administrationLabel } from "../globalName";
 import { c } from "../theme";
 
 // 2.5.3 CA-12: Central runs nothing; among the choices it reads as what it is.
-const label = (id: string, name: string) => (id === GLOBAL_AGENCY ? `${name} · administration` : name);
+const label = (id: string, name: string) => (id === GLOBAL_AGENCY ? administrationLabel(name) : name);
 
 // The agency switcher (2.4.4 F1), under the wordmark. One agency at a time:
 // the menu lists the person's choices — All agencies (the Dashboard across
