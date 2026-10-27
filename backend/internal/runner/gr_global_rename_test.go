@@ -77,10 +77,11 @@ func TestGR_ARenamedBuiltInAgencyStillClaimsItsRuns(t *testing.T) {
 	}
 }
 
-// 2.5.2 GR — a new installation calls the built-in agency "Central" (at its
-// first start; settings.NameNewInstallationAgency), audited as the system; an
-// existing one keeps "Global" (nothing renames it on an upgrade).
-func TestGR_ANewInstallationCallsItCentral(t *testing.T) {
+// 2.5.2 GR — a new installation names the built-in agency (at its first
+// start; settings.NameNewInstallationAgency), audited as the system; an
+// existing one keeps "Global" (nothing renames it on an upgrade). The name is
+// "Administration" since 2.5.3 (2.5.2's was "Central").
+func TestGR_ANewInstallationCallsItAdministration(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	var name string
@@ -91,11 +92,11 @@ func TestGR_ANewInstallationCallsItCentral(t *testing.T) {
 	if err := settings.NameNewInstallationAgency(ctx, svc.db); err != nil {
 		t.Fatal(err)
 	}
-	if got := settings.GlobalAgencyName(ctx, svc.db); got != "Central" {
-		t.Errorf("a new installation's built-in agency is %q, want Central", got)
+	if got := settings.GlobalAgencyName(ctx, svc.db); got != "Administration" {
+		t.Errorf("a new installation's built-in agency is %q, want Administration", got)
 	}
 	var by string
-	_ = svc.db.QueryRow(`SELECT actor FROM change_log WHERE category = 'Agencies' AND target = 'Central' ORDER BY id DESC LIMIT 1`).Scan(&by)
+	_ = svc.db.QueryRow(`SELECT actor FROM change_log WHERE category = 'Agencies' AND target = 'Administration' ORDER BY id DESC LIMIT 1`).Scan(&by)
 	if by != "system" {
 		t.Errorf("the naming was recorded as %q, want system", by)
 	}

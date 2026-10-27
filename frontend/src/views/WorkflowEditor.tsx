@@ -17,10 +17,11 @@ import type { WfStep } from "./workflows/shared";
 import { ambiguousNames, disambiguate, type NamedRef } from "../utils/disambiguate";
 import { Btn, InfoBody, InfoToggle } from "../components/ui";
 import { RepairDialog, isRepairRequired, type RepairBody } from "../components/RepairDialog";
-import { CalendarPicker } from "./scheduling/CalendarPicker";
+import { CalendarPicker, EMPTY_BINDING, bindingError, type CalendarBinding } from "./scheduling/CalendarPicker";
 import { ReactionsEditor, reactionsError, saveReactionsFor, useLoadedReactions } from "./scheduling/ReactionsEditor";
 import { deleteBlockedNote, reactionsWatchingRefusal } from "./scheduling/reactions";
 import type { components } from "../api/schema";
+import { useAgencyOptional } from "../agency";
 
 type Job = components["schemas"]["Job"];
 type Schedule = components["schemas"]["Schedule"];
@@ -288,6 +289,9 @@ export function WorkflowEditor() {
   // place (the CalendarPicker below), since a change-freeze policy should not
   // require API surgery on a workflow authored in-app.
   const [preservedInline, setPreservedInline] = useState<PreservedInline[]>([]);
+  // 2.5.3 CA-30: the workflow's own Forbid and Allow calendars. Always sent:
+  // the save is a full replace, and a list left out is cleared.
+  const [wfCalendars, setWfCalendars] = useState<CalendarBinding>(EMPTY_BINDING);
   const [enabled, setEnabled] = useState(true);
 
   const [busy, setBusy] = useState(false);
@@ -319,6 +323,8 @@ export function WorkflowEditor() {
   // The loaded workflow's agency (2.4.1): its inline entries are judged by that
   // agency's calendars. A new workflow's is not known until it is saved.
   const [wfAgency, setWfAgency] = useState<string | undefined>(undefined);
+  // A new workflow is the agency's it is made in: its calendars are offered.
+  const inUseAgency = useAgencyOptional()?.agency;
   // 2.4.4 (SW-8) — a link to another agency's workflow switches to its agency.
   useEnsureAgency(editId ? wfAgency : undefined);
 
@@ -342,6 +348,7 @@ export function WorkflowEditor() {
       setName(wf.name ?? "");
       setDescription(wf.description ?? "");
       setEnabled(!wf.disabled);
+      setWfCalendars({ skipCalendars: wf.forbidCalendars ?? [], onlyCalendars: wf.allowCalendars ?? [] });
       const entries = wf.schedules ?? [];
       setScheduleRefs(entries.filter((s) => !!s.sourceRef).map((s) => s.sourceRef as string));
       setPreservedInline(
@@ -406,6 +413,8 @@ export function WorkflowEditor() {
 
   function clientError(): string | null {
     if (!WF_NAME_RE.test(name.trim())) return "Name must be a slug (a-z, 0-9, _-, ≤64 chars).";
+    const calErr = bindingError(wfCalendars, "workflow");
+    if (calErr) return `Calendars: ${calErr}`;
     if (steps.length === 0) return "Add at least one step.";
     for (const s of steps) {
       if (s.kind === "job" && !s.name) return "Every job step needs a job selected.";
@@ -440,6 +449,8 @@ export function WorkflowEditor() {
       scheduleRefs,
       schedules: preservedInline.map(preservedInlineToWire),
       steps: steps.map(emitStep),
+      forbidCalendars: wfCalendars.skipCalendars,
+      allowCalendars: wfCalendars.onlyCalendars,
     };
   }
 
@@ -576,6 +587,8 @@ export function WorkflowEditor() {
     setOkMsg(null);
     setValidateErrors([]);
     if (!WF_NAME_RE.test(name.trim())) return setErr("Name must be a slug (a-z, 0-9, _-, ≤64 chars).");
+    const calErr = bindingError(wfCalendars, "workflow");
+    if (calErr) return setErr(`Calendars: ${calErr}`);
     const body = {
       name: name.trim(),
       description: description.trim(),
@@ -583,6 +596,8 @@ export function WorkflowEditor() {
       scheduleRefs,
       schedules: preservedInline.map(preservedInlineToWire),
       steps: toSteps(canvasTree),
+      forbidCalendars: wfCalendars.skipCalendars,
+      allowCalendars: wfCalendars.onlyCalendars,
       // WC-P7: the canvas is authoritative for layout, so always send it — including an
       // empty {} after a Reset, which clears the stored layout. (The linear editor's
       // buildBody omits layout entirely; that omission is what COALESCE preserves.)
@@ -707,6 +722,7 @@ export function WorkflowEditor() {
             </div>
           )}
           <InlineCalendarBindings entries={preservedInline} agency={wfAgency} onPatch={(i, b) => { patchInlineBinding(i, b); markDirty(); }} />
+          <WorkflowCalendars value={wfCalendars} agency={wfAgency ?? inUseAgency} onChange={(b) => { setWfCalendars(b); markDirty(); }} />
         </div>
 
         <WorkflowCanvasEditor value={canvasTree} onChange={(t) => { setCanvasTree(t); markDirty(); }} jobs={jobs.map((j) => ({ name: j.name ?? "", source: j.source, uid: j.uid, agencies: (j as NamedRef).agencies ?? undefined }))} layout={canvasLayout} onLayoutChange={(m) => { setCanvasLayout(m); markDirty(); }} />
@@ -898,6 +914,8 @@ export function WorkflowEditor() {
         <InlineCalendarBindings entries={preservedInline} agency={wfAgency} onPatch={patchInlineBinding} />
       </Field>
 
+      <WorkflowCalendars value={wfCalendars} agency={wfAgency ?? inUseAgency} onChange={setWfCalendars} />
+
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: c.fontSm, color: c.textSec }}>
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled
       </label>
@@ -953,6 +971,17 @@ export function WorkflowEditor() {
 // which are editable here per entry: a change-freeze policy should be attachable
 // without re-authoring the entry over the API. Renders nothing when there are no
 // inline entries.
+// 2.5.3 CA-30 to CA-33 — the workflow's own Forbid and Allow calendars, from
+// its agency's: they decide whether it starts, and its steps' job calendars do
+// not apply inside it (the picker's copy says so).
+function WorkflowCalendars({ value, agency, onChange }: { value: CalendarBinding; agency?: string; onChange: (b: CalendarBinding) => void }) {
+  return (
+    <Field label="Calendars (optional)">
+      <CalendarPicker level="definition" of="workflow" value={value} onChange={onChange} agency={agency} />
+    </Field>
+  );
+}
+
 function InlineCalendarBindings({
   entries,
   agency,

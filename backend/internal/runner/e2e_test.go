@@ -189,7 +189,8 @@ func newE2EHarness(t *testing.T, sensitiveStdout string) *e2eHarness {
 	// Mount the real runner routes the way runners_mount.go does — the minimal
 	// subset the agent drives — with the real auth middleware.
 	mux := http.NewServeMux()
-	// register: the handler does its own registration-token auth (bootstrap token).
+	// register: the handler does its own registration-token auth (a token
+	// minted in an ordinary agency: the bootstrap token is refused since 2.5.3).
 	mux.HandleFunc("POST /api/v1/runners/register", svc.HandleRegisterRunner)
 	// poll / manifest / log: real RequireRunner (bearer = the per-runner apiKey).
 	mux.Handle("GET /api/v1/runners/{id}/poll",
@@ -224,32 +225,76 @@ func (h *e2eHarness) seedRunnerRun(t *testing.T, jobName, scope, hostName, authK
 
 	// Job command body the manifest resolves via execspec.ResolveCommand.
 	insertJobDef(t, h.svc, jobName, "bash", "echo from-job", 0)
+	ownJobForOps(t, h.svc, jobName)
 
-	// scope → host wiring, with an ssh_hosts row pointed at the in-test server.
+	// scope → host wiring, with an ssh_hosts row pointed at the in-test server;
+	// all of it the agency's, whose run resolves only its own records (LR-70).
 	scopeID := db.NewID()
 	if _, err := h.svc.db.Exec(
 		`INSERT INTO scopes(id, name, source, created_at) VALUES (?, ?, 'cronomicon', ?)`,
 		scopeID, scope, ts); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}
+	ownScopeForOps(t, h.svc, scopeID)
 	if _, err := h.svc.db.Exec(
 		`INSERT INTO scope_hosts(scope_id, host) VALUES (?, ?)`, scopeID, hostName); err != nil {
 		t.Fatalf("seed scope_host: %v", err)
 	}
 	if _, err := h.svc.db.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
-		VALUES (?, ?, ?, ?, 'tester', ?, ?)`,
-		db.NewID(), hostName, host, port, authKeyEnvVar, ts); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, owner_agency, created_at)
+		VALUES (?, ?, ?, ?, 'tester', ?, ?, ?)`,
+		db.NewID(), hostName, host, port, authKeyEnvVar, opsAgencyID, ts); err != nil {
 		t.Fatalf("seed ssh_host: %v", err)
 	}
 
-	// The queued runner run the poll loop will claim.
+	// The queued runner run the poll loop will claim: the agency's, as its
+	// agent is.
+	return queueOpsRun(t, h.svc, jobName, scope)
+}
+
+// ownJobForOps makes the job the fixtures' ordinary agency's, as the composer
+// files one. insertJobDef's jobs are born with no owner and no repository,
+// which is Central's, and Central runs nothing (2.5.3, CA-1).
+func ownJobForOps(t *testing.T, svc *Service, jobName string) {
+	t.Helper()
+	if _, err := svc.db.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, ?)`,
+		opsAgencyID, opsAgencyName, now()); err != nil {
+		t.Fatalf("seed agency: %v", err)
+	}
+	if _, err := svc.db.Exec(`UPDATE jobs SET owner_agency = ? WHERE name = ?`, opsAgencyID, jobName); err != nil {
+		t.Fatalf("own the job: %v", err)
+	}
+}
+
+// ownScopeForOps gives the scope to the fixtures' ordinary agency (its owner
+// follows scope_agencies), so an Ops run's scope resolves to its hosts.
+func ownScopeForOps(t *testing.T, svc *Service, scopeID string) {
+	t.Helper()
+	if _, err := svc.db.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, ?)`,
+		opsAgencyID, opsAgencyName, now()); err != nil {
+		t.Fatalf("seed agency: %v", err)
+	}
+	if _, err := svc.db.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES (?, ?)`, scopeID, opsAgencyID); err != nil {
+		t.Fatalf("give the scope to %s: %v", opsAgencyID, err)
+	}
+}
+
+// queueOpsRun queues an executor='runner' bash run of the job on the scope,
+// the fixtures' ordinary agency's: the agency snapshot the enqueue path writes
+// (agencies_json, materialized into run_agencies), which is what an agent
+// enrolled in that agency claims by. A run written with no snapshot is born
+// Global's, and no department's agent takes it.
+func queueOpsRun(t *testing.T, svc *Service, jobName, scope string) string {
+	t.Helper()
 	traceID := db.NewTraceID()
-	if _, err := h.svc.db.Exec(`
-		INSERT INTO runs(id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES (?, ?, 'bash', ?, 'queued', 'test', 'manual', 'runner', ?)`,
-		traceID, jobName, scope, ts); err != nil {
+	if _, err := svc.db.Exec(`
+		INSERT INTO runs(id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, agencies_json, created_at)
+		VALUES (?, ?, 'bash', ?, 'queued', 'test', 'manual', 'runner', ?, ?)`,
+		traceID, jobName, scope, `["`+opsAgencyName+`"]`, now()); err != nil {
 		t.Fatalf("seed queued run: %v", err)
+	}
+	if _, err := svc.db.Exec(`INSERT INTO run_agencies (run_id, agency) VALUES (?, ?)`, traceID, opsAgencyName); err != nil {
+		t.Fatalf("seed queued run: materialize: %v", err)
 	}
 	return traceID
 }
@@ -261,7 +306,7 @@ func (h *e2eHarness) agentConfig(t *testing.T, name, authKeyEnvVar string) agent
 	t.Helper()
 	return agent.Config{
 		ServerURL:         h.server.URL,
-		RegistrationToken: "test-bootstrap-token", // matches newTestService's cfg
+		RegistrationToken: opsToken(t, h.svc), // a fresh token minted in the fixtures' agency
 		Name:              name,
 		OS:                "Linux",
 		Capabilities:      []string{"bash"},
@@ -313,10 +358,21 @@ func TestRunnerAgentE2EHappyPath(t *testing.T) {
 	// Seed a Variable whose value equals the SSH target's stdout so we can prove
 	// single-line Variables are LOG-VISIBLE (D7): the ingest redactor no longer
 	// masks them. env_vars scope '*' applies to any run.
+	// The Variable is the run's agency's, so it applies to the run (2.5.3:
+	// the run and its agent are an ordinary agency's, Central runs nothing).
+	if _, err := h.svc.db.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, ?)`,
+		opsAgencyID, opsAgencyName, now()); err != nil {
+		t.Fatalf("seed agency: %v", err)
+	}
+	varID := db.NewID()
 	if _, err := h.svc.db.Exec(`
-		INSERT INTO env_vars(id, key, scope, value, created_at)
-		VALUES (?, 'SECRET', '*', ?, ?)`, db.NewID(), secret, now()); err != nil {
+		INSERT INTO env_vars(id, key, scope, value, owner_agency, created_at)
+		VALUES (?, 'SECRET', '*', ?, ?, ?)`, varID, secret, opsAgencyID, now()); err != nil {
 		t.Fatalf("seed env_var: %v", err)
+	}
+	if _, err := h.svc.db.Exec(`INSERT OR IGNORE INTO env_var_agencies (env_var_id, agency_id) VALUES (?, ?)`,
+		varID, opsAgencyID); err != nil {
+		t.Fatalf("seed env_var agency: %v", err)
 	}
 
 	traceID := h.seedRunnerRun(t, "deploy-job", "prod", "web01", "AGENT_KEY")
@@ -555,28 +611,25 @@ func TestRunnerAgentE2EKill(t *testing.T) {
 	// Seed job + host (pointed at the blocking SSH server) + queued run.
 	ts := now()
 	insertJobDef(t, svc, "long-job", "bash", "sleep 100", 0)
+	ownJobForOps(t, svc, "long-job")
 	scopeID := db.NewID()
 	if _, err := svc.db.Exec(`INSERT INTO scopes(id, name, source, created_at) VALUES (?, 'prod', 'cronomicon', ?)`, scopeID, ts); err != nil {
 		t.Fatal(err)
 	}
+	ownScopeForOps(t, svc, scopeID)
 	if _, err := svc.db.Exec(`INSERT INTO scope_hosts(scope_id, host) VALUES (?, 'web01')`, scopeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.db.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
-		VALUES (?, 'web01', ?, ?, 'tester', 'AGENT_KEY', ?)`, db.NewID(), host, port, ts); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, owner_agency, created_at)
+		VALUES (?, 'web01', ?, ?, 'tester', 'AGENT_KEY', ?, ?)`, db.NewID(), host, port, opsAgencyID, ts); err != nil {
 		t.Fatal(err)
 	}
-	traceID := db.NewTraceID()
-	if _, err := svc.db.Exec(`
-		INSERT INTO runs(id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES (?, 'long-job', 'bash', 'prod', 'queued', 'test', 'manual', 'runner', ?)`, traceID, ts); err != nil {
-		t.Fatal(err)
-	}
+	traceID := queueOpsRun(t, svc, "long-job", "prod")
 
 	cfg := agent.Config{
 		ServerURL:         srv.URL,
-		RegistrationToken: "test-bootstrap-token",
+		RegistrationToken: opsToken(t, svc),
 		Name:              "kill-runner",
 		OS:                "Linux",
 		Capabilities:      []string{"bash"},

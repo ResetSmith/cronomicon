@@ -3,7 +3,8 @@ package notices
 import (
 	"context"
 	"database/sql"
-	"sync/atomic"
+	"strings"
+	"sync"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 )
@@ -13,28 +14,24 @@ import (
 // where the agency's definitions live, and where its publishes, and from
 // 2.5.0 the assignments it is given, are committed. Since 2.5.1 (SG-40) an
 // agency connects it at creation or later, and a connected one is never
-// disconnected; so this is an agency created without it, one from before
-// 2.4.0, or Global's repository with no URL. Nothing else is refused while it
-// is so: the agency cannot receive an assignment or be published to.
+// disconnected; so this is an agency created without it, or one from before
+// 2.4.0. Nothing else is refused while it is so: the agency cannot receive an
+// assignment or be published to.
+//
+// The built-in agency is not asked (2.5.3, CA-6): it runs nothing and has no
+// repository, so having none is not something to settle. Until 2.5.3 it was
+// asked as "Global's repository is not connected".
 //
 // Subject: the agency's id. Filed under the agency. It clears when the
-// agency's repository is connected (for Global: a URL in its connection, or
-// CRONOMICON_GITLAB_BASE_URL).
+// agency's repository is connected.
 const KindAgencyNoRepository = "agency_no_repository"
-
-// globalRepoFromEnvironment is whether CRONOMICON_GITLAB_BASE_URL names
-// Global's repository: the checks are given the database only.
-var globalRepoFromEnvironment atomic.Bool
-
-// SetGlobalRepoFromEnvironment tells the checks whether Global's repository's
-// URL comes from the environment (the server sets it at start).
-func SetGlobalRepoFromEnvironment(set bool) { globalRepoFromEnvironment.Store(set) }
 
 func checkAgencyNoRepository(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT a.id, a.name FROM agencies a
-		 WHERE NOT EXISTS (SELECT 1 FROM git_repos g WHERE g.agency_id = a.id AND COALESCE(g.url, '') <> '')
-		 ORDER BY a.name`)
+		 WHERE a.id <> ?
+		   AND NOT EXISTS (SELECT 1 FROM git_repos g WHERE g.agency_id = a.id AND COALESCE(g.url, '') <> '')
+		 ORDER BY a.name`, agencyid.Global)
 	if err != nil {
 		return err
 	}
@@ -44,20 +41,6 @@ func checkAgencyNoRepository(ctx context.Context, database *sql.DB) error {
 		if err := rows.Scan(&id, &name); err != nil {
 			rows.Close()
 			return err
-		}
-		if id == agencyid.Global {
-			if globalRepoFromEnvironment.Load() {
-				continue
-			}
-			found = append(found, Finding{
-				AgencyID: id,
-				Subject:  id,
-				Detail: "Global's repository is not connected: its connection has no URL, and CRONOMICON_GITLAB_BASE_URL " +
-					"is not set. Every agency has a repository, Global included: it is where Global's definitions live, " +
-					"and where its publishes and the assignments it makes are committed. Nothing is refused while it is so. " +
-					"Connect it (a URL, and a token that can push) under Settings → Repositories; this notice clears when it is done.",
-			})
-			continue
 		}
 		found = append(found, Finding{
 			AgencyID: id,
@@ -74,4 +57,61 @@ func checkAgencyNoRepository(ctx context.Context, database *sql.DB) error {
 		return err
 	}
 	return Reconcile(ctx, database, KindAgencyNoRepository, found)
+}
+
+// KindEnvironmentSettingsIgnored — the server was started with environment
+// settings that 2.5.3 no longer reads (question 207): the CRONOMICON_GITLAB_*
+// that configured Global's repository, which the built-in agency no longer
+// has (CA-6), and CRONOMICON_RUNNER_BOOTSTRAP_TOKEN, which enrolled agents as
+// Global's, which runs nothing (CA-1). They are named in a warning at start
+// too.
+//
+// Subject: "environment". Filed under the built-in agency, for global
+// administrators. It clears when the server starts without them.
+const KindEnvironmentSettingsIgnored = "environment_settings_ignored"
+
+var (
+	ignoredEnvMu sync.Mutex
+	ignoredEnv   []string
+)
+
+// SetIgnoredEnvironmentSettings tells the checks which of those settings the
+// server was started with (settings.EnvSettingsIgnored; the server sets it at
+// start): the checks are given the database only.
+func SetIgnoredEnvironmentSettings(names []string) {
+	ignoredEnvMu.Lock()
+	defer ignoredEnvMu.Unlock()
+	ignoredEnv = append([]string(nil), names...)
+}
+
+func checkEnvironmentSettingsIgnored(ctx context.Context, database *sql.DB) error {
+	ignoredEnvMu.Lock()
+	names := append([]string(nil), ignoredEnv...)
+	ignoredEnvMu.Unlock()
+	var found []Finding
+	if len(names) > 0 {
+		var gitlab, token bool
+		for _, n := range names {
+			if n == "CRONOMICON_RUNNER_BOOTSTRAP_TOKEN" {
+				token = true
+			} else {
+				gitlab = true
+			}
+		}
+		detail := "The server was started with " + strings.Join(names, ", ") + ", which this version no longer reads: " +
+			"the built-in administration agency runs nothing and has no repository."
+		if gitlab {
+			detail += " Connect the repository to an ordinary agency under Settings → Repositories. If the built-in " +
+				"agency still holds what it synced, a global administrator removes that leftover first (Settings → " +
+				"Repositories, the built-in agency's), then connects the same URL to the agency."
+		}
+		if token {
+			detail += " Enrol agents with a registration token minted in their agency (Runners). An agent enrolled with " +
+				"the environment's token belongs to the built-in agency and takes no work: deregister it and enrol it " +
+				"again with an agency's token."
+		}
+		detail += " Remove the settings from the server's environment; this notice clears at the next start without them."
+		found = append(found, Finding{AgencyID: agencyid.Global, Subject: "environment", Detail: detail})
+	}
+	return Reconcile(ctx, database, KindEnvironmentSettingsIgnored, found)
 }

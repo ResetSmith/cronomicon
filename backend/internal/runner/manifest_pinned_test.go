@@ -21,12 +21,15 @@ import (
 // The entry is read at the run's pinned commit, and the run is handed out as
 // it was queued. A run whose job has gone is refused, and told why.
 func TestManifestOfACheckoutRunQueuedBeforeALaterSync(t *testing.T) {
+	// The run is the agency's, pinned to its repository (seedOpsRepo): the
+	// built-in agency has no repository since 2.5.3. A repository's clone is
+	// the directory named by its id beside Global's (gitlab.CloneDirFor).
 	root := t.TempDir()
-	clone := filepath.Join(root, "job-definitions")
-	t.Setenv("CRONOMICON_GIT_CACHE_DIR", clone)
+	t.Setenv("CRONOMICON_GIT_CACHE_DIR", filepath.Join(root, "job-definitions"))
+	clone := filepath.Join(root, opsRepoID)
 
 	svc := newTestService(t)
-	svc.cfg.GitLabBaseURL = "https://gitlab.example/infra/job-defs.git"
+	seedOpsRepo(t, svc)
 	as := authSvc(t, svc)
 	runnerID, tok := "runner-pinned", "crn_run_pinned"
 	insertRunner(t, svc, runnerID, "pinned", "online", []string{"ansible", "bash", "checkout"})
@@ -34,21 +37,21 @@ func TestManifestOfACheckoutRunQueuedBeforeALaterSync(t *testing.T) {
 
 	first := gittest.CommitObjects(t, clone, map[string]string{"scripts/proj/site.yml": "- hosts: all # first\n"}, nil)
 	second := gittest.CommitObjects(t, clone, map[string]string{"scripts/proj/main.yml": "- hosts: all # second\n"}, nil)
-	gittest.Synced(t, svc.db, "global", second)
+	gittest.Synced(t, svc.db, opsRepoID, second)
 	// The job as the second sync left it.
 	if _, err := svc.db.Exec(`
 		INSERT INTO jobs (uid, name, source, repo_id, run_type, script_path, project_root, synced_at)
-		VALUES ('uid-proj', 'proj', 'git', 'global', 'ansible', 'scripts/proj/main.yml', 'scripts/proj', 't')`); err != nil {
+		VALUES ('uid-proj', 'proj', 'git', '` + opsRepoID + `', 'ansible', 'scripts/proj/main.yml', 'scripts/proj', 't')`); err != nil {
 		t.Fatalf("seed the job: %v", err)
 	}
 	pinned := func(jobUID, jobName, sha, entry string) string {
 		t.Helper()
 		id := db.NewTraceID()
 		if _, err := svc.db.Exec(`
-			INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, runner_id, executor,
-			                 checkout_repo, checkout_sha, checkout_entry, triggered_by, trigger_kind, started_at, created_at)
-			VALUES (?, ?, 'git', ?, 'ansible', 'running', ?, 'runner', 'global', ?, ?, 'test', 'manual', ?, ?)`,
-			id, jobName, jobUID, runnerID, sha, entry, now(), now()); err != nil {
+			INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, status, runner_id, executor,
+			                 checkout_repo, checkout_sha, checkout_entry, triggered_by, trigger_kind, started_at, created_at, agencies_json)
+			VALUES (?, ?, 'git', ?, 'ansible', ?, 'running', ?, 'runner', ?, ?, ?, 'test', 'manual', ?, ?, ?)`,
+			id, jobName, jobUID, opsScopeName, runnerID, opsRepoID, sha, entry, now(), now(), `["`+opsAgencyName+`"]`); err != nil {
 			t.Fatalf("insert the checkout run: %v", err)
 		}
 		return id

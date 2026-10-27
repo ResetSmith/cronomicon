@@ -40,7 +40,10 @@ func unboundFireDB(t *testing.T) (*sql.DB, func(string, ...any)) {
 		}
 	}
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-tax','Tax','t')`)
-	exec(`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, synced_at)VALUES ('uid-'||'unscoped-job', 'unscoped-job','git','bash','Allow','t')`)
+	// The job is an ordinary agency's, and not the one that owns DEPT_PASSWORD
+	// (since 2.5.3 the built-in agency's job runs nothing, CA-1).
+	seedOpsAgency(t, pool)
+	exec(`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, synced_at, owner_agency)VALUES ('uid-'||'unscoped-job', 'unscoped-job','git','bash','Allow','t',?)`, opsAgency)
 	exec(`INSERT INTO secrets(id,key,source,owner_agency,created_at)
 	      VALUES('s-owned','DEPT_PASSWORD','stored','ag-tax','t')`)
 	exec(`INSERT INTO secret_agencies(secret_id,agency_id) VALUES('s-owned','ag-tax')`)
@@ -87,24 +90,37 @@ func TestScheduledUnboundFireWithOwnedCredentialIsRecordedNotEnqueued(t *testing
 	}
 }
 
-// TestScheduledUnboundFireWithGlobalCredentialStillEnqueues — precision, same as
-// the trigger side. A job binding only global rows has always fired unbound and
-// must keep doing so; over-refusing here would silently stop working cron jobs,
-// which is a worse outcome than the failure being prevented.
-func TestScheduledUnboundFireWithGlobalCredentialStillEnqueues(t *testing.T) {
-	pool, exec := unboundFireDB(t)
-	exec(`INSERT INTO reference_bindings(owner_kind,owner_source,owner_name,ref_kind,ref_name,created_at)
-	      VALUES('job','git','unscoped-job','secret','SHARED_TOKEN','t')`)
-
-	fireUnscoped(t, pool)
-
-	var status string
-	if err := pool.QueryRowContext(context.Background(),
-		`SELECT status FROM runs WHERE job_name='unscoped-job'`).Scan(&status); err != nil {
-		t.Fatalf("no run row: %v", err)
+// TestScheduledUnboundFireWithItsAgencysCredentialStillEnqueues — precision, same as
+// the trigger side. A job binding only rows its unbound run resolves has always
+// fired unbound and must keep doing so; over-refusing here would silently stop
+// working cron jobs, which is a worse outcome than the failure being prevented.
+//
+// Since 2.5.3 (CA-5) an unbound run is its job's agency's, not the built-in
+// agency's: the rows that resolve for it are its own agency's, and the built-in
+// agency's (once "global rows, for everyone") no longer do.
+func TestScheduledUnboundFireWithItsAgencysCredentialStillEnqueues(t *testing.T) {
+	statusOf := func(t *testing.T, binds string) (string, string) {
+		t.Helper()
+		pool, exec := unboundFireDB(t)
+		exec(`INSERT INTO secrets(id,key,source,owner_agency,created_at) VALUES('s-ops','OPS_TOKEN','stored',?,'t')`, opsAgency)
+		exec(`INSERT INTO secret_agencies(secret_id,agency_id) VALUES('s-ops',?)`, opsAgency)
+		exec(`INSERT INTO reference_bindings(owner_kind,owner_source,owner_name,ref_kind,ref_name,created_at)
+		      VALUES('job','git','unscoped-job','secret',?,'t')`, binds)
+		fireUnscoped(t, pool)
+		var status, reason string
+		if err := pool.QueryRowContext(context.Background(),
+			`SELECT status, COALESCE(queued_reason,'') FROM runs WHERE job_name='unscoped-job'`).Scan(&status, &reason); err != nil {
+			t.Fatalf("no run row: %v", err)
+		}
+		return status, reason
 	}
-	if status != "queued" {
-		t.Errorf("status = %q, want queued — a global row resolves for everyone", status)
+
+	if status, _ := statusOf(t, "OPS_TOKEN"); status != "queued" {
+		t.Errorf("status = %q, want queued — a row of the job's own agency resolves for its unbound run", status)
+	}
+	if status, reason := statusOf(t, "SHARED_TOKEN"); status != "skipped" || reason != runref.QueuedReasonUnboundReferences {
+		t.Errorf("binding the built-in agency's row: status/reason = %q/%q, want skipped/%q — an unbound run is its job's agency's since 2.5.3 (CA-5)",
+			status, reason, runref.QueuedReasonUnboundReferences)
 	}
 }
 

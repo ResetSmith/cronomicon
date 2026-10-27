@@ -24,30 +24,33 @@ const (
 	assignJob      = "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: nightly\nspec:\n  # the nightly backup\n  run_type: bash\n  script_ref: nightly.sh\n  scheduleRefs:\n    - nightly-cron\n  become_password_secret: DB_PASS\n"
 )
 
-// assignFixture is Global's repository holding the job nightly (its script and
-// its schedule), synced; Finance (ag-fin) with a repository whose remote is
-// bare, so it takes a push, synced, and a scope Finance owns alone; and a
-// Registry holding both Services.
+// assignFixture is the origin agency's (ag-a's) repository holding the job
+// nightly (its script and its schedule, on ag-a's scope), synced; Finance
+// (ag-fin) with a repository whose remote is bare, so it takes a push, synced,
+// and a scope Finance owns alone; and a Registry holding both Services.
+//
+// Until 2.5.3 the origin was Global's repository. The built-in agency has none
+// since (CA-6): an assignment's origin is an agency's repository.
 type assignFixture struct {
 	t        *testing.T
 	reg      *Registry
-	global   *Service
+	origin   *Service
 	fin      *Service
 	finBare  string
 	branch   string
 	jobUID   string
 	finScope string
-	// Global's working repository, to change the origin after an assignment.
-	globalRepo *gogit.Repository
-	globalWork string
+	// The origin's working repository, to change it after an assignment.
+	originRepo *gogit.Repository
+	originWork string
 }
 
-func newAssignFixture(t *testing.T, globalFiles, finFiles map[string]string) *assignFixture {
+func newAssignFixture(t *testing.T, originFiles, finFiles map[string]string) *assignFixture {
 	t.Helper()
 	a, repoA, remoteA := newSyncFixture(t)
-	// Global's calendar, which its schedule skips (a sync refuses a schedule
-	// naming a calendar its agency does not have).
-	if _, err := a.db.Exec(`INSERT INTO calendars (source, name, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 't', 't', 'global')`); err != nil {
+	// The origin agency's calendar, which its schedule skips (a sync refuses a
+	// schedule naming a calendar its agency does not have).
+	if _, err := a.db.Exec(`INSERT INTO calendars (source, name, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 't', 't', ?)`, fixtureAgency); err != nil {
 		t.Fatal(err)
 	}
 	template := map[string]string{
@@ -55,12 +58,12 @@ func newAssignFixture(t *testing.T, globalFiles, finFiles map[string]string) *as
 		"schedules/nightly-cron.yaml": assignSchedule,
 		"jobs/nightly.yaml":           assignJob,
 	}
-	for k, v := range globalFiles {
+	for k, v := range originFiles {
 		template[k] = v
 	}
 	grCommitFiles(t, repoA, remoteA, template, "the template")
-	if r := grSync(t, a, "Global's repository"); r.Status != "success" {
-		t.Fatalf("Global's sync: %s %s", r.Status, r.ErrorMessage)
+	if r := grSync(t, a, "the origin's repository"); r.Status != "success" {
+		t.Fatalf("the origin's sync: %s %s", r.Status, r.ErrorMessage)
 	}
 
 	fin, repoB, remoteB := grRepo(t, a, "repo-fin", "ag-fin")
@@ -83,18 +86,18 @@ func newAssignFixture(t *testing.T, globalFiles, finFiles map[string]string) *as
 	}
 
 	reg := NewRegistry(a.db, slog.New(slog.NewTextHandler(io.Discard, nil)), &config.Config{})
-	reg.services["global"], reg.services["repo-fin"] = a, fin
+	reg.services[fixtureRepo], reg.services["repo-fin"] = a, fin
 	reg.cloneDir = func(id string) string {
 		if id == "repo-fin" {
 			return fin.cloneDir
 		}
 		return a.cloneDir
 	}
-	f := &assignFixture{t: t, reg: reg, global: a, fin: fin, finBare: bare, branch: a.Cfg.GitLabWriteBranch, finScope: "hosts-of-repo-fin",
-		globalRepo: repoA, globalWork: remoteA}
-	f.jobUID = grString(t, a.db, `SELECT uid FROM jobs WHERE name = 'nightly' AND repo_id = 'global'`)
+	f := &assignFixture{t: t, reg: reg, origin: a, fin: fin, finBare: bare, branch: a.Cfg.GitLabWriteBranch, finScope: "hosts-of-repo-fin",
+		originRepo: repoA, originWork: remoteA}
+	f.jobUID = grString(t, a.db, `SELECT uid FROM jobs WHERE name = 'nightly' AND repo_id = 'repo-a'`)
 	if f.jobUID == "" {
-		t.Fatal("Global's job nightly was not synced")
+		t.Fatal("the origin's job nightly was not synced")
 	}
 	return f
 }
@@ -130,7 +133,7 @@ func refusalCode(err error) string {
 func TestAnAssignmentIsOneCommitCarryingTheWholeSet(t *testing.T) {
 	f := newAssignFixture(t, nil, nil)
 	before := f.head()
-	globalSHA := grString(t, f.global.db, `SELECT last_sha FROM git_repos WHERE id = 'global'`)
+	originSHA := grString(t, f.origin.db, `SELECT last_sha FROM git_repos WHERE id = 'repo-a'`)
 
 	_, err := f.assign()
 	var refusal *AssignError
@@ -139,6 +142,20 @@ func TestAnAssignmentIsOneCommitCarryingTheWholeSet(t *testing.T) {
 	}
 	if f.head() != before {
 		t.Fatal("a refused assignment pushed")
+	}
+	if len(refusal.CatalogueCalendars) != 0 {
+		t.Errorf("the refusal offers %v from Central's catalogue, which has none", refusal.CatalogueCalendars)
+	}
+	// 2.5.3 CA-19: where Central's catalogue has the calendar, the refusal
+	// says so, for Add from Central.
+	if _, err := f.origin.db.Exec(`INSERT INTO calendars (source, name, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 't', 't', 'global')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.assign()
+	if !errors.As(err, &refusal) || refusal.Code != "calendar_missing" || strings.Join(refusal.CatalogueCalendars, ",") != "holidays" ||
+		// The built-in agency by its name now (this database's is "Global").
+		!strings.Contains(refusal.Message, "Global's catalogue offers holidays") || !strings.Contains(refusal.Message, "from Global") {
+		t.Fatalf("with the catalogue's holidays: want calendar_missing offering it from the built-in agency, got %v (%v)", err, refusal)
 	}
 	f.finHasCalendar()
 
@@ -172,7 +189,7 @@ func TestAnAssignmentIsOneCommitCarryingTheWholeSet(t *testing.T) {
 	if doc.Spec.Scope != f.finScope {
 		t.Errorf("the copy names scope %q, want Finance's %q", doc.Spec.Scope, f.finScope)
 	}
-	if o := doc.Metadata.Origin; o["agency"] != "global" || o["path"] != "jobs/nightly.yaml" || o["commit"] != globalSHA {
+	if o := doc.Metadata.Origin; o["agency"] != fixtureAgency || o["path"] != "jobs/nightly.yaml" || o["commit"] != originSHA {
 		t.Errorf("metadata.origin = %v", o)
 	}
 	if !strings.Contains(job, "# the nightly backup") {
@@ -193,19 +210,19 @@ func TestAnAssignmentIsOneCommitCarryingTheWholeSet(t *testing.T) {
 		t.Error("no sync of Finance's repository was started")
 	}
 	finJob := `SELECT COUNT(*) FROM jobs WHERE name = 'nightly' AND owner_agency = 'ag-fin' AND repo_id = 'repo-fin'`
-	if n := grString(t, f.global.db, finJob); n != "1" {
+	if n := grString(t, f.origin.db, finJob); n != "1" {
 		t.Errorf("Finance's sync did not bring the job in as Finance's (count %s)", n)
 	}
 
-	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignments WHERE id = ? AND origin_commit = ? AND commit_sha = ? AND target_agency = 'ag-fin'`,
-		res.AssignmentID, globalSHA, after); n != "1" {
+	if n := grString(t, f.origin.db, `SELECT COUNT(*) FROM assignments WHERE id = ? AND origin_commit = ? AND commit_sha = ? AND target_agency = 'ag-fin'`,
+		res.AssignmentID, originSHA, after); n != "1" {
 		t.Errorf("assignment rows: %s, want 1", n)
 	}
-	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ? AND length(origin_hash) = 64 AND length(committed_hash) = 64`,
+	if n := grString(t, f.origin.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ? AND length(origin_hash) = 64 AND length(committed_hash) = 64`,
 		res.AssignmentID); n != "3" {
 		t.Errorf("file rows with both hashes: %s, want 3", n)
 	}
-	if same := grString(t, f.global.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ? AND origin_hash = committed_hash`,
+	if same := grString(t, f.origin.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ? AND origin_hash = committed_hash`,
 		res.AssignmentID); same != "1" {
 		t.Errorf("files committed as they were in the origin: %s, want 1 (the script; the job and the schedule are stamped)", same)
 	}
@@ -223,7 +240,7 @@ func TestATakenNameRefusesWithNothingPushed(t *testing.T) {
 	if f.head() != before {
 		t.Error("a refused assignment pushed")
 	}
-	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignments`); n != "0" {
+	if n := grString(t, f.origin.db, `SELECT COUNT(*) FROM assignments`); n != "0" {
 		t.Errorf("a refused assignment was recorded")
 	}
 }
@@ -232,8 +249,8 @@ func TestATakenNameRefusesWithNothingPushed(t *testing.T) {
 // would accept for its job: refused before anything is committed.
 func TestAScopeNotTheTargetsAloneRefusesWithNothingPushed(t *testing.T) {
 	f := newAssignFixture(t, nil, nil)
-	grAgencyScope(t, f.global.db, "ag-tax", "tax-hosts")
-	if _, err := f.global.db.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('id-hosts-of-repo-fin', 'ag-tax')`); err != nil {
+	grAgencyScope(t, f.origin.db, "ag-tax", "tax-hosts")
+	if _, err := f.origin.db.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('id-hosts-of-repo-fin', 'ag-tax')`); err != nil {
 		t.Fatal(err)
 	}
 	before := f.head()
@@ -247,7 +264,7 @@ func TestAScopeNotTheTargetsAloneRefusesWithNothingPushed(t *testing.T) {
 }
 
 // A script Finance has by name is Finance's own: it is used, not added, and
-// the answer says that it differs from Global's. It has no row in the record.
+// the answer says that it differs from the origin's. It has no row in the record.
 func TestADependencyTheTargetHasIsUsedAndReported(t *testing.T) {
 	f := newAssignFixture(t, nil, map[string]string{"scripts/nightly.sh": "#!/bin/sh\necho finances-own\n"})
 	f.finHasCalendar()
@@ -267,7 +284,7 @@ func TestADependencyTheTargetHasIsUsedAndReported(t *testing.T) {
 	if got := sysGit(t, f.finBare, "show", res.CommitSHA+":scripts/nightly.sh"); !strings.Contains(got, "finances-own") {
 		t.Errorf("Finance's script was replaced: %q", got)
 	}
-	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ? AND role = 'script'`, res.AssignmentID); n != "0" {
+	if n := grString(t, f.origin.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ? AND role = 'script'`, res.AssignmentID); n != "0" {
 		t.Errorf("a file not written has a record row")
 	}
 }
@@ -296,7 +313,7 @@ func TestATargetWithNoCloneYetStartsASync(t *testing.T) {
 // A job built in the app is not a file of a repository (question 87).
 func TestAJobBuiltInTheAppIsRefused(t *testing.T) {
 	f := newAssignFixture(t, nil, nil)
-	if _, err := f.global.db.Exec(`UPDATE jobs SET source = 'cronomicon' WHERE uid = ?`, f.jobUID); err != nil {
+	if _, err := f.origin.db.Exec(`UPDATE jobs SET source = 'cronomicon' WHERE uid = ?`, f.jobUID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.assign(); refusalCode(err) != "not_in_git" {

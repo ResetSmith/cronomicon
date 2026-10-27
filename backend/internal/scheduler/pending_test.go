@@ -15,8 +15,9 @@ import (
 
 func seedPendingJob(t *testing.T, pool *sql.DB) {
 	t.Helper()
+	seedOpsAgency(t, pool)
 	if _, err := pool.ExecContext(context.Background(), `
-		INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, synced_at)VALUES ('uid-'||'deferred-job', 'deferred-job', 'git', 'bash', 'Allow', '2026-01-01T00:00:00Z')`); err != nil {
+		INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, synced_at, owner_agency)VALUES ('uid-'||'deferred-job', 'deferred-job', 'git', 'bash', 'Allow', '2026-01-01T00:00:00Z', ?)`, opsAgency); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 }
@@ -180,8 +181,9 @@ func TestPendingRunCascadesOnJobDelete(t *testing.T) {
 func TestPendingWorkflowRunFires(t *testing.T) {
 	pool := openPool(t)
 	ctx := context.Background()
+	seedOpsAgency(t, pool)
 	if _, err := pool.ExecContext(ctx, `
-		INSERT INTO workflows (name, source, steps, synced_at) VALUES ('deferred-wf', 'git', '[]', 't')`); err != nil {
+		INSERT INTO workflows (name, source, steps, synced_at, repo_id) VALUES ('deferred-wf', 'git', '[]', 't', 'repo-ops')`); err != nil {
 		t.Fatalf("seed workflow: %v", err)
 	}
 	s := scheduler.New(pool, discardLog(), nil)
@@ -349,9 +351,10 @@ func TestHeldPendingRunIsMarkedWithItsGate(t *testing.T) {
 func TestPendingWorkflowRunHeldWhileOwnerIsBinned(t *testing.T) {
 	pool := openPool(t)
 	ctx := context.Background()
+	seedOpsAgency(t, pool)
 	if _, err := pool.ExecContext(ctx, `
-		INSERT INTO workflows (name, source, steps, synced_at)
-		VALUES ('deferred-wf', 'git', '[]', '2026-01-01T00:00:00Z')`); err != nil {
+		INSERT INTO workflows (name, source, steps, synced_at, repo_id)
+		VALUES ('deferred-wf', 'git', '[]', '2026-01-01T00:00:00Z', 'repo-ops')`); err != nil {
 		t.Fatalf("seed workflow: %v", err)
 	}
 	var fired int

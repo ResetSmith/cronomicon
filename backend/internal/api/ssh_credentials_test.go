@@ -51,6 +51,7 @@ func credDoJSON(t *testing.T, client *http.Client, method, url, csrf string, bod
 func TestSshCredentialsAPI(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLogin(t, ts.URL)
+	workInAgency(t, pool, client) // 2.5.3: no SSH key is the built-in agency's
 
 	// Create (201): metadata with derived fingerprint, no private material echoed.
 	resp, body := credDoJSON(t, client, http.MethodPost, ts.URL+"/api/v1/ssh/credentials", csrf,
@@ -85,8 +86,8 @@ func TestSshCredentialsAPI(t *testing.T) {
 	}
 
 	// Reference it from a host → delete blocked (409 + usage), then forced (204).
-	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, port, created_at, source, auth_credential_id)
-	      VALUES('h1','web1',22,'t','cronomicon',?)`, id); err != nil {
+	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, port, created_at, source, auth_credential_id, owner_agency)
+	      VALUES('h1','web1',22,'t','cronomicon',?,?)`, id, workAgency); err != nil {
 		t.Fatal(err)
 	}
 	resp, body = credDoJSON(t, client, http.MethodDelete, ts.URL+"/api/v1/ssh/credentials/"+id, csrf, nil)

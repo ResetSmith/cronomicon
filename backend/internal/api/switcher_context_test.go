@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -45,11 +46,14 @@ func TestSwitcherWhereEachKindOfPersonStarts(t *testing.T) {
 		who, groups, choices, effective, working string
 		overview                                 bool
 	}{
-		// A global administrator: Global (SW-6), and the overview to choose.
-		{"root", gRoot, "overview,global,ag:FIN,ag:TAX", "global", "global", true},
+		// A global administrator: the overview with two agencies, the first by
+		// name for the lists, as Global runs nothing (2.5.3 CA-13; was Global,
+		// SW-6).
+		{"root", gRoot, "overview,global,ag:FIN,ag:TAX", "overview", "ag:FIN", true},
 		// A viewer of every agency, the operations team: the overview (SW-13),
-		// with Global for the lists.
-		{"all-viewer", gAllViewer, "overview,global,ag:FIN,ag:TAX", "overview", "global", true},
+		// with the first agency for the lists, as Global runs nothing (2.5.3
+		// question 216; was Global).
+		{"all-viewer", gAllViewer, "overview,global,ag:FIN,ag:TAX", "overview", "ag:FIN", true},
 		// One agency's people: their agency, and Global to read (SW-5).
 		{"fin-admin", gFinAdmin, "ag:FIN", "ag:FIN", "ag:FIN", false},
 		{"fin-viewer", gFinViewer, "ag:FIN", "ag:FIN", "ag:FIN", false},
@@ -105,9 +109,10 @@ func TestSwitcherAPersonChoosesTheirOwnDefault(t *testing.T) {
 			t.Errorf("FIN's admin choosing %s = %d %s, want 422 invalid_default_agency, naming nothing", body, c, b)
 		}
 	}
-	// A global administrator may start on the overview, with Global for the lists.
+	// A global administrator may store the overview, with the first agency for
+	// the lists (CA-13), or Global, which they still may choose (CA-12).
 	if c, b := put(gRoot, `{"defaultAgencyId":"overview"}`); c != http.StatusOK ||
-		!strings.Contains(b, `"effectiveDefault":"overview"`) || !strings.Contains(b, `"workingAgency":"global"`) {
+		!strings.Contains(b, `"effectiveDefault":"overview"`) || !strings.Contains(b, `"workingAgency":"ag:FIN"`) {
 		t.Errorf("root choosing the overview = %d %s", c, b)
 	}
 	// A default the person has lost access to is ignored, not removed.
@@ -115,4 +120,38 @@ func TestSwitcherAPersonChoosesTheirOwnDefault(t *testing.T) {
 	if got := readContext(t, h, gFinAdmin); got.EffectiveDefault != "ag:FIN" || got.StoredDefault == nil || *got.StoredDefault != "ag:TAX" {
 		t.Errorf("a stored default no longer theirs: starts %s, stored %v; want ag:FIN, ag:TAX kept", got.EffectiveDefault, got.StoredDefault)
 	}
+}
+
+// 2.5.3 CA-13: with one agency a global administrator starts in it; with none
+// (before the first, CA-16), on the overview, with Global for the lists.
+func TestSwitcherAGlobalAdministratorStartsWhereTheWorkIs(t *testing.T) {
+	h, pool := gateServer(t)
+	if c, b := gateReq(t, h, http.MethodPut, "/api/v1/me/preferences", gRoot, `{"defaultAgencyId":"global"}`).Code, ""; c != http.StatusOK {
+		t.Fatalf("root storing Global = %d %s", c, b)
+	}
+	if got := readContext(t, h, gRoot); got.EffectiveDefault != "global" || got.WorkingAgency != "global" {
+		t.Errorf("root with Global stored: starts %s, works in %s; want global, global", got.EffectiveDefault, got.WorkingAgency)
+	}
+	mustExec(t, pool)(`DELETE FROM user_preferences`)
+	dropAgency(t, pool, "ag:TAX")
+	if got := readContext(t, h, gRoot); got.EffectiveDefault != "ag:FIN" || got.WorkingAgency != "ag:FIN" ||
+		got.ids() != "overview,global,ag:FIN" {
+		t.Errorf("root with one agency: starts %s, works in %s, choices %s; want ag:FIN, ag:FIN, overview,global,ag:FIN",
+			got.EffectiveDefault, got.WorkingAgency, got.ids())
+	}
+	dropAgency(t, pool, "ag:FIN")
+	if got := readContext(t, h, gRoot); got.EffectiveDefault != "overview" || got.WorkingAgency != "global" {
+		t.Errorf("root with no agency: starts %s, works in %s; want overview, global", got.EffectiveDefault, got.WorkingAgency)
+	}
+}
+
+// dropAgency deletes a gate fixture's agency with what the fixture gave it.
+func dropAgency(t *testing.T, pool *sql.DB, agency string) {
+	t.Helper()
+	exec := mustExec(t, pool)
+	exec(`DELETE FROM scopes WHERE id IN (SELECT scope_id FROM scope_agencies WHERE agency_id = ?)`, agency)
+	exec(`DELETE FROM access_grants WHERE agency_id = ?`, agency)
+	exec(`DELETE FROM agency_groups WHERE agency_id = ?`, agency)
+	exec(`DELETE FROM git_repos WHERE agency_id = ?`, agency)
+	exec(`DELETE FROM agencies WHERE id = ?`, agency)
 }

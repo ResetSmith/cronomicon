@@ -175,16 +175,15 @@ func TestScriptRoutesMeanGlobalsScript(t *testing.T) {
 		t.Errorf("the other repository's script's tags were changed: %s", got)
 	}
 
-	// ── a composed job is joined to Global's script ──────────────────────────
+	// ── a job composed on Global's script ─────────────────────────────────────
+	// Until 2.5.3 it was saved, Global's, and joined to Global's script. Since
+	// CA-4 Global composes no job: it is refused, and nothing is saved.
 	code, raw = do(http.MethodPost, "/api/v1/jobs", map[string]any{"name": "composed", "scriptRef": "deploy", "scope": ""})
-	if code != http.StatusCreated && code != http.StatusOK {
-		t.Fatalf("POST /jobs = %d: %s", code, raw)
+	if code != http.StatusUnprocessableEntity || errCode(raw) != "central_runs_nothing" {
+		t.Fatalf("POST /jobs = %d: %s, want 422 central_runs_nothing", code, raw)
 	}
-	if got := str(`SELECT COALESCE(script_uid,'') FROM jobs WHERE source='cronomicon' AND name='composed'`); got != "s-global" {
-		t.Errorf("the composed job is joined to script %q, want Global's", got)
-	}
-	if got := str(`SELECT COALESCE(script,'') FROM jobs WHERE source='cronomicon' AND name='composed'`); got != "echo from-global" {
-		t.Errorf("the composed job copied the body %q, want Global's", got)
+	if n := count(`SELECT COUNT(*) FROM jobs WHERE source='cronomicon' AND name='composed'`); n != 0 {
+		t.Errorf("Global's composed job was saved (%d rows)", n)
 	}
 
 	// ── a name only another repository has is not found ──────────────────────
@@ -197,7 +196,9 @@ func TestScriptRoutesMeanGlobalsScript(t *testing.T) {
 	if code, _ := do(http.MethodPut, "/api/v1/script-tags/only-b", map[string]any{"tags": []string{"x"}}); code != http.StatusNotFound {
 		t.Errorf("PUT /script-tags/only-b = %d, want 404", code)
 	}
-	if code, _ := do(http.MethodPost, "/api/v1/jobs", map[string]any{"name": "composed-b", "scriptRef": "only-b", "scope": ""}); code != http.StatusUnprocessableEntity {
-		t.Errorf("composing on a script only another repository has = %d, want 422", code)
+	// Composing is refused before the script is looked for: Global composes no
+	// job since 2.5.3 (CA-4).
+	if code, raw := do(http.MethodPost, "/api/v1/jobs", map[string]any{"name": "composed-b", "scriptRef": "only-b", "scope": ""}); code != http.StatusUnprocessableEntity || errCode(raw) != "central_runs_nothing" {
+		t.Errorf("composing on a script only another repository has = %d %s, want 422 central_runs_nothing", code, raw)
 	}
 }

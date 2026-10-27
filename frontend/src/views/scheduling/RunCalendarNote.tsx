@@ -1,9 +1,16 @@
 // CAL-14 / CAL-15 — the Run dialog's calendar note.
 //
-// Working calendars gate SCHEDULED fires only. A manual run — now or deferred as
-// an ad-hoc pending run — is never blocked by one, and that is deliberate: an
-// operator running a job by hand on a holiday is usually doing so precisely
-// because it is a holiday. So this is a warning, never a block.
+// A schedule entry's calendars gate SCHEDULED fires only. A manual run — now or
+// deferred as an ad-hoc pending run — is never blocked by one, and that is
+// deliberate: an operator running a job by hand on a holiday is usually doing so
+// precisely because it is a holiday. So for those this is a warning, never a block.
+//
+// A freeze calendar is the exception (FX-Q2, scheduler/gate.go: OriginManual and
+// OriginPromotionAdHoc have globalFreeze): a freeze stops a person's Run too, and
+// the server refuses it (409 suppressed_by_calendar). Until 2.5.3 this note named
+// the freeze and then said the run "will still happen", which it did not; the
+// freeze is judged on its own now, whether or not the job has a schedule, and
+// never masked by an entry's own calendar.
 //
 // It exists because the surprise runs the other way too: someone who bound a
 // run-day (only) calendar to a job expects "this runs on business days", and
@@ -34,11 +41,14 @@ export function RunCalendarNote({ entries, at, agency }: { entries: EntryBinding
   if (bound.length === 0 && globals.length === 0) return null;
   const day = dayInAppZone(at ?? Date.now());
 
-  // One line per entry whose policy disagrees with this instant; entries that
-  // would have fired normally say nothing.
+  // The agency's freeze, judged alone: it stops this run, whatever the entries say.
+  const frozen = suppressionFor(day, [], [], days, globals);
+
+  // One line per entry whose own calendars disagree with this instant; entries
+  // that would have fired normally say nothing.
   const notes: string[] = [];
   for (const e of entries) {
-    const sup = suppressionFor(day, e.skipCalendars ?? [], e.onlyCalendars ?? [], days, globals);
+    const sup = suppressionFor(day, e.skipCalendars ?? [], e.onlyCalendars ?? [], days);
     if (!sup) continue;
     const which = e.scheduleName ? `Schedule "${e.scheduleName}"` : "This job's schedule";
     notes.push(
@@ -47,7 +57,7 @@ export function RunCalendarNote({ entries, at, agency }: { entries: EntryBinding
         : `${which} would be suppressed ${at ? "then" : "today"} by ${sup.label ? `${sup.label} (${sup.by})` : sup.by}.`,
     );
   }
-  if (notes.length === 0) return null;
+  if (notes.length === 0 && !frozen) return null;
 
   return (
     <div
@@ -65,9 +75,17 @@ export function RunCalendarNote({ entries, at, agency }: { entries: EntryBinding
       {notes.map((n, i) => (
         <div key={i}>{n}</div>
       ))}
-      <div style={{ marginTop: 4 }}>
-        Working calendars gate scheduled fires only — this run will still happen{at ? " at the instant you picked" : ""}.
-      </div>
+      {frozen ? (
+        <div data-testid="run-frozen" style={{ marginTop: notes.length > 0 ? 4 : 0, color: c.warning, fontWeight: 600 }}>
+          {at ? "That day" : "Today"} is frozen by {frozen.label ? `${frozen.label} (${frozen.by})` : frozen.by}: a freeze stops
+          every start of this agency, a person&rsquo;s Run included, so this run{" "}
+          {at ? "will be skipped at the instant you picked" : "will be refused"}.
+        </div>
+      ) : (
+        <div style={{ marginTop: 4 }}>
+          A schedule&rsquo;s calendars gate its fires only — this run will still happen{at ? " at the instant you picked" : ""}.
+        </div>
+      )}
     </div>
   );
 }

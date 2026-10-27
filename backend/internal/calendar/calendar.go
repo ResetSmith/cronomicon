@@ -83,6 +83,14 @@ type Verdict struct {
 	// Always true for skip; for only, true only when a named calendar sets
 	// RecordSuppressed (CAL-Q4).
 	Record bool
+	// Level is whose calendar decided (2.5.3, CA-31): "job" or "workflow" for
+	// the definition's own Forbid and Allow calendars, "" for the schedule
+	// entry's and the agency's freeze calendars.
+	Level string
+	// AlsoAllowedBy names an Allow calendar that lists the day too, when a
+	// Forbid one decided: the two disagree, and the Forbid prevails (the
+	// owner, 2026-10-23). Empty otherwise.
+	AlsoAllowedBy string
 }
 
 // DayOf renders an instant as the wall-clock day used for matching.
@@ -154,15 +162,74 @@ func Evaluate(sets Set, skip, only []string, day string) Verdict {
 // its own agency's at a write, and one bound before §0a to Global's keeps
 // that binding rather than start firing on its days.
 func EvaluateFor(sets Set, agency string, skip, only []string, day string) Verdict {
+	return EvaluateBindings(sets, agency, Bindings{EntrySkip: skip, EntryOnly: only}, day)
+}
+
+// Bindings are the calendars that bind one start (2.5.3, CA-30, CA-31): the
+// definition's own Forbid and Allow calendars, and, for a schedule's fire,
+// its entry's skip and only calendars.
+type Bindings struct {
+	// Kind is the definition's: "job" or "workflow". It names the level in a
+	// reason.
+	Kind                 string
+	DefForbid, DefAllow  []string
+	EntrySkip, EntryOnly []string
+}
+
+// Names are every calendar the bindings name, for Load.
+func (b Bindings) Names() []string {
+	var out []string
+	for _, l := range [][]string{b.DefForbid, b.DefAllow, b.EntrySkip, b.EntryOnly} {
+		out = append(out, l...)
+	}
+	return out
+}
+
+// EvaluateBindings is the one rule for both levels (CA-31): a day is
+// forbidden if a Forbid calendar of the definition, a skip calendar of the
+// entry, or a freeze (global) calendar of the agency lists it — the veto,
+// checked first and always recorded. Then each level that names Allow (only)
+// calendars must list the day in one of them: a union within a level, both
+// levels when both name some. When a Forbid decides on a day an Allow
+// calendar lists, the verdict says so: the Forbid prevails.
+func EvaluateBindings(sets Set, agency string, b Bindings, day string) Verdict {
 	if agency == "" {
 		agency = "global"
 	}
-	// (1) skip-polarity, the veto: bound calendars first, then the global tier.
-	// Bound names are checked in the operator's authored order so the reported
-	// reason is stable across evaluations.
-	for _, name := range skip {
+	level := b.Kind
+	if level == "" {
+		level = "job"
+	}
+	// The conflict note (the owner, 2026-10-23) when a definition's calendars
+	// are in it: its Allow listing the day an entry or freeze calendar
+	// forbids, or anything Allowing the day its own Forbid forbids. An
+	// entry's skip against its own only reads as before 2.5.3.
+	alsoAllowed := func(v Verdict) Verdict {
+		lists := [][]string{b.DefAllow}
+		if v.Level != "" {
+			lists = append(lists, b.EntryOnly)
+		}
+		for _, l := range lists {
+			for _, name := range l {
+				if _, ok := sets[name].Days[day]; ok {
+					v.AlsoAllowedBy = name
+					return v
+				}
+			}
+		}
+		return v
+	}
+	// (1) skip-polarity, the veto: the definition's Forbid calendars, then the
+	// entry's, then the global tier. Bound names are checked in the operator's
+	// authored order so the reported reason is stable across evaluations.
+	for _, name := range b.DefForbid {
 		if label, ok := sets[name].Days[day]; ok {
-			return Verdict{Suppressed: true, Calendar: name, Label: label, Polarity: "skip", Record: true}
+			return alsoAllowed(Verdict{Suppressed: true, Calendar: name, Label: label, Polarity: "skip", Record: true, Level: level})
+		}
+	}
+	for _, name := range b.EntrySkip {
+		if label, ok := sets[name].Days[day]; ok {
+			return alsoAllowed(Verdict{Suppressed: true, Calendar: name, Label: label, Polarity: "skip", Record: true})
 		}
 	}
 	// Global calendars apply to every entry, including entries with no bindings
@@ -179,41 +246,55 @@ func EvaluateFor(sets Set, agency string, skip, only []string, day string) Verdi
 			continue
 		}
 		if label, ok := c.Days[day]; ok {
-			return Verdict{Suppressed: true, Calendar: name, Label: label, Polarity: "skip", Record: true}
+			return alsoAllowed(Verdict{Suppressed: true, Calendar: name, Label: label, Polarity: "skip", Record: true})
 		}
 	}
 
-	// (2) only-polarity: the day must appear in the union of the named calendars.
-	if len(only) > 0 {
-		for _, name := range only {
-			if _, ok := sets[name].Days[day]; ok {
-				return Verdict{} // a run day, and no veto applied above
-			}
-		}
-		// Union, not intersection: an operator naming two calendars means "either
-		// of these" — an intersection is expressible by making one calendar.
-		// Record only if some named calendar opted in (CAL-Q4).
-		record := false
-		for _, name := range only {
-			if sets[name].RecordSuppressed {
-				record = true
-				break
-			}
-		}
-		return Verdict{
-			Suppressed: true,
-			// The audit column takes the FIRST named calendar so the stored value
-			// is a single deterministic name the History filter can match. With
-			// several only-calendars the others are not named anywhere — a narrow
-			// corner, since one calendar is the overwhelmingly common case and
-			// only-mode recording is off by default.
-			Calendar: only[0],
-			Polarity: "only",
-			Record:   record,
-		}
+	// (2) only-polarity: at each level that names some, the day must appear in
+	// the union of them. The entry's first, as before 2.5.3; then the
+	// definition's.
+	if v, miss := onlyMiss(sets, b.EntryOnly, day); miss {
+		return v
 	}
-
+	if v, miss := onlyMiss(sets, b.DefAllow, day); miss {
+		v.Level = level
+		return v
+	}
 	return Verdict{}
+}
+
+// onlyMiss is one level's only-polarity rule: when it names calendars and
+// none lists the day, the suppression.
+func onlyMiss(sets Set, only []string, day string) (Verdict, bool) {
+	if len(only) == 0 {
+		return Verdict{}, false
+	}
+	for _, name := range only {
+		if _, ok := sets[name].Days[day]; ok {
+			return Verdict{}, false // a run day at this level
+		}
+	}
+	// Union, not intersection: an operator naming two calendars means "either
+	// of these" — an intersection is expressible by making one calendar.
+	// Record only if some named calendar opted in (CAL-Q4).
+	record := false
+	for _, name := range only {
+		if sets[name].RecordSuppressed {
+			record = true
+			break
+		}
+	}
+	return Verdict{
+		Suppressed: true,
+		// The audit column takes the FIRST named calendar so the stored value
+		// is a single deterministic name the History filter can match. With
+		// several only-calendars the others are not named anywhere — a narrow
+		// corner, since one calendar is the overwhelmingly common case and
+		// only-mode recording is off by default.
+		Calendar: only[0],
+		Polarity: "only",
+		Record:   record,
+	}, true
 }
 
 // Reason renders the human-readable queued_reason for a suppression. The
@@ -223,8 +304,23 @@ func Reason(v Verdict) string {
 	if !v.Suppressed {
 		return ""
 	}
+	// A definition's own calendars (2.5.3, CA-31) say so: "the job's".
+	whose := ""
+	if v.Level != "" {
+		whose = "the " + v.Level + "'s "
+	}
 	if v.Polarity == "only" {
-		return fmt.Sprintf("Skipped: not a run day in calendar %q", v.Calendar)
+		return fmt.Sprintf("Skipped: not a run day in %scalendar %q", whose, v.Calendar)
+	}
+	also := ""
+	if v.AlsoAllowedBy != "" {
+		also = fmt.Sprintf("; the Allow calendar %q lists the day too, and Forbid prevails", v.AlsoAllowedBy)
+	}
+	if whose != "" {
+		if v.Label != "" {
+			return fmt.Sprintf("Skipped: forbidden by %scalendar %q (%s)%s", whose, v.Calendar, v.Label, also)
+		}
+		return fmt.Sprintf("Skipped: forbidden by %scalendar %q%s", whose, v.Calendar, also)
 	}
 	if v.Calendar == FreezeCalendar {
 		if v.Label != "" {
@@ -233,9 +329,9 @@ func Reason(v Verdict) string {
 		return "Skipped: the installation is frozen"
 	}
 	if v.Label != "" {
-		return fmt.Sprintf("Skipped: suppressed by calendar %q (%s)", v.Calendar, v.Label)
+		return fmt.Sprintf("Skipped: suppressed by calendar %q (%s)%s", v.Calendar, v.Label, also)
 	}
-	return fmt.Sprintf("Skipped: suppressed by calendar %q", v.Calendar)
+	return fmt.Sprintf("Skipped: suppressed by calendar %q%s", v.Calendar, also)
 }
 
 // Load resolves calendar names to their day sets in ONE query, plus every
@@ -400,8 +496,8 @@ func ValidateBinding(skip, only []string, known, global map[string]bool) (outSki
 	}
 	for _, n := range outOnly {
 		if global[n] {
-			return nil, nil, "calendar " + n + " is global and cannot be used as a run-day (only) calendar; " +
-				"a global calendar is unioned into every entry's SKIP set"
+			return nil, nil, "calendar " + n + " is a freeze calendar and cannot be used as a run-day (only) calendar; " +
+				"a freeze calendar is unioned into every entry's SKIP set"
 		}
 	}
 	return outSkip, outOnly, ""
@@ -481,4 +577,26 @@ func sortedNames(sets Set) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// EvaluateDefinition is a definition's own calendars alone (2.5.3, CA-32):
+// its Forbid, then its Allow, with no entry and no freeze tier. What the Run
+// dialog warns of and what a service account's deferred start is judged by;
+// a freeze is judged apart, at the start.
+func EvaluateDefinition(sets Set, b Bindings, day string) Verdict {
+	return EvaluateBindings(sets, "\x00no agency tier", Bindings{Kind: b.Kind, DefForbid: b.DefForbid, DefAllow: b.DefAllow}, day)
+}
+
+// ValidateDefinitionBinding is ValidateBinding for a job's or a workflow's
+// own Forbid and Allow calendars (2.5.3, CA-30), said in their words.
+func ValidateDefinitionBinding(forbid, allow []string, known, global map[string]bool) (outForbid, outAllow []string, verr string) {
+	outForbid, outAllow, verr = ValidateBinding(forbid, allow, known, global)
+	if verr != "" {
+		verr = "forbidCalendars/allowCalendars: " + strings.NewReplacer(
+			"skipCalendars and onlyCalendars", "forbidCalendars and allowCalendars",
+			"an entry's run-day list and its veto", "a definition's Allow and its Forbid",
+			"a run-day (only) calendar", "an Allow calendar",
+		).Replace(verr)
+	}
+	return outForbid, outAllow, verr
 }

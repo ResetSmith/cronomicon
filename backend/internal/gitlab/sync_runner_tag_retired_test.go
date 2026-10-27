@@ -150,10 +150,13 @@ func TestValidateWarnsAboutARetiredRunnerTag(t *testing.T) {
 	pinned := filepath.Join(dir, "jobs", "pinned.yaml")
 	plain := filepath.Join(dir, "jobs", "plain.yaml")
 	body := "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: %s\nspec:\n  run_type: bash\n  command: echo hi\n"
-	if err := os.WriteFile(pinned, []byte(strings.Replace(body, "%s", "pinned", 1)+"  runner_tag: vlan-dmz\n"), 0o644); err != nil {
+	// Each job names a scope, after the key the test is about (line 8): a
+	// checkout's job with none is an error since 2.5.3 (question 206).
+	const scoped = "  scope: web\n"
+	if err := os.WriteFile(pinned, []byte(strings.Replace(body, "%s", "pinned", 1)+"  runner_tag: vlan-dmz\n"+scoped), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(plain, []byte(strings.Replace(body, "%s", "plain", 1)), 0o644); err != nil {
+	if err := os.WriteFile(plain, []byte(strings.Replace(body, "%s", "plain", 1)+scoped), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

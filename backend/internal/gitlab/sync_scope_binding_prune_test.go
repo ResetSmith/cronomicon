@@ -56,8 +56,10 @@ func TestSyncHoldsABoundScopeWithWaitingRuns(t *testing.T) {
 	// The operator binds dmz; a run is waiting on it.
 	exec(`INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_by, bound_at)
 	      SELECT id, 'r-dmz', 'runner-dmz-01', 'ops@example', 'now' FROM scopes WHERE name='dmz'`)
-	exec(`INSERT INTO runs (id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
-	      VALUES ('run-waiting', 'deploy', 'bash', 'dmz', 'queued', 'seed', 'manual', 'runner', '2026-10-05T00:00:00Z')`)
+	// The run is of the scope's agency, ag-a (its snapshot names it): the work
+	// that holds a scope is its own agency's (I2).
+	exec(`INSERT INTO runs (id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, created_at, agencies_json)
+	      VALUES ('run-waiting', 'deploy', 'bash', 'dmz', 'queued', 'seed', 'manual', 'runner', '2026-10-05T00:00:00Z', '["Agency ag-a"]')`)
 
 	// An ordinary re-sync: nothing removed, the binding is untouched.
 	backdateScopes()

@@ -12,7 +12,7 @@ import (
 // A publish that names a repository is that repository's (GR-24): its Service
 // commits and pushes, to its remote, on its branch, with its head as the base;
 // the answer and the audit row say which repository it was. A publish that
-// names none is Global's, as it always was.
+// names none was Global's until 2.5.3, and is refused since (no_repository).
 func TestAPublishThatNamesARepositoryLandsInIt(t *testing.T) {
 	svc, bare, branch := bareFixture(t)
 	ctx := context.Background()
@@ -49,9 +49,11 @@ func TestAPublishThatNamesARepositoryLandsInIt(t *testing.T) {
 		return rec.Code, out
 	}
 
-	// Naming none is Global's, which these handlers have no Service for.
-	if code, out := publish(""); code != http.StatusServiceUnavailable {
-		t.Errorf("a publish that names no repository answered %d %v, want Global's (503: it has no service here)", code, out)
+	// Naming none is the built-in agency's, which has no repository since
+	// 2.5.3 (CA-6): nothing to publish to, as for an agency that has not
+	// connected one. (Until 2.5.3 it was 503, Global's Service not running.)
+	if code, out := publish(""); code != http.StatusUnprocessableEntity || out["code"] != "no_repository" {
+		t.Errorf("a publish that names no repository answered %d %v, want 422 no_repository", code, out)
 	}
 	// One that is not there: the authorizer is asked, with nothing but that,
 	// and then the caller it allowed is told.

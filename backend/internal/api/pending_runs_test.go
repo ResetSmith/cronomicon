@@ -35,6 +35,7 @@ func TestDeferredRunLifecycle(t *testing.T) {
 		VALUES ('deferrable', 'git', 'bash', 'Allow', 't')`); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
+	ownJobsByWorkAgency(t, pool, "deferrable") // 2.5.3: the built-in agency runs nothing
 	var jobID int64
 	_ = pool.QueryRowContext(ctx, `SELECT rowid FROM jobs WHERE name='deferrable'`).Scan(&jobID)
 
@@ -251,6 +252,7 @@ func TestDeferredWorkflowTrigger(t *testing.T) {
 		INSERT INTO workflows (name, source, steps, synced_at) VALUES ('wf-later', 'git', '[]', 't')`); err != nil {
 		t.Fatalf("seed workflow: %v", err)
 	}
+	ownWorkflowsByWorkAgency(t, pool, "wf-later") // 2.5.3: the built-in agency runs nothing
 	var wfID int64
 	_ = pool.QueryRowContext(ctx, `SELECT rowid FROM workflows WHERE name='wf-later'`).Scan(&wfID)
 

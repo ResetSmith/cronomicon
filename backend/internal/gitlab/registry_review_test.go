@@ -16,8 +16,6 @@ import (
 
 	gogit "github.com/go-git/go-git/v5"
 	plumbing "github.com/go-git/go-git/v5/plumbing"
-
-	"github.com/ResetSmith/cronomicon/internal/repoid"
 )
 
 // A Restart is not its caller's to cancel. The caller is the request that
@@ -26,25 +24,25 @@ import (
 //
 // As first built, Restart read the row on the caller's context AFTER it had
 // stopped the running Service, and took a read that failed for a repository
-// with nothing configured: Global's Service was replaced by one with no URL
+// with nothing configured: the repository's Service was replaced by one with no URL
 // and no token, and every sync failed "not configured" until the next save.
 func TestRegistry_ARestartIsNotItsCallersToCancel(t *testing.T) {
 	f := newRegFixture(t)
 	if err := f.reg.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "the first sync", func() bool { return f.lastSHA(repoid.Global) != "" })
-	f.reg.Global().wg.Wait()
+	eventually(t, "the first sync", func() bool { return f.lastSHA(fixtureRepo) != "" })
+	f.reg.Service(fixtureRepo).wg.Wait()
 	events := grCount(t, f.db, `SELECT COUNT(*) FROM git_sync_events`)
 
 	gone, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := f.reg.Restart(gone, repoid.Global); err != nil {
+	if err := f.reg.Restart(gone, fixtureRepo); err != nil {
 		t.Fatalf("restart on a request that was abandoned: %v", err)
 	}
-	now := f.reg.Global()
+	now := f.reg.Service(fixtureRepo)
 	if now == nil {
-		t.Fatal("no Service for Global's repository after the restart")
+		t.Fatal("no Service for the repository after the restart")
 	}
 	if now.repoURL != f.remote {
 		t.Errorf("the Service built by the restart has URL %q, want the row's %q", now.repoURL, f.remote)
@@ -62,18 +60,18 @@ func TestRegistry_ARestartThatCannotReadKeepsTheRunningService(t *testing.T) {
 	if err := f.reg.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "the first sync", func() bool { return f.lastSHA(repoid.Global) != "" })
-	running := f.reg.Global()
+	eventually(t, "the first sync", func() bool { return f.lastSHA(fixtureRepo) != "" })
+	running := f.reg.Service(fixtureRepo)
 	running.wg.Wait()
 
 	// The table is out of reach (what a read error looks like from here).
 	if _, err := f.db.Exec(`ALTER TABLE git_repos RENAME TO git_repos_away`); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.reg.Restart(ctx, repoid.Global); err == nil {
+	if err := f.reg.Restart(ctx, fixtureRepo); err == nil {
 		t.Errorf("a restart that could not read the repository's row reported success")
 	}
-	if got := f.reg.Global(); got != running {
+	if got := f.reg.Service(fixtureRepo); got != running {
 		t.Errorf("the running Service was replaced although the row could not be read (now %p, was %p)", got, running)
 	}
 	running.mu.Lock()
@@ -85,10 +83,10 @@ func TestRegistry_ARestartThatCannotReadKeepsTheRunningService(t *testing.T) {
 	if _, err := f.db.Exec(`ALTER TABLE git_repos_away RENAME TO git_repos`); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.reg.Restart(ctx, repoid.Global); err != nil {
+	if err := f.reg.Restart(ctx, fixtureRepo); err != nil {
 		t.Errorf("restart once the row can be read again: %v", err)
 	}
-	if got := f.reg.Global(); got == nil || got == running || got.repoURL != f.remote {
+	if got := f.reg.Service(fixtureRepo); got == nil || got == running || got.repoURL != f.remote {
 		t.Errorf("after the restart that could read the row: %+v", got)
 	}
 	// A repository that does not exist is refused the same way, and nothing is
@@ -111,6 +109,7 @@ func TestRegistry_OverlappingRestartsLeaveOneService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	grConfinedTo.Store(second, fixtureScope) // the same agency's repository
 	gitCommitFile(t, repo2, second, "jobs/other.yaml", jobYAML("other"), "the second repository's job")
 	urls := []string{f.remote, second}
 	if err := f.reg.Start(ctx); err != nil {
@@ -123,25 +122,25 @@ func TestRegistry_OverlappingRestartsLeaveOneService(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if _, err := f.db.Exec(`UPDATE git_repos SET url = ? WHERE id = 'global'`, urls[i%2]); err != nil {
+			if _, err := f.db.Exec(`UPDATE git_repos SET url = ? WHERE id = 'repo-a'`, urls[i%2]); err != nil {
 				t.Errorf("write the connection: %v", err)
 				return
 			}
-			if err := f.reg.Restart(ctx, repoid.Global); err != nil {
+			if err := f.reg.Restart(ctx, fixtureRepo); err != nil {
 				t.Errorf("restart: %v", err)
 			}
-			if svc := f.reg.Global(); svc != nil {
+			if svc := f.reg.Service(fixtureRepo); svc != nil {
 				seen.Store(svc, true)
 			}
 		}(i)
 	}
 	wg.Wait()
 
-	final := f.reg.Global()
+	final := f.reg.Service(fixtureRepo)
 	if final == nil {
 		t.Fatal("no Service after the restarts")
 	}
-	if want := grString(t, f.db, `SELECT url FROM git_repos WHERE id = 'global'`); final.repoURL != want {
+	if want := grString(t, f.db, `SELECT url FROM git_repos WHERE id = 'repo-a'`); final.repoURL != want {
 		t.Errorf("the Service left registered has URL %q; the row says %q", final.repoURL, want)
 	}
 	seen.Range(func(k, _ any) bool {
@@ -214,17 +213,18 @@ func TestACancelledSyncDoesNotReachTheScheduler(t *testing.T) {
 	}
 
 	// A sync whose caller goes away while it is inside its transaction. The
-	// job upsert logs that a job declares no scope; the context is cancelled
-	// on that line.
-	gitCommitFile(t, repo, remote, "jobs/late.yaml", jobYAML("late"), "a job the cancelled sync will not import")
+	// job upsert logs that a job names an SSH credential that is not stored;
+	// the context is cancelled on that line. (Until 2.5.3 the line was a job's
+	// of Global's repository declaring no scope; an agency's job names one.)
+	gitCommitFile(t, repo, remote, "jobs/late.yaml", jobYAML("late")+"  ssh_credential: no-such-credential\n", "a job the cancelled sync will not import")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	quiet := svc.log
-	svc.log = slog.New(cancelOnLog{Handler: quiet.Handler(), needle: "declares no scope", cancel: cancel})
+	svc.log = slog.New(cancelOnLog{Handler: quiet.Handler(), needle: "names no stored SSH credential", cancel: cancel})
 	res := svc.SyncBlocking(ctx, "manual")
 	svc.log = quiet
 	if ctx.Err() == nil {
-		t.Fatalf("the sync was not cancelled inside its transaction (no job logged that it has no scope); status %q", res.Status)
+		t.Fatalf("the sync was not cancelled inside its transaction (no job logged its missing SSH credential); status %q", res.Status)
 	}
 	if res.Status == "success" || jobCount(t, svc.db, "late") != 0 {
 		t.Fatalf("the cancelled sync committed: status %q, late=%d", res.Status, jobCount(t, svc.db, "late"))
@@ -256,8 +256,8 @@ func TestASyncCutShortByItsServiceBeingStoppedIsNotHistory(t *testing.T) {
 	if err := f.reg.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "the first sync", func() bool { return f.lastSHA(repoid.Global) != "" })
-	svc := f.reg.Global()
+	eventually(t, "the first sync", func() bool { return f.lastSHA(fixtureRepo) != "" })
+	svc := f.reg.Service(fixtureRepo)
 	svc.wg.Wait()
 	events, hooks := grCount(t, f.db, `SELECT COUNT(*) FROM git_sync_events`), calls.Load()
 
@@ -286,27 +286,27 @@ func TestASyncCutShortByItsServiceBeingStoppedIsNotHistory(t *testing.T) {
 func TestRegistry_AConnectionWithNoURLIsNotSynced(t *testing.T) {
 	f := newRegFixture(t)
 	ctx := context.Background()
-	if _, err := f.db.Exec(`UPDATE git_repos SET url = '' WHERE id = 'global'`); err != nil {
+	if _, err := f.db.Exec(`UPDATE git_repos SET url = '' WHERE id = 'repo-a'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.reg.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "the start-up sync of an installation with no repository", func() bool {
+	eventually(t, "the start-up sync of a repository with no URL", func() bool {
 		return grCount(t, f.db, `SELECT COUNT(*) FROM git_sync_events WHERE status = 'failed'`) == 1
 	})
-	f.reg.Global().wg.Wait()
+	f.reg.Service(fixtureRepo).wg.Wait()
 	for i := 0; i < 3; i++ {
-		if err := f.reg.Restart(ctx, repoid.Global); err != nil {
+		if err := f.reg.Restart(ctx, fixtureRepo); err != nil {
 			t.Fatal(err)
 		}
-		f.reg.Global().wg.Wait()
+		f.reg.Service(fixtureRepo).wg.Wait()
 	}
 	if n := grCount(t, f.db, `SELECT COUNT(*) FROM git_sync_events`); n != 1 {
 		t.Errorf("history after three saves of a connection with no URL = %d lines, want the one from start-up", n)
 	}
 	// It still answers: a manual sync says what is wrong.
-	if r := f.reg.Global().SyncBlocking(ctx, "manual"); r.Status != "failed" || !strings.Contains(r.ErrorMessage, "not configured") {
+	if r := f.reg.Service(fixtureRepo).SyncBlocking(ctx, "manual"); r.Status != "failed" || !strings.Contains(r.ErrorMessage, "not configured") {
 		t.Errorf("a manual sync with no URL: %q %q", r.Status, r.ErrorMessage)
 	}
 }
@@ -358,7 +358,7 @@ func TestPublishLandsOnTheConnectionsBranch(t *testing.T) {
 	if r.Status == "failed" {
 		t.Fatalf("first sync: %s", r.ErrorMessage)
 	}
-	res, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p1.yaml", Content: jobYAML("p1")}, r.SHA, "a@example.com")
+	res, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p1.yaml", Content: grScopedJob("p1", fixtureScope)}, r.SHA, "a@example.com")
 	if err != nil {
 		t.Fatalf("publish on a fresh clone: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestPublishLandsOnTheConnectionsBranch(t *testing.T) {
 	if r.Status == "failed" || r.SHA != res.CommitSHA {
 		t.Fatalf("the sync after the publish: %+v", r)
 	}
-	res2, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p2.yaml", Content: jobYAML("p2")}, r.SHA, "a@example.com")
+	res2, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p2.yaml", Content: grScopedJob("p2", fixtureScope)}, r.SHA, "a@example.com")
 	if err != nil {
 		t.Fatalf("publish on an existing clone: %v", err)
 	}
@@ -384,12 +384,12 @@ func TestPublishLandsOnTheConnectionsBranch(t *testing.T) {
 	// The connection's branch changes.
 	firstHead := sysGit(t, bare, "rev-parse", "refs/heads/"+first)
 	releaseHead := sysGit(t, bare, "rev-parse", "refs/heads/release")
-	svc.Cfg.GitLabWriteBranch = "release"
+	setBranch(t, svc, "release")
 	r = svc.SyncBlocking(ctx, "manual")
 	if r.Status == "failed" || r.SHA != releaseHead {
 		t.Fatalf("the sync on the new branch: %+v, want %s", r, releaseHead)
 	}
-	res3, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p3.yaml", Content: jobYAML("p3")}, r.SHA, "a@example.com")
+	res3, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p3.yaml", Content: grScopedJob("p3", fixtureScope)}, r.SHA, "a@example.com")
 	if err != nil {
 		t.Fatalf("publish after the branch change: %v", err)
 	}
@@ -447,11 +447,11 @@ func TestAPublishThatDeliversNothingIsAFailure(t *testing.T) {
 	}
 
 	// A branch the repository does not have.
-	svc.Cfg.GitLabWriteBranch = "no-such-branch"
+	setBranch(t, svc, "no-such-branch")
 	if bad := svc.SyncBlocking(ctx, "manual"); bad.Status != "failed" {
 		t.Fatalf("a sync of a branch the repository does not have: %q", bad.Status)
 	}
-	res, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p1.yaml", Content: jobYAML("p1")}, r.SHA, "a@example.com")
+	res, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p1.yaml", Content: grScopedJob("p1", fixtureScope)}, r.SHA, "a@example.com")
 	if err == nil || !strings.Contains(err.Error(), "git fetch") {
 		t.Fatalf("a publish to a branch the repository does not have answered %+v, %v; want the fetch's error", res, err)
 	}
@@ -459,11 +459,11 @@ func TestAPublishThatDeliversNothingIsAFailure(t *testing.T) {
 
 	// The repository's own branch, and nothing to push when the push comes:
 	// the local branch is gone by then.
-	svc.Cfg.GitLabWriteBranch = first
+	setBranch(t, svc, first)
 	svc.beforePush = func() {
 		sysGit(t, svc.cloneDir, "update-ref", "-d", "refs/heads/"+first)
 	}
-	res, err = svc.Publish(ctx, PublishRequest{FilePath: "jobs/p2.yaml", Content: jobYAML("p2")}, r.SHA, "a@example.com")
+	res, err = svc.Publish(ctx, PublishRequest{FilePath: "jobs/p2.yaml", Content: grScopedJob("p2", fixtureScope)}, r.SHA, "a@example.com")
 	svc.beforePush = nil
 	if err == nil {
 		t.Fatalf("a publish whose push delivered nothing answered success: %+v", res)
@@ -479,7 +479,7 @@ func TestAPublishThatDeliversNothingIsAFailure(t *testing.T) {
 	}
 	clean("a push that delivered nothing")
 	// Nothing is left in the way of the next publish.
-	if _, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p2.yaml", Content: jobYAML("p2")}, r.SHA, "a@example.com"); err != nil {
+	if _, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p2.yaml", Content: grScopedJob("p2", fixtureScope)}, r.SHA, "a@example.com"); err != nil {
 		t.Fatalf("the publish after the failed one: %v", err)
 	}
 }

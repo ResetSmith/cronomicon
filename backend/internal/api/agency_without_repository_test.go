@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -67,16 +68,23 @@ func TestSG5_AnAgencyIsCreatedWithoutARepositoryAndConnectsOneLater(t *testing.T
 	}
 }
 
-// A publish to a repository whose connection has no URL (Global's here) is
-// 422 no_repository, not a failure in the clone.
+// A publish to a repository whose connection has no URL is 422 no_repository,
+// not a failure in the clone. Global's unconfigured row was the fixture until
+// 2.5.3; the built-in agency has no repository since (CA-6), so it is an
+// agency's row from before 2.4.0 with no connection, there when the server
+// starts its repositories' sync services.
 func TestSG5_APublishToAnUnconnectedRepositoryIsRefusedByName(t *testing.T) {
-	h, pool := repoGateServer(t)
-	if n := count(t, pool, `SELECT COUNT(*) FROM git_repos WHERE id = 'global' AND COALESCE(url, '') = ''`); n != 1 {
-		t.Skip("the fixture's Global repository has a URL")
+	t.Setenv("CRONOMICON_GIT_CACHE_DIR", filepath.Join(t.TempDir(), "git-cache", "job-definitions"))
+	h, pool := gateServerSeeded(t, nil, func(exec func(string, ...any)) {
+		exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag:OPS', 'OPS', '2026-01-01T00:00:00Z')`)
+		exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-ops', 'ag:OPS', '', 'main')`)
+	})
+	if n := count(t, pool, `SELECT COUNT(*) FROM git_repos WHERE id = 'repo-ops' AND COALESCE(url, '') = ''`); n != 1 {
+		t.Fatalf("the fixture's agency repository is not there with no URL")
 	}
-	body := `{"filePath":"schedules/nightly.yaml","content":"apiVersion: cronomicon.io/v1\nkind: Schedule\nmetadata:\n  name: nightly\nspec:\n  cron: '0 2 * * *'\n","commitMessage":"m","new":true}`
+	body := `{"repoId":"repo-ops","filePath":"schedules/nightly.yaml","content":"apiVersion: cronomicon.io/v1\nkind: Schedule\nmetadata:\n  name: nightly\nspec:\n  cron: '0 2 * * *'\n","commitMessage":"m","new":true}`
 	rec := gateReqWithHeader(t, h, http.MethodPost, "/api/v1/schedules/publish", gRoot, body, "If-Match", "deadbeef")
 	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "no_repository") {
-		t.Fatalf("publish to Global's unconnected repository = %d %s", rec.Code, rec.Body)
+		t.Fatalf("publish to OPS's unconnected repository = %d %s", rec.Code, rec.Body)
 	}
 }

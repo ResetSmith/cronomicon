@@ -40,8 +40,8 @@ afterEach(cleanup);
 describe("a global calendar reaches its own agency", () => {
   it("says whose runs are suppressed, and that other agencies' are not", async () => {
     render(<GlobalCalendarBanner />);
-    expect(await screen.findByText(/Scheduled runs of Finance are suppressed today/)).toBeTruthy();
+    expect(await screen.findByText(/Nothing of Finance starts today/)).toBeTruthy();
     expect(screen.queryByText(/fleet-wide/)).toBeNull();
-    expect(screen.getByText(/Other agencies' schedules and manual runs are unaffected\./)).toBeTruthy();
+    expect(screen.getByText(/A freeze stops a person.s Run too; other agencies are unaffected\./)).toBeTruthy();
   });
 });

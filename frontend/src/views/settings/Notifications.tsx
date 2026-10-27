@@ -5,6 +5,7 @@ import type { components } from "../../api/schema";
 import { useGet } from "../../hooks";
 import { c } from "../../theme";
 import { globalOnly } from "../../api/globalAdmin";
+import { globalAgencyName } from "../../globalName";
 import { Btn, Card, Chip, ReadOnlyFields, csrfHeader, errMsg, fmtDateTime, inputStyle, lblStyle } from "./ui";
 import { InlineLoading, Rule } from "../../components/ui";
 import { appAddress } from "../../alertLink";
@@ -425,7 +426,7 @@ function RunNotificationsCard({ canWrite }: { canWrite: boolean }) {
                 />
                 {/* Question 80 (2.5.0 C4): an agency's rule mails its own recipients only. */}
                 <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
-                  Comma-separated. Added to the mail of Global's alert rules only; an agency's rules mail their own recipients.
+                  Comma-separated. Added to the mail of {globalAgencyName()}'s alert rules only; an agency's rules mail their own recipients.
                 </div>
               </div>
             </div>
@@ -445,14 +446,15 @@ function RunNotificationsCard({ canWrite }: { canWrite: boolean }) {
 function GlobalTargets() {
   const q = useGet<AlertTarget[]>(() => api.GET("/alert-targets", { headers: allReadable }), []);
   const list = (Array.isArray(q.data) ? q.data : []).filter((t) => t.ownerAgency === "global");
+  const central = globalAgencyName();
   return (
     <>
-      <div style={lblStyle()}>Global's targets</div>
+      <div style={lblStyle()}>{central}'s targets</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {q.loading && <InlineLoading />}
-        {q.error && <div style={{ color: c.danger, fontSize: c.fontSm }}>Could not read Global's targets: {q.error}</div>}
+        {q.error && <div style={{ color: c.danger, fontSize: c.fontSm }}>Could not read {central}'s targets: {q.error}</div>}
         {!q.loading && !q.error && list.length === 0 && (
-          <div style={{ color: c.textSec, fontSize: c.fontSm }}>Global has no push targets.</div>
+          <div style={{ color: c.textSec, fontSize: c.fontSm }}>{central} has no push targets.</div>
         )}
         {list.map((t, i) => (
           <Fragment key={t.id ?? i}>
@@ -468,9 +470,9 @@ function GlobalTargets() {
           </Fragment>
         ))}
         <div style={{ fontSize: c.fontXs, color: c.textSec }}>
-          Global's alert rules push to these, and each agency keeps its own. They are added, changed and removed under{" "}
+          {central}'s alert rules push to these, and each agency keeps its own. They are added, changed and removed under{" "}
           <Link to="/settings?tab=alerts&agency=global" style={{ color: c.primary }}>
-            Settings → Alerts, working in Global
+            Settings → Alerts, working in {central}
           </Link>, which keeps the rules
           that name each one.
         </div>

@@ -593,6 +593,10 @@ func (s *Server) nextFireByAgency(ctx context.Context, now time.Time) (map[strin
 		allCalNames = append(allCalNames, calendar.ParseNames(sr.skipCals.String)...)
 		allCalNames = append(allCalNames, calendar.ParseNames(sr.onlyCals.String)...)
 	}
+	defBindings := s.definitionBindingsOf(ctx, srows) // 2.5.3, CA-31
+	for _, b := range defBindings {
+		allCalNames = append(allCalNames, b.Names()...)
+	}
 	sets := map[string]calendar.Set{}
 	for _, sr := range srows {
 		key := defKey{sr.source, sr.kind, sr.owner}
@@ -615,7 +619,9 @@ func (s *Server) nextFireByAgency(ctx context.Context, now time.Time) (map[strin
 			if _, frozen := calendar.FreezeVerdictAt(freeze, t); frozen {
 				continue
 			}
-			if calendar.EvaluateFor(set, owner, skip, only, calendar.DayOf(t, appLoc)).Suppressed {
+			b := defBindings[defBindingKey(sr)]
+			b.EntrySkip, b.EntryOnly = skip, only
+			if calendar.EvaluateBindings(set, owner, b, calendar.DayOf(t, appLoc)).Suppressed {
 				continue
 			}
 			if cur, ok := out[owner]; !ok || t.Before(cur) {

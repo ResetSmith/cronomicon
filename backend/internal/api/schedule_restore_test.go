@@ -71,7 +71,7 @@ func TestGR1_ARestoreFromAnOlderTombstoneStillBinds(t *testing.T) {
 	// One definition of the name: bound by its uid.
 	a.must(http.MethodPost, "/api/v1/schedule-defs", map[string]any{"name": "one", "cron": "0 0 2 * * *"}, http.StatusCreated)
 	a.must(http.MethodPost, "/api/v1/jobs",
-		map[string]any{"name": "solo-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"one"}}, http.StatusCreated)
+		map[string]any{"name": "solo-job", "scriptRef": "backup-db", "scope": workScope, "scheduleRefs": []string{"one"}}, http.StatusCreated)
 	solo := a.str(`SELECT uid FROM jobs WHERE source='cronomicon' AND name='solo-job'`)
 	a.must(http.MethodDelete, "/api/v1/schedule-defs/one?force=true", nil, http.StatusNoContent)
 	stripOwnerUIDs("one")

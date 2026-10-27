@@ -118,4 +118,31 @@ describe("Notices (LR-85)", () => {
     open();
     expect(await screen.findByText(/Nothing needs attention/)).toBeTruthy();
   });
+
+  // 2.5.3: the kinds this release raises have a title, and central_holds_work
+  // (one finding per kind Central still holds, CA-17) links to the page where
+  // that kind is moved out or deleted.
+  it("names 2.5.3's kinds, and sends each of Central's held kinds to its own page", async () => {
+    const held = (id: string, kind: string) => ({ ...notice(id, "central_holds_work", "global", "Central", "Central still holds " + kind), subject: "central:" + kind });
+    NOTICES = [
+      held("h-job", "job"),
+      held("h-host", "host"),
+      held("h-repo", "repository"),
+      notice("lr", "local_runner_unassigned", "global", "Central", "The local runner belongs to no agency."),
+      notice("cal", "calendar_update_available", "ag-tax", "Tax", "holidays has an update from Central."),
+      notice("old", "global_job_on_agency_scope", "global", "Central", "A notice from before 2.5.3."),
+    ];
+    open();
+    await screen.findByText("Central still holds job");
+    const rowOf = (detail: string) => screen.getByText(detail).parentElement as HTMLElement;
+    const link = (detail: string) => within(rowOf(detail)).getByRole("link");
+    expect(within(rowOf("Central still holds job")).getByText("The administration still holds work that no longer runs")).toBeTruthy();
+    expect(link("Central still holds job").getAttribute("href")).toBe("/jobs");
+    expect(link("Central still holds host").getAttribute("href")).toBe("/settings?tab=targets");
+    expect(link("Central still holds repository").getAttribute("href")).toBe("/settings?tab=repositories");
+    expect(within(rowOf("The local runner belongs to no agency.")).getByText("The local runner belongs to no agency and is off")).toBeTruthy();
+    expect(link("holidays has an update from Central.").getAttribute("href")).toBe("/schedules?tab=calendars");
+    // A retired kind has no title of its own any more.
+    expect(within(rowOf("A notice from before 2.5.3.")).getByText("Notice")).toBeTruthy();
+  });
 });

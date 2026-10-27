@@ -41,15 +41,15 @@ func TestGR3_ASyncPrunesOnlyItsOwnRepository(t *testing.T) {
 	grSync(t, a, "first repository")
 
 	firsts := map[string]string{
-		"job":                 `SELECT COUNT(*) FROM jobs WHERE source='git' AND name='keep' AND repo_id='global'`,
-		"workflow":            `SELECT COUNT(*) FROM workflows WHERE source='git' AND name='nightly' AND repo_id='global'`,
-		"schedule":            `SELECT COUNT(*) FROM schedules WHERE source='git' AND name='yearly' AND repo_id='global'`,
-		"script":              `SELECT COUNT(*) FROM scripts WHERE name='deploy.sh' AND repo_id='global'`,
-		"scope":               `SELECT COUNT(*) FROM scopes WHERE source='git' AND name='web' AND repo_id='global'`,
+		"job":                 `SELECT COUNT(*) FROM jobs WHERE source='git' AND name='keep' AND repo_id='repo-a'`,
+		"workflow":            `SELECT COUNT(*) FROM workflows WHERE source='git' AND name='nightly' AND repo_id='repo-a'`,
+		"schedule":            `SELECT COUNT(*) FROM schedules WHERE source='git' AND name='yearly' AND repo_id='repo-a'`,
+		"script":              `SELECT COUNT(*) FROM scripts WHERE name='deploy.sh' AND repo_id='repo-a'`,
+		"scope":               `SELECT COUNT(*) FROM scopes WHERE source='git' AND name='web' AND repo_id='repo-a'`,
 		"scope's host":        `SELECT COUNT(*) FROM scope_hosts WHERE host='web1'`,
 		"host record":         `SELECT COUNT(*) FROM ssh_hosts WHERE source='git' AND hostname='web1'`,
 		"job's schedule":      `SELECT COUNT(*) FROM definition_schedules d JOIN jobs j ON j.uid = d.owner_uid WHERE j.name='timed' AND d.name='yearly'`,
-		"job's log-folder id": `SELECT COUNT(*) FROM entity_codes e JOIN jobs j ON j.uid = e.uid WHERE j.name='keep' AND e.deleted_at IS NULL AND e.repo_id='global'`,
+		"job's log-folder id": `SELECT COUNT(*) FROM entity_codes e JOIN jobs j ON j.uid = e.uid WHERE j.name='keep' AND e.deleted_at IS NULL AND e.repo_id='repo-a'`,
 	}
 	check := func(when string) {
 		t.Helper()
@@ -178,8 +178,8 @@ func TestGR3_TwoRepositoriesWithTheSameNames(t *testing.T) {
 			}
 		}
 	}
-	sa, sb := state("global"), state("repo-b")
-	want("global", "echo from-a", "0 3 1 1 *", sa)
+	sa, sb := state(fixtureRepo), state("repo-b")
+	want(fixtureRepo, "echo from-a", "0 3 1 1 *", sa)
 	want("repo-b", "echo from-b", "0 4 2 2 *", sb)
 	for _, k := range []string{"job uid", "workflow uid", "job log-folder id", "workflow log-folder id"} {
 		if sa[k] == sb[k] {
@@ -204,7 +204,7 @@ func TestGR3_TwoRepositoriesWithTheSameNames(t *testing.T) {
 		grBackdateAll(t, a)
 		grSync(t, b, "second repository again")
 	}
-	for repo, before := range map[string]map[string]string{"global": sa, "repo-b": sb} {
+	for repo, before := range map[string]map[string]string{fixtureRepo: sa, "repo-b": sb} {
 		after := state(repo)
 		for k, v := range before {
 			if after[k] != v {
@@ -223,7 +223,7 @@ func TestGR3_TwoRepositoriesWithTheSameNames(t *testing.T) {
 	if n := count(`SELECT COUNT(*) FROM jobs WHERE source='git' AND name='nightly'`); n != 1 {
 		t.Fatalf("after the second repository removed its nightly, git jobs of that name = %d, want the first's", n)
 	}
-	if got := state("global"); got["job schedule entries"] != "1" || got["reaction rows"] != "1" || got["job log-folder id"] != sa["job log-folder id"] {
+	if got := state(fixtureRepo); got["job schedule entries"] != "1" || got["reaction rows"] != "1" || got["job log-folder id"] != sa["job log-folder id"] {
 		t.Errorf("the first repository's nightly after the second pruned its own: %v", got)
 	}
 	grCommitFiles(t, repoB, remoteB, files("echo from-b", "0 4 2 2 *"), "nightly returns")
@@ -235,7 +235,7 @@ func TestGR3_TwoRepositoriesWithTheSameNames(t *testing.T) {
 	if back["job log-folder id"] != sb["job log-folder id"] {
 		t.Errorf("the returned job's log folder is %q, want the one it had, %q", back["job log-folder id"], sb["job log-folder id"])
 	}
-	if got := state("global")["job log-folder id"]; got != sa["job log-folder id"] {
+	if got := state(fixtureRepo)["job log-folder id"]; got != sa["job log-folder id"] {
 		t.Errorf("the first repository's job's log folder changed to %q when the second's job returned", got)
 	}
 }
@@ -256,7 +256,7 @@ func TestGR3_TwoAgenciesEachHaveTheirOwnScopeOfOneName(t *testing.T) {
 		return grString(t, a.db, `SELECT COALESCE(GROUP_CONCAT(host, ','), '') FROM (SELECT h.host FROM scope_hosts h
 			JOIN scopes sc ON sc.id = h.scope_id WHERE sc.name = 'web' AND COALESCE(sc.repo_id, 'global') = ? ORDER BY h.host)`, repo)
 	}
-	if got := hostsOf("global"); got != "web1" {
+	if got := hostsOf(fixtureRepo); got != "web1" {
 		t.Fatalf("the first repository's scope holds %q, want web1", got)
 	}
 	scopeID := grString(t, a.db, `SELECT id FROM scopes WHERE name='web'`)
@@ -276,13 +276,13 @@ func TestGR3_TwoAgenciesEachHaveTheirOwnScopeOfOneName(t *testing.T) {
 	}
 	check := func(when string) {
 		t.Helper()
-		if got := grString(t, a.db, `SELECT GROUP_CONCAT(r, ',') FROM (SELECT COALESCE(repo_id, 'global') || ':' || owner_agency AS r FROM scopes WHERE name = 'web' ORDER BY r)`); got != "global:global,repo-b:ag-b" {
+		if got := grString(t, a.db, `SELECT GROUP_CONCAT(r, ',') FROM (SELECT COALESCE(repo_id, 'global') || ':' || owner_agency AS r FROM scopes WHERE name = 'web' ORDER BY r)`); got != "repo-a:ag-a,repo-b:ag-b" {
 			t.Errorf("%s: the scopes web are %q, want one of each repository and agency", when, got)
 		}
-		if got := grString(t, a.db, `SELECT id FROM scopes WHERE name = 'web' AND owner_agency = 'global'`); got != scopeID {
+		if got := grString(t, a.db, `SELECT id FROM scopes WHERE name = 'web' AND owner_agency = 'ag-a'`); got != scopeID {
 			t.Errorf("%s: the first repository's scope is row %q, want %q untouched", when, got, scopeID)
 		}
-		if got := hostsOf("global"); got != "web1" {
+		if got := hostsOf(fixtureRepo); got != "web1" {
 			t.Errorf("%s: the first repository's scope holds %q, want web1", when, got)
 		}
 		if got := hostsOf("repo-b"); got != "web2" {
@@ -339,8 +339,9 @@ func TestGR3_AHeldScopeKeepsItsImportedHostRecords(t *testing.T) {
 	// The operator binds dmz; a run is waiting on it.
 	exec(`INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_by, bound_at)
 	      SELECT id, 'r-dmz', 'runner-dmz-01', 'ops@example', 'now' FROM scopes WHERE name='dmz'`)
-	exec(`INSERT INTO runs (id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
-	      VALUES ('run-waiting', 'deploy', 'bash', 'dmz', 'queued', 'seed', 'manual', 'runner', '2026-10-05T00:00:00Z')`)
+	// Of the scope's agency, ag-a: the work that holds a scope is its own agency's (I2).
+	exec(`INSERT INTO runs (id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, created_at, agencies_json)
+	      VALUES ('run-waiting', 'deploy', 'bash', 'dmz', 'queued', 'seed', 'manual', 'runner', '2026-10-05T00:00:00Z', '["Agency ag-a"]')`)
 
 	// dmz leaves Git; plain loses one host and keeps the other.
 	gitRemoveFile(t, repo, "inventory/dmz.ini", "remove dmz")
@@ -377,17 +378,18 @@ func TestGR3_AHeldScopeKeepsItsImportedHostRecords(t *testing.T) {
 // A scope that arrives from an agency's repository is that agency's (Phase R4,
 // GR-18): the operator said whose it is by connecting the repository. It is
 // born so, once; a later sync neither writes nor changes it; and it comes back
-// the agency's if its file leaves and returns. A scope from Global's
-// repository is born Global's and assigned by an operator, as before (LR-31),
-// and that assignment survives every sync.
+// the agency's if its file leaves and returns. Each of two agencies'
+// repositories' scopes is its own agency's, and stays so through every sync.
 //
 // Until Phase R4 every scope from Git was born Global's, whichever repository
 // it came from: an agency's hosts were Global's to run on until somebody
-// noticed and moved them.
+// noticed and moved them. Until 2.5.3 the first repository here was Global's,
+// its scope born Global's; the built-in agency has no repository since (CA-6),
+// and the first repository is ag-a's.
 func TestGR4_AScopeFromAnAgencysRepositoryIsThatAgencys(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
-	gitCommitFile(t, repoA, remoteA, "inventory/shared.ini", fmt.Sprintf(grScope, "g1", "10.0.0.1"), "Global's scope")
-	grSync(t, a, "Global's repository")
+	gitCommitFile(t, repoA, remoteA, "inventory/shared.ini", fmt.Sprintf(grScope, "g1", "10.0.0.1"), "ag-a's scope")
+	grSync(t, a, "ag-a's repository")
 	b, repoB, remoteB := grSecondRepo(t, a)
 	gitCommitFile(t, repoB, remoteB, "inventory/theirs.ini", fmt.Sprintf(grScope, "b1", "10.0.0.2"), "the agency's scope")
 	grSync(t, b, "the agency's repository")
@@ -400,24 +402,24 @@ func TestGR4_AScopeFromAnAgencysRepositoryIsThatAgencys(t *testing.T) {
 	if got := agencies("theirs"); got != "ag-b" {
 		t.Fatalf("the scope from the agency's repository is in %q, want ag-b alone", got)
 	}
-	if got := agencies("shared"); got != "global" {
-		t.Fatalf("the scope from Global's repository is in %q, want global alone", got)
+	if got := agencies("shared"); got != fixtureAgency {
+		t.Fatalf("the scope from ag-a's repository is in %q, want ag-a alone", got)
 	}
 
-	// Global's repository's scope is held to Global the same way (2.4.3,
-	// question 58: until then an operator could assign it to an agency, and
-	// this test checked that it stayed there).
+	// The first repository's scope is held to its agency the same way (for
+	// Global's repository's since 2.4.3, question 58: until then an operator
+	// could assign it to an agency, and this test checked that it stayed there).
 	if _, err := a.db.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) SELECT id, 'ag-b' FROM scopes WHERE name = 'shared'`); err == nil || !strings.Contains(err.Error(), "scope_agency_fixed") {
-		t.Fatalf("assigning Global's repository's scope to ag-b: %v, want the scope_agency_fixed refusal", err)
+		t.Fatalf("assigning ag-a's repository's scope to ag-b: %v, want the scope_agency_fixed refusal", err)
 	}
 	for i := 0; i < 2; i++ {
 		grBackdateAll(t, a)
-		grSync(t, a, "Global's repository again")
+		grSync(t, a, "ag-a's repository again")
 		grBackdateAll(t, a)
 		grSync(t, b, "the agency's repository again")
 	}
-	if got := agencies("shared"); got != "global" {
-		t.Errorf("after two more syncs Global's repository's scope is in %q, want global", got)
+	if got := agencies("shared"); got != fixtureAgency {
+		t.Errorf("after two more syncs ag-a's repository's scope is in %q, want ag-a", got)
 	}
 	if got := agencies("theirs"); got != "ag-b" {
 		t.Errorf("after two more syncs the agency's scope is in %q, want ag-b", got)

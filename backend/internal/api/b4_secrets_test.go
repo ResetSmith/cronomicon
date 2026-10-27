@@ -39,6 +39,7 @@ func createStoredSecret(t *testing.T, baseURL string, client *http.Client, csrf,
 func TestRevealFailsClosedWhenAuditWriteFails(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 
 	const secret = "supersecret-reveal-value"
 	id := createStoredSecret(t, ts.URL, client, csrf, "MY_TOKEN", secret)
@@ -71,6 +72,7 @@ func TestRevealFailsClosedWhenAuditWriteFails(t *testing.T) {
 func TestRunOutputsRedactedAtDisplay(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 
 	const secret = "topsecretoutputvalue123"
 	// A stored secret supplies the redaction dictionary. (Plain env_vars values
@@ -78,9 +80,9 @@ func TestRunOutputsRedactedAtDisplay(t *testing.T) {
 	createStoredSecret(t, ts.URL, client, csrf, "TOK", secret)
 	const trace = "run-b4c-00000001"
 	if _, err := pool.Exec(
-		`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, created_at, outputs_json)
-		 VALUES (?, 'job1', 'bash', 'success', 't@example.com', 'manual', '2026-01-01T00:00:00Z', ?)`,
-		trace, `{"TOKEN":"`+secret+`"}`); err != nil {
+		`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, created_at, outputs_json, owner_agency, agencies_json)
+		 VALUES (?, 'job1', 'bash', 'success', 't@example.com', 'manual', '2026-01-01T00:00:00Z', ?, ?, ?)`,
+		trace, `{"TOKEN":"`+secret+`"}`, workAgency, `["`+workAgencyName+`"]`); err != nil { // a run of the secret's agency
 		t.Fatalf("seed run: %v", err)
 	}
 

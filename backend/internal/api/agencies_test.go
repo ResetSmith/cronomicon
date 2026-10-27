@@ -146,18 +146,23 @@ func TestAgenciesAPI(t *testing.T) {
 		t.Fatalf("delete in-use = %d/%q, want 409/agency_in_use", resp.StatusCode, inUse.Code)
 	}
 
-	// ── Clear the binding → 200, agency null ──────────────────────────────────────
+	// ── Clear the binding → refused ───────────────────────────────────────────────
+	// Until 2.5.3 this was 200 and the scope's agency null (Global's). Since
+	// CA-4 a scope is not moved into Central: 422 central_runs_nothing, and the
+	// scope stays the agency's. What frees the agency is the scope's delete.
 	resp = do(http.MethodPut, "/api/v1/scopes/s1/agency", repairOf(map[string]any{"agencyId": nil}), true)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("clear = %d, want 200", resp.StatusCode)
+	var refused struct {
+		Code string `json:"code"`
 	}
-	var cleared struct {
-		Agency *struct{ ID string } `json:"agency"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&cleared)
+	_ = json.NewDecoder(resp.Body).Decode(&refused)
 	resp.Body.Close()
-	if cleared.Agency != nil {
-		t.Fatalf("scope.agency = %+v after clear, want null", cleared.Agency)
+	if resp.StatusCode != http.StatusUnprocessableEntity || refused.Code != "central_runs_nothing" {
+		t.Fatalf("clear = %d/%q, want 422/central_runs_nothing", resp.StatusCode, refused.Code)
+	}
+	resp = do(http.MethodDelete, "/api/v1/scopes/s1", nil, true)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete the scope = %d, want 204", resp.StatusCode)
 	}
 
 	// ── Now the delete succeeds → 204 ─────────────────────────────────────────────

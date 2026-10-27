@@ -55,6 +55,7 @@ func seedTriggerJob(t *testing.T, pool *sql.DB, name string, requestable int) {
 		VALUES (?, 'git', 'bash', 'Allow', 1, ?, '2026-08-11T00:00:00Z')`, name, requestable); err != nil {
 		t.Fatalf("seed job %s: %v", name, err)
 	}
+	ownJobsByWorkAgency(t, pool, name) // 2.5.3: the built-in agency runs nothing
 }
 
 func triggerAs(t *testing.T, ts *httptest.Server, token, path string) *http.Response {
@@ -209,6 +210,7 @@ func TestTriggerRefusesAmbiguousNameAndAcceptsSourceParam(t *testing.T) {
 		VALUES ('shared-name', 'cronomicon', 'bash', 'Allow', 1, 1, '2026-08-11T00:00:00Z')`); err != nil {
 		t.Fatalf("seed cronomicon twin: %v", err)
 	}
+	ownJobsByWorkAgency(t, pool, "shared-name")
 
 	_, token := mintAccount(t, ts, client, csrf, map[string]any{
 		"name": "ci", "role": "admin", "allScopes": true,

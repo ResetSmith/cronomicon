@@ -25,6 +25,8 @@ func TestScheduleWindowRoundTripAndPropagation(t *testing.T) {
 	      VALUES('backup-db','bash','pg_dump mydb','ssh','sha256:aaa','scripts/backup-db.yaml','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 	do := func(method, url string, body any) *http.Response {
 		t.Helper()
 		var rdr *bytes.Reader
@@ -84,7 +86,7 @@ func TestScheduleWindowRoundTripAndPropagation(t *testing.T) {
 	resp = do(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
 		"name":         "nightly-backup",
 		"scriptRef":    "backup-db",
-		"scope":        "",
+		"scope":        workScope,
 		"scheduleRefs": []string{"deferred"},
 	})
 	if resp.StatusCode != http.StatusCreated {
@@ -143,11 +145,13 @@ func TestJobComposeInlineScheduleWindow(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 
 	body, _ := json.Marshal(map[string]any{
 		"name":      "inline-window-job",
 		"scriptRef": "backup-db",
-		"scope":     "",
+		"scope":     workScope,
 		"schedules": []map[string]any{
 			{"name": "deferred", "cron": "0 17 * * 3", "startAt": "2026-08-05T00:00:00Z"},
 		},
@@ -182,8 +186,10 @@ func TestJobComposeInlineScheduleWindow(t *testing.T) {
 // The validation matrix: malformed bounds and an inverted window are 422s, and
 // omitting the fields entirely stays valid (the pre-window behavior).
 func TestScheduleWindowValidation(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 
 	post := func(body map[string]any) int {
 		t.Helper()
@@ -231,6 +237,7 @@ func TestScheduleIntervalModes(t *testing.T) {
 	ts, pool := newTestServer(t)
 	ctx := context.Background()
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 
 	post := func(body map[string]any) (int, map[string]any) {
 		t.Helper()
@@ -299,12 +306,12 @@ func TestScheduleIntervalModes(t *testing.T) {
 
 	// A job binding the interval schedule copies the whole rule down, so the
 	// runtime row is self-contained (the scheduler never joins back).
-	if _, err := pool.ExecContext(ctx, `INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
-	      VALUES('backup-db','bash','pg_dump mydb','ssh','sha256:aaa','scripts/backup-db.yaml','t')`); err != nil {
+	if _, err := pool.ExecContext(ctx, `INSERT INTO scripts(repo_id, name, run_type, command, executor, content_hash, source_path, synced_at)
+	      VALUES('repo-work', 'backup-db','bash','pg_dump mydb','ssh','sha256:aaa','scripts/backup-db.yaml','t')`); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
 	body, _ := json.Marshal(map[string]any{
-		"name": "interval-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"every-ten-days"},
+		"name": "interval-job", "scriptRef": "backup-db", "scope": workScope, "scheduleRefs": []string{"every-ten-days"},
 	})
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/jobs", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

@@ -56,6 +56,10 @@ interface Preserved {
   // ansible/terraform child process. Here (rather than its own state) for the
   // promptEnforcement reason: the full-replace PUT must always re-send it.
   envPassthrough: string[];
+  // 2.5.3 CA-30 — the job's own calendars. Here for the same reason: the
+  // full-replace PUT clears them when they are left out.
+  forbidCalendars: string[];
+  allowCalendars: string[];
 }
 const DEFAULT_PRESERVED: Preserved = {
   timeoutSeconds: 0,
@@ -71,6 +75,8 @@ const DEFAULT_PRESERVED: Preserved = {
   mustFinishBy: "",
   watch: [],
   promptEnforcement: "warn",
+  forbidCalendars: [],
+  allowCalendars: [],
 };
 
 // JC-P3 — an inline (job-local) schedule authored directly in the composer: name +
@@ -191,19 +197,12 @@ export function JobComposer() {
   // EV-6 parity — key-binding writes go through the reference-bindings PUT, which
   // is gated on ManageEnvVars (same as JobKeyField in job detail).
   const [canManageEnv, setCanManageEnv] = useState(false);
-  // AF-2 — may this caller author an ALL-scoped job? Only an unrestricted compose
-  // grant may, because a scheduled fire of an unbound job runs scope-unchecked
-  // (RB-30). A departmental composer is offered named scopes only, rather than
-  // being shown an option the server will refuse.
-  const [canComposeUnbound, setCanComposeUnbound] = useState(false);
-  // What "No scope" means, said of the agency the job is created in (2.5.0 C11,
-  // defect 90: it said "visible to every agency", and even the 2.5.0 hint was
-  // true only in Global): the agency's job, a scope of its given to each run.
+  // Every job names one of its agency's scopes (2.5.3, CA7). Until 2.5.3 an
+  // unrestricted composer was offered "No scope" (AF-2, composeUnbound); the
+  // shapes it was used for are scopes now, and this says which.
+  const scopeShapes =
+    "for work on the runner itself, a scope whose one host is the runner (ansible_connection=local); for a job that pins its target host, a scope that lists no hosts";
   const inAgency = useAgencyOptional();
-  const noScopeMeans =
-    !inAgency || inAgency.agency === "global"
-      ? "the job is Global's, and runs on Global's hosts and runners"
-      : `the job is ${inAgency.agencyName}'s, and each run is given one of ${inAgency.agencyName}'s scopes when it starts`;
   // Reactions were, from GC (v2.2.2) until 2.4.2, the one part of this form the
   // server took only from a compose administrator; since question 61 they are
   // the job's agency's, like the job.
@@ -211,7 +210,6 @@ export function JobComposer() {
     fetchCapabilities().then((caps) => {
       setCanCompose(caps.compose);
       setCanManageEnv(caps.manageEnvVars);
-      setCanComposeUnbound(caps.composeUnbound);
     });
   }, []);
 
@@ -407,6 +405,8 @@ export function JobComposer() {
         mustFinishBy: j.mustFinishBy ?? "",
         watch: j.watch ?? [],
         envPassthrough: j.envPassthrough ?? [],
+        forbidCalendars: j.forbidCalendars ?? [],
+        allowCalendars: j.allowCalendars ?? [],
       });
       setTagsInput((j.tags ?? []).join(", "));
       // EV-6 parity — prefill the declared key bindings (labels only; the derived
@@ -474,10 +474,11 @@ export function JobComposer() {
   const identityCapable = isIdentityCapable(runType);
   const chosenScope = scopesList.find((s) => s.scope === scope);
   // The job's agency is its scope's (2.4.0, I2): its schedule entries are
-  // judged by that agency's calendars (2.4.1). No scope is Global's; a scope
-  // not chosen yet, or in no single agency, leaves it unknown.
+  // judged by that agency's calendars (2.4.1). No scope is the job's own
+  // agency's, the one it is made in (2.5.3 CA-5); a scope not chosen yet, or in
+  // no single agency, leaves it unknown.
   const jobAgency =
-    scope === "" ? "global" : (chosenScope?.agencies ?? []).length === 1 ? chosenScope!.agencies![0].id : undefined;
+    scope === "" ? inAgency?.agency : (chosenScope?.agencies ?? []).length === 1 ? chosenScope!.agencies![0].id : undefined;
   const scopeHosts = chosenScope?.hosts ?? [];
 
   // JC-P4 — env context for the chosen scope. '*'/empty scope = a global (mirrors the
@@ -676,11 +677,14 @@ export function JobComposer() {
     }
     const inlineNames = inlineEntries.map((s) => s.name.toLowerCase());
     if (new Set(inlineNames).size !== inlineNames.length) return setErr("Inline schedule names must be unique.");
-    // AF-1 — the choice must be made, and only silence is refused. Client-side so
-    // the author is told in the form rather than by a 422 after a full round-trip;
-    // the server enforces the same rule for every other client.
-    if (scope == null) {
-      return setErr(`Pick a scope — it decides where this job runs. Or pick "No scope": ${noScopeMeans}.`);
+    const jobCalErr = bindingError({ skipCalendars: preserved.forbidCalendars, onlyCalendars: preserved.allowCalendars }, "job");
+    if (jobCalErr) return setErr(`Calendars: ${jobCalErr}`);
+    // AF-1, since 2.5.3 (CA7) — every job names a scope: silence and "" (a job
+    // with no scope from before) are both refused. Client-side so the author is
+    // told in the form rather than by a 422 after a full round-trip; the server
+    // enforces the same rule for every other client.
+    if (scope == null || scope.trim() === "") {
+      return setErr(`Pick a scope — it decides where this job runs. Every job names one of its agency's scopes: ${scopeShapes}.`);
     }
     setBusy(true);
     const body: Record<string, unknown> = {
@@ -728,6 +732,9 @@ export function JobComposer() {
       // RP-14 — only sent for local-toolchain types; the server 422s it on an
       // ssh-family job, whose remote env is built entirely from the manifest.
       envPassthrough: runnerOnly ? preserved.envPassthrough : [],
+      // 2.5.3 CA-30 — always sent: one left out is cleared.
+      forbidCalendars: preserved.forbidCalendars,
+      allowCalendars: preserved.allowCalendars,
     };
     setKeyErr(null);
     // PUT/DELETE /jobs/{jobId} declare `header?: never` — the csrf middleware
@@ -796,7 +803,8 @@ export function JobComposer() {
     if (isEdit) return;
     setName("");
     setScriptRef("");
-    setScope("");
+    // Not chosen yet, not "" (a job with no scope; CA7).
+    setScope(null);
     setTargetHost("");
     setSshUser("");
     setSshCredential("");
@@ -917,30 +925,17 @@ export function JobComposer() {
       <div style={{ display: "flex", gap: 12 }}>
         <Field label="Scope" style={{ flex: 1 }}>
           {/* JC22/JC23 — searchable, creatable scope combobox (replaces the select/manual toggle).
-              AF-1 — with an explicit All option, because the scope is what decides
-              which agencies see this job and that must be answered, not defaulted. */}
-          <ScopePicker
-            value={scope}
-            onChange={setScope}
-            suggestions={scopeSuggestions}
-            style={input()}
-            allowAll={canComposeUnbound}
-          />
+              Every job names one of its agency's scopes (2.5.3, CA7). */}
+          <ScopePicker value={scope} onChange={setScope} suggestions={scopeSuggestions} style={input()} />
           {scope == null && (
             <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
-              Decides where this job runs.{" "}
-              {canComposeUnbound ? (
-                <>
-                  <strong>No scope</strong>: {noScopeMeans}.
-                </>
-              ) : (
-                <>Pick one of the scopes your role is granted.</>
-              )}
+              Decides where this job runs: {scopeShapes}.
             </div>
           )}
           {scope === "" && (
-            <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
-              No scope: {noScopeMeans}.
+            <div style={{ fontSize: c.fontXs, color: c.warning, marginTop: 4 }}>
+              ⚠ This job has no scope (it was made before 2.5.3). Every job names one of its agency's scopes now, and
+              this one is saved only with one: {scopeShapes}.
             </div>
           )}
           {/* AF-Q3 — advisory, never blocking: a scope that maps to no agency is
@@ -1088,7 +1083,7 @@ export function JobComposer() {
             ) : (
               <>
                 Whichever runner that serves the job&rsquo;s scope asks first takes a run: an agent, or the local runner
-                (this server, over SSH) where it is switched on, for a job of Global&rsquo;s.
+                (this server, over SSH) where it is switched on and belongs to the job&rsquo;s agency.
               </>
             )}{" "}
             To keep a scope&rsquo;s jobs on particular runners, bind them on Scopes → Runners.
@@ -1390,6 +1385,18 @@ export function JobComposer() {
             ? "No schedules bound — the job will run manually only."
             : `Bound: ${scheduleRefs.length} reusable + ${nInlineValid} inline.`}
         </div>
+      </Field>
+
+      {/* 2.5.3 CA-30 to CA-32 — the job's own Forbid and Allow calendars, from
+          its agency's calendars: they gate every automatic start of the job. */}
+      <Field label="Calendars (optional)">
+        <CalendarPicker
+          level="definition"
+          of="job"
+          value={{ skipCalendars: preserved.forbidCalendars, onlyCalendars: preserved.allowCalendars }}
+          onChange={(b) => setPreserved((p) => ({ ...p, forbidCalendars: b.skipCalendars, allowCalendars: b.onlyCalendars }))}
+          agency={jobAgency}
+        />
       </Field>
 
       {/* JC-P4 — scope env context: what is actually injected (the firing schedule's

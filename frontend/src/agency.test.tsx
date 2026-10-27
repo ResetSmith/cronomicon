@@ -238,6 +238,30 @@ describe("the switcher (2.4.4 F1)", () => {
     expect(screen.queryByTestId("agency-switcher")).toBeNull();
   });
 
+  // 2.5.3 CA-12: Central runs nothing; among the choices it reads as the
+  // administration, and so does the switcher while it is chosen. Its name
+  // alone for a person whose one choice it is (above).
+  it("labels the built-in agency as the administration among the choices", async () => {
+    renderAt("/jobs");
+    await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("ag-a"));
+    fireEvent.click(screen.getByTestId("agency-switcher"));
+    const central = await screen.findByRole("option", { name: /Global · administration/ });
+    expect(screen.getByRole("option", { name: /agency-alpha/ }).textContent).not.toContain("administration");
+    fireEvent.click(central);
+    await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("global"));
+    expect(screen.getByTestId("agency-switcher").textContent).toContain("Global · administration");
+  });
+
+  // 2.5.3: a new installation calls it Administration, which says so already.
+  it("labels a built-in agency named Administration by its name alone", async () => {
+    CONTEXT = { ...CONTEXT, choices: agencies.map((ch) => (ch.id === "global" ? { ...ch, name: "Administration" } : ch)), globalName: "Administration" };
+    renderAt("/jobs");
+    await waitFor(() => expect(screen.getByTestId("agency").textContent).toBe("ag-a"));
+    fireEvent.click(screen.getByTestId("agency-switcher"));
+    const admin = await screen.findByRole("option", { name: /Administration/ });
+    expect(admin.textContent).not.toContain("·");
+  });
+
   it("switches, and shows each agency's waiting work and the default", async () => {
     BADGES = [
       { agencyId: "ag-b", openNotices: 2, failedRuns24h: 3 },

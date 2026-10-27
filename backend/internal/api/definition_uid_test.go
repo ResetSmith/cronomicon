@@ -23,6 +23,8 @@ func TestComposedJobUidIsStableAcrossEdits(t *testing.T) {
 		t.Fatalf("seed script: %v", err)
 	}
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 
 	send := func(method, url string, body any) map[string]any {
 		t.Helper()

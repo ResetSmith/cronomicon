@@ -78,9 +78,12 @@ func TestValidateWarnsAboutARetiredExecutor(t *testing.T) {
 	job := "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: %s\nspec:\n  run_type: bash\n  command: echo hi\n"
 	script := "apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: %s\nspec:\n  run_type: bash\n  command: echo hi\n"
 	named := func(tpl, name string) string { return strings.Replace(tpl, "%s", name, 1) }
-	sshJob := write("jobs/ssh.yaml", named(job, "ssh-job")+"  executor: ssh\n")
-	oddJob := write("jobs/odd.yaml", named(job, "odd-job")+"  executor: bogus\n")
-	plainJob := write("jobs/plain.yaml", named(job, "plain-job"))
+	// Each job names a scope, after the key the test is about (line 8): a
+	// checkout's job with none is an error since 2.5.3 (question 206).
+	const scoped = "  scope: web\n"
+	sshJob := write("jobs/ssh.yaml", named(job, "ssh-job")+"  executor: ssh\n"+scoped)
+	oddJob := write("jobs/odd.yaml", named(job, "odd-job")+"  executor: bogus\n"+scoped)
+	plainJob := write("jobs/plain.yaml", named(job, "plain-job")+scoped)
 	sidecar := write("scripts/runner.yaml", named(script, "runner-script")+"  executor: runner\n")
 	write("scripts/plain.yaml", named(script, "plain-script"))
 

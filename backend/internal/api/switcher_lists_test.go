@@ -205,7 +205,9 @@ var switcherPeople = []struct{ name, groups string }{
 // job with no scope, and its run, to TAX; every agency's grants to any agency's
 // administrator). 2.5.0 C1 and C2 closed them: each list now answers by CF-1,
 // an agency's rows to its own people and Global's only to those who reach
-// every agency (question 77).
+// every agency (question 77). Since 2.5.3 (CA-6) the built-in agency has no
+// repository, so Global's column of the two repository lists is empty for
+// everyone.
 var switcherToday = map[string][6]string{
 	"/api/v1/jobs?pageSize=200":               {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 	"/api/v1/runs?pageSize=200":               {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
@@ -225,8 +227,8 @@ var switcherToday = map[string][6]string{
 	"/api/v1/ssh/bastions":                    {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 	"/api/v1/calendars":                       {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 	"/api/v1/notices":                         {"YYY", "...", "Y..", ".Y.", "YY.", "..."},
-	"/api/v1/git-repo-names":                  {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
-	"/api/v1/git-repos":                       {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
+	"/api/v1/git-repo-names":                  {"YY.", "YY.", "Y..", ".Y.", "YY.", "Y.."},
+	"/api/v1/git-repos":                       {"YY.", "403", "Y..", ".Y.", "YY.", "403"},
 	"/api/v1/scripts?pageSize=200":            {"YYY", "YYY", "Y..", ".Y.", "YY.", "Y.."},
 	"/api/v1/access-grants":                   {"YYY", "403", "Y..", ".Y.", "YY.", "403"},
 	"/api/v1/service-accounts":                {"YYY", "403", "Y..", ".Y.", "YY.", "403"},

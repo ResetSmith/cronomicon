@@ -38,7 +38,7 @@ function GlobalOnlyCard({ title }: { title: string }) {
   return (
     <Card title={title}>
       <div role="note" style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-        {GLOBAL_ADMIN_VIEW_ONLY} The connection is used by Global and by every agency without one of its own, and
+        {GLOBAL_ADMIN_VIEW_ONLY} The connection is used by every agency without one of its own, and
         its settings are not shown to an administrator of one agency.
       </div>
     </Card>
@@ -51,7 +51,7 @@ export function VaultSection({ canWrite }: { canWrite: boolean }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-        The installation's Vault, used by Global and by every agency without a Vault of its own (each inside the path
+        The installation's Vault, used by every agency without a Vault of its own (each inside the path
         prefixes assigned on Scopes → Agencies). An agency connects its own on Settings → Agency Vault, on
         a host listed below.
       </div>

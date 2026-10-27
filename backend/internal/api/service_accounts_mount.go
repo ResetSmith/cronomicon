@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
@@ -236,7 +237,7 @@ func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {
 		// by itself — the account for every agency is the all-scopes one.
 		if in.AgencyID == agencyid.Global {
 			httpx.Fail(w, http.StatusBadRequest, "validation",
-				"Global cannot be named for a service account: use allScopes for one that reaches every agency")
+				agencyid.CurrentGlobalName(r.Context(), s.db)+" cannot be named for a service account: use allScopes for one that reaches every agency")
 			return
 		}
 		var n int
@@ -555,6 +556,17 @@ func (s *Server) triggerWorkflowByName(eng *workflow.Engine) http.HandlerFunc {
 			return
 		}
 		r.SetPathValue("workflowId", strconv.FormatInt(rowid, 10))
-		inner(w, r)
+		// A service account's start (2.5.3, CA-32): the workflow's own calendars
+		// gate it, as a job's gate the job's token route.
+		inner(w, r.WithContext(context.WithValue(r.Context(), tokenStartKey{}, true)))
 	}
+}
+
+// tokenStartKey marks a workflow trigger a service account made.
+type tokenStartKey struct{}
+
+// isTokenStart reports whether the request is a service account's start.
+func isTokenStart(r *http.Request) bool {
+	v, _ := r.Context().Value(tokenStartKey{}).(bool)
+	return v
 }

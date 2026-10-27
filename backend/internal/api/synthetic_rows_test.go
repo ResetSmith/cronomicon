@@ -23,8 +23,9 @@ func seedSkip(t *testing.T, pool *sql.DB, source, job, at, reason string) {
 	t.Helper()
 	if _, err := pool.Exec(`
 		INSERT INTO runs (id, job_name, job_source, run_type, status, queued_reason,
-		                  triggered_by, trigger_kind, started_at, completed_at, created_at)
-		VALUES (?, ?, ?, 'bash', 'skipped', ?, 'scheduler', 'scheduled', ?, ?, ?)`,
+		                  triggered_by, trigger_kind, started_at, completed_at, created_at, job_uid)
+		VALUES (?, ?, ?, 'bash', 'skipped', ?, 'scheduler', 'scheduled', ?, ?, ?,
+		        (SELECT uid FROM jobs WHERE source = ?3 AND name = ?2))`,
 		"skip-"+at, job, source, reason, at, at, at); err != nil {
 		t.Fatalf("seed skip: %v", err)
 	}
@@ -34,8 +35,9 @@ func seedExecutedRun(t *testing.T, pool *sql.DB, source, job, at, status string)
 	t.Helper()
 	if _, err := pool.Exec(`
 		INSERT INTO runs (id, job_name, job_source, run_type, status, duration_ms,
-		                  triggered_by, trigger_kind, started_at, completed_at, created_at)
-		VALUES (?, ?, ?, 'bash', ?, 4200, 'op@example.com', 'manual', ?, ?, ?)`,
+		                  triggered_by, trigger_kind, started_at, completed_at, created_at, job_uid)
+		VALUES (?, ?, ?, 'bash', ?, 4200, 'op@example.com', 'manual', ?, ?, ?,
+		        (SELECT uid FROM jobs WHERE source = ?3 AND name = ?2))`,
 		"run-"+at, job, source, status, at, at, at); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
@@ -54,6 +56,7 @@ type jobView struct {
 func TestSuppressionDoesNotImpersonateTheLastRun(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	jobID := createRHJob(t, ts, client, csrf, "billing")
 
@@ -128,6 +131,7 @@ func TestSuppressionDoesNotImpersonateTheLastRun(t *testing.T) {
 func TestJobWithOnlySuppressionsHasNoLastRun(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	jobID := createRHJob(t, ts, client, csrf, "billing")
 	seedSkip(t, pool, "cronomicon", "billing", "2026-08-11T02:00:00Z", "Skipped: the job is paused")
@@ -155,6 +159,7 @@ func TestJobWithOnlySuppressionsHasNoLastRun(t *testing.T) {
 func TestAnalyticsTotalCountsRunsNotSuppressions(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	createRHJob(t, ts, client, csrf, "billing")
 
@@ -205,6 +210,7 @@ func derefStr(p *string) string {
 func TestWorkflowSuppressionDoesNotImpersonateTheLastRun(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 	createRHJob(t, ts, client, csrf, "step-one")
 

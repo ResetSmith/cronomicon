@@ -19,7 +19,6 @@ func TestAScopeOfAnAgencysRepositoryCannotBeMoved(t *testing.T) {
 	}
 	for _, c := range []struct{ path, body string }{
 		{"/api/v1/scopes/sc:repo/agency", `{"agencyId":"ag:TAX"}`},
-		{"/api/v1/scopes/sc:repo/agency", `{"agencyId":null}`},
 		{"/api/v1/scope-agencies", `[{"id":"sc:repo","agencyIds":["ag:TAX"]}]`},
 		{"/api/v1/agencies/ag:TAX/members", `{"members":[{"kind":"scope","id":"sc:tax"},{"kind":"scope","id":"sc:repo"}]}`},
 	} {
@@ -27,6 +26,11 @@ func TestAScopeOfAnAgencysRepositoryCannotBeMoved(t *testing.T) {
 		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "scope_agency_fixed") {
 			t.Errorf("PUT %s %s = %d, want 409 scope_agency_fixed (%s)", c.path, c.body, rec.Code, rec.Body)
 		}
+	}
+	// To Global (no agency named): 409 scope_agency_fixed until 2.5.3; since
+	// CA-4 a move into Central is refused first, and writes nothing either.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:repo/agency", gRoot, asRepair(`{"agencyId":null}`)); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "central_runs_nothing") {
+		t.Errorf("PUT /api/v1/scopes/sc:repo/agency to Global = %d, want 422 central_runs_nothing (%s)", rec.Code, rec.Body)
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id = 'sc:repo'`); n != 1 {
 		t.Errorf("after the refused moves the scope has %d agency rows, want its one", n)

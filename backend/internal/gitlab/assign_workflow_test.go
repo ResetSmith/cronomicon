@@ -28,9 +28,9 @@ func workflowTemplate() map[string]string {
 
 func (f *assignFixture) assignWorkflow(name string, scope string, scopes map[string]string) (*AssignResult, error) {
 	f.t.Helper()
-	uid := grString(f.t, f.global.db, `SELECT uid FROM workflows WHERE name = ? AND repo_id = 'global'`, name)
+	uid := grString(f.t, f.origin.db, `SELECT uid FROM workflows WHERE name = ? AND repo_id = 'repo-a'`, name)
 	if uid == "" {
-		f.t.Fatalf("Global's workflow %s was not synced", name)
+		f.t.Fatalf("the origin's workflow %s was not synced", name)
 	}
 	res, err := f.reg.Assign(context.Background(), AssignRequest{
 		Kind: "workflow", UID: uid, TargetAgency: "ag-fin", Scope: scope, Scopes: scopes, Actor: "admin@example.com",
@@ -41,7 +41,7 @@ func (f *assignFixture) assignWorkflow(name string, scope string, scopes map[str
 
 func (f *assignFixture) finHasCalendar() {
 	f.t.Helper()
-	if _, err := f.global.db.Exec(`INSERT INTO calendars (source, name, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 't', 't', 'ag-fin')`); err != nil {
+	if _, err := f.origin.db.Exec(`INSERT INTO calendars (source, name, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 't', 't', 'ag-fin')`); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -79,17 +79,17 @@ func TestAWorkflowsAssignmentCarriesWhatItRuns(t *testing.T) {
 			t.Errorf("jobs/%s.yaml is not Finance's stamped copy:\n%s", job, got)
 		}
 	}
-	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ?`, res.AssignmentID); n != "7" {
+	if n := grString(t, f.origin.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ?`, res.AssignmentID); n != "7" {
 		t.Errorf("record rows: %s, want 7", n)
 	}
-	if k := grString(t, f.global.db, `SELECT kind FROM assignments WHERE id = ?`, res.AssignmentID); k != "workflow" {
+	if k := grString(t, f.origin.db, `SELECT kind FROM assignments WHERE id = ?`, res.AssignmentID); k != "workflow" {
 		t.Errorf("recorded kind %q", k)
 	}
 	for q, want := range map[string]string{
 		`SELECT COUNT(*) FROM workflows WHERE owner_agency = 'ag-fin' AND repo_id = 'repo-fin' AND name IN ('release', 'notify')`:   "2",
 		`SELECT COUNT(*) FROM jobs WHERE owner_agency = 'ag-fin' AND repo_id = 'repo-fin' AND name IN ('build', 'nightly', 'ping')`: "3",
 	} {
-		if n := grString(t, f.global.db, q); n != want {
+		if n := grString(t, f.origin.db, q); n != want {
 			t.Errorf("Finance's sync: %s → %s, want %s", q, n, want)
 		}
 	}
@@ -122,7 +122,7 @@ func TestAWorkflowUsesAJobTheTargetsRepositoryHas(t *testing.T) {
 // and its name is Finance's: refused, nothing pushed.
 func TestAWorkflowNeedingANameTheTargetHasInTheAppIsRefused(t *testing.T) {
 	f := newAssignFixture(t, workflowTemplate(), nil)
-	if _, err := f.global.db.Exec(`INSERT INTO jobs (uid, name, source, run_type, owner_agency, created_by, created_at)
+	if _, err := f.origin.db.Exec(`INSERT INTO jobs (uid, name, source, run_type, owner_agency, created_by, created_at)
 	                               VALUES ('fin-build', 'build', 'cronomicon', 'bash', 'ag-fin', 't', 't')`); err != nil {
 		t.Fatal(err)
 	}
@@ -148,16 +148,17 @@ func TestAWorkflowRunningAJobBuiltInTheAppIsRefused(t *testing.T) {
 }
 
 // Each copied job's scope is picked by the scope it runs on in the origin
-// ("" for none); with no pick and no default, the job is named.
+// ("" for none; a job of an agency's repository always names one, GR-14);
+// with no pick and no default, the job is named.
 func TestAWorkflowsJobsTakeTheirScopeByTheOriginsScope(t *testing.T) {
 	f := newAssignFixture(t, workflowTemplate(), nil)
 	f.finHasCalendar()
 	if _, err := f.assignWorkflow("release", "", nil); refusalCode(err) != "scope_required" {
 		t.Fatalf("no scope at all: want scope_required, got %v", err)
 	}
-	res, err := f.assignWorkflow("release", "", map[string]string{"": f.finScope})
+	res, err := f.assignWorkflow("release", "", map[string]string{fixtureScope: f.finScope})
 	if err != nil {
-		t.Fatalf("assign with Global's no-scope jobs mapped: %v", err)
+		t.Fatalf("assign with the origin's scope mapped: %v", err)
 	}
 	if got := sysGit(t, f.finBare, "show", res.CommitSHA+":jobs/build.yaml"); !strings.Contains(got, "scope: "+f.finScope) {
 		t.Errorf("build's copy:\n%s", got)
@@ -184,7 +185,7 @@ func TestAWorkflowNamingADependencyTwicePlansItOnce(t *testing.T) {
 	if len(res.Files) != 3 {
 		t.Errorf("files answered: %+v, want three", res.Files)
 	}
-	if n := grString(t, f.global.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ?`, res.AssignmentID); n != "3" {
+	if n := grString(t, f.origin.db, `SELECT COUNT(*) FROM assignment_files WHERE assignment_id = ?`, res.AssignmentID); n != "3" {
 		t.Errorf("record rows: %s, want 3", n)
 	}
 }

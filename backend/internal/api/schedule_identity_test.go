@@ -54,6 +54,7 @@ func TestGR1_AWorkflowIsBoundToItsScheduleByUID(t *testing.T) {
 	a := newGRSchedAPI(t)
 	a.exec(`INSERT INTO jobs(name, source, run_type, command, content_hash, source_path, synced_at)
 	        VALUES('build','git','bash','make','sha256:a','jobs/build.yaml','t')`)
+	ownJobsByWorkAgency(t, a.pool, "build") // the in-app workflow's agency's job
 	// Git's `cadence`, with a Git workflow bound to it.
 	a.exec(`INSERT INTO schedules(uid, name, source, cron, content_hash, synced_at) VALUES('s-git-cadence', 'cadence', 'git', '0 0 1 * * *', 'h', 't')`)
 	a.exec(`INSERT INTO workflows(uid, name, source, steps, synced_at) VALUES('w-git', 'gitflow', 'git', '[]', 't')`)
@@ -131,7 +132,7 @@ func TestGR1_ARestoreReplaysItsOwnTombstone(t *testing.T) {
 	// The first `rota`: a user, some history, then force-deleted and purged.
 	a.must(http.MethodPost, "/api/v1/schedule-defs", map[string]any{"name": "rota", "cron": "0 0 2 * * *"}, http.StatusCreated)
 	a.must(http.MethodPost, "/api/v1/jobs",
-		map[string]any{"name": "rota-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"rota"}}, http.StatusCreated)
+		map[string]any{"name": "rota-job", "scriptRef": "backup-db", "scope": workScope, "scheduleRefs": []string{"rota"}}, http.StatusCreated)
 	first := a.str(`SELECT uid FROM schedules WHERE source='cronomicon' AND name='rota'`)
 	for _, cron := range []string{"0 0 3 * * *", "0 0 4 * * *", "0 0 5 * * *"} {
 		a.must(http.MethodPut, "/api/v1/schedule-defs/rota", map[string]any{"cron": cron}, http.StatusOK)

@@ -31,6 +31,8 @@ func TestJobComposePromptsRoundTrip(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 	do := func(method, url string, body any) *http.Response {
 		t.Helper()
 		var rdr *bytes.Reader
@@ -139,6 +141,9 @@ func TestRunJobPromptWarnings(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
+	seedWorkScope(t, pool, "Prod")
 	do := func(method, url string, body any) *http.Response {
 		t.Helper()
 		var rdr *bytes.Reader
@@ -268,6 +273,9 @@ func TestRunJobPromptBlockEnforcement(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
+	seedWorkScope(t, pool, "Prod")
 	do := func(method, url string, body any) *http.Response {
 		t.Helper()
 		var rdr *bytes.Reader

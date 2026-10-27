@@ -32,6 +32,8 @@ func TestJobComposeCRUD(t *testing.T) {
 	      VALUES('reports','git','bash','echo git','sha256:ccc','jobs/reports.yaml','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 
 	post := func(method, url string, body any, hdrCSRF bool) *http.Response {
 		t.Helper()
@@ -55,7 +57,7 @@ func TestJobComposeCRUD(t *testing.T) {
 	}
 
 	// ── CSRF guard ────────────────────────────────────────────────────────────
-	resp := post(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{"name": "x", "scriptRef": "backup-db", "scope": ""}, false)
+	resp := post(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{"name": "x", "scriptRef": "backup-db", "scope": workScope}, false)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("POST without CSRF = %d, want 403", resp.StatusCode)
@@ -97,7 +99,7 @@ func TestJobComposeCRUD(t *testing.T) {
 	}
 
 	// ── Disjoint namespace: an cronomicon 'reports' can coexist with the git one ────
-	resp = post(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{"name": "reports", "scriptRef": "backup-db", "scope": ""}, true)
+	resp = post(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{"name": "reports", "scriptRef": "backup-db", "scope": workScope}, true)
 	code := resp.StatusCode
 	resp.Body.Close()
 	if code != http.StatusCreated {
@@ -105,7 +107,7 @@ func TestJobComposeCRUD(t *testing.T) {
 	}
 
 	// ── Duplicate cronomicon name → 409 ────────────────────────────────────────────
-	resp = post(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{"name": "nightly-backup", "scriptRef": "backup-db", "scope": ""}, true)
+	resp = post(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{"name": "nightly-backup", "scriptRef": "backup-db", "scope": workScope}, true)
 	code = resp.StatusCode
 	resp.Body.Close()
 	if code != http.StatusConflict {
@@ -113,7 +115,7 @@ func TestJobComposeCRUD(t *testing.T) {
 	}
 
 	// ── Dangling scriptRef → 422 ────────────────────────────────────────────────
-	resp = post(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{"name": "bad", "scriptRef": "ghost", "scope": ""}, true)
+	resp = post(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{"name": "bad", "scriptRef": "ghost", "scope": workScope}, true)
 	code = resp.StatusCode
 	resp.Body.Close()
 	if code != http.StatusUnprocessableEntity {
@@ -123,7 +125,7 @@ func TestJobComposeCRUD(t *testing.T) {
 	// ── Git job is read-only (409 on PUT) ───────────────────────────────────────
 	var gitRowid int64
 	_ = pool.QueryRow(`SELECT rowid FROM jobs WHERE source='git' AND name='reports'`).Scan(&gitRowid)
-	resp = post(http.MethodPut, ts.URL+"/api/v1/jobs/"+itoa(gitRowid), map[string]any{"name": "reports", "scriptRef": "backup-db", "scope": ""}, true)
+	resp = post(http.MethodPut, ts.URL+"/api/v1/jobs/"+itoa(gitRowid), map[string]any{"name": "reports", "scriptRef": "backup-db", "scope": workScope}, true)
 	code = resp.StatusCode
 	resp.Body.Close()
 	if code != http.StatusConflict {
@@ -186,6 +188,8 @@ func TestJobComposeAnsibleTargetHostValidation(t *testing.T) {
 	      VALUES('patch','ansible','- hosts: web\n','ssh','sha256:aaa','scripts/patch.yaml','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 	post := func(method, url string, body any) *http.Response {
 		t.Helper()
 		var rdr *bytes.Reader
@@ -208,7 +212,7 @@ func TestJobComposeAnsibleTargetHostValidation(t *testing.T) {
 	// ── Metachar targetHost → 422, no DB write ──────────────────────────────────
 	resp := post(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
 		"name": "bad-pin", "scriptRef": "patch", "targetHost": "web[01:50]",
-		"scope": "",
+		"scope": workScope,
 	})
 	code := resp.StatusCode
 	resp.Body.Close()
@@ -224,7 +228,7 @@ func TestJobComposeAnsibleTargetHostValidation(t *testing.T) {
 	// ── Plain host name → 201 ───────────────────────────────────────────────────
 	resp = post(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
 		"name": "good-pin", "scriptRef": "patch", "targetHost": "web1",
-		"scope": "",
+		"scope": workScope,
 	})
 	var created struct {
 		ID int64 `json:"id"`
@@ -243,7 +247,7 @@ func TestJobComposeAnsibleTargetHostValidation(t *testing.T) {
 	// ── Update path: PUT with a metachar targetHost also 422s ──────────────────
 	resp = post(http.MethodPut, ts.URL+"/api/v1/jobs/"+itoa(created.ID), map[string]any{
 		"name": "good-pin", "scriptRef": "patch", "targetHost": "web:&staged",
-		"scope": "",
+		"scope": workScope,
 	})
 	code = resp.StatusCode
 	resp.Body.Close()

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from "react";
 import { c } from "../theme";
 import { Btn, CopyText, statusLabel, statusTone } from "./ui";
 import { fmtDuration } from "../utils/datetime";
@@ -648,6 +648,13 @@ function Readout({
             const cell: CSSProperties = { padding: "4px 14px 0 0", verticalAlign: "baseline", whiteSpace: "nowrap" };
             const quiet: CSSProperties = { ...cell, fontSize: c.fontXs, color: c.textMuted };
             const cap: CSSProperties = { maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" };
+            // Client-side navigation for a plain click; the href stays for a
+            // middle-click or a modified one.
+            const openRun = (e: MouseEvent, traceId: string) => {
+              if (!onOpenRun || e.metaKey || e.ctrlKey || e.button !== 0) return;
+              e.preventDefault();
+              onOpenRun(traceId);
+            };
             // 2.4.4 — a Score that spans agencies says whose each job is.
             const agencies = group.members.some((m) => !!m.agency);
             const table = (
@@ -669,7 +676,20 @@ function Readout({
                   {group.members.map((m, i) => (
                     <tr key={`${m.jobName}-${m.traceId ?? i}`}>
                       <td style={{ ...cell, ...cap, color: c.text, fontWeight: 600 }}>
-                        {m.jobName}
+                        {/* The name is where the eye lands, so a past run's
+                            name opens it too, as "View run" does. */}
+                        {past && runHref && m.traceId ? (
+                          <a
+                            href={runHref(m.traceId)}
+                            onClick={(e) => openRun(e, m.traceId!)}
+                            title="Open this run in History"
+                            style={{ color: c.text, textDecoration: "underline", textDecorationColor: c.borderStrong, textUnderlineOffset: 3 }}
+                          >
+                            {m.jobName}
+                          </a>
+                        ) : (
+                          m.jobName
+                        )}
                         {m.ownerKind === "workflow" && <span style={{ fontSize: c.fontXs, color: c.info, fontWeight: 400, marginLeft: 8 }}>workflow</span>}
                       </td>
                       {agencies && <td style={{ ...cell, ...cap, color: c.textSec }}>{m.agency ?? ""}</td>}
@@ -690,16 +710,12 @@ function Readout({
                         </td>
                       )}
                       {past && runHref && (
-                        <td style={{ ...quiet, paddingRight: 0, textAlign: "right" }}>
+                        <td style={{ ...cell, paddingRight: 0, textAlign: "right" }}>
                           {m.traceId && (
                             <a
                               href={runHref(m.traceId)}
-                              onClick={(e) => {
-                                if (!onOpenRun || e.metaKey || e.ctrlKey || e.button !== 0) return;
-                                e.preventDefault();
-                                onOpenRun(m.traceId!);
-                              }}
-                              style={{ color: c.primary, textDecoration: "none" }}
+                              onClick={(e) => openRun(e, m.traceId!)}
+                              style={{ color: c.primary, fontSize: c.fontSm, fontWeight: 600, textDecoration: "none" }}
                             >
                               View run
                             </a>

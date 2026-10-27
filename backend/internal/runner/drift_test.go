@@ -14,12 +14,13 @@ import (
 
 // registerV4 registers a protocol-v4 runner through the real handler (so the
 // config_digest is stored exactly as production computes it) and returns its
-// id and API key. Capabilities are then blanked directly so polls return
+// id and API key, enrolled in an ordinary agency (the bootstrap token is
+// refused since 2.5.3). Capabilities are then blanked directly so polls return
 // without entering the 30s long-poll — the drift check reads the STORED
 // digest, not the capabilities column, so the digest stays authoritative.
 func registerV4(t *testing.T, svc *Service, name string) (runnerID, apiKey string) {
 	t.Helper()
-	rec := registerWith(t, svc, "test-bootstrap-token", name)
+	rec := registerWith(t, svc, opsToken(t, svc), name)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("register: got %d, want 201 (body %s)", rec.Code, rec.Body.String())
 	}

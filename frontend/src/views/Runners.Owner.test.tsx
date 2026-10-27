@@ -87,6 +87,7 @@ vi.mock("../api/access", async (importOriginal) => {
 });
 
 import { Runners } from "./Runners";
+import { setGlobalAgencyName } from "../globalName";
 
 const grant = (a: { id: string; name: string }, permissions: string[]) => ({
   role: "admin", allScopes: false, agencyId: a.id, agencyName: a.name, scopes: [], permissions, groups: [], origin: "group",
@@ -106,6 +107,7 @@ afterEach(() => {
   POST.mockClear();
   PUT.mockClear();
   inUse.current = null;
+  setGlobalAgencyName(null);
 });
 
 const renderRunners = () =>
@@ -338,6 +340,9 @@ describe("Runners — owner and serves (MA-26)", () => {
     renderRunners();
     await screen.findByText("fin-agent");
     fireEvent.click(screen.getByRole("button", { name: "+ Add Runner" }));
+    // 2.5.3 CA-14: a global administrator names the agency (never Central).
+    const owners = screen.getAllByRole("combobox", { name: "Agency the runner is for" }) as HTMLSelectElement[];
+    fireEvent.change(owners[owners.length - 1], { target: { value: "ag-fin" } });
     fireEvent.click(await screen.findByRole("button", { name: "Mint & build command" }));
     await screen.findByText(/\/install\/crn_reg_x \| sudo bash$/);
     // The page's other install helper shows the same fields over the same
@@ -428,7 +433,8 @@ describe("Runners — the local runner's row (LR-38)", () => {
     renderRunners();
     await expand("Local runner");
     const sec = await agencySection();
-    expect(sec.getByText(/serves Global only. A global administrator turns it on or off under/)).toBeTruthy();
+    // 2.5.3 CA-8, CA-9: it serves its agency, or none and is off.
+    expect(sec.getByText(/serves one agency, or none and is off\. A global administrator chooses its\s+agency and turns it on or off under/)).toBeTruthy();
     expect(sec.queryByRole("button", { name: /Stop serving/ })).toBeNull();
     expect(sec.queryByText("Legacy placement")).toBeNull();
     for (const name of ["Resync", "Drain", "⚙ Edit"]) expect(screen.queryByRole("button", { name }), name).toBeNull();
@@ -552,13 +558,29 @@ describe("Runners — a registration token names the owner (LR-61)", () => {
     );
   });
 
-  it("offers a global administrator Global and every agency, and sends the one chosen", async () => {
+  // 2.5.3 CA-12, CA-17: working in Central (its leftover agents listed for
+  // their way out), no token is minted there: an agent of Central's takes no work.
+  it("mints no token while working in Central, and says where to", async () => {
+    inUse.current = { agency: "global", agencyName: "Central" };
+    setGlobalAgencyName("Central"); // the built-in agency's name, read, never a literal
+    renderRunners();
+    await screen.findByText("fin-agent");
+    const mint = screen.getByRole("button", { name: "Mint token" }) as HTMLButtonElement;
+    expect(mint.disabled).toBe(true);
+    expect(mint.title).toBe("Central runs nothing: mint the token working in the agency the runner is for");
+    expect(screen.queryByRole("button", { name: "+ Add Runner" })).toBeNull();
+    inUse.current = null;
+  });
+
+  // 2.5.3 CA-14: Central's agents take no work, so no token is minted for it.
+  it("offers a global administrator every agency, never Global, and sends the one chosen", async () => {
     renderRunners();
     await screen.findByText("fin-agent");
     await waitFor(() => expect(ownerSelects()[0].options.length).toBe(3));
     const sel = ownerSelects()[0];
-    expect(Array.from(sel.options).map((o) => o.textContent)).toEqual(["For Global", "For Finance", "For Tax"]);
-    expect(sel.value).toBe("global");
+    expect(Array.from(sel.options).map((o) => o.textContent)).toEqual(["Runner for…", "For Finance", "For Tax"]);
+    expect(sel.value).toBe("");
+    expect((screen.getByRole("button", { name: "Mint token" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(sel, { target: { value: "ag-tax" } });
     fireEvent.click(screen.getByRole("button", { name: "Mint token" }));
     await waitFor(() =>

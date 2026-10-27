@@ -206,9 +206,10 @@ func TestCalendarCoverageReportsExpiry(t *testing.T) {
 
 func TestComposeRejectsBadCalendarBindings(t *testing.T) {
 	api, pool := newCalAPI(t)
+	workInAgency(t, pool, api.client) // 2.5.3: the built-in agency composes nothing
 	ctx := context.Background()
-	if _, err := pool.ExecContext(ctx, `INSERT INTO scripts(name, run_type, command, content_hash, synced_at)
-		VALUES('s1','bash','echo hi','sha256:x','2026-01-01T00:00:00Z')`); err != nil {
+	if _, err := pool.ExecContext(ctx, `INSERT INTO scripts(repo_id, name, run_type, command, content_hash, synced_at)
+		VALUES(?, 's1','bash','echo hi','sha256:x','2026-01-01T00:00:00Z')`, workRepo); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
 	if code, _ := api.do(http.MethodPost, "/api/v1/calendars", map[string]any{
@@ -224,7 +225,7 @@ func TestComposeRejectsBadCalendarBindings(t *testing.T) {
 
 	composeJob := func(name string, entry map[string]any) (int, map[string]any) {
 		return api.do(http.MethodPost, "/api/v1/jobs", map[string]any{
-			"name": name, "scriptRef": "s1", "scope": "", "schedules": []map[string]any{entry},
+			"name": name, "scriptRef": "s1", "scope": workScope, "schedules": []map[string]any{entry},
 		})
 	}
 
@@ -255,8 +256,9 @@ func TestComposeRejectsBadCalendarBindings(t *testing.T) {
 	if code != http.StatusUnprocessableEntity {
 		t.Errorf("global calendar in only role = %d, want 422", code)
 	}
-	if msg, _ := body["message"].(string); !strings.Contains(msg, "global") {
-		t.Errorf("422 message %q should explain the global/only incompatibility", msg)
+	// The flag is called freeze on screen since 2.5.3 (the field stays `global`).
+	if msg, _ := body["message"].(string); !strings.Contains(msg, "freeze calendar") {
+		t.Errorf("422 message %q should explain the freeze/only incompatibility", msg)
 	}
 
 	// The valid binding persists and copies down to the runtime row.
@@ -454,6 +456,7 @@ func TestCalendarCannotBecomeGlobalWhileABinnedOwnerBindsItAsOnly(t *testing.T) 
 // reports the entire catalogue as modified.
 func TestContentHashUnchangedWithoutBindings(t *testing.T) {
 	api, pool := newCalAPI(t)
+	workInAgency(t, pool, api.client) // 2.5.3: no schedule is the built-in agency's
 	ctx := context.Background()
 
 	// The digest a plain cron schedule produced BEFORE this feature existed,

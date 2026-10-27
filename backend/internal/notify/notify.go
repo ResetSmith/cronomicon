@@ -75,11 +75,20 @@ const (
 	// TriggerBackupKeyChanged — the installation's backup keys changed (2.5.1
 	// SG-7, SG-17). It is the installation's, so Global's rules alone see it.
 	TriggerBackupKeyChanged = "backup-key-changed"
+	// TriggerCalendarUpdateAvailable — a calendar an agency copied from
+	// Central's catalogue is behind it, and waits for the agency's Update
+	// (2.5.3, CA-28). The agency's event.
+	TriggerCalendarUpdateAvailable = "calendar-update-available"
+	// TriggerCalendarUpdated — a calendar an agency copied from Central's
+	// catalogue, set to update automatically, was updated from it (2.5.3,
+	// CA-28). The agency's event.
+	TriggerCalendarUpdated = "calendar-updated"
 )
 
 // alertTriggers is the closed set, and the single source the guard and the
 // dispatcher both read.
-var alertTriggers = []string{TriggerSLABreach, TriggerMissedRun, TriggerSecretRevealed, TriggerSecretChanged, TriggerBackupKeyChanged}
+var alertTriggers = []string{TriggerSLABreach, TriggerMissedRun, TriggerSecretRevealed, TriggerSecretChanged, TriggerBackupKeyChanged,
+	TriggerCalendarUpdateAvailable, TriggerCalendarUpdated}
 
 // AlertEvent is a non-run-terminal alert.
 //

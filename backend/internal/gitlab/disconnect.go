@@ -38,9 +38,11 @@ import (
 // is REFUSED while the repository has such a scope, and names them: the same
 // answer renaming or deleting such a scope in the app gets.
 
-// ErrGlobalRepo is the answer for Global's repository, which every
-// installation has and Global, which is never deleted, keeps.
-var ErrGlobalRepo = errors.New("Global's repository is never removed: Global is not deleted")
+// ErrGlobalRepo is RemoveWithAgency's answer for the built-in agency's
+// repository: that agency is never deleted, so its connection does not go
+// with it. Since 2.5.3 a leftover connection goes by its own repair
+// (RemoveCentralLeftover).
+var ErrGlobalRepo = errors.New("the built-in agency's repository connection is not removed with an agency: remove it as a leftover")
 
 // ErrScopesBusy is the refusal while scopes of the repository are bound to
 // runners and have work queued.
@@ -69,6 +71,30 @@ func (r *Registry) RemoveWithAgency(ctx context.Context, repoID, actor string) (
 	if repoID == "" || repoID == repoid.Global {
 		return nil, nil, ErrGlobalRepo
 	}
+	return r.removeRepository(ctx, repoID, actor)
+}
+
+// RemoveCentralLeftover is RemoveWithAgency for the built-in agency's
+// repository connection from before 2.5.3 (CA-6; question 203: "Remove the
+// leftover repository", a global administrator's repair). The agency stays:
+// only the connection goes, with everything it synced, by the same statements
+// and the same refusal while one of its scopes has work queued. Its run
+// history stays. settings.ErrRepoNotFound when there is no leftover (the
+// unconfigured row of 1310 is none). The clone directory is left, as it is
+// for an agency's (cloneDir(Global) is the base the others are under).
+func (r *Registry) RemoveCentralLeftover(ctx context.Context, actor string) (remove func(tx *sql.Tx) error, finish func(committed bool), err error) {
+	left, err := settings.CentralLeftoverRepo(ctx, r.db)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !left {
+		return nil, nil, settings.ErrRepoNotFound
+	}
+	return r.removeRepository(ctx, repoid.Global, actor)
+}
+
+// removeRepository is the removal both share; see RemoveWithAgency.
+func (r *Registry) removeRepository(ctx context.Context, repoID, actor string) (remove func(tx *sql.Tx) error, finish func(committed bool), err error) {
 	r.restartMu.Lock()
 	if _, err := r.agencyOf(ctx, repoID); err != nil {
 		r.restartMu.Unlock()
@@ -154,7 +180,8 @@ func (r *Registry) RemoveWithAgency(ctx context.Context, repoID, actor string) (
 				r.logWarn("the repository's clone was not removed", "repo_id", repoID, "dir", dir, "err", err)
 			}
 		}
-		// Global's: its agency is deleted with it (C1).
+		// Global's: its agency is deleted with it (C1); or the built-in
+		// agency's leftover (2.5.3), which is the installation's change.
 		_ = settings.WriteChangeLog(ctx, r.db, agencyid.Global, actor, "Settings", "deleted", "Repository connection", repoID)
 		r.mu.Lock()
 		hook := r.onSyncComplete

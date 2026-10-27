@@ -95,8 +95,10 @@ describe("Settings → Repositories", () => {
     repos = [];
     render(<RepositoriesSection isGlobal={true} />);
     await waitFor(() => expect(screen.getByText("Finance's repository")).toBeTruthy());
-    expect(screen.getAllByText(/No repository is connected/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Connect").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/No repository is connected/).length).toBe(1);
+    expect(screen.getAllByText("Connect").length).toBe(1);
+    // 2.5.3 CA-6, CA-15: Central has no repository to connect.
+    expect(screen.queryByText("Global's repository")).toBeNull();
     await waitFor(() => expect(screen.getByText("Allowed hosts")).toBeTruthy());
     expect((screen.getByLabelText("Allowed hosts") as HTMLTextAreaElement).value).toBe("gitlab.example.org");
   });

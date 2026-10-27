@@ -21,12 +21,20 @@ func TestCheckoutNeedsAgent(t *testing.T) {
 	scope("s-a", "a-hosts", "ag-a")
 	scope("s-b", "b-hosts", "ag-b")
 	scope("s-bound", "a-bound", "ag-a")
-	f.exec(`INSERT INTO jobs (uid, name, source, run_type, synced_at, script_path, project_root) VALUES
+	// The jobs are seeded afresh for each question, born with no owner. A job of
+	// an agency cannot be MOVED into Central (1670, 2.5.3), so the questions
+	// about a job of Central's (no scope, or a scope that is not there) ask it of
+	// one born there, the state an upgrade's leftover is in.
+	seedJobs := func() {
+		t.Helper()
+		f.exec(`DELETE FROM jobs`)
+		f.exec(`INSERT INTO jobs (uid, name, source, run_type, synced_at, script_path, project_root) VALUES
 	        ('j-proj',  'proj',  'git',        'ansible', 't', 'scripts/proj/site.yml', 'scripts/proj'),
 	        ('j-app',   'built', 'cronomicon', 'ansible', 't', 'scripts/proj/site.yml', 'scripts/proj'),
 	        ('j-body',  'body',  'git',        'ansible', 't', 'scripts/x.yml',         NULL),
 	        ('j-twin1', 'twin',  'cronomicon', 'ansible', 't', 'scripts/proj/site.yml', 'scripts/proj'),
 	        ('j-twin2', 'twin',  'cronomicon', 'ansible', 't', 'scripts/proj/site.yml', 'scripts/proj')`)
+	}
 	runner := func(id, kind, caps string, agencies ...string) {
 		t.Helper()
 		f.exec(`INSERT INTO runners (id, name, kind, status, os, capabilities, load, max_concurrent, version, registered_at, created_at)
@@ -45,6 +53,7 @@ func TestCheckoutNeedsAgent(t *testing.T) {
 		// The jobs are the asked scope's agency's: a job finds its scope in its own
 		// agency (I2), so a job of the scope's agency is what each case means.
 		owner := scopeOwner(t, f.pool, scope)
+		seedJobs()
 		f.exec(`UPDATE jobs SET owner_agency = ? WHERE source <> 'git'`, owner)
 		f.exec(`UPDATE jobs SET repo_id = (SELECT id FROM git_repos WHERE agency_id = ? ORDER BY id LIMIT 1) WHERE source = 'git'`, owner)
 		got, err := CheckoutNeedsAgent(ctx, f.pool, uid, source, name, scope)
@@ -102,4 +111,37 @@ func TestCheckoutNeedsAgent(t *testing.T) {
 	// Global's.
 	runner("g-checkout", "agent", `["checkout"]`, "global")
 	ask("no scope, with a Global agent that allows it", "j-proj", "git", "proj", "", false)
+}
+
+// 2.5.3 CA-5: a run with no scope, or a scope its agency does not hold, is its
+// job's agency's (execspec.ScopeAgencies), so the agent it can wait for is one
+// of that agency's. Until 2.5.3 this asked for a Global agent, which can never
+// claim such a run: an agency's own agent was ignored, and a Global one let the
+// run through to wait for nothing. Found by the CA1 test repair.
+func TestCheckoutNeedsAgentForAnAgencysScopelessRun(t *testing.T) {
+	f := newOwnerFixture(t) // agencies ag-a and ag-b
+	ctx := context.Background()
+	f.exec(`INSERT INTO jobs (uid, name, source, run_type, synced_at, script_path, project_root, owner_agency) VALUES
+	        ('j-a', 'built', 'cronomicon', 'ansible', 't', 'scripts/proj/site.yml', 'scripts/proj', 'ag-a')`)
+	runner := func(id, agency string) {
+		t.Helper()
+		f.exec(`INSERT INTO runners (id, name, kind, status, os, capabilities, load, max_concurrent, version, registered_at, created_at, owner_agency)
+		        VALUES (?, ?, 'agent', 'offline', 'Linux', '["ansible","checkout"]', 0, 5, '1.0', 't', 't', ?)`, id, id, agency)
+	}
+	ask := func(what, scope string, want bool) {
+		t.Helper()
+		got, err := CheckoutNeedsAgent(ctx, f.pool, "j-a", "cronomicon", "built", scope)
+		if err != nil || got != want {
+			t.Errorf("%s: refused = %v (%v), want %v", what, got, err, want)
+		}
+	}
+
+	runner("g-checkout", "global")
+	ask("no scope, with only a Global agent", "", true)
+	ask("a scope that is not there, with only a Global agent", "no-such", true)
+	runner("b-checkout", "ag-b")
+	ask("no scope, with only another agency's agent", "", true)
+	runner("a-checkout", "ag-a")
+	ask("no scope, with its own agency's agent", "", false)
+	ask("a scope that is not there, with its own agency's agent", "no-such", false)
 }

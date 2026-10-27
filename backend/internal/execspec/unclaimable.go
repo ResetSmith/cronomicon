@@ -7,7 +7,6 @@ import (
 	"errors"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/runcap"
-	"slices"
 	"strings"
 )
 
@@ -39,10 +38,6 @@ import (
 // triggerJobs on the run's scope, the facts are about infrastructure rather than
 // credentials, and a reason vague enough to leak nothing is a reason nobody can act
 // on — which is the entire failure being fixed.
-// localRunnerTypes are the run types the local runner runs
-// (settings.LocalRunnerCapabilities, which this package does not import).
-var localRunnerTypes = []string{"bash", "perl", "powershell", "python"}
-
 func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (string, error) {
 	var agenciesJSON, runType, requiresJSON, scope, executor sql.NullString
 	err := database.QueryRowContext(ctx, `
@@ -165,20 +160,15 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 			// Not reachable through the one writer of runs or the birth trigger; a
 			// row in this state was written around both.
 			return "this run carries no agency at all, so no runner can claim it (an internal error: " +
-				"every run belongs to Global or to its scope's agency)", nil
+				"every run belongs to its job's agency)", nil
 		case len(names) == 1 && names[0] == agencyid.CurrentGlobalName(ctx, database):
-			// The built-in agency, by its name now (2.5.2 GR).
+			// The built-in agency, by its name now (2.5.2 GR). Since 2.5.3 (CA-1)
+			// it runs nothing: no runner serves it and none can be given it, so
+			// the only remedy is the definition's agency. A run of it is one
+			// queued before the upgrade.
 			g := names[0]
-			// Since 2.4.0 (§0a) a Global job names Global's scopes only: binding it
-			// to an agency's scope is not a remedy, so the reason does not offer it.
-			// The local runner is offered only for what it runs (2.5.0 C11,
-			// defect 90: it was offered to an Ansible run too).
-			remedy := "enrol a runner for " + g
-			if slices.Contains(localRunnerTypes, runType.String) {
-				remedy += ", or turn on the local runner (it serves " + g + ")"
-			}
-			return "this run belongs to " + g + " (it has no scope, or its scope is " + g + "'s), and no online " +
-				"runner serves " + g + " — " + remedy, nil
+			return "this run belongs to " + g + ", which runs nothing since 2.5.3, so no runner takes it — " +
+				"cancel it and run the job in the agency whose work it is (Notices lists what " + g + " still holds)", nil
 		}
 		return "no online runner serves " + strings.Join(names, ", "), nil
 	}

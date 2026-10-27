@@ -248,19 +248,24 @@ type JobYAML struct {
 		Name string `yaml:"name"`
 	} `yaml:"metadata"`
 	Spec struct {
-		Description    string          `yaml:"description"`
-		RunType        string          `yaml:"run_type"`     // bash|ansible|terraform|powershell|perl|python
-		Schedule       string          `yaml:"schedule"`     // legacy single cron expression; empty = manual
-		Schedules      []ScheduleEntry `yaml:"schedules"`    // multi-schedule list (mutually exclusive with schedule)
-		ScheduleRefs   []string        `yaml:"scheduleRefs"` // A10a — references to first-class schedules/<name>; resolved into the runtime schedule expansion at sync
-		Reactions      []ReactionEntry `yaml:"reactions"`    // RX-13 — run this job when another definition finishes
-		Scope          string          `yaml:"scope"`
-		TargetHost     string          `yaml:"target_host"`
-		Tags           []string        `yaml:"tags"`
-		Enabled        *bool           `yaml:"enabled"` // nil → default true
-		TimeoutSeconds int             `yaml:"timeout_seconds"`
-		Retries        int             `yaml:"retries"`
-		Requestable    bool            `yaml:"requestable"`
+		Description  string          `yaml:"description"`
+		RunType      string          `yaml:"run_type"`     // bash|ansible|terraform|powershell|perl|python
+		Schedule     string          `yaml:"schedule"`     // legacy single cron expression; empty = manual
+		Schedules    []ScheduleEntry `yaml:"schedules"`    // multi-schedule list (mutually exclusive with schedule)
+		ScheduleRefs []string        `yaml:"scheduleRefs"` // A10a — references to first-class schedules/<name>; resolved into the runtime schedule expansion at sync
+		Reactions    []ReactionEntry `yaml:"reactions"`    // RX-13 — run this job when another definition finishes
+		// ForbidCalendars and AllowCalendars are the job's own calendars (2.5.3,
+		// CA-30): it does not start automatically on a day a Forbid one lists,
+		// and only on a day an Allow one lists. Its agency's calendars.
+		ForbidCalendars []string `yaml:"forbidCalendars"`
+		AllowCalendars  []string `yaml:"allowCalendars"`
+		Scope           string   `yaml:"scope"`
+		TargetHost      string   `yaml:"target_host"`
+		Tags            []string `yaml:"tags"`
+		Enabled         *bool    `yaml:"enabled"` // nil → default true
+		TimeoutSeconds  int      `yaml:"timeout_seconds"`
+		Retries         int      `yaml:"retries"`
+		Requestable     bool     `yaml:"requestable"`
 		// SL — soft deadlines. Distinct from TimeoutSeconds, which KILLS: these
 		// only warn, because a job running long is often healthy and merely slow.
 		WarnAfterSeconds int    `yaml:"warn_after_seconds"`
@@ -403,8 +408,12 @@ type WorkflowYAML struct {
 		Schedules    []ScheduleEntry `yaml:"schedules"`
 		ScheduleRefs []string        `yaml:"scheduleRefs"` // A10a — references to first-class schedules/<name>
 		Reactions    []ReactionEntry `yaml:"reactions"`    // RX-13 — run this workflow when another definition finishes
-		Enabled      *bool           `yaml:"enabled"`
-		Steps        []any           `yaml:"steps"` // stored as raw JSON
+		// ForbidCalendars and AllowCalendars: the workflow's own calendars
+		// (2.5.3, CA-30). Its steps' jobs' do not apply to the steps (CA-33).
+		ForbidCalendars []string `yaml:"forbidCalendars"`
+		AllowCalendars  []string `yaml:"allowCalendars"`
+		Enabled         *bool    `yaml:"enabled"`
+		Steps           []any    `yaml:"steps"` // stored as raw JSON
 	} `yaml:"spec"`
 	SourcePath string `yaml:"-"` // repo-relative path, set during recursive discovery (folder support)
 }
@@ -736,6 +745,7 @@ func validateYAMLBytes(file string, data []byte) ([]ValidationError, error) {
 					errs = append(errs, e)
 				}
 			}
+			errs = append(errs, definitionCalendarShape(file, j.Spec.ForbidCalendars, j.Spec.AllowCalendars)...)
 		}
 	}
 
@@ -831,6 +841,7 @@ func validateYAMLBytes(file string, data []byte) ([]ValidationError, error) {
 					errs = append(errs, e)
 				}
 			}
+			errs = append(errs, definitionCalendarShape(file, wf.Spec.ForbidCalendars, wf.Spec.AllowCalendars)...)
 		}
 	}
 	return errs, nil
@@ -1206,17 +1217,28 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 	errs = append(errs, invErrs...)
 	warnings = append(warnings, invWarnings...)
 
-	// 2e. Confinement, in an agency's repository (GR-14, confineJobs): a job
-	// with no scope is refused by sync. A job whose scope is not one of the
-	// checkout's is accepted by sync only if the scope is one its agency owns
-	// that was built in the app, which this run cannot see: a warning.
+	// 2e. Confinement (GR-14, confineJobs): a job with no scope is refused by
+	// sync. Since 2.5.3 so without -agency too (question 206): a checkout with
+	// no flag was read as Global's repository, where a job could have none, and
+	// the built-in agency now runs nothing and syncs nothing (CA-1, CA-6). A job
+	// whose scope is not one of the checkout's is accepted by sync only if the
+	// scope is one its agency owns that was built in the app, which this run
+	// cannot see: a warning, asked of an agency's repository (-agency).
+	for _, js := range jobScopes {
+		if js[1] == "" {
+			msg := "a job in an agency's repository must name one of that agency's scopes (spec.scope): " +
+				"sync refuses a job with none"
+			if !opt.Agency {
+				msg = "every job names one of its agency's scopes (spec.scope): a job with none is refused by sync, " +
+					"and the built-in agency, whose repository this used to be read as, runs nothing since 2.5.3"
+			}
+			errs = append(errs, ValidationError{File: js[0], Field: "spec.scope", Message: msg})
+		}
+	}
 	if opt.Agency {
 		for _, js := range jobScopes {
 			switch {
 			case js[1] == "":
-				errs = append(errs, ValidationError{File: js[0], Field: "spec.scope",
-					Message: "a job in an agency's repository must name one of that agency's scopes (spec.scope): " +
-						"with none it would be Global's, and sync refuses it"})
 			case !ownScopes[js[1]]:
 				warnings = append(warnings, ValidationError{File: js[0], Field: "spec.scope",
 					Message: fmt.Sprintf("the scope %q is not one of this repository's (inventory/): sync accepts the job only "+
@@ -1810,4 +1832,23 @@ func firstStepWithJobUID(steps []any) string {
 		}
 	}
 	return ""
+}
+
+// definitionCalendarShape is what `cronomicon validate` can check of a
+// definition's own Forbid and Allow calendars without a database (2.5.3,
+// CA-30): a name in both. Whether the agency has them, and whether an Allow
+// one is a freeze calendar, is the sync's to say.
+func definitionCalendarShape(file string, forbid, allow []string) []ValidationError {
+	inForbid := map[string]bool{}
+	for _, n := range forbid {
+		inForbid[strings.TrimSpace(n)] = true
+	}
+	var errs []ValidationError
+	for _, n := range allow {
+		if n = strings.TrimSpace(n); n != "" && inForbid[n] {
+			errs = append(errs, ValidationError{File: file, Field: "spec.allowCalendars",
+				Message: "calendar " + n + " is named in both forbidCalendars and allowCalendars"})
+		}
+	}
+	return errs
 }

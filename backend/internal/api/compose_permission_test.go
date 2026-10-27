@@ -228,11 +228,15 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 	h, pool := composeRBACServer(t)
 	allID := composeJobID(t, pool, "all-job")
 
+	// Since 2.5.3 (CA-4) an All job is the built-in agency's, which runs
+	// nothing, and nobody creates one: the creates below are refused 422
+	// central_runs_nothing (they were 403) before the grant is asked. The
+	// invariant holds more strongly: no grant reaches an unbound new job.
 	t.Run("create an All job", func(t *testing.T) {
 		rec := composeReq(t, h, http.MethodPost, "/api/v1/jobs", "fin-composers",
 			`{"name":"new-all-job","scriptRef":"backup-db","scope":""}`)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("departmental composer creating an All job = %d, want 403", rec.Code)
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+			t.Errorf("departmental composer creating an All job = %d %s, want 422 central_runs_nothing", rec.Code, rec.Body)
 		}
 	})
 
@@ -242,8 +246,8 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 		rec := composeReq(t, h, http.MethodPost, "/api/v1/jobs", "fin-composers",
 			`{"name":"unattended","scriptRef":"backup-db","scope":"",`+
 				`"schedules":[{"name":"nightly","cron":"0 0 2 * * *"}]}`)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("departmental composer scheduling an unbound job = %d, want 403 — "+
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+			t.Errorf("departmental composer scheduling an unbound job = %d, want 422 central_runs_nothing — "+
 				"this is the RB-26 bypass RB-30 exists to prevent", rec.Code)
 		}
 	})
@@ -265,11 +269,13 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 	})
 
 	t.Run("move its own job into All", func(t *testing.T) {
+		// Since 2.5.3 (CA7) every job names a scope: emptying one is refused
+		// for everyone (it was 403 for a departmental composer).
 		finID := composeJobID(t, pool, "fin-job")
 		rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+finID, "fin-composers",
 			`{"name":"fin-job","scriptRef":"backup-db","scope":""}`)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("departmental composer moving a job into All = %d, want 403", rec.Code)
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "validation_failed" {
+			t.Errorf("departmental composer moving a job into All = %d %s, want 422 validation_failed", rec.Code, rec.Body)
 		}
 	})
 
@@ -280,15 +286,77 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 		}
 	})
 
-	t.Run("an UNRESTRICTED compose grant may", func(t *testing.T) {
-		// The counterpart that proves the rule is about REACH, not about the
-		// permission: All is reserved for a grant that already covers everything.
+	t.Run("an UNRESTRICTED compose grant may not either", func(t *testing.T) {
+		// Until 2.5.3 the counterpart that proved the rule was about REACH: All
+		// was reserved for a grant that already covered everything. Since CA-4
+		// the All pool is the built-in agency's, which runs nothing, and not
+		// even that grant creates a job in it.
 		rec := composeReq(t, h, http.MethodPost, "/api/v1/jobs", "unrestricted-composers",
 			`{"name":"legit-all-job","scriptRef":"backup-db","scope":""}`)
-		if rec.Code != http.StatusCreated {
-			t.Errorf("unrestricted composer creating an All job = %d, want 201. Body: %s", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+			t.Errorf("unrestricted composer creating an All job = %d, want 422 central_runs_nothing. Body: %s", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+// 2.5.3 CA7 (the owner, 2026-10-26): a job with no scope made before 2.5.3 is
+// its agency's composers' to fix. FIN's composer edits FIN's leftover only to
+// give it a scope (keeping none is the rule's 422), and may delete it; TAX's
+// may not touch it, and Central's leftover stays a global administrator's.
+func TestAnAgencysComposersFixItsJobsWithNoScope(t *testing.T) {
+	h, pool := composeRBACServer(t)
+	mk := func(name string) string {
+		t.Helper()
+		if _, err := pool.Exec(`INSERT INTO jobs(uid, name, source, run_type, command, scope, content_hash, created_at, owner_agency)
+		      VALUES(?,?,'cronomicon','bash','pg_dump mydb',NULL,'sha256:bbb','2026-01-01T00:00:00Z','ag:FIN')`, "uid-"+name, name); err != nil {
+			t.Fatal(err)
+		}
+		return composeJobID(t, pool, name)
+	}
+	fix, gone := mk("fin-left"), mk("fin-left-del")
+
+	if rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+fix, "tax-composers",
+		`{"name":"fin-left","scriptRef":"backup-db","scope":"tax-prod"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("TAX's composer editing FIN's job with no scope = %d %s, want 403", rec.Code, rec.Body)
+	}
+	if rec := composeReq(t, h, http.MethodDelete, "/api/v1/jobs/"+gone, "tax-composers", ""); rec.Code != http.StatusForbidden {
+		t.Errorf("TAX's composer deleting FIN's job with no scope = %d, want 403", rec.Code)
+	}
+	if rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+fix, "fin-composers",
+		`{"name":"fin-left","scriptRef":"backup-db","scope":""}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("FIN's composer saving its job still with no scope = %d %s, want 422", rec.Code, rec.Body)
+	}
+	if rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+fix, "fin-composers",
+		`{"name":"fin-left","scriptRef":"backup-db","scope":"fin-prod"}`); rec.Code != http.StatusOK {
+		t.Fatalf("FIN's composer giving its job a scope = %d %s, want 200", rec.Code, rec.Body)
+	}
+	var n int
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM jobs WHERE name = 'fin-left'`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("%d rows named fin-left (%v), want the one, saved in place", n, err)
+	}
+	var scope, owner string
+	if err := pool.QueryRow(`SELECT COALESCE(scope,''), owner_agency FROM jobs WHERE uid = 'uid-fin-left'`).Scan(&scope, &owner); err != nil ||
+		scope != "fin-prod" || owner != "ag:FIN" {
+		t.Errorf("fin-left after the save: scope %q, owner %q (%v); want fin-prod, FIN's", scope, owner, err)
+	}
+	if rec := composeReq(t, h, http.MethodDelete, "/api/v1/jobs/"+gone, "fin-composers", ""); rec.Code != http.StatusNoContent {
+		t.Errorf("FIN's composer deleting its job with no scope = %d %s, want 204", rec.Code, rec.Body)
+	}
+	// Central's leftover (all-job, born the built-in agency's) is not FIN's.
+	if rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+composeJobID(t, pool, "all-job"), "fin-composers",
+		`{"name":"all-job","scriptRef":"backup-db","scope":"fin-prod"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("FIN's composer editing Central's job with no scope = %d, want 403", rec.Code)
+	}
+	// A compose grant that reaches every agency still passes the gate on it, as
+	// before CA7: its save meets the rule (422, not 403), and it may delete it.
+	allID := composeJobID(t, pool, "all-job")
+	if rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+allID, "unrestricted-composers",
+		`{"name":"all-job","scriptRef":"backup-db","scope":""}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("an unrestricted composer saving Central's job with no scope = %d %s, want 422 (the rule, past the gate)", rec.Code, rec.Body)
+	}
+	if rec := composeReq(t, h, http.MethodDelete, "/api/v1/jobs/"+allID, "unrestricted-composers", ""); rec.Code != http.StatusNoContent {
+		t.Errorf("an unrestricted composer deleting Central's job with no scope = %d %s, want 204", rec.Code, rec.Body)
+	}
 }
 
 // The shared authoring surfaces AF-2 left a global administrator's are gone:
@@ -366,10 +434,12 @@ func TestWorkflowComposeIsBoundToItsJobsAgencies(t *testing.T) {
 	t.Run("over an All-scoped job", func(t *testing.T) {
 		// The RB-30 shape again, one level of indirection out: a workflow over an
 		// unbound job, on a schedule, is the same unattended unchecked run.
+		// Since 2.5.3 (CA-4) such a workflow would be the built-in agency's,
+		// which runs nothing: refused 422 central_runs_nothing (it was 403).
 		rec := composeReq(t, h, http.MethodPost, "/api/v1/workflows", "fin-composers",
 			`{"name":"wf-all","steps":[{"type":"job","name":"all-job"}]}`)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("FIN composer wrapping an All job = %d, want 403", rec.Code)
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "central_runs_nothing" {
+			t.Errorf("FIN composer wrapping an All job = %d %s, want 422 central_runs_nothing", rec.Code, rec.Body)
 		}
 	})
 

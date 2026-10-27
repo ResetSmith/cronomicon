@@ -21,10 +21,10 @@ func TestSyncKeepsAScriptsIdentityThroughItsLife(t *testing.T) {
 	}
 	scriptUID := func() string {
 		t.Helper()
-		if grCount(t, svc.db, `SELECT COUNT(*) FROM scripts WHERE repo_id='global' AND name='deploy.sh'`) == 0 {
+		if grCount(t, svc.db, `SELECT COUNT(*) FROM scripts WHERE repo_id='repo-a' AND name='deploy.sh'`) == 0 {
 			return ""
 		}
-		return grString(t, svc.db, `SELECT uid FROM scripts WHERE repo_id='global' AND name='deploy.sh'`)
+		return grString(t, svc.db, `SELECT uid FROM scripts WHERE repo_id='repo-a' AND name='deploy.sh'`)
 	}
 	jobScript := func(uid string) string {
 		t.Helper()
@@ -45,21 +45,23 @@ func TestSyncKeepsAScriptsIdentityThroughItsLife(t *testing.T) {
 	if first == "" {
 		t.Fatal("the script has no uid after its first sync")
 	}
-	if got := grString(t, svc.db, `SELECT repo_id FROM scripts WHERE uid=?`, first); got != "global" {
-		t.Errorf("the script's repository = %q, want global", got)
+	if got := grString(t, svc.db, `SELECT repo_id FROM scripts WHERE uid=?`, first); got != fixtureRepo {
+		t.Errorf("the script's repository = %q, want repo-a", got)
 	}
 	gitJob := grString(t, svc.db, `SELECT uid FROM jobs WHERE source='git' AND name='roll'`)
 	if got := jobScript(gitJob); got != first {
 		t.Errorf("the Git job is joined to %q, want the script %q", got, first)
 	}
 
-	// An in-app job that names the script (as the composer would have written
-	// it, but not yet joined), and a binding on the script.
-	exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at, script_ref) VALUES('j-app','roll-app','cronomicon','bash','t','deploy.sh')`)
+	// An in-app job of the repository's agency (ag-a: a repository joins its
+	// own agency's in-app jobs only, §0a) that names the script (as the
+	// composer would have written it, but not yet joined), and a binding on
+	// the script.
+	exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at, script_ref, scope, owner_agency) VALUES('j-app','roll-app','cronomicon','bash','t','deploy.sh',?,?)`, fixtureScope, fixtureAgency)
 	// And one left holding the uid of a script that no longer exists, which is
 	// what the composer can write if a prune lands between its read of the
 	// script and its transaction.
-	exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at, script_ref, script_uid) VALUES('j-stale','roll-stale','cronomicon','bash','t','deploy.sh','uid-of-a-script-that-is-gone')`)
+	exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at, script_ref, script_uid, scope, owner_agency) VALUES('j-stale','roll-stale','cronomicon','bash','t','deploy.sh','uid-of-a-script-that-is-gone',?,?)`, fixtureScope, fixtureAgency)
 	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_by, created_at, owner_uid)
 	      VALUES('script','','deploy.sh','secret','DB_PASSWORD','t','t',?)`, first)
 	exec(`UPDATE scripts SET tags='["blue"]' WHERE uid=?`, first)
@@ -128,7 +130,7 @@ func TestSyncKeepsAScriptsIdentityThroughItsLife(t *testing.T) {
 // the rest of the rule.)
 func TestAnotherRepositorysScriptDoesNotClaimAnInAppJob(t *testing.T) {
 	a, _, _ := newSyncFixture(t)
-	grSync(t, a, "global")
+	grSync(t, a, "ag-a's repository")
 	if _, err := a.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at, script_ref) VALUES('j-app','roll-app','cronomicon','bash','t','deploy.sh')`); err != nil {
 		t.Fatal(err)
 	}

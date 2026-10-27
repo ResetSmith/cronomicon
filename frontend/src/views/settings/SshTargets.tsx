@@ -10,6 +10,8 @@ import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../../a
 import { useAgencyOptional } from "../../agency";
 import { Btn, Card, StatusBadge, csrfHeader, errMsg, fmtDateTime, inputStyle } from "./ui";
 import { globalAgencyName } from "../../globalName";
+import { useInCentral } from "../../components/CentralRunsNothing";
+import { MoveAgency } from "../envvars/MoveAgency";
 
 type SshHost = components["schemas"]["SshHost"];
 type SshHostInput = components["schemas"]["SshHostInput"];
@@ -251,16 +253,19 @@ const SSH_STATUS_RANK: Record<string, number> = { cred_error: 0, conn_error: 0, 
 //   - a host IMPORTED for a scope follows that scope's gate, which the server
 //     judges; this view does not guess, and its actions stay live.
 export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
+  const inCentral = useInCentral(); // 2.5.3 CA-12: Central has no create actions
   // LR-69 (v2.3.0) — a bastion and a hand-written host record belong to ONE
   // agency. Its administrators create and change them; Global's are a global
-  // administrator's. `owners` is what this caller may create a record for.
+  // administrator's. `owners` is what this caller may create a record for:
+  // never Central, which owns none since 2.5.3 (CA-1, CA-14). A global
+  // administrator still changes what Central holds from before, to move it out.
   const access = useMyAccess();
   const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
   const catalog = rows<{ id: string; name: string }>(catalogQ.data);
   const owners: AgencyRef[] = canWrite
-    ? [{ id: GLOBAL_AGENCY, name: globalAgencyName() }, ...catalog.filter((a) => a.id !== GLOBAL_AGENCY)]
+    ? catalog.filter((a) => a.id !== GLOBAL_AGENCY)
     : agenciesFor(access ?? null, "configureApp");
-  const mine = new Set(owners.map((a) => a.id));
+  const mine = new Set([...owners.map((a) => a.id), ...(canWrite ? [GLOBAL_AGENCY] : [])]);
   // The agency the person works in, where a new record is created (below).
   const ag = useAgencyOptional();
   const here: AgencyRef | null = ag ? { id: ag.agency, name: ag.agencyName } : null;
@@ -283,7 +288,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
   const ownedWhy = (owner: string | undefined | null, name: string | undefined | null, what: string): string => {
     if (!known || !owner || mine.has(owner)) return "";
     return owner === GLOBAL_AGENCY
-      ? `This ${what} is Global's — only a global administrator (a role on every agency) can change it.`
+      ? `This ${what} is ${globalAgencyName()}'s — only a global administrator (a role on every agency) can change it.`
       : `This ${what} belongs to ${ownerName(owner, name)} — only that agency's administrators can change it.`;
   };
   // R8 — a row says what this caller may do with it (canEdit, canDelete),
@@ -295,7 +300,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
     if (flag === undefined) return derived;
     if (derived) return derived;
     return owner === GLOBAL_AGENCY || !owner
-      ? `This ${what} is Global's — only a global administrator (a role on every agency) can change it.`
+      ? `This ${what} is ${globalAgencyName()}'s — only a global administrator (a role on every agency) can change it.`
       : `This ${what} belongs to ${ownerName(owner, name)} — only that agency's administrators can change it.`;
   };
   // 2.5.0 C11, defect 86: a record is created in the agency the person works
@@ -305,7 +310,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
   // narrowed credentials list does not carry. Outside a provider (tests, an
   // older shell) the choice stays as it was.
   const createOwners: AgencyRef[] = here ? [here] : owners;
-  const defaultOwner = here ? here.id : canWrite ? GLOBAL_AGENCY : owners.length === 1 ? owners[0].id : "";
+  const defaultOwner = here ? here.id : owners.length === 1 ? owners[0].id : "";
   const [bump, setBump] = useState(0);
   const hostsQ = useGet<unknown>(() => api.GET("/ssh/hosts"), [bump]);
   const bastionsQ = useGet<unknown>(() => api.GET("/ssh/bastions"), [bump]);
@@ -808,7 +813,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
       }
       style={smallInput({ cursor: createOwners.length <= 1 ? "default" : "pointer" })}
     >
-      {!here && !canWrite && owners.length > 1 && <option value="">Owner…</option>}
+      {!here && owners.length > 1 && <option value="">Owner…</option>}
       {createOwners.map((a) => (
         <option key={a.id} value={a.id}>
           {a.name}
@@ -906,17 +911,19 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
               style={smallInput({ width: 160 })}
             />
             <ColumnsMenu cols={hostCols} cw={hostCw} />
-            <Btn
-              primary
-              disabled={!!addWhy}
-              title={addWhy || undefined}
-              onClick={() => {
-                setShowAddHost((s) => !s);
-                setActionErr(null);
-              }}
-            >
-              {showAddHost ? "Cancel" : "+ Add Host"}
-            </Btn>
+            {!inCentral && (
+              <Btn
+                primary
+                disabled={!!addWhy}
+                title={addWhy || undefined}
+                onClick={() => {
+                  setShowAddHost((s) => !s);
+                  setActionErr(null);
+                }}
+              >
+                {showAddHost ? "Cancel" : "+ Add Host"}
+              </Btn>
+            )}
           </div>
         }
       >
@@ -958,6 +965,29 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                               {hostFields(editHostForm, (p) => setEditHostForm((f) => ({ ...f, ...p })), false)}
                             </div>
+                            {/* 2.5.3 CA-17: a hand-written record is given to another
+                                agency by a repair; one imported for a scope follows it. */}
+                            {!h.scopeId && h.source !== "git" && h.id != null && (
+                              <MoveAgency
+                                kind="host"
+                                id={h.id}
+                                name={h.hostname}
+                                ownerName={h.ownerAgencyName || ownerName(h.ownerAgency)}
+                                canRepair={(h as { canRepair?: boolean }).canRepair}
+                                send={(to, repair) =>
+                                  api.PUT("/ssh/hosts/{hostId}", {
+                                    params: { path: { hostId: h.id as string }, header: csrfHeader },
+                                    body: { ...hostToInput(hostToForm(h)), ownerAgency: to, ...repair },
+                                  })
+                                }
+                                onMoved={(m) => {
+                                  setActionOk(m);
+                                  setEditHostId(null);
+                                  setBump((n) => n + 1);
+                                }}
+                                onError={setActionErr}
+                              />
+                            )}
                           </DetailCell>
                         </tr>
                       )}
@@ -977,17 +1007,19 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
         action={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <ColumnsMenu cols={bastionCols} cw={bastionCw} />
-            <Btn
-              primary
-              disabled={!!addWhy}
-              title={addWhy || undefined}
-              onClick={() => {
-                setShowAddBastion((s) => !s);
-                setActionErr(null);
-              }}
-            >
-              {showAddBastion ? "Cancel" : "+ Add Bastion"}
-            </Btn>
+            {!inCentral && (
+              <Btn
+                primary
+                disabled={!!addWhy}
+                title={addWhy || undefined}
+                onClick={() => {
+                  setShowAddBastion((s) => !s);
+                  setActionErr(null);
+                }}
+              >
+                {showAddBastion ? "Cancel" : "+ Add Bastion"}
+              </Btn>
+            )}
           </div>
         }
       >
@@ -1027,6 +1059,28 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                               {bastionFields(editBastionForm, (p) => setEditBastionForm((f) => ({ ...f, ...p })), false)}
                             </div>
+                            {/* 2.5.3 CA-17: a bastion is given to another agency by a repair. */}
+                            {b.id != null && (
+                              <MoveAgency
+                                kind="bastion"
+                                id={b.id}
+                                name={b.name}
+                                ownerName={b.ownerAgencyName || ownerName(b.ownerAgency)}
+                                canRepair={(b as { canRepair?: boolean }).canRepair}
+                                send={(to, repair) =>
+                                  api.PUT("/ssh/bastions/{bastionId}", {
+                                    params: { path: { bastionId: b.id as string }, header: csrfHeader },
+                                    body: { ...bastionToInput(bastionToForm(b)), ownerAgency: to, ...repair },
+                                  })
+                                }
+                                onMoved={(m) => {
+                                  setActionOk(m);
+                                  setEditBastionId(null);
+                                  setBump((n) => n + 1);
+                                }}
+                                onError={setActionErr}
+                              />
+                            )}
                           </DetailCell>
                         </tr>
                       )}

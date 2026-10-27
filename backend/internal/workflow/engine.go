@@ -1365,6 +1365,13 @@ func (e *Engine) stepOutsideWorkflowAgency(ctx context.Context, workflowID int64
 	if !agency.Valid {
 		return true, nil
 	}
+	if scope == "" {
+		// 2.5.3 (CA-5): a scopeless step is its job's agency's run, which is the
+		// workflow's agency (the step's job is checked to be the workflow's), so
+		// it is inside; runref.StepOutsideWorkflowRepository says the same at
+		// dispatch.
+		return false, nil
+	}
 	return runref.ScopeOutsideAgency(ctx, e.db, agency.String, scope)
 }
 

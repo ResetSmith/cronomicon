@@ -16,7 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"gopkg.in/yaml.v3"
 )
@@ -111,7 +113,11 @@ type AssignError struct {
 	Message   string
 	Paths     []string
 	Calendars []string // calendar_missing, calendar_not_bindable: the calendars
-	Upstreams []string // upstream_missing: kind:name of each reaction's upstream
+	// CatalogueCalendars are those of Calendars (calendar_missing) that
+	// Central's catalogue offers: Add from Central gives the target them
+	// (2.5.3 CA-19, CA-26).
+	CatalogueCalendars []string
+	Upstreams          []string // upstream_missing: kind:name of each reaction's upstream
 }
 
 func (e *AssignError) Error() string { return e.Message }
@@ -233,6 +239,15 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 	if err != nil {
 		return nil, err
 	}
+	if top.repo == repoid.Global {
+		// The built-in agency has no repository since 2.5.3 (CA-6): what its
+		// leftover synced is assigned from nowhere. Reconnecting the URL to an
+		// ordinary agency makes it that agency's, and assignable from there
+		// (question 203). Until this it was "try again in a moment" for ever.
+		return nil, refuse(http.StatusUnprocessableEntity, "central_runs_nothing",
+			"this definition is in the built-in agency's repository from before 2.5.3, which no longer syncs: "+
+				"remove that leftover connection and connect its URL to an ordinary agency, then assign from there")
+	}
 	st.originSvc, st.targetSvc = r.Service(top.repo), r.Service(st.targetRepo)
 	if st.originSvc == nil || st.targetSvc == nil {
 		return nil, refuse(http.StatusServiceUnavailable, "unavailable", "a repository's sync service is not running; try again in a moment")
@@ -292,15 +307,26 @@ func (r *Registry) Assign(ctx context.Context, req AssignRequest) (*AssignResult
 		return nil, err
 	}
 	if len(st.missingCalendars) > 0 {
+		offered, err := st.catalogueOffers(st.missingCalendars)
+		if err != nil {
+			return nil, err
+		}
+		how := "Create the calendars in " + st.targetName + " and assign again"
+		if len(offered) > 0 {
+			central := agencyid.CurrentGlobalName(st.ctx, st.r.db) // the built-in agency's name now (2.5.2 GR)
+			how = central + "'s catalogue offers " + strings.Join(offered, ", ") + ": add them to " + st.targetName +
+				" from " + central + " (Schedules → Calendars), create the others there, and assign again"
+		}
 		e := refuse(http.StatusUnprocessableEntity, "calendar_missing",
-			"%s has no calendar named %s, which the copy's schedules name: its sync would refuse them, and what names them. Create the calendars in %s and assign again",
-			st.targetName, strings.Join(st.missingCalendars, ", "), st.targetName)
+			"%s has no calendar named %s, which the copy's schedules name: its sync would refuse them, and what names them. %s",
+			st.targetName, strings.Join(st.missingCalendars, ", "), how)
 		e.Calendars = st.missingCalendars
+		e.CatalogueCalendars = offered
 		return nil, e
 	}
 	if len(st.unbindableCalendars) > 0 {
 		e := refuse(http.StatusUnprocessableEntity, "calendar_not_bindable",
-			"%s's calendar %s is global: it freezes the whole agency, and may be skipped but not kept to, so its sync would refuse the copy's schedules that keep to it. Make the calendar not global in %s, or change the origin's schedules, and assign again",
+			"%s's calendar %s is a freeze calendar: it freezes the whole agency, and may be skipped but not kept to, so its sync would refuse the copy's schedules that keep to it. Clear its Freeze in %s, or change the origin's schedules, and assign again",
 			st.targetName, strings.Join(st.unbindableCalendars, ", "), st.targetName)
 		e.Calendars = st.unbindableCalendars
 		return nil, e
@@ -365,6 +391,22 @@ func (r *Registry) defRowWhere(ctx context.Context, table, where string, args ..
 		  FROM `+table+` WHERE `+where+` AND deleted_at IS NULL`, args...).
 		Scan(&d.uid, &d.name, &d.source, &d.owner, &d.repo, &d.path)
 	return d, err
+}
+
+// catalogueOffers are the names among names that Central's catalogue has a
+// calendar of (the built-in agency's calendars, 2.5.3 CA-25).
+func (st *assignState) catalogueOffers(names []string) ([]string, error) {
+	var out []string
+	for _, n := range names {
+		c, err := st.count(`SELECT COUNT(*) FROM calendars WHERE owner_agency = 'global' AND name = ?`, n)
+		if err != nil {
+			return nil, err
+		}
+		if c > 0 {
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }
 
 func (st *assignState) count(query string, args ...any) (int, error) {
@@ -570,6 +612,7 @@ func (st *assignState) addJob(row defRow, role string) error {
 		}
 		st.add(files[0], "script", files[0].Content, nil)
 	}
+	st.addDefinitionCalendars(spec.Spec.ForbidCalendars, spec.Spec.AllowCalendars)
 	return st.addSchedules(spec.Spec.ScheduleRefs, spec.Spec.Schedules)
 }
 
@@ -637,6 +680,18 @@ func (st *assignState) addScript(ref string) error {
 		}
 	}
 	return nil
+}
+
+// addDefinitionCalendars notes a definition's own Forbid and Allow calendars
+// (2.5.3, CA-30), which the target must have as its entries' (an Allow as an
+// only: never a freeze calendar there).
+func (st *assignState) addDefinitionCalendars(forbid, allow []string) {
+	for _, c := range append(append([]string{}, forbid...), allow...) {
+		st.calendars[c] = true
+	}
+	for _, c := range allow {
+		st.onlyCalendars[strings.TrimSpace(c)] = true
+	}
 }
 
 // addSchedules plans the reusable schedules a definition names, and notes the
@@ -718,6 +773,7 @@ func (st *assignState) addWorkflow(row defRow, role string) error {
 		return err
 	}
 	st.reactions = append(st.reactions, spec.Spec.Reactions...)
+	st.addDefinitionCalendars(spec.Spec.ForbidCalendars, spec.Spec.AllowCalendars)
 	if err := st.addSchedules(spec.Spec.ScheduleRefs, spec.Spec.Schedules); err != nil {
 		return err
 	}

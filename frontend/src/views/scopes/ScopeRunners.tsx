@@ -153,8 +153,8 @@ export function ScopeRunnersField({
         </span>
         {bound.length === 0 ? (
           <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-            Not bound — any runner that serves {scopePoolName(scope)} may take this scope's runs: its agents, and, for a
-            scope of Global's, the local runner.
+            Not bound — any runner that serves {scopePoolName(scope)} may take this scope's runs: its agents, and the
+            local runner where it belongs to that agency.
           </span>
         ) : (
           bound.map((b) => {
@@ -638,8 +638,9 @@ export function UnboundHostKeysNote() {
       <Link to="/runners" style={{ color: c.primary, fontWeight: 600 }}>
         Runners
       </Link>{" "}
-      → the agent → Trusted host keys. The local runner (this server, where it is switched on; it serves Global only)
-      belongs to Global: <strong>only a global administrator approves its host keys</strong>, and{" "}
+      → the agent → Trusted host keys. The local runner (this server, where it is switched on) belongs to the agency a
+      global administrator chooses in Settings → Local runner: <strong>that agency&rsquo;s administrators approve its
+      host keys</strong>, and{" "}
       <Link to="/notices" style={{ color: c.primary, fontWeight: 600 }}>
         Notices
       </Link>{" "}
@@ -667,10 +668,10 @@ export function RunsOn({ bound, scope, runType }: { bound: BoundRunner[]; scope?
         title={
           agent
             ? "This run type needs the local toolchain, which only an agent has."
-            : "An agent, or, for a scope of Global's, the local runner (this server) where it is switched on. A job that binds an SSH key is taken by an agent only."
+            : "An agent, or the local runner (this server) where it is switched on and belongs to the agency. A job that binds an SSH key is taken by an agent only."
         }
       >
-        Any {agent ? "agent" : "runner"} that serves {scope ? "its scope" : "the Global agency"}
+        Any {agent ? "agent" : "runner"} that serves {scope ? "its scope" : "the job's agency"}
       </span>
     );
   }

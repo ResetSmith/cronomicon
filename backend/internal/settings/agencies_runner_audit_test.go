@@ -84,7 +84,7 @@ func TestSetRunnerAgenciesWritesAUsefulActivityRow(t *testing.T) {
 	}, "alice@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if got := rowsFor("ansible-rh8"); len(got) != 2 || got[1] != "alice@example.com|moved to Global (it now serves Global's runs, and no department's)" {
+	if got := rowsFor("ansible-rh8"); len(got) != 2 || got[1] != "alice@example.com|moved to Global, the administration, which runs nothing: it takes no runs" {
 		t.Errorf("moving to Global: got %v", got)
 	}
 

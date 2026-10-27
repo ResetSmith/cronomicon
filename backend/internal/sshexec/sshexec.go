@@ -300,7 +300,7 @@ func (s *Service) Apply(ctx context.Context) error { //nolint:contextcheck // se
 		if s.cfg.LocalRunnerForbid {
 			s.log.Info("local runner forbidden on this host (CRONOMICON_LOCAL_RUNNER=forbid) — ssh runs will queue")
 		} else {
-			s.log.Info("local runner off — ssh runs will queue until it is turned on in Settings")
+			s.log.Info("local runner off — ssh runs will queue until a global administrator gives it to an agency (if it has none) and turns it on in Settings")
 		}
 	}
 	return nil

@@ -20,6 +20,7 @@ func TestArrivalFollowsTheJobsOwnScript(t *testing.T) {
 	}
 	insertRunner(t, svc, "r1", "one", "online", []string{"bash"})
 	seedWatchJob(t, svc, "git", "ingest", "", `[{"path":"/srv/incoming/*.csv"}]`)
+	ownWatchJobs(t, svc) // an ordinary agency's job: Central runs nothing (2.5.3)
 	insertAgencyRow(t, svc, "ag-tax", "Tax")
 	exec(`INSERT INTO secrets (id, key, source, owner_agency, created_at) VALUES ('s1', 'DEPT_PASSWORD', 'stored', 'ag-tax', 't')`)
 	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES ('s1', 'ag-tax')`)

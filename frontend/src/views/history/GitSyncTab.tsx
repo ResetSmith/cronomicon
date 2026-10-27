@@ -1,6 +1,7 @@
 import { Fragment, useState } from "react";
 import { api, csrfHeader } from "../../api/client";
 import { RepoSelect, useRepoAdmin, useRepos } from "../../components/RepoPicker";
+import { globalAgencyName } from "../../globalName";
 import { useGet, paged, useColumnWidths, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { type SortColumn } from "../../utils/sort";
@@ -77,7 +78,7 @@ export function GitSyncTab() {
     ? ""
     : current && current.agencyId !== "global"
       ? `Only ${current.agencyName ?? current.agencyId}'s administrators (or a global administrator) can sync its repository.`
-      : "Only a global administrator (a role on every agency) can sync Global's repository.";
+      : `${globalAgencyName()} has no repository to sync: choose an agency's repository.`;
   const [search, setSearchRaw] = useState("");
   const [action, setActionRaw] = useState("All");
   const [status, setStatusRaw] = useState("All");

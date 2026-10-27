@@ -65,9 +65,10 @@ func KeyBindingsNeedAgent(ctx context.Context, database *sql.DB, owners []Owner,
 	}
 	// An agent that serves one of the scope's agencies and is named by the
 	// scope's binding, if it has one — the claim's agency and binding rules,
-	// asked of every registered agent. A run with no scope is Global's, and so
-	// is one whose scope names no scope row (execspec.ScopeAgencies stamps it
-	// Global; this must agree, or a run a Global agent would take is refused).
+	// asked of every registered agent. A run with no scope is its agency's, and
+	// so is one whose scope names no scope row (execspec.ScopeAgencies stamps it
+	// so since 2.5.3, CA-5; Global's before): this must agree, or a run its own
+	// agency's agent would take is refused.
 	//
 	// Capability and the secret-injection flag are deliberately not asked. An
 	// agent that lacks one is an agent an operator can fix, and the run that
@@ -81,7 +82,7 @@ func KeyBindingsNeedAgent(ctx context.Context, database *sql.DB, owners []Owner,
 			   AND EXISTS (
 			       SELECT 1 FROM runner_agencies ra
 			        WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency -- its owner's work only (§0a, question 29)
-			          AND ((NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = ?1 AND sc.owner_agency = ?2) AND ra.agency_id = 'global')
+			          AND ((NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = ?1 AND sc.owner_agency = ?2) AND ra.agency_id = ?2)
 			               OR ra.agency_id IN (SELECT sa.agency_id FROM scope_agencies sa
 			                                     JOIN scopes sc ON sc.id = sa.scope_id
 			                                    WHERE sc.name = ?1 AND sc.owner_agency = ?2)))

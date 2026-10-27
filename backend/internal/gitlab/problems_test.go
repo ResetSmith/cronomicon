@@ -56,6 +56,12 @@ func grHas(lines []string, parts ...string) bool {
 	return false
 }
 
+// warnJob is a job a sync writes with a warning: it names an SSH credential
+// that is not stored.
+func warnJob(name string) string {
+	return jobYAML(name) + "  ssh_credential: no-such-key\n"
+}
+
 // What a sync has to say about a repository's files is a row per problem, for
 // that repository, replaced by each of its syncs (GR-30), with one notice in
 // the inbox for a repository whose last sync reported ERRORS. A warning is a
@@ -63,8 +69,13 @@ func grHas(lines []string, parts ...string) bool {
 //
 // Until Phase R3 a file error was a piece of one text column of the sync's
 // history row, and a warning was a line in the server's log and nowhere else.
+//
+// Until 2.5.3 the repository was Global's, the notice Global's, and the
+// warning a job's that declares no scope (Global's alone: an agency's
+// repository refuses such a job). The built-in agency has no repository since
+// (CA-6): the repository is ag-a's, and the warning a missing SSH credential.
 func TestGR3_ASyncsProblemsAreRows(t *testing.T) {
-	svc, repo, remote := newSyncFixture(t) // jobs/keep.yaml, which declares no scope
+	svc, repo, remote := newSyncFixture(t)
 	ctx := context.Background()
 	sync := func(what string) SyncResult {
 		t.Helper()
@@ -77,14 +88,15 @@ func TestGR3_ASyncsProblemsAreRows(t *testing.T) {
 	const bad = "apiVersion: cronomicon.io/v2\nkind: Job\nmetadata:\n  name: bad\n"
 	grCommitFiles(t, repo, remote, map[string]string{
 		"jobs/bad.yaml":         bad,
-		"jobs/team/nested.yaml": jobYAML("nested"),
+		"jobs/keep.yaml":        warnJob("keep"),
+		"jobs/team/nested.yaml": warnJob("nested"),
 		"jobs/broken.yaml":      "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: [unclosed\n",
 	}, "a file that does not validate, one that does not parse, and a job in a folder")
 	if r := sync("first sync"); r.Status != "partial" {
 		t.Fatalf("the sync with a file that does not validate is %q, want partial", r.Status)
 	}
 
-	rows := grProblems(t, svc, "global")
+	rows := grProblems(t, svc, fixtureRepo)
 	if !grHas(rows, "error job jobs/bad.yaml:") {
 		t.Errorf("no error row for the file that does not validate:\n%s", strings.Join(rows, "\n"))
 	}
@@ -97,8 +109,8 @@ func TestGR3_ASyncsProblemsAreRows(t *testing.T) {
 		t.Errorf("an error of a file is filed against the repository as a whole:\n%s", strings.Join(rows, "\n"))
 	}
 	for _, path := range []string{"jobs/keep.yaml", "jobs/team/nested.yaml"} {
-		if !grHas(rows, "warning job "+path+":", "declares no scope") {
-			t.Errorf("no warning row for %s, which declares no scope:\n%s", path, strings.Join(rows, "\n"))
+		if !grHas(rows, "warning job "+path+":", "names no stored SSH credential") {
+			t.Errorf("no warning row for %s, which names an SSH credential that is not stored:\n%s", path, strings.Join(rows, "\n"))
 		}
 	}
 	// A row says what is wrong with a file of the repository. It does not say
@@ -108,9 +120,9 @@ func TestGR3_ASyncsProblemsAreRows(t *testing.T) {
 			t.Errorf("a problem row carries the clone's directory: %s", r)
 		}
 	}
-	agency, open, detail := grNotice(t, svc, "global")
-	if !open || agency != "global" {
-		t.Fatalf("the repository's notice: open=%v agency=%q, want it open under Global", open, agency)
+	agency, open, detail := grNotice(t, svc, fixtureRepo)
+	if !open || agency != fixtureAgency {
+		t.Fatalf("the repository's notice: open=%v agency=%q, want it open under its agency, ag-a", open, agency)
 	}
 	count := func(rows []string, severity string) int {
 		n := 0
@@ -139,7 +151,7 @@ func TestGR3_ASyncsProblemsAreRows(t *testing.T) {
 		t.Errorf("the notice carries the clone's directory: %s", detail)
 	}
 	// The notice quotes the errors. A warning is counted and not quoted.
-	if strings.Contains(detail, "declares no scope") {
+	if strings.Contains(detail, "names no stored SSH credential") {
 		t.Errorf("the notice quotes a warning: %s", detail)
 	}
 
@@ -148,9 +160,9 @@ func TestGR3_ASyncsProblemsAreRows(t *testing.T) {
 	// nobody has seen that one.
 	dismissed := func() bool {
 		t.Helper()
-		return grCount(t, svc.db, `SELECT COUNT(*) FROM notices WHERE kind='git_sync_problems' AND subject='global' AND dismissed_at IS NOT NULL`) == 1
+		return grCount(t, svc.db, `SELECT COUNT(*) FROM notices WHERE kind='git_sync_problems' AND subject='repo-a' AND dismissed_at IS NOT NULL`) == 1
 	}
-	if _, err := svc.db.Exec(`UPDATE notices SET dismissed_at='t', dismissed_by='ops@example' WHERE kind='git_sync_problems' AND subject='global'`); err != nil {
+	if _, err := svc.db.Exec(`UPDATE notices SET dismissed_at='t', dismissed_by='ops@example' WHERE kind='git_sync_problems' AND subject='repo-a'`); err != nil {
 		t.Fatal(err)
 	}
 	sync("a sync with the same errors, after a dismissal")
@@ -162,14 +174,14 @@ func TestGR3_ASyncsProblemsAreRows(t *testing.T) {
 	if dismissed() {
 		t.Errorf("the notice is still dismissed although the sync reported an error nobody has seen")
 	}
-	if _, open, detail := grNotice(t, svc, "global"); !open || !strings.Contains(detail, "jobs/worse.yaml") {
+	if _, open, detail := grNotice(t, svc, fixtureRepo); !open || !strings.Contains(detail, "jobs/worse.yaml") {
 		t.Errorf("the notice after a new error: open=%v %q", open, detail)
 	}
 	gitRemoveFile(t, repo, "jobs/worse.yaml", "remove it again")
 	gitRemoveFile(t, repo, "jobs/broken.yaml", "and the file that does not parse")
 	grBackdate(t, svc.db)
 	sync("back to the one file that does not validate")
-	rows = grProblems(t, svc, "global")
+	rows = grProblems(t, svc, fixtureRepo)
 
 	// The same problems at the next sync are the same rows: first seen then,
 	// last seen now.
@@ -187,21 +199,21 @@ func TestGR3_ASyncsProblemsAreRows(t *testing.T) {
 
 	// The file is corrected: its error goes, the warnings stay, and the notice
 	// resolves, since warnings alone hold none open.
-	gitCommitFile(t, repo, remote, "jobs/bad.yaml", jobYAML("bad"), "correct the file")
+	gitCommitFile(t, repo, remote, "jobs/bad.yaml", warnJob("bad"), "correct the file")
 	if r := sync("third sync"); r.Status != "success" {
 		t.Fatalf("the sync after the correction is %q (%s), want success", r.Status, r.ErrorMessage)
 	}
-	rows = grProblems(t, svc, "global")
+	rows = grProblems(t, svc, fixtureRepo)
 	if grHas(rows, "error ") {
 		t.Errorf("an error row is left after the file was corrected:\n%s", strings.Join(rows, "\n"))
 	}
-	if !grHas(rows, "warning job jobs/bad.yaml:", "declares no scope") {
+	if !grHas(rows, "warning job jobs/bad.yaml:", "names no stored SSH credential") {
 		t.Errorf("the corrected file's own warning is missing:\n%s", strings.Join(rows, "\n"))
 	}
 	if n := count(rows, "warning"); n != 3 {
-		t.Errorf("warnings after the correction = %d, want the three jobs that declare no scope:\n%s", n, strings.Join(rows, "\n"))
+		t.Errorf("warnings after the correction = %d, want the three jobs that name an SSH credential that is not stored:\n%s", n, strings.Join(rows, "\n"))
 	}
-	if _, open, _ := grNotice(t, svc, "global"); open {
+	if _, open, _ := grNotice(t, svc, fixtureRepo); open {
 		t.Errorf("the notice is open after the correction, on warnings alone")
 	}
 
@@ -212,15 +224,15 @@ func TestGR3_ASyncsProblemsAreRows(t *testing.T) {
 	}
 	grBackdate(t, svc.db)
 	sync("fourth sync, the jobs removed")
-	rows = grProblems(t, svc, "global")
+	rows = grProblems(t, svc, fixtureRepo)
 	if len(rows) != 1 || !grHas(rows, "warning repository :", "fully pruned") {
 		t.Errorf("after every job was removed, want the one warning that a kind was fully pruned:\n%s", strings.Join(rows, "\n"))
 	}
 	sync("fifth sync")
-	if rows = grProblems(t, svc, "global"); len(rows) != 0 {
+	if rows = grProblems(t, svc, fixtureRepo); len(rows) != 0 {
 		t.Errorf("rows after a sync with nothing to say:\n%s", strings.Join(rows, "\n"))
 	}
-	if _, open, _ := grNotice(t, svc, "global"); open {
+	if _, open, _ := grNotice(t, svc, fixtureRepo); open {
 		t.Errorf("the notice is still open although the last sync reported nothing")
 	}
 }
@@ -281,9 +293,9 @@ func TestGR3_EachRepositoryHasItsOwnProblems(t *testing.T) {
 	}, "the second repository")
 	b.SyncBlocking(context.Background(), "manual")
 
-	rowsA, rowsB := grProblems(t, a, "global"), grProblems(t, a, "repo-b")
+	rowsA, rowsB := grProblems(t, a, fixtureRepo), grProblems(t, a, "repo-b")
 	if !grHas(rowsA, "error job jobs/bad.yaml:") || grHas(rowsA, "alsobad") || grHas(rowsA, "other") {
-		t.Errorf("Global's rows:\n%s", strings.Join(rowsA, "\n"))
+		t.Errorf("the first repository's rows:\n%s", strings.Join(rowsA, "\n"))
 	}
 	if !grHas(rowsB, "error job jobs/alsobad.yaml:") || !grHas(rowsB, "warning job jobs/other.yaml:") || grHas(rowsB, "jobs/bad.yaml") || grHas(rowsB, "keep") {
 		t.Errorf("the second repository's rows:\n%s", strings.Join(rowsB, "\n"))
@@ -293,25 +305,25 @@ func TestGR3_EachRepositoryHasItsOwnProblems(t *testing.T) {
 	if !grHas(rowsB, "warning repository .gitmodules:", "submodules") {
 		t.Errorf("no row for the submodules that are not fetched:\n%s", strings.Join(rowsB, "\n"))
 	}
-	if agency, open, _ := grNotice(t, a, "global"); !open || agency != "global" {
-		t.Errorf("Global's notice: open=%v agency=%q", open, agency)
+	if agency, open, _ := grNotice(t, a, fixtureRepo); !open || agency != fixtureAgency {
+		t.Errorf("the first repository's notice: open=%v agency=%q, want it open under ag-a", open, agency)
 	}
 	if agency, open, detail := grNotice(t, a, "repo-b"); !open || agency != "ag-b" || !strings.Contains(detail, "jobs/alsobad.yaml") {
 		t.Errorf("the second repository's notice: open=%v agency=%q %q, want it open under its agency, naming its file", open, agency, detail)
 	}
 
-	// Global's file is corrected and Global syncs: the second repository's rows
+	// The first repository's file is corrected and it syncs: the second repository's rows
 	// and notice are as they were.
 	gitCommitFile(t, repoA, remoteA, "jobs/bad.yaml", jobYAML("bad"), "correct")
 	a.SyncBlocking(context.Background(), "manual")
 	if got := grProblems(t, a, "repo-b"); strings.Join(got, "\n") != strings.Join(rowsB, "\n") {
-		t.Errorf("the second repository's rows changed on Global's sync:\n%s\nwere:\n%s", strings.Join(got, "\n"), strings.Join(rowsB, "\n"))
+		t.Errorf("the second repository's rows changed on the first repository's sync:\n%s\nwere:\n%s", strings.Join(got, "\n"), strings.Join(rowsB, "\n"))
 	}
-	if grHas(grProblems(t, a, "global"), "error ") {
-		t.Errorf("Global's error row is left after its file was corrected")
+	if grHas(grProblems(t, a, fixtureRepo), "error ") {
+		t.Errorf("the first repository's error row is left after its file was corrected")
 	}
 	if _, open, _ := grNotice(t, a, "repo-b"); !open {
-		t.Errorf("the second repository's notice was resolved by Global's sync")
+		t.Errorf("the second repository's notice was resolved by the first repository's sync")
 	}
 }
 
@@ -336,7 +348,7 @@ func TestGR3_ADuplicateNameInOneRepositoryIsReported(t *testing.T) {
 	if res.Status != "partial" || len(res.Errors) != 2 {
 		t.Fatalf("the sync is %q with %d error(s) (%s); want partial, one error per ignored file", res.Status, len(res.Errors), res.ErrorMessage)
 	}
-	rows := grProblems(t, svc, "global")
+	rows := grProblems(t, svc, fixtureRepo)
 	for _, want := range [][]string{
 		{"error job jobs/z-last.yaml:", `the job "twice"`, "also in jobs/a-first.yaml"},
 		{"error schedule schedules/z-last.yaml:", `the schedule "yearly"`, "also in schedules/a-first.yaml"},
@@ -371,7 +383,7 @@ func TestGR3_ARepositoryThatCannotBeFetchedSaysSo(t *testing.T) {
 	const bad = "apiVersion: cronomicon.io/v2\nkind: Job\nmetadata:\n  name: bad\n"
 	gitCommitFile(t, repo, remote, "jobs/bad.yaml", bad, "a file that does not validate")
 	svc.SyncBlocking(ctx, "manual")
-	if !grHas(grProblems(t, svc, "global"), "error job jobs/bad.yaml:") {
+	if !grHas(grProblems(t, svc, fixtureRepo), "error job jobs/bad.yaml:") {
 		t.Fatalf("no row for the file that does not validate")
 	}
 
@@ -382,14 +394,14 @@ func TestGR3_ARepositoryThatCannotBeFetchedSaysSo(t *testing.T) {
 	if r := svc.SyncBlocking(ctx, "manual"); r.Status != "failed" {
 		t.Fatalf("a sync of a URL that is not a repository is %q, want failed", r.Status)
 	}
-	rows := grProblems(t, svc, "global")
+	rows := grProblems(t, svc, fixtureRepo)
 	if !grHas(rows, "error repository :", "the repository could not be fetched") {
 		t.Errorf("no row saying the repository could not be fetched:\n%s", strings.Join(rows, "\n"))
 	}
 	if !grHas(rows, "error job jobs/bad.yaml:") {
 		t.Errorf("what was known of the files was dropped when the fetch failed:\n%s", strings.Join(rows, "\n"))
 	}
-	_, open, detail := grNotice(t, svc, "global")
+	_, open, detail := grNotice(t, svc, fixtureRepo)
 	if !open || !strings.Contains(detail, "could not be fetched") {
 		t.Errorf("the notice after a failed fetch: open=%v %q", open, detail)
 	}
@@ -409,7 +421,7 @@ func TestGR3_ARepositoryThatCannotBeFetchedSaysSo(t *testing.T) {
 	if r := svc.SyncBlocking(ctx, "manual"); r.Status == "failed" {
 		t.Fatalf("the sync after the URL was put right: %s", r.ErrorMessage)
 	}
-	if rows := grProblems(t, svc, "global"); grHas(rows, "could not be fetched") {
+	if rows := grProblems(t, svc, fixtureRepo); grHas(rows, "could not be fetched") {
 		t.Errorf("the failed fetch's row is left after a sync that fetched:\n%s", strings.Join(rows, "\n"))
 	}
 
@@ -417,24 +429,24 @@ func TestGR3_ARepositoryThatCannotBeFetchedSaysSo(t *testing.T) {
 	fresh, _, _ := newSyncFixture(t)
 	fresh.repoURL = ""
 	fresh.SyncBlocking(ctx, "manual")
-	if rows := grProblems(t, fresh, "global"); len(rows) != 0 {
+	if rows := grProblems(t, fresh, fixtureRepo); len(rows) != 0 {
 		t.Errorf("a connection with no URL has problem rows:\n%s", strings.Join(rows, "\n"))
 	}
 
 	// And one whose URL is taken away has nothing left to say: no sync will
 	// come to clear what the last one found.
-	if !grHas(grProblems(t, svc, "global"), "error job jobs/bad.yaml:") {
+	if !grHas(grProblems(t, svc, fixtureRepo), "error job jobs/bad.yaml:") {
 		t.Fatalf("the file's error row is not there before the URL is removed")
 	}
-	if _, open, _ := grNotice(t, svc, "global"); !open {
+	if _, open, _ := grNotice(t, svc, fixtureRepo); !open {
 		t.Fatalf("the notice is not open before the URL is removed")
 	}
 	svc.repoURL = ""
 	svc.SyncBlocking(ctx, "manual")
-	if rows := grProblems(t, svc, "global"); len(rows) != 0 {
+	if rows := grProblems(t, svc, fixtureRepo); len(rows) != 0 {
 		t.Errorf("rows left for a repository whose connection has no URL any more:\n%s", strings.Join(rows, "\n"))
 	}
-	if _, open, _ := grNotice(t, svc, "global"); open {
+	if _, open, _ := grNotice(t, svc, fixtureRepo); open {
 		t.Errorf("the notice is still open for a repository whose connection has no URL any more")
 	}
 }

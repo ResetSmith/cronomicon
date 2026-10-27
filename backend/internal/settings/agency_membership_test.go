@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -119,16 +120,31 @@ func TestSetAgencyMembershipAllKinds(t *testing.T) {
 			if tc.kind != MemberScope && owner() != "ag-nwd" {
 				t.Errorf("owner after the move = %q, want ag-nwd", owner())
 			}
-			// Naming Global is how a row becomes Global's.
-			if err := SetAgencyMembership(ctx, pool, tc.kind,
-				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"global"}}}, "alice"); err != nil {
-				t.Fatalf("move to Global: %v", err)
+			// Naming Global is how a SCOPE becomes Global's. A secret, a variable
+			// or a key is not moved into Central, which runs nothing (1670, 2.5.3):
+			// the move is refused and the row stays where it was, owner and all.
+			// (A scope's move into Central is the app's refusal, not the
+			// database's: its owner passes through Global while a setter rewrites
+			// its membership.)
+			err := SetAgencyMembership(ctx, pool, tc.kind,
+				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"global"}}}, "alice")
+			if tc.kind == MemberScope {
+				if err != nil {
+					t.Fatalf("move to Global: %v", err)
+				}
+				if got := agencies(); len(got) != 1 || got[0] != "global" {
+					t.Errorf("membership after the move to Global: %v", got)
+				}
+				return
 			}
-			if got := agencies(); len(got) != 1 || got[0] != "global" {
-				t.Errorf("membership after the move to Global: %v", got)
+			if err == nil || !strings.Contains(err.Error(), "central_runs_nothing") {
+				t.Fatalf("move to Global = %v, want the central_runs_nothing refusal", err)
 			}
-			if tc.kind != MemberScope && owner() != "global" {
-				t.Errorf("owner after the move to Global = %q, want global", owner())
+			if got := agencies(); len(got) != 1 || got[0] != "ag-nwd" {
+				t.Errorf("membership after the refused move to Global = %v, want ag-nwd alone", got)
+			}
+			if owner() != "ag-nwd" {
+				t.Errorf("owner after the refused move to Global = %q, want ag-nwd", owner())
 			}
 		})
 	}
@@ -306,10 +322,11 @@ func TestDeleteAgencyGuardCountsMembership(t *testing.T) {
 				t.Fatalf("delete with a %s = %v, want ErrAgencyInUse", tc.name, err)
 			}
 			// Moving the member elsewhere makes it deletable again — the guard must
-			// not be a one-way latch.
+			// not be a one-way latch. Elsewhere is another agency: a secret, a
+			// variable or a key is not moved into Central (1670, 2.5.3).
 			if err := SetAgencyMembership(ctx, pool, tc.kind,
-				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"global"}}}, "alice"); err != nil {
-				t.Fatalf("move to Global: %v", err)
+				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"ag-nwd"}}}, "alice"); err != nil {
+				t.Fatalf("move to NWD: %v", err)
 			}
 			ok, err := DeleteAgency(ctx, pool, "ag-dss", "alice")
 			if err != nil || !ok {

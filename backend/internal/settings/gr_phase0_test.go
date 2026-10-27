@@ -110,6 +110,11 @@ func TestGR2_SavingTheConnectionBackKeepsTheToken(t *testing.T) {
 // token set by the environment the read returns the environment's token,
 // masked; a save of that form used to write the mask into the row, where it
 // waited for the day the environment variable was removed.
+//
+// Since 2.5.3 (question 207) CRONOMICON_GITLAB_TOKEN is read by no
+// repository: with it set, the read of an agency's repository with no token
+// stored returns no mask, and a save of a form carrying a mask of some other
+// token (as a read before 2.5.3 returned) still stores nothing.
 func TestGR2_AMaskIsNeverStoredAsAToken(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
@@ -117,24 +122,28 @@ func TestGR2_AMaskIsNeverStoredAsAToken(t *testing.T) {
 	_, _ = rand.Read(kek)
 	cfg := &config.Config{SecretKEKEnv: base64.StdEncoding.EncodeToString(kek)}
 	t.Setenv("CRONOMICON_GITLAB_TOKEN", "env-token-abcd")
+	if _, err := pool.ExecContext(ctx, `INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('r-fin', 'ag-fin', 'https://git.example/finance/defs.git', 'main')`); err != nil {
+		t.Fatal(err)
+	}
 
-	form, err := GetGitlabConfig(ctx, pool, cfg, repoid.Global)
+	form, err := GetGitlabConfig(ctx, pool, cfg, "r-fin")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if form.Pat != maskSecret("env-token-abcd") {
-		t.Fatalf("the read should return the environment's token masked, got %q", form.Pat)
+	if form.Pat != "" || form.PatSet {
+		t.Fatalf("the read of a repository with no token stored returned %q (set %v): the environment's token is read by no repository", form.Pat, form.PatSet)
 	}
-	if _, err := UpdateGitlabConfig(ctx, pool, cfg, repoid.Global, *form, "tester"); err != nil {
+	form.Pat = maskSecret("env-token-abcd")
+	if _, err := UpdateGitlabConfig(ctx, pool, cfg, "r-fin", *form, "tester"); err != nil {
 		t.Fatal(err)
 	}
 	var enc string
-	if err := pool.QueryRowContext(ctx, `SELECT COALESCE(token_enc, '') FROM git_repos WHERE id = 'global'`).Scan(&enc); err != nil {
+	if err := pool.QueryRowContext(ctx, `SELECT COALESCE(token_enc, '') FROM git_repos WHERE id = 'r-fin'`).Scan(&enc); err != nil {
 		t.Fatal(err)
 	}
 	if enc != "" {
-		plain, _ := secrets.DecryptSetting(cfg, secrets.SettingsBinding(secrets.LabelGitToken, "global"), enc)
-		t.Errorf("a save of the form stored %q as the repository's token; want nothing stored (the token is the environment's)", plain)
+		plain, _ := secrets.DecryptSetting(cfg, secrets.SettingsBinding(secrets.LabelGitToken, "r-fin"), enc)
+		t.Errorf("a save of a form carrying a mask stored %q as the repository's token; want nothing stored", plain)
 	}
 
 	for val, want := range map[string]bool{

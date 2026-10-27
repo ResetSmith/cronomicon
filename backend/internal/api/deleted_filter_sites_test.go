@@ -40,7 +40,7 @@ func binnedDefinitionRoutes() []defRoute {
 			func(j, _ int64) string { return "/api/v1/jobs/" + itoa(j) }, nil},
 		{"edit a job", http.MethodPut,
 			func(j, _ int64) string { return "/api/v1/jobs/" + itoa(j) },
-			map[string]any{"name": "billing", "scriptRef": "deploy.sh", "scope": "", "runType": "bash"}},
+			map[string]any{"name": "billing", "scriptRef": "deploy.sh", "scope": workScope, "runType": "bash"}},
 		{"run a job", http.MethodPost,
 			func(j, _ int64) string { return "/api/v1/jobs/" + itoa(j) + "/run" }, map[string]any{}},
 		{"pause a job", http.MethodPost,
@@ -88,6 +88,7 @@ func binnedDefinitionRoutes() []defRoute {
 func TestDeletedFilterSites_EveryActingRouteRefusesABinnedDefinition(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	jobID := createRHJob(t, ts, client, csrf, "billing")
@@ -128,6 +129,7 @@ func TestDeletedFilterSites_EveryActingRouteRefusesABinnedDefinition(t *testing.
 func TestDeletedFilterSites_TheSameRoutesWorkWhenLive(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	jobID := createRHJob(t, ts, client, csrf, "billing")
@@ -164,6 +166,7 @@ func TestDeletedFilterSites_TheSameRoutesWorkWhenLive(t *testing.T) {
 func TestBinnedOwnerIsNotALiveScheduleReference(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	if code, b := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/schedule-defs", csrf, map[string]any{
@@ -173,7 +176,7 @@ func TestBinnedOwnerIsNotALiveScheduleReference(t *testing.T) {
 	}
 	code, body := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs", csrf, map[string]any{
 		"name": "importer", "scriptRef": "deploy.sh", "runType": "bash",
-		"scope":        "",
+		"scope":        workScope,
 		"scheduleRefs": []string{"nightly"},
 	})
 	if code != http.StatusCreated {
@@ -226,6 +229,7 @@ func TestBinnedOwnerIsNotALiveScheduleReference(t *testing.T) {
 func TestBinnedDefinitionReactionsAreReadableAndRemovable(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
 	seedRHScript(t, pool)
 
 	jobID := createRHJob(t, ts, client, csrf, "billing")

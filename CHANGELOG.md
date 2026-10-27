@@ -13,6 +13,227 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.5.3] - 2026-10-27
+
+The built-in agency administers, agencies run. It becomes the installation's
+administration and runs nothing: every job, workflow, schedule, scope, secret,
+variable, key, host record, runner and repository is an agency's. A new
+installation calls it *Administration* (2.5.2 called it *Central*); an existing
+one keeps its name (*Global* or *Central*) until a global administrator renames
+it, and this entry calls it Administration. A new installation starts with one
+agency, *Operations*, to work in. Calendars gain a catalogue in Administration
+that agencies copy from, with updates they take or that come by themselves, and
+jobs and workflows gain calendars of their own to Forbid and Allow days. Three
+migrations (1670, 1700, 1710; schema v1710); runner protocol 14 is unchanged.
+It also ships the release-image work built for 2.5.0 (its plan's C13) that
+v2.5.2 was published without: attested and scanned images, and a fat runner
+image without Terraform.
+
+### Upgrading
+
+**From 2.5.2:** take a snapshot as for every release, replace the image and
+start it; the three migrations run at the first start. Nothing is one-way
+beyond what 2.5.1 already did. **From 2.2.3:** follow 2.5.1's upgrade below
+with the 2.5.3 image (the schema goes from 1210 to 1710).
+
+Then, because Administration runs nothing from this release on:
+
+- **Nothing moves by itself.** What Administration owns at the upgrade stays where it
+  is and no longer runs. The notice *The administration still holds work that
+  no longer runs* lists it, one finding per kind, each with its way out, and
+  every Dashboard tells a global administrator what is left until nothing is:
+  - secrets, variables and SSH keys: Env Vars → the row → Move agency (a
+    repair, with a reason);
+  - scopes built in the app: Scopes → the scope's agency (a repair);
+  - host records and bastions: Settings → SSH Targets → Edit → *Repair: move
+    to another agency*;
+  - agents that serve Administration alone: deregister them and enrol them again with
+    a registration token minted in their agency;
+  - jobs and workflows built in the app: their names are the installation's,
+    and Administration's copy keeps the name, in the recycle bin too. Note each one's
+    settings, delete it in Administration and then for good (Settings → Recycle Bin →
+    *Delete forever*), then make it again in its agency (or publish it into
+    its repository);
+  - schedules built in the app: make them again in their agency, then delete
+    them in Administration;
+  - Administration's repository: Settings → Repositories, working in Administration →
+    *Remove the leftover repository* (a repair), then connect the same URL and
+    branch to the agency whose work it is; its next sync brings the
+    definitions in as that agency's, except a job with no scope, which an
+    agency's sync refuses: give each one of that agency's scopes first
+    (`cronomicon validate -agency` on a checkout lists them). Their run
+    history stays Administration's.
+- **An installation with no agency but Administration gets one**, *Operations*, at
+  the first start. Rename it, or make your own and delete it.
+- **The local runner belongs to no agency and is off.** Choose its agency in
+  Settings → Local runner, then turn it on; its host keys are approved again
+  by that agency's administrators. A notice says so if it was on.
+- **Environment settings that configured Administration's work no longer apply.**
+  `CRONOMICON_GITLAB_BASE_URL`, `_TOKEN`, `_WEBHOOK_SECRET` and
+  `_WRITE_BRANCH` are ignored (a notice and a warning at start name any that
+  is set): connect each agency's repository in Settings → Repositories.
+  `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` is refused: an agent enrols with a
+  registration token minted in its agency (Runners → Add Runner, working in
+  that agency). After a database restore, enrol again each agent enrolled
+  since the backup.
+- **An agency's job with no scope that uses a secret, variable or key of
+  Administration's no longer runs** ("unbound references"): a job with no scope is
+  its own agency's, so the credential must be too. Move it (above).
+- Creating anything that runs in Administration is refused with 422
+  `central_runs_nothing`, also for an agency's administrator who names Administration
+  (until now 403). A global administrator's Vault-backed secret or key is made
+  in an agency, inside that agency's Vault paths.
+- **Every job names a scope.** The Job Composer has no "No scope" option, and
+  the API refuses a job with an empty scope (`""`) as it refused an omitted
+  one, on create and on edit, for every caller (422 `validation_failed`). A
+  job built in the app with no scope before 2.5.3 stays as it was and is
+  listed per agency in the Notices inbox (*Jobs built in the app have no
+  scope*). Its scheduled and automatic starts are refused when its script is
+  in its agency's repository, as they already were; a person may still run it
+  on one of the agency's scopes from the Run dialog. The agency's composers
+  (until 2.5.3 a global administrator only) give each a scope (Jobs → Edit),
+  or delete it: for work on the runner itself, a scope
+  whose one host is the runner (`runner ansible_host=127.0.0.1
+  ansible_connection=local`); for a job that pins its target host, a scope
+  that lists no hosts.
+- `cronomicon validate` without `-agency` refuses a job with no scope. The CI
+  template (`deploy/ci-validate-template.yml`) now defaults
+  `CRONOMICON_REPO_KIND` to `agency`; a pipeline copied from it earlier still
+  says `global`: change it to `agency`.
+- A global administrator, and a reader of every agency, starts in the one
+  agency there is, or on the All-agencies Dashboard when there are several
+  (until now in Administration); a stored default still wins.
+- Administration's existing calendars become its **catalogue**: no run reads them.
+  The copies 2.4.0 made in the agencies stay theirs, unlinked. A calendar named
+  `catalogue` can no longer be opened by name (the name is now the
+  catalogue's), and a calendar cannot be renamed: make one with its days under
+  another name, bind it where the old one was bound, and delete the old one.
+- The calendar flag *global* is called **freeze** on screen; the API field and
+  the YAML key stay `global`.
+- **The `cronomicon-runner-fat` image no longer has Terraform** (Removed,
+  below): an agent that runs Terraform jobs needs an image you build `FROM` the
+  fat one with the binary added, or a host that has it. Until it has one, its
+  Terraform jobs wait.
+
+### Added
+
+- **Verifiable releases.** Every published image carries a build-provenance
+  attestation (SLSA, Sigstore-signed through GitHub's attestations) and a signed
+  SPDX SBOM, made by the release workflow from the tag's commit, and the docs zip
+  is attested too: `gh attestation verify
+  oci://ghcr.io/resetsmith/cronomicon:2.5.3 --repo ResetSmith/cronomicon`. The
+  GitHub Release carries each image's SBOM and Trivy report and the source's
+  `govulncheck` and `npm audit` reports, with a count of distinct
+  vulnerabilities by severity in its notes and on the run's page (reports, not a
+  gate). A test run of the workflow (`test` ticked) publishes to
+  `ghcr.io/resetsmith/test/*`, verifies every attestation, and makes no Release.
+  Between releases, a weekly workflow (`scan-images.yml`) scans the published
+  images and raises an alert in the repository's Security tab for each finding
+  that has a fix, closed by the next scan that no longer finds it. This was
+  built for 2.5.0 and recorded there, but never reached the branch that v2.5.2
+  was published from: v2.5.2's images are not attested.
+- **Operations.** A new installation (and an upgrade with only Administration) makes
+  one agency, *Operations*, once; its Dashboard offers a global administrator
+  **Name your agency**: its name and, optionally, the AD group that
+  administers it. With every agency deleted, the All-agencies Dashboard offers
+  **Create your first agency**, with the same optional group.
+- **The calendar catalogue.** Working in Administration, Schedules → Calendars is the
+  catalogue: global administrators create, edit and import calendars there,
+  and **Add to agencies…** or **Push the update…** to chosen agencies (the
+  result says what happened in each). An agency's calendar editors take one
+  with **Add from Administration**. A copy is the agency's own calendar, read-only
+  there and deletable; **Make it our own** detaches it. Each copy updates
+  **Ask before updating** (the default: *update available*, a notice, the
+  alert event `calendar-update-available`, **Update**) or **Update
+  automatically** (it changes with the catalogue; a change-log row, an
+  Activity entry, the alert event `calendar-updated`). An update the agency's
+  bindings forbid is not applied, and says why. A copy whose original is
+  deleted is *no longer offered*, with a notice.
+- **Forbid and Allow on jobs and workflows.** A job and a workflow name their
+  own calendars to Forbid (never on these days) and to Allow (only on days in
+  one of these): the composer's and the workflow editor's *Calendars* field,
+  YAML `spec.forbidCalendars` and `spec.allowCalendars`. They gate every
+  automatic start — schedule, service-account trigger (409
+  `suppressed_by_calendar`), reaction, file arrival, a parked run's
+  promotion — and not a person's Run: the Run dialog (a workflow's row) says
+  *Today is forbidden by …* or *Today is not in …*. A forbidden start is
+  dropped, never postponed, and recorded. A day both forbidden and allowed is
+  forbidden. In a workflow, a step's job calendars do not apply.
+- Settings → Local runner chooses its agency, or *Unassigned (off)*.
+- Repairs for what Administration holds: host records and bastions (SSH Targets),
+  and Administration's leftover repository (Repositories).
+- Notices: *The administration still holds work that no longer runs*, *The
+  local runner belongs to no agency and is off*, *Environment settings that no
+  longer apply are set*, *A calendar from Administration has an update*, *A calendar
+  from Administration is no longer offered*, and *Jobs built in the app have no
+  scope* (one per agency, `job_without_scope`).
+
+### Changed
+
+- A new installation calls the built-in agency *Administration*, not
+  *Central* as 2.5.2 did; an existing one keeps its name until a global
+  administrator renames it (Scopes → Agencies → Rename).
+- The switcher lists the built-in agency as the administration: under its name
+  when the name says so (*Administration*), else as *Global · administration*.
+  Its work pages say *Administration runs nothing. Switch to an agency to work.*, and list
+  what it still holds, for its way out, under a banner; its change log,
+  Activity, Notices and Settings are the installation's, as before. The
+  agency catalog shows it apart, with Rename.
+- Nothing offers Administration when something is created or moved: the agency
+  pickers, SSH Targets, a registration token, the repair moves, a scope's
+  clone.
+- Every job names one of its agency's scopes: the composer and the API no
+  longer make a job with no scope (Upgrading, above), matching an agency's
+  repository and `cronomicon validate`. A job with no scope made before is its
+  own agency's, and so are its runs: any runner that serves the agency may take
+  one (until now they were the built-in agency's; the composer's "each run is
+  given one of the agency's scopes" was never so, and is corrected). A
+  workflow of an agency that runs one does not span agencies, so saving it is
+  no longer refused with `409 crosses_agencies`; and the notices about shell
+  jobs with no runner, and about requirements no agent advertises, look at
+  that agency's runners (the first no longer files one under Administration, which
+  runs nothing).
+- The schedule entry's calendars are called Forbid and Allow on screen (the
+  YAML keys stay `skipCalendars` and `onlyCalendars`).
+- In the Score's readout, a run's job name opens the run in History, as its
+  *View run* link does, and *View run* is set at the readout's text size
+  instead of the small muted one.
+- The validate and fat images apply Debian's published security fixes
+  when they are built (`apt-get upgrade`), instead of waiting for a new base
+  image.
+- The manuals, the courses, the runner and language guides and the security
+  review describe 2.5.3, and call the built-in agency Administration.
+
+### Removed
+
+- The notices `global_job_on_agency_scope`, `global_calendar_scope`,
+  `local_runner_served` and `agency_placed`, and Administration's part of
+  `shared_ownership`: `central_holds_work` lists what they reported.
+- Administration's repository sync, the environment's repository settings and the
+  bootstrap registration token (above).
+- **Terraform from the `cronomicon-runner-fat` image.** The project no longer
+  describes or supports Terraform, and its binary brought findings of its own
+  into every release's scan; the image's build now fails if `terraform` is on
+  its PATH. The `terraform` run type is unchanged: an agent claims it when its
+  host has the binary, or in an image you build `FROM` the fat one with it
+  added. The Runners view's container command says so when terraform is
+  chosen.
+
+### Fixed
+
+- A freeze calendar, and the installation freeze, stop a person's Run too (the
+  server answers `409 suppressed_by_calendar`), but the freeze banner said
+  manual runs were unaffected, and the Run dialog named the freeze calendar and
+  then said the run "will still happen". The banner now says a freeze stops a
+  person's Run; the dialog says the run will be refused (a deferred one,
+  skipped at its instant), also for a job with no schedule, and an entry's own
+  calendar no longer hides the freeze.
+- Settings → Repositories, for a global administrator working in an agency,
+  offered a *Connect* card for every other agency (since 2.4.4): it shows the
+  agency in use.
+- The demo data recorded its last sync on Administration's repository, which raised
+  the leftover notice on every demo.
+
 ## [2.5.2] - 2026-10-22
 
 Operations: who to call, and what the last shift knew. A run, an alert and

@@ -23,9 +23,10 @@ import (
 //	POST /api/v1/webhooks/gitlab/{repoId} (the same, for the repository named)
 func (s *Server) mountGit(mux *http.ServeMux) {
 	// One sync service per repository, owned by a registry (GR-11). Each
-	// resolves its repository's URL and token when it is built (for Global's:
-	// env wins, its row otherwise, E.3), and is built again whenever the
-	// connection is written, so a change needs no restart of the server.
+	// resolves its repository's URL and token from its row when it is built,
+	// and is built again whenever the connection is written, so a change needs
+	// no restart of the server. The built-in agency has none since 2.5.3 (CA-6),
+	// and the environment configures none (question 207).
 	reg := gitlab.NewRegistry(s.db, s.log, s.cfg)
 	// Reload the scheduler immediately after a git sync brings in new schedules
 	// (no-op when unset, e.g. in tests). The hook self-gates on SHA change.
@@ -100,14 +101,21 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 	// ── Git sync status (operator GET — no CSRF for reads) ─────────────────
 	//
 	// Each of the three takes ?repo= (2.4.0, GR-9, GR-26); without it, it means
-	// Global's repository, as it always did. The status and the history of a
-	// repository are read by its agency's people and by those who reach every
-	// agency, Global's by every session (readableRepo). A sync is started by
-	// who may configure the repository: its agency's administrator, or for
-	// Global's a global administrator, as before (configurableRepo).
+	// the built-in agency's, as it did when that was Global's repository. Since
+	// 2.5.3 it has none (CA-6): its status and a sync of it answer 404
+	// not_connected, and its past history is still read. A repository's status
+	// and history are read by its agency's people and by those who reach every
+	// agency (readableRepo); a sync is started by who may configure it
+	// (configurableRepo).
 	mux.Handle("GET /api/v1/git/sync",
 		s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if repo, ok := s.readableRepo(w, r, r.URL.Query().Get("repo")); ok {
+				if repo == repoid.Global {
+					// No sync runs for the built-in agency (2.5.3, CA-6). Its
+					// history, if it had a repository, is still read below.
+					failCentralHasNoRepository(w)
+					return
+				}
 				h.GetSyncStatusOf(repo, w, r)
 			}
 		})))

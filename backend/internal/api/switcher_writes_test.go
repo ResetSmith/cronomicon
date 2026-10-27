@@ -84,8 +84,8 @@ func TestSwitcherACreateInAnAgencyIsThatAgencys(t *testing.T) {
 		t.Errorf("the calendar created in Global is %q's", o)
 	}
 
-	// A job with no scope, composed in FIN, is FIN's.
-	if c, b := in(gRoot, "ag:FIN", http.MethodPost, "/api/v1/jobs", `{"name":"s3-job","scope":"","scriptRef":"s0-fin-script.sh"}`); c != http.StatusCreated {
+	// A job composed in FIN, on the scope created there, is FIN's.
+	if c, b := in(gRoot, "ag:FIN", http.MethodPost, "/api/v1/jobs", `{"name":"s3-job","scope":"s3-scope","scriptRef":"s0-fin-script.sh"}`); c != http.StatusCreated {
 		t.Fatalf("a job created in FIN = %d %s, want 201", c, b)
 	}
 	if o := ownerOf(`SELECT owner_agency FROM jobs WHERE name = 's3-job'`); o != "ag:FIN" {
@@ -133,8 +133,17 @@ func TestSwitcherAGlobalAdministratorsChangeInAnAgencyIsAuditedWithBoth(t *testi
 	if got := acting(mark); len(got) != 1 || got[0] != "ag:FIN" {
 		t.Errorf("the global administrator's change in FIN is audited as acting in %v, want [ag:FIN]", got)
 	}
+	// A change in Global: until 2.5.3 a variable; since CA-4 Central owns no
+	// variable (refused, nothing audited), and the change is a push target,
+	// which it still owns (CA-2).
 	mark = before()
-	if r := gateReqWithHeader(t, h, http.MethodPost, "/api/v1/env-vars", gRoot, `{"key":"S3_B","value":"v"}`, agencyctx.Header, "global"); r.Code != http.StatusCreated {
+	if r := gateReqWithHeader(t, h, http.MethodPost, "/api/v1/env-vars", gRoot, `{"key":"S3_B","value":"v"}`, agencyctx.Header, "global"); r.Code != http.StatusUnprocessableEntity || errCode(r.Body.Bytes()) != "central_runs_nothing" {
+		t.Errorf("a variable created in Global: %d %s, want 422 central_runs_nothing", r.Code, r.Body)
+	}
+	if got := acting(mark); len(got) != 0 {
+		t.Errorf("the refused variable was audited: %v", got)
+	}
+	if r := gateReqWithHeader(t, h, http.MethodPost, "/api/v1/alert-targets", gRoot, `{"label":"ops","url":"json://GLOBTOKEN"}`, agencyctx.Header, "global"); r.Code != http.StatusCreated {
 		t.Fatalf("create in Global: %d %s", r.Code, r.Body)
 	}
 	if got := acting(mark); len(got) != 1 || got[0] != "" {

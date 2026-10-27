@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,40 +46,50 @@ var (
 // GR-1): a row of git_repos, where until migration 1310 there was the one row
 // of gitlab_config. The routes that existed before 2.4.0 pass repoid.Global.
 //
-// The CRONOMICON_GITLAB_* environment overrides are scalar, so they apply to
-// Global's repository and to no other (GR-21): envURL, envToken and
-// envWebhookSecret return "" for any other id.
+// The CRONOMICON_GITLAB_* environment overrides were scalar, so they applied
+// to Global's repository and to no other (GR-21). The built-in agency has no
+// repository since 2.5.3 (CA-6), so they apply to nothing (question 207): a
+// set one is named at start and in a notice (EnvSettingsIgnored). These answer
+// "" for every repository and are kept so the readers stay one shape.
 
-func envURL(appCfg *config.Config, repoID string) string {
-	if repoID != repoid.Global || appCfg == nil {
-		return ""
-	}
-	return appCfg.GitLabBaseURL
-}
+func envURL(*config.Config, string) string { return "" }
 
-func envToken(repoID string) string {
-	if repoID != repoid.Global {
-		return ""
-	}
-	return os.Getenv("CRONOMICON_GITLAB_TOKEN")
-}
+func envToken(string) string { return "" }
 
 // EnvWebhookSecret is the webhook secret pinned by the environment for this
-// repository: CRONOMICON_GITLAB_WEBHOOK_SECRET for Global's, "" for any other.
-func EnvWebhookSecret(repoID string) string {
-	if repoID != repoid.Global {
-		return ""
-	}
-	return os.Getenv("CRONOMICON_GITLAB_WEBHOOK_SECRET")
-}
+// repository: none since 2.5.3 (CRONOMICON_GITLAB_WEBHOOK_SECRET pinned
+// Global's).
+func EnvWebhookSecret(string) string { return "" }
 
-// EnvBranch is the branch pinned by the environment for this repository:
-// CRONOMICON_GITLAB_WRITE_BRANCH for Global's, "" for any other.
-func EnvBranch(appCfg *config.Config, repoID string) string {
-	if repoID != repoid.Global || appCfg == nil {
-		return ""
+// EnvBranch is the branch pinned by the environment for this repository: none
+// since 2.5.3 (CRONOMICON_GITLAB_WRITE_BRANCH pinned Global's).
+func EnvBranch(*config.Config, string) string { return "" }
+
+// EnvSettingsIgnored names the environment settings that are set and that
+// 2.5.3 no longer reads (question 207): the four CRONOMICON_GITLAB_* that
+// configured Global's repository, and CRONOMICON_RUNNER_BOOTSTRAP_TOKEN, which
+// enrolled agents as Global's. Sorted; empty when none is set.
+func EnvSettingsIgnored(appCfg *config.Config) []string {
+	var out []string
+	if appCfg != nil {
+		if appCfg.GitLabBaseURL != "" {
+			out = append(out, "CRONOMICON_GITLAB_BASE_URL")
+		}
+		if appCfg.RunnerBootstrapToken != "" {
+			out = append(out, "CRONOMICON_RUNNER_BOOTSTRAP_TOKEN")
+		}
+		if appCfg.WebhookSecret != "" {
+			out = append(out, "CRONOMICON_GITLAB_WEBHOOK_SECRET")
+		}
+		if appCfg.GitLabWriteBranch != "" {
+			out = append(out, "CRONOMICON_GITLAB_WRITE_BRANCH")
+		}
 	}
-	return appCfg.GitLabWriteBranch
+	if os.Getenv("CRONOMICON_GITLAB_TOKEN") != "" {
+		out = append(out, "CRONOMICON_GITLAB_TOKEN")
+	}
+	sort.Strings(out)
+	return out
 }
 
 type GitlabConfig struct {
@@ -321,20 +332,9 @@ func UpdateGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Co
 		return nil, fmt.Errorf("update git_repos: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		if repoID != repoid.Global {
-			return nil, ErrRepoNotFound
-		}
-		if _, err := database.ExecContext(ctx, `
-			INSERT INTO git_repos
-			  (id, agency_id, token_enc, bot_name, bot_email, branch, url, token_expiry_notify_days,
-			   webhook_enabled, webhook_events_push, webhook_events_mr, webhook_events_tag,
-			   created_by, created_at, last_modified_by, last_modified_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			repoid.Global, agencyid.Global, patEnc, inp.BotName, inp.BotEmail, inp.WriteBranch, inp.RepoUrl, inp.TokenExpiryNotifyDays,
-			webhookEnabledVal, pushVal, mrVal, tagVal, actor, now, actor, now,
-		); err != nil {
-			return nil, fmt.Errorf("insert Global's git_repos row: %w", err)
-		}
+		// Global's row was made again here when it was missing, until 2.5.3:
+		// the built-in agency has no repository now (CA-6).
+		return nil, ErrRepoNotFound
 	}
 
 	secrets.RedactionSourceChanged() // AM-4b
@@ -527,12 +527,11 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 }
 
 // ResolveRepoRuntime returns the effective URL and token of a repository, for
-// its sync service and a checkout's manifest: for Global's, env
-// (CRONOMICON_GITLAB_BASE_URL / CRONOMICON_GITLAB_TOKEN) wins when set (E.3
-// precedence); otherwise, and for every other repository, its row. A
-// repository with no row is not an error (it resolves to what the environment
-// gives, which is nothing for any repository but Global's); a query that
-// failed is, and a caller must not take "could not read" for "not configured".
+// its sync service and a checkout's manifest: its row's. Until 2.5.3 the
+// environment (CRONOMICON_GITLAB_BASE_URL / CRONOMICON_GITLAB_TOKEN) won for
+// Global's; nothing reads it now (question 207). A repository with no row is
+// not an error (it resolves to nothing); a query that failed is, and a caller
+// must not take "could not read" for "not configured".
 // (ResolveGitlabRuntime, which dropped the error, went in 2.4.2.)
 func ResolveRepoRuntime(ctx context.Context, database *sql.DB, appCfg *config.Config, repoID string) (repoURL, pat string, err error) {
 	repoURL = envURL(appCfg, repoID)

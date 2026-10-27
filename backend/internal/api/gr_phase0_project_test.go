@@ -43,16 +43,20 @@ func TestAnInAppJobOnAProjectIsACheckoutJob(t *testing.T) {
 		return s
 	}
 	const sha = "0123456789abcdef0123456789abcdef01234567"
-	exec(`UPDATE git_repos SET last_sha = ? WHERE id = 'global'`, sha)
+	// 2.5.3: the built-in agency composes nothing; the jobs are an ordinary
+	// agency's, on its repository's project.
+	seedWorkAgency(t, pool)
+	exec(`UPDATE git_repos SET last_sha = ? WHERE id = ?`, sha, workRepo)
 	exec(`INSERT INTO scripts(uid, repo_id, name, run_type, script_path, project_root, content_hash, synced_at)
-	      VALUES('s-proj','global','proj','ansible','scripts/proj/site.yml','scripts/proj','sha256:p','t')`)
+	      VALUES('s-proj',?,'proj','ansible','scripts/proj/site.yml','scripts/proj','sha256:p','t')`, workRepo)
 	// The same script used by a job that came from Git, as sync writes it: the
 	// marker is on the job.
-	exec(`INSERT INTO jobs(uid, name, source, run_type, script_path, project_root, content_hash, synced_at, script_ref, script_uid)
-	      VALUES('j-git','proj-git','git','ansible','scripts/proj/site.yml','scripts/proj','sha256:p','t','proj','s-proj')`)
+	exec(`INSERT INTO jobs(uid, name, source, run_type, script_path, project_root, content_hash, synced_at, script_ref, script_uid, repo_id)
+	      VALUES('j-git','proj-git','git','ansible','scripts/proj/site.yml','scripts/proj','sha256:p','t','proj','s-proj',?)`, workRepo)
 
 	client, csrf := devLoginWithCSRF(t, ts)
-	b, _ := json.Marshal(map[string]any{"name": "proj-app", "scriptRef": "proj", "scope": ""})
+	workInAgency(t, pool, client)
+	b, _ := json.Marshal(map[string]any{"name": "proj-app", "scriptRef": "proj", "scope": workScope})
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/jobs", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrf)
@@ -99,15 +103,15 @@ func TestAnInAppJobOnAProjectIsACheckoutJob(t *testing.T) {
 	if got := pinned(app); got != sha {
 		t.Errorf("a run of the in-app job on the project has checkout_sha %q, want the pinned commit: it would be handed the entry file alone", got)
 	}
-	if got := str(`SELECT COALESCE(checkout_entry,'') || ' in ' || COALESCE(checkout_repo,'') FROM runs WHERE id=?`, app); got != "scripts/proj/site.yml in global" {
+	if got := str(`SELECT COALESCE(checkout_entry,'') || ' in ' || COALESCE(checkout_repo,'') FROM runs WHERE id=?`, app); got != "scripts/proj/site.yml in "+workRepo {
 		t.Errorf("the run of the in-app job is pinned to %q, want the project's entry in its script's repository", got)
 	}
 
 	// Saved again on a script that is no project, it stops being one: the
 	// marker follows the script the job is on.
 	exec(`INSERT INTO scripts(uid, repo_id, name, run_type, script_path, content_hash, synced_at)
-	      VALUES('s-plain','global','plain','ansible','scripts/plain.yml','sha256:q','t')`)
-	b, _ = json.Marshal(map[string]any{"name": "proj-app", "scriptRef": "plain", "scope": ""})
+	      VALUES('s-plain',?,'plain','ansible','scripts/plain.yml','sha256:q','t')`, workRepo)
+	b, _ = json.Marshal(map[string]any{"name": "proj-app", "scriptRef": "plain", "scope": workScope})
 	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/jobs/"+job("cronomicon", "proj-app", "rowid"), bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrf)

@@ -3,7 +3,6 @@ import { api, fetchCapabilities } from "../api/client";
 import { GLOBAL_AGENCY, agenciesFor, fetchMyAccess, type AgencyRef } from "../api/access";
 import { c } from "../theme";
 import { useAgencyOptional } from "../agency";
-import { globalAgencyName } from "../globalName";
 
 type Agency = { id?: string; name?: string };
 
@@ -19,8 +18,9 @@ type Agency = { id?: string; name?: string };
  *     server would place it there anyway (RA-9). The picker shows which.
  *   - An administrator of SEVERAL must say which (the server answers 422
  *     `agency_required` otherwise). Their own agencies are offered and no others.
- *   - A GLOBAL administrator may name any agency, or leave it Global's, which is
- *     the default: Global's runs' only (§0a), changed only by global administrators.
+ *   - A GLOBAL administrator may name any agency. Not Central: it runs nothing
+ *     since 2.5.3 (CA-1, CA-14), so it is neither offered nor preselected; the
+ *     one agency there is, is.
  *
  * Until 2.3.0 this was a multi-select shown only to restricted callers, because
  * a row could be shared by several agencies and "no agency" meant shared
@@ -46,8 +46,7 @@ export function useCreationAgencies(isEdit: boolean, permission?: "configureApp"
     let cancelled = false;
     (async () => {
       // Fail CLOSED on a capabilities error: CAPS_OFF reports every flag false,
-      // so the caller is treated as restricted and must choose. The reverse
-      // would offer Global to someone the server will refuse.
+      // so the caller is treated as restricted and must choose.
       const caps = await fetchCapabilities();
       const isGlobal =
         permission === "configureApp"
@@ -66,7 +65,7 @@ export function useCreationAgencies(isEdit: boolean, permission?: "configureApp"
       let options: AgencyRef[] = [];
       try {
         if (isGlobal) {
-          options = [{ id: GLOBAL_AGENCY, name: globalAgencyName() }, ...(await catalog())];
+          options = await catalog();
         } else {
           const mine = permission ? agenciesFor(await fetchMyAccess(), permission) : [];
           // Their own agencies when the server could say; otherwise the catalog,
@@ -74,17 +73,14 @@ export function useCreationAgencies(isEdit: boolean, permission?: "configureApp"
           options = mine.length > 0 ? mine : await catalog();
         }
       } catch {
-        // A failed read leaves whatever was gathered (Global, for a global
-        // administrator). The form must still settle: with nothing to choose
-        // from, the server names the owner or says what is missing.
-        if (isGlobal && options.length === 0) options = [{ id: GLOBAL_AGENCY, name: globalAgencyName() }];
+        // A failed read leaves whatever was gathered. The form must still
+        // settle: with nothing to choose from, the server says what is missing.
       }
       if (cancelled) return;
       setGlobal(isGlobal);
       setAgencies(options);
-      // Global for a global administrator; the one agency for an administrator
-      // of one; nothing for an administrator of several, who must choose.
-      setSelected(isGlobal ? GLOBAL_AGENCY : options.length === 1 ? options[0].id : "");
+      // The one agency when there is one; otherwise nothing, and they choose.
+      setSelected(options.length === 1 ? options[0].id : "");
       setLoaded(true);
     })();
     return () => {
@@ -114,8 +110,8 @@ export function useCreationAgencies(isEdit: boolean, permission?: "configureApp"
   return {
     /** Mount the picker (every create form; never an edit). */
     visible,
-    /** A choice must be made before submitting: everyone but a global administrator. */
-    required: visible && !global,
+    /** A choice must be made before submitting. */
+    required: visible,
     global,
     agencies,
     selected,
@@ -127,7 +123,7 @@ export function useCreationAgencies(isEdit: boolean, permission?: "configureApp"
     /** Non-empty when the form must not submit yet. */
     // Nothing to choose from (the lists could not be read) does not block: the
     // server places the row in the caller's one agency, or says which to name.
-    blockedReason: visible && loaded && !global && !selected && agencies.length > 0 ? "Choose an agency" : "",
+    blockedReason: visible && loaded && !selected && agencies.length > 0 ? "Choose an agency" : "",
     context: null as { id: string; name: string } | null,
   };
 }
@@ -160,7 +156,7 @@ export function CreationAgencyPicker({
       </div>
     );
   }
-  const only = !pick.global && pick.agencies.length === 1;
+  const only = pick.agencies.length === 1;
   return (
     <div style={{ marginTop: 12 }}>
       <label style={{ display: "block", fontSize: c.fontSm, color: c.textMuted, marginBottom: 4 }}>
@@ -182,7 +178,7 @@ export function CreationAgencyPicker({
             fontSize: c.fontBody,
           }}
         >
-          {!pick.global && !only && <option value="">Choose an agency…</option>}
+          {!only && <option value="">Choose an agency…</option>}
           {pick.agencies.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name}
@@ -192,10 +188,7 @@ export function CreationAgencyPicker({
       </label>
       <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 4 }}>
         {pick.global ? (
-          <>
-            A {label} belongs to one agency, and is used by that agency's runs only. Global's is changed only by global
-            administrators; an agency's is that agency's own.
-          </>
+          <>A {label} belongs to one agency, and is used by that agency's runs only: choose the agency whose work it is.</>
         ) : only ? (
           <>This {label} will belong to your agency, whose administrators manage it.</>
         ) : (

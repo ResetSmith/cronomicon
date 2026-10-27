@@ -20,6 +20,8 @@ frontend/tsconfig.tsbuildinfo
 .crush/
 .scratch/
 .aidata/
+# Release scan reports and SBOMs downloaded from a workflow run (2.5.0 C13).
+.reports/
 skill-observations/
 skill-updates/
 supercmo-media/

@@ -45,25 +45,27 @@ func TestAnInAppDefinitionFollowsItsGitSchedule(t *testing.T) {
 		      VALUES('cronomicon', ?, ?, ?, ?, ?, ?, ?, ?)`, kind, owner, name, first, position, ref, ownerUID, schedUID)
 	}
 
+	// The in-app definitions are the repository's agency's (ag-a): a Git
+	// schedule's edit reaches its own agency's only (§0a).
 	// An in-app job bound to the Git schedule, as the composer writes it: a copy
 	// of the schedule's timing, its name, and its uid. Its display column
 	// mirrors its first entry.
-	exec(`INSERT INTO jobs(uid, name, source, run_type, command, schedule, synced_at) VALUES('j-app', 'app-job', 'cronomicon', 'bash', 'echo hi', ?, 't')`, first)
+	exec(`INSERT INTO jobs(uid, name, source, run_type, command, schedule, synced_at, owner_agency) VALUES('j-app', 'app-job', 'cronomicon', 'bash', 'echo hi', ?, 't', 'ag-a')`, first)
 	bind("job", "j-app", "app-job", "yearly", 0, "yearly", sched)
 	// An inline entry of the same job: its own timing, no schedule.
 	bind("job", "j-app", "app-job", "own", 1, nil, nil)
 	// An in-app workflow bound to it.
-	exec(`INSERT INTO workflows(uid, name, source, steps, schedule, synced_at) VALUES('w-app', 'app-flow', 'cronomicon', '[]', ?, 't')`, first)
+	exec(`INSERT INTO workflows(uid, name, source, steps, schedule, synced_at, owner_agency) VALUES('w-app', 'app-flow', 'cronomicon', '[]', ?, 't', 'ag-a')`, first)
 	bind("workflow", "w-app", "app-flow", "yearly", 0, "yearly", sched)
 	// A job in the recycle bin bound to it: restored, it fires at once.
-	exec(`INSERT INTO jobs(uid, name, source, run_type, command, synced_at, deleted_at) VALUES('j-bin', 'binned-job', 'cronomicon', 'bash', 'echo hi', 't', '2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO jobs(uid, name, source, run_type, command, synced_at, deleted_at, owner_agency) VALUES('j-bin', 'binned-job', 'cronomicon', 'bash', 'echo hi', 't', '2026-01-01T00:00:00Z', 'ag-a')`)
 	bind("job", "j-bin", "binned-job", "yearly", 0, "yearly", sched)
 	// What must NOT follow: an entry of that name tied to ANOTHER schedule (an
 	// in-app `yearly`), and one tied to none (the ambiguous entry of 1300).
-	exec(`INSERT INTO schedules(uid, name, source, cron, content_hash, owner_agency) VALUES('s-app', 'yearly', 'cronomicon', ?, 'h', 'global')`, first)
-	exec(`INSERT INTO jobs(uid, name, source, run_type, command, schedule, synced_at) VALUES('j-other', 'other-job', 'cronomicon', 'bash', 'echo hi', ?, 't')`, first)
+	exec(`INSERT INTO schedules(uid, name, source, cron, content_hash, owner_agency) VALUES('s-app', 'yearly', 'cronomicon', ?, 'h', 'ag-a')`, first)
+	exec(`INSERT INTO jobs(uid, name, source, run_type, command, schedule, synced_at, owner_agency) VALUES('j-other', 'other-job', 'cronomicon', 'bash', 'echo hi', ?, 't', 'ag-a')`, first)
 	bind("job", "j-other", "other-job", "yearly", 0, "yearly", "s-app")
-	exec(`INSERT INTO jobs(uid, name, source, run_type, command, synced_at) VALUES('j-untied', 'untied-job', 'cronomicon', 'bash', 'echo hi', 't')`)
+	exec(`INSERT INTO jobs(uid, name, source, run_type, command, synced_at, owner_agency) VALUES('j-untied', 'untied-job', 'cronomicon', 'bash', 'echo hi', 't', 'ag-a')`)
 	bind("job", "j-untied", "untied-job", "yearly", 0, "yearly", nil)
 
 	// The schedule is edited in Git.
@@ -125,7 +127,7 @@ func TestGR4_AnInAppDefinitionOutlivesItsPrunedGitScheduleAndTheInboxSaysSo(t *t
 	grSync(t, svc, "first sync")
 	sched := grString(t, svc.db, `SELECT uid FROM schedules WHERE source='git' AND name='yearly'`)
 	first := grString(t, svc.db, `SELECT cron FROM definition_schedules WHERE owner_source='git' AND owner_name='git-job'`)
-	if _, err := svc.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, command, synced_at) VALUES('j-app', 'app-job', 'cronomicon', 'bash', 'echo hi', 't')`); err != nil {
+	if _, err := svc.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, command, synced_at, owner_agency) VALUES('j-app', 'app-job', 'cronomicon', 'bash', 'echo hi', 't', 'ag-a')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, position, source_ref, owner_uid, schedule_uid)
@@ -167,7 +169,7 @@ func TestGR4_AnInAppDefinitionOutlivesItsPrunedGitScheduleAndTheInboxSaysSo(t *t
 		return agency, detail, resolved == nil
 	}
 	agency, detail, open := gone()
-	if !open || agency != "global" {
+	if !open || agency != fixtureAgency {
 		t.Fatalf("the notice for the job whose schedule has gone: open=%v agency=%q", open, agency)
 	}
 	for _, want := range []string{"The job app-job", "yearly", "removed from its Git repository", first} {

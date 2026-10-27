@@ -3,12 +3,15 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
+	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/settings"
@@ -30,6 +33,7 @@ func (s *Server) mountGitRepos(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/git-repo-names", s.auth.RequireSession(http.HandlerFunc(s.handleListGitRepoNames)))
 	mux.Handle("GET /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handleGetAgencyGitRepo)))
 	mux.Handle("PUT /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handlePutAgencyGitRepo)))
+	mux.Handle("DELETE /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handleDeleteAgencyGitRepo)))
 	mux.Handle("GET /api/v1/git-repos/{repoId}/problems", s.auth.RequireSession(http.HandlerFunc(s.handleListRepoProblems)))
 	mux.Handle("POST /api/v1/agencies/{agencyId}/git-repo/webhook-secret/rotate", configure(http.HandlerFunc(s.handleRotateAgencyWebhookSecret)))
 	mux.Handle("POST /api/v1/agencies/{agencyId}/git-repo/test", configure(http.HandlerFunc(s.handleTestAgencyGitRepo)))
@@ -49,7 +53,7 @@ func (s *Server) requireRepoAgency(w http.ResponseWriter, r *http.Request, agenc
 	}
 	msg := "you do not have configureApp on the agency this repository belongs to"
 	if agencyID == agencyid.Global {
-		msg = "Global's repository is Global's (§0a); only a global administrator may read or change its connection"
+		msg = "the built-in agency's repository connection is a global administrator's to read or remove"
 	}
 	s.denyEntityAgency(w, r, id, auth.PermConfigureApp, agencyID, msg)
 	return id, false
@@ -148,6 +152,22 @@ func (s *Server) handleGetAgencyGitRepo(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	repoID, err := settings.RepoOfAgency(r.Context(), s.db, agencyID)
+	if agencyID == agencyid.Global {
+		// The built-in agency has no repository (2.5.3, CA-6). A connection it
+		// kept from before is shown, marked a leftover, so that it can be
+		// removed (question 203); the unconfigured row 1310 left is none.
+		left, lerr := settings.CentralLeftoverRepo(r.Context(), s.db)
+		if lerr != nil {
+			httpx.Fail500(w, s.log, "db_error", lerr)
+			return
+		}
+		if !left {
+			httpx.Fail(w, http.StatusNotFound, "not_connected",
+				"the built-in administration agency has no repository: it runs nothing, so it keeps no definitions in Git")
+			return
+		}
+		repoID, err = repoid.Global, nil
+	}
 	if errors.Is(err, settings.ErrRepoNotFound) {
 		httpx.Fail(w, http.StatusNotFound, "not_connected", "this agency has no repository connected")
 		return
@@ -157,6 +177,9 @@ func (s *Server) handleGetAgencyGitRepo(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	repo, err := settings.GetRepo(r.Context(), s.db, s.cfg, repoID)
+	if err == nil && agencyID == agencyid.Global {
+		repo.Leftover = true
+	}
 	if errors.Is(err, settings.ErrRepoNotFound) {
 		httpx.Fail(w, http.StatusNotFound, "not_connected", "this agency has no repository connected")
 		return
@@ -175,6 +198,11 @@ func (s *Server) handlePutAgencyGitRepo(w http.ResponseWriter, r *http.Request) 
 	agencyID := r.PathValue("agencyId")
 	id, ok := s.requireRepoAgency(w, r, agencyID)
 	if !ok {
+		return
+	}
+	if agencyID == agencyid.Global {
+		// 2.5.3 (CA-6): the built-in agency runs nothing and has no repository.
+		httpx.Fail(w, http.StatusUnprocessableEntity, "central_runs_nothing", settings.ErrCentralHasNoRepository.Error())
 		return
 	}
 	var inp settings.GitlabConfig
@@ -272,6 +300,17 @@ func (s *Server) configurableRepo(w http.ResponseWriter, r *http.Request, repoID
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {
 		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return "", false
+	}
+	if repoID == repoid.Global {
+		// The built-in agency has no repository to sync (2.5.3, CA-6): a
+		// request that names none, as the routes from before 2.4.0 do, is told
+		// so. Who may not configure it is answered 403, as before.
+		if !id.GlobalAdmin(auth.PermConfigureApp) {
+			_, _ = s.requireRepoAgency(w, r, agencyid.Global)
+			return "", false
+		}
+		failCentralHasNoRepository(w)
 		return "", false
 	}
 	agency, err := settings.RepoAgency(r.Context(), s.db, repoID)
@@ -430,4 +469,105 @@ func (s *Server) requirePushableConnection(w http.ResponseWriter, r *http.Reques
 		return false
 	}
 	return true
+}
+
+// handleDeleteAgencyGitRepo is "Remove the leftover repository" (2.5.3, CA-6,
+// question 203): the built-in agency's repository connection from before 2.5.3
+// goes, with what it synced (gitlab.RemoveCentralLeftover), as a global
+// administrator's repair with a reason. Its run history stays. To keep the
+// definitions, the same URL and branch are then connected to an ordinary
+// agency, whose sync brings them in as that agency's. An agency's repository
+// is changed, never disconnected (IN-2): it goes only with its agency.
+func (s *Server) handleDeleteAgencyGitRepo(w http.ResponseWriter, r *http.Request) {
+	agencyID := r.PathValue("agencyId")
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	if agencyID != agencyid.Global {
+		if _, ok := s.requireRepoAgency(w, r, agencyID); !ok {
+			return
+		}
+		if !s.requireAgencyExists(w, r, agencyID) {
+			return
+		}
+		httpx.Fail(w, http.StatusUnprocessableEntity, "repository_not_removable",
+			"an agency's repository is changed (another URL, token or branch), never disconnected: it goes only when the agency is deleted")
+		return
+	}
+	// A global administrator's repair, decided before the body is read (the
+	// review of CA2). requireRepair's sentences are about a change of agency,
+	// which this is not; the rule is the same: repair: true and a reason.
+	if !id.GlobalAdmin(auth.PermConfigureApp) {
+		s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
+			"removing the built-in agency's repository connection is a global administrator's repair")
+		return
+	}
+	var rep repairInput
+	if err := json.NewDecoder(r.Body).Decode(&rep); err != nil && !errors.Is(err, io.EOF) {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return
+	}
+	if !rep.Repair {
+		httpx.Fail(w, http.StatusConflict, "repair_required",
+			"removing the built-in agency's repository connection, and what it synced, is a repair: send `repair: true` "+
+				"and a `reason`, which is written to the audit log")
+		return
+	}
+	if reason := strings.TrimSpace(rep.Reason); reason == "" || utf8.RuneCountInString(reason) > repairReasonMax {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
+			"a repair needs a reason, of at most 500 characters: it is written to the audit log")
+		return
+	}
+	if s.git == nil {
+		httpx.Fail(w, http.StatusServiceUnavailable, "unavailable", errSyncUnavailable.Error())
+		return
+	}
+	remove, finish, err := s.git.RemoveCentralLeftover(r.Context(), id.Email)
+	if errors.Is(err, settings.ErrRepoNotFound) {
+		httpx.Fail(w, http.StatusNotFound, "not_connected",
+			"the built-in administration agency has no repository connection to remove")
+		return
+	}
+	var busy *gitlab.ErrScopesBusy
+	if errors.As(err, &busy) {
+		httpx.Fail(w, http.StatusConflict, "scopes_busy", busy.Error())
+		return
+	}
+	if err != nil {
+		httpx.Fail500(w, s.log, "remove_failed", err)
+		return
+	}
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		finish(false)
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	err = remove(tx)
+	if err == nil {
+		err = tx.Commit()
+	} else {
+		_ = tx.Rollback()
+	}
+	finish(err == nil)
+	if errors.As(err, &busy) {
+		httpx.Fail(w, http.StatusConflict, "scopes_busy", busy.Error())
+		return
+	}
+	if err != nil {
+		httpx.Fail500(w, s.log, "remove_failed", err)
+		return
+	}
+	s.auditRepair(r.Context(), agencyid.Global, id.Email, "repository connection "+repoid.Global, "removed", rep)
+	httpx.JSON(w, http.StatusOK, map[string]any{"removed": true})
+}
+
+// failCentralHasNoRepository answers a request about the built-in agency's
+// repository's sync (2.5.3, CA-6): it has none. A route from before 2.4.0
+// that names no repository means that one; ?repo= names an agency's.
+func failCentralHasNoRepository(w http.ResponseWriter) {
+	httpx.Fail(w, http.StatusNotFound, "not_connected",
+		"the built-in administration agency has no repository: name an agency's repository with ?repo=")
 }

@@ -67,14 +67,19 @@ func TestScheduledFireOfKeyBoundJobOnSSHIsRecordedNotEnqueued(t *testing.T) {
 	}
 }
 
-// agentServing registers an agent of Global's and makes sure the scope exists
-// (a new scope is Global's), so the agent serves it.
+// agentServing registers an agent of opsAgency's (the agency of
+// unboundFireDB's job) and makes sure the scope exists and is that agency's,
+// so the agent serves it. (Until 2.5.3 the job, the scope and the agent were
+// all Global's; since then the built-in agency runs nothing, CA-1.)
 func agentServing(t *testing.T, pool *sql.DB, scope string) {
 	t.Helper()
 	const now = "2026-01-01T00:00:00Z"
+	seedOpsAgency(t, pool)
 	for _, q := range []string{
 		`INSERT OR IGNORE INTO scopes (id, name, source, created_at) VALUES ('sc-` + scope + `', '` + scope + `', 'cronomicon', '` + now + `')`,
-		`INSERT INTO runners (id, name, status, registered_at, created_at) VALUES ('agent-1', 'agent-1', 'offline', '` + now + `', '` + now + `')`,
+		`DELETE FROM scope_agencies WHERE scope_id = 'sc-` + scope + `'`,
+		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-` + scope + `', '` + opsAgency + `')`,
+		`INSERT INTO runners (id, name, status, registered_at, created_at, owner_agency) VALUES ('agent-1', 'agent-1', 'offline', '` + now + `', '` + now + `', '` + opsAgency + `')`,
 	} {
 		if _, err := pool.Exec(q); err != nil {
 			t.Fatalf("seed: %v\n%s", err, q)

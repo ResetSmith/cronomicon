@@ -3,12 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-// AF-1 — a job's scope decides which agencies can see it, so the composer must
-// make it a CHOICE. What is pinned: an unanswered scope blocks the create with a
-// sentence (not a silent global job, and not a server round-trip), the explicit
-// All option sends "" so the server's required-field check passes, a named scope
-// still works, and editing an existing global job prefills All rather than
-// re-asking (the value was already decided, even if by a legacy default).
+// AF-1, as it stands since 2.5.3 (CA7) — every job names one of its agency's
+// scopes. What is pinned: an unanswered scope blocks the create with a sentence
+// (not a server round-trip), there is no "No scope" option even for an
+// unrestricted composer, a named scope still works, and a job with no scope
+// from before is shown as such and saved only with a scope.
 
 const SCOPES = [
   { id: "sc1", scope: "Prod", hosts: ["db-01"], agencies: ["FIN"] },
@@ -56,7 +55,7 @@ vi.mock("../api/client", async (importOriginal) => {
       vault: false,
       apprise: false,
       compose: true,
-      // AF-2 — an unrestricted composer, so the All scope option is offered.
+      // An unrestricted composer: until 2.5.3 it was offered "No scope".
       composeUnbound: true,
       manageRoles: false,
       configureApp: false,
@@ -99,19 +98,14 @@ describe("JobComposer — scope is a required choice (AF-1)", () => {
     expect(posts.filter((p) => p.path === "/jobs")).toHaveLength(0);
   });
 
-  it("sends an explicit empty scope when All is chosen", async () => {
+  it("offers no 'No scope' option, even to an unrestricted composer", async () => {
     const q = renderComposer("/compose?script=tools%2Fbackup.sh");
     await waitFor(() => expect(q.getAllByText("tools/backup.sh").length).toBeGreaterThan(0));
-    fireEvent.change(q.getByPlaceholderText("nightly-backup"), { target: { value: "global-job" } });
-    pickScope(q, /^No scope/);
-    fireEvent.click(q.getByRole("button", { name: "Create job" }));
-
-    await waitFor(() => expect(posts.filter((p) => p.path === "/jobs")).toHaveLength(1));
-    expect(posts[0].body).toMatchObject({ name: "global-job", scope: "" });
-    // The consequence is stated, so "No scope" is never chosen blind; and it is
-    // the agency's, not every agency's (2.5.0 C11, defect 90).
-    expect(q.getAllByText(/No scope: the job is Global.s, and runs on Global.s hosts/).length).toBeGreaterThan(0);
-    expect(q.queryByText(/Visible to every agency/)).toBeNull();
+    fireEvent.click(q.getByRole("combobox", { name: "Scope" }));
+    expect(q.queryByRole("option", { name: /^No scope/ })).toBeNull();
+    expect(q.getByRole("option", { name: /^Prod/ })).toBeTruthy();
+    // The hint names the shapes a scopeless job was used for.
+    expect(q.getAllByText(/a scope whose one host is the runner/).length).toBeGreaterThan(0);
   });
 
   it("sends a named scope unchanged", async () => {
@@ -138,80 +132,12 @@ describe("JobComposer — scope is a required choice (AF-1)", () => {
     expect(posts[0].body).toMatchObject({ scope: "Orphan" });
   });
 
-  it("prefills All when editing a job that is already global", async () => {
+  it("shows a job with no scope from before as such, and saves it only with a scope", async () => {
     const q = renderComposer("/compose?id=8");
-    // The picker states the existing choice rather than sitting empty: the value
-    // was decided (a legacy default counts), so re-asking would be noise.
-    await waitFor(() => expect(q.getAllByDisplayValue("No scope").length).toBeGreaterThan(0));
-  });
-});
-
-// AF-2 — a DEPARTMENTAL composer (compose granted on an agency, not everywhere)
-// may not author an All-scoped job: a scheduled fire of an unbound job runs
-// scope-unchecked, so All is reserved for an unrestricted grant (RB-30). The
-// server refuses it; the composer's job is not to offer it in the first place.
-describe("JobComposer — All is withheld without composeUnbound (AF-2)", () => {
-  it("offers named scopes only, and says so", async () => {
-    const { fetchCapabilities } = await import("../api/client");
-    vi.mocked(fetchCapabilities).mockResolvedValueOnce({
-      vault: false,
-      apprise: false,
-      compose: true,
-      composeUnbound: false, // departmental: agency-bound compose
-      manageRoles: false,
-      configureApp: false,
-      manageEnvVars: true,
-      publishSchedule: false,
-      triggerJobs: false,
-      killJobs: false,
-      unrestricted: false,
-    });
-    const q = renderComposer("/compose?script=tools%2Fbackup.sh");
-    await waitFor(() => expect(q.getAllByText("tools/backup.sh").length).toBeGreaterThan(0));
-
-    fireEvent.click(q.getByRole("combobox", { name: "Scope" }));
-    // The named scopes are still offered; only the global option is absent.
-    await waitFor(() => expect(q.getByRole("option", { name: /^Prod/ })).toBeTruthy());
-    expect(q.queryByRole("option", { name: /^No scope/ })).toBeNull();
-    expect(q.getByText(/Pick one of the scopes your role is granted/)).toBeTruthy();
-  });
-});
-
-// GC (v2.2.2, gate closing) — reactions are the one part of this form the server
-// takes only from a compose ADMINISTRATOR (PUT /reactions/… needs compose and
-// configureApp on one all-agencies grant): a reaction couples this job to
-// another definition, whoever owns it. A departmental composer still edits the
-// job and its inline schedules; the Reactions section is read-only for them and
-// says why (FX-7), rather than accepting input the second save would refuse
-// with "the job was saved, but its reactions were not".
-// Reactions needed a compose administrator from GC (v2.2.2) until 2.4.2; since
-// question 61 they are the definition's agency's, like the definition.
-describe("JobComposer — reactions are the job's agency's (question 61)", () => {
-  const BASE = {
-    vault: false, apprise: false, compose: true, composeUnbound: true, manageRoles: false,
-    configureApp: false, manageEnvVars: true, publishSchedule: false, triggerJobs: false,
-    killJobs: false, unrestricted: false,
-  };
-
-  it("enables Add reaction for a departmental composer", async () => {
-    const q = renderComposer("/compose?id=8");
-    const add = (await waitFor(() => q.getByRole("button", { name: "+ Add reaction" }))) as HTMLButtonElement;
-    await waitFor(() => expect(add.disabled).toBe(false));
-    expect(add.title).toBe("");
-  });
-
-  it("enables it for a compose administrator", async () => {
-    const { fetchCapabilities } = await import("../api/client");
-    const original = vi.mocked(fetchCapabilities).getMockImplementation();
-    vi.mocked(fetchCapabilities).mockImplementation(async () => ({ ...BASE, configureApp: true, configureAppGlobal: true, composeAdmin: true, unrestricted: true }));
-    try {
-      const q = renderComposer("/compose?id=8");
-      const add = (await waitFor(() => q.getByRole("button", { name: "+ Add reaction" }))) as HTMLButtonElement;
-      await waitFor(() => expect(add.disabled).toBe(false));
-      expect(add.title).toBe("");
-      expect(q.queryByRole("note")).toBeNull();
-    } finally {
-      vi.mocked(fetchCapabilities).mockImplementation(original!);
-    }
+    await waitFor(() => expect(q.getByText(/This job has no scope \(it was made before 2\.5\.3\)/)).toBeTruthy());
+    fireEvent.click(q.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(q.getByText(/Pick a scope/)).toBeTruthy());
+    const { api } = await import("../api/client");
+    expect(api.PUT).not.toHaveBeenCalled();
   });
 });

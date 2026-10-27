@@ -161,19 +161,19 @@ describe("JobComposer — ?script= (Scripts → Create Job hand-off)", () => {
 
     fireEvent.change(q.getByPlaceholderText("nightly-backup"), { target: { value: "from-script" } });
     // AF-1 — the scope is no longer defaulted, so a create must state one. This
-    // hand-off starts from a script and carries no scope, so the author picks:
-    // here, the explicit global.
-    fireEvent.click(q.getByRole("combobox", { name: "Scope" }));
-    fireEvent.click(q.getByRole("option", { name: /^No scope/ }));
+    // hand-off starts from a script and carries no scope, so the author names one
+    // (every job names a scope since 2.5.3, CA7).
+    const combo = q.getByRole("combobox", { name: "Scope" });
+    fireEvent.focus(combo);
+    fireEvent.change(combo, { target: { value: "ops-local" } });
+    fireEvent.keyDown(combo, { key: "Enter" });
     fireEvent.click(q.getByRole("button", { name: "Create job" }));
 
     await waitFor(() => expect(posts.filter((p) => p.path === "/jobs")).toHaveLength(1));
-    // scope "" is the deliberate All, and it must reach the wire: an absent field
-    // is what the server 422s.
     expect(posts.find((p) => p.path === "/jobs")!.body).toMatchObject({
       name: "from-script",
       scriptRef: "tools/backup.sh",
-      scope: "",
+      scope: "ops-local",
     });
   });
 });

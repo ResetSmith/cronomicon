@@ -1,0 +1,9 @@
+DROP TRIGGER IF EXISTS secrets_not_made_central;
+DROP TRIGGER IF EXISTS env_vars_not_made_central;
+DROP TRIGGER IF EXISTS ssh_credentials_not_made_central;
+DROP TRIGGER IF EXISTS ssh_hosts_not_made_central;
+DROP TRIGGER IF EXISTS bastions_not_made_central;
+DROP TRIGGER IF EXISTS runners_not_made_central;
+DROP TRIGGER IF EXISTS schedules_not_made_central;
+DROP TRIGGER IF EXISTS workflows_not_made_central;
+DROP TRIGGER IF EXISTS jobs_not_made_central;

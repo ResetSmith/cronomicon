@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { allReadable, api } from "../../api/client";
 import { GLOBAL_AGENCY } from "../../api/access";
+import { administrationLabel, globalAgencyName } from "../../globalName";
 import { globalOnly } from "../../api/globalAdmin";
 import { useGet, rows, useTableSort } from "../../hooks";
 import { type SortColumn } from "../../utils/sort";
@@ -10,6 +11,7 @@ import { DOC_LINKS } from "../../components/docLinks";
 import { DetailCell, DetailPanel, ExpandChevron, InlineLoading, SkeletonRows, SortableLabel, DocLink } from "../../components/ui";
 import { RefreshScope } from "../../components/RefreshScope";
 import { REPAIR_HINT, RepairDialog, vaultChangesOf, type RepairBody, type VaultChange } from "../../components/RepairDialog";
+import { grantAgencyAdmins } from "../../api/grants";
 import {
   Btn,
   Chevron,
@@ -98,7 +100,11 @@ export function AgenciesTab({
     setDep((n) => n + 1);
   };
 
-  const filtered = items.filter(
+  // 2.5.3 CA-16: the catalog lists the agencies; Central, the installation's
+  // administration, is shown apart (renamed there, never deleted).
+  const central = items.find((a) => a.id === GLOBAL_AGENCY);
+  const ordinary = items.filter((a) => a.id !== GLOBAL_AGENCY);
+  const filtered = ordinary.filter(
     (a) =>
       !search ||
       a.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -133,13 +139,29 @@ export function AgenciesTab({
       )}
       <div style={{ marginBottom: 12, color: c.textSec, fontSize: c.fontSm, lineHeight: 1.55 }}>
         An agency is a department&rsquo;s isolation zone. Every scope, secret, variable, SSH key, host record and
-        runner belongs to exactly one, and <strong>Global</strong> is the global administrators&rsquo; own agency:
-        its rows are Global&rsquo;s runs&rsquo; to use and a global administrator&rsquo;s to change. A run goes only to a
-        runner that serves its scope&rsquo;s agency, and receives only that agency&rsquo;s secrets and keys.{" "}
+        runner belongs to exactly one. A run goes only to a runner that serves its agency, and receives only that
+        agency&rsquo;s secrets and keys.{" "}
         <strong>Expand a row to see and edit what it contains.</strong> To go the other way — which agency one secret,
         variable, key, scope or runner belongs to — that row&rsquo;s own catalog carries an Agency column.{" "}
         <DocLink href={DOC_LINKS.agencies}>How membership and ownership work</DocLink>
       </div>
+      {central && (
+        <div
+          data-testid="central-apart"
+          style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, padding: "10px 14px", border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, background: c.panel }}
+        >
+          <div style={{ flex: 1, fontSize: c.fontSm, color: c.textSec, lineHeight: 1.5 }}>
+            <strong style={{ color: c.text }}>{administrationLabel(central.name)}</strong> — the installation&rsquo;s own: it
+            runs nothing, and holds the installation&rsquo;s notices, change log, alert rules and calendar catalogue. It
+            may be renamed, never deleted.
+          </div>
+          {canEdit && (
+            <Btn small onClick={() => setEditing(central)} disabled={!!rowWhy(central, central.canEdit)} title={rowWhy(central, central.canEdit) || undefined}>
+              Rename
+            </Btn>
+          )}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <div style={{ flex: 1 }}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search agencies by name or description..." />
@@ -159,9 +181,9 @@ export function AgenciesTab({
           or the search back. */}
       {!loading && !error && filtered.length === 0 && (
         <div style={{ color: c.textSec }}>
-          {items.length === 0 ? (
+          {ordinary.length === 0 ? (
             <>
-              <div>No agencies yet. Until one exists, every scope, credential and runner is unrestricted.</div>
+              <div>No agencies yet. Work happens in an agency: create the first one.</div>
               {canEdit && (
                 <div style={{ marginTop: 12 }}>
                   <Btn small onClick={() => setAdding(true)} disabled={!!globalWhy} title={globalWhy || undefined}>
@@ -319,14 +341,20 @@ export function AgenciesTab({
   );
 }
 
-function AgencyFormModal({
+export function AgencyFormModal({
   initial,
   onClose,
   onSaved,
+  withAdminGroup,
+  onCreated,
 }: {
   initial: AgencyRow | null;
   onClose: () => void;
   onSaved: (msg: string) => void;
+  /** 2.5.3 CA-16, question 210: also ask for the administrators' AD group (the first-agency card). */
+  withAdminGroup?: boolean;
+  /** Called with the new agency's id once it is created (and its group granted). */
+  onCreated?: (id: string) => void;
 }) {
   const isEdit = initial != null;
   const [name, setName] = useState(initial?.name ?? "");
@@ -339,6 +367,8 @@ function AgencyFormModal({
   const [repoUrl, setRepoUrl] = useState("");
   const [pat, setPat] = useState("");
   const [branch, setBranch] = useState("main");
+  const [adminGroup, setAdminGroup] = useState("");
+  const [createdId, setCreatedId] = useState<string | null>(null);
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -365,6 +395,20 @@ function AgencyFormModal({
                 : {}),
             },
           });
+    if (!res.error && !isEdit && withAdminGroup) {
+      const id = (res.data as { id?: string } | undefined)?.id ?? "";
+      // The agency stands whatever the grant's answer; the form says so.
+      const refused = adminGroup.trim() && id ? await grantAgencyAdmins(id, adminGroup) : null;
+      setBusy(false);
+      if (refused) {
+        // Created: a second Save would create it again. The form only opens it.
+        setCreatedId(id);
+        setFormError(`${name.trim()} was created, but the administrators' group was not added: ${refused}. Add it in Settings → Users & Access.`);
+        return;
+      }
+      onCreated?.(id);
+      return;
+    }
     setBusy(false);
     if (res.error) setFormError(errMsg(res.error));
     else if (isEdit) onSaved(`Agency updated: ${name.trim()}`);
@@ -386,14 +430,20 @@ function AgencyFormModal({
       footer={
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {formError && <div style={{ fontSize: c.fontSm, color: c.danger }}>{formError}</div>}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <Btn onClick={onClose} disabled={busy}>
-              Cancel
-            </Btn>
-            <Btn primary onClick={save} disabled={busy}>
-              {busy ? "Saving…" : isEdit ? "Save Changes" : "Save Agency"}
-            </Btn>
-          </div>
+          {createdId ? (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn primary onClick={() => onCreated?.(createdId)}>Open {name.trim()}</Btn>
+            </div>
+          ) : (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn onClick={onClose} disabled={busy}>
+                Cancel
+              </Btn>
+              <Btn primary onClick={save} disabled={busy}>
+                {busy ? "Saving…" : isEdit ? "Save Changes" : "Save Agency"}
+              </Btn>
+            </div>
+          )}
         </div>
       }
     >
@@ -416,6 +466,18 @@ function AgencyFormModal({
             style={inputStyle()}
           />
         </div>
+        {!isEdit && withAdminGroup && (
+          <div>
+            <label style={labelStyle()}>Administrators' AD group (optional)</label>
+            <input
+              aria-label="Administrators' AD group"
+              value={adminGroup}
+              onChange={(e) => setAdminGroup(e.target.value)}
+              placeholder="e.g. ops-admins"
+              style={inputStyle()}
+            />
+          </div>
+        )}
         {!isEdit && (
           <button
             type="button"
@@ -592,7 +654,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
       desired: [...members.map((x) => ({ kind: x.kind, id: x.id })), { kind, id }],
       busyKey: `add-${kind}`,
       title: `Give ${name} to this agency?`,
-      message: `${name} is Global's. Adding it here makes this agency its owner: other agencies' runs that bind it stop resolving it the next time they start.`,
+      message: `${name} is ${globalAgencyName()}'s, which runs nothing, so no run uses it. Adding it here makes this agency its owner, and this agency's runs can bind it.`,
       confirm: "Give it to this agency",
     });
   };
@@ -664,7 +726,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
           // ADDING here takes one of Global's rows out of Global: a repair, a
           // global administrator's (configureApp on every agency) whatever the
           // kind. For anyone else it is disabled with why.
-          const why = globalAdmin ? "" : `Adding one of Global's here changes its agency. ${REPAIR_HINT}`;
+          const why = globalAdmin ? "" : `Adding one of ${globalAgencyName()}'s here changes its agency. ${REPAIR_HINT}`;
           // REMOVING is possible only for a row still in several agencies (from
           // before 2.3.0): a row in one agency cannot be left in none, and one
           // this agency owns is moved, not removed. So the control exists only
@@ -749,7 +811,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
                     color: c.textSec,
                   }}
                 >
-                  <option value="">{avail.length === 0 ? "Nothing of Global's to add" : "+ Add one of Global's…"}</option>
+                  <option value="">{avail.length === 0 ? `Nothing of ${globalAgencyName()}'s to add` : `+ Add one of ${globalAgencyName()}'s…`}</option>
                   {avail.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
@@ -764,7 +826,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, rolesAdmin = false,
       </div>
       <div style={{ fontSize: c.fontXs, color: c.textMuted }}>
         A scope, secret, variable and key belongs to exactly one agency, and another agency gets one by a copy. A global
-        administrator can repair a placement that was a mistake: add one of Global's here, which makes this agency its
+        administrator can repair a placement that was a mistake: add one of {globalAgencyName()}'s here, which makes this agency its
         owner, or change its agency on the row itself. A repair asks for a reason, written to the audit log.
       </div>
       {pending && (

@@ -6,6 +6,7 @@ import { AlertBanner, Btn, InlineLoading } from "../components/ui";
 import { fmtInAppZone } from "../utils/datetime";
 import { c } from "../theme";
 import type { components } from "../api/schema";
+import { globalAgencyName } from "../globalName";
 
 // Notices — one inbox for standing conditions (LR-85, v2.3.0).
 //
@@ -43,9 +44,10 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   schedule_gone: { title: "A schedule in use was removed from Git", to: "/schedules", toLabel: "Schedules" },
   workflow_spans_agencies: { title: "A workflow runs jobs of more than one agency", to: "/workflows", toLabel: "Workflows" },
   reaction_other_agency: { title: "A reaction watches another agency's definition", to: "/schedules?tab=reactions", toLabel: "Reactions" },
-  global_job_on_agency_scope: { title: "A job of Global's repository names an agency's scope", to: "/jobs", toLabel: "Jobs" },
-  global_credential_bound: { title: "A job binds a secret, variable or key only Global has", to: "/env-vars", toLabel: "Env Vars" },
-  global_host_record: { title: "A host only Global has a record for", to: "/settings?tab=targets", toLabel: "SSH Targets" },
+  // The built-in agency's name is read when the title is shown (a getter): this
+  // table is built at import, before the name is known.
+  global_credential_bound: { get title() { return `A job binds a secret, variable or key only ${globalAgencyName()} has`; }, to: "/env-vars", toLabel: "Env Vars" },
+  global_host_record: { get title() { return `A host only ${globalAgencyName()} has a record for`; }, to: "/settings?tab=targets", toLabel: "SSH Targets" },
   // 2.5.1 SG-40: an agency may be created without one; its administrator connects it.
   agency_no_repository: { title: "An agency has no repository connected", to: "/settings?tab=repositories", toLabel: "Repositories" },
   // 2.5.0 C5 (GA-2): its delegates delete it in Users & Access; a global
@@ -53,15 +55,12 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   grant_group_unlisted: { title: "A grant names a group its agency does not list", to: "/settings?tab=users", toLabel: "Users & Access" },
   // 2.5.1 SG-28: the agency's own Vault did not answer.
   agency_vault_unreachable: { title: "An agency's own Vault cannot be reached", to: "/settings?tab=agencyvault", toLabel: "Agency Vault" },
-  local_runner_served: { title: "The local runner no longer serves this agency", to: "/runners", toLabel: "Runners" },
-  global_script_job: { title: "A job is built on a script of Global's repository", to: "/jobs", toLabel: "Jobs" },
-  global_schedule_bound: { title: "A job or workflow is bound to a schedule of Global's", to: "/schedules", toLabel: "Schedules" },
-  global_calendar_scope: { title: "A global calendar of Global's freezes Global only", to: "/schedules", toLabel: "Schedules" },
+  global_script_job: { get title() { return `A job is built on a script of ${globalAgencyName()}'s repository`; }, to: "/jobs", toLabel: "Jobs" },
+  global_schedule_bound: { get title() { return `A job or workflow is bound to a schedule of ${globalAgencyName()}'s`; }, to: "/schedules", toLabel: "Schedules" },
   schedule_entry_no_owner: { title: "A schedule entry with no owner no longer fires", to: "/schedules", toLabel: "Schedules" },
   may_run_on_agent: { title: "Shell jobs that ran from the server may now run on an agent", to: "/scopes", toLabel: "Scopes" },
   mixed_scope: { title: "Shell jobs that ran in two places may now run in either", to: "/scopes", toLabel: "Scopes" },
   may_run_on_server: { title: "Shell jobs that ran on agents may now run from the server", to: "/scopes", toLabel: "Scopes" },
-  agency_placed: { title: "The upgrade made the local runner serve an agency", to: "/settings?tab=localrunner", toLabel: "Local runner" },
   shell_job_requires: { title: "A shell job requires what no agent has", to: "/jobs", toLabel: "Jobs" },
   no_runner_for_shell_jobs: { title: "An agency's shell jobs have no runner", to: "/runners", toLabel: "Runners" },
   local_runner_host_keys: { title: "The local runner has no approved key for some hosts", to: "/runners", toLabel: "Runners" },
@@ -69,7 +68,42 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   leftover_executor_key: { title: "Jobs in Git still declare an executor, which is ignored", to: "/scopes", toLabel: "Scopes" },
   project_job_no_checkout_agent: { title: "A job on a project has no agent that allows checkout", to: "/runners", toLabel: "Runners" },
   job_script_gone: { title: "A job's script was removed from Git", to: "/jobs", toLabel: "Jobs" },
+  // 2.5.3 CA7: every job names a scope; one made before with none is listed.
+  job_without_scope: { title: "Jobs built in the app have no scope", to: "/jobs", toLabel: "Jobs" },
+  // 2.5.3 (CA-17): one finding per kind of row Central still holds; its way
+  // out is on the page of that kind (see HELD).
+  central_holds_work: { title: "The administration still holds work that no longer runs" },
+  // 2.5.3 CA-9: the local runner belongs to no agency, so it is off.
+  local_runner_unassigned: { title: "The local runner belongs to no agency and is off", to: "/settings?tab=localrunner", toLabel: "Local runner" },
+  // 2.5.3 CA-7: settings that configured Central's work are ignored.
+  environment_settings_ignored: { title: "Environment settings that no longer apply are set", to: "/settings?tab=repositories", toLabel: "Repositories" },
+  // 2.5.3 CA-28, CA-27: a copy of a Central calendar is behind, or its original is gone.
+  calendar_update_available: { get title() { return `A calendar from ${globalAgencyName()} has an update`; }, to: "/schedules?tab=calendars", toLabel: "Calendars" },
+  calendar_no_longer_offered: { get title() { return `A calendar from ${globalAgencyName()} is no longer offered`; }, to: "/schedules?tab=calendars", toLabel: "Calendars" },
 };
+
+/** Where each kind central_holds_work lists (subject `central:<kind>`) is moved
+ * out or deleted: its work page, while working in Central (CA-12, CA-17). */
+const HELD: Record<string, { to: string; toLabel: string }> = {
+  job: { to: "/jobs", toLabel: "Jobs" },
+  workflow: { to: "/workflows", toLabel: "Workflows" },
+  schedule: { to: "/schedules?tab=catalog", toLabel: "Schedules" },
+  scope: { to: "/scopes", toLabel: "Scopes" },
+  secret: { to: "/env-vars", toLabel: "Env Vars" },
+  "env-var": { to: "/env-vars", toLabel: "Env Vars" },
+  "ssh-credential": { to: "/env-vars", toLabel: "Env Vars" },
+  host: { to: "/settings?tab=targets", toLabel: "SSH Targets" },
+  bastion: { to: "/settings?tab=targets", toLabel: "SSH Targets" },
+  runner: { to: "/runners", toLabel: "Runners" },
+  repository: { to: "/settings?tab=repositories", toLabel: "Repositories" },
+};
+
+/** kindOf is a notice's title and the page its remedy is made on. */
+function kindOf(n: Notice): { title: string; to?: string; toLabel?: string } | undefined {
+  const k = KINDS[n.kind];
+  if (n.kind === "central_holds_work" && k) return { ...k, ...HELD[n.subject.replace(/^central:/, "")] };
+  return k;
+}
 
 export function Notices() {
   const [dep, setDep] = useState(0);
@@ -122,7 +156,7 @@ export function Notices() {
             {g.name} · {g.items.length}
           </div>
           {g.items.map((n, i) => {
-            const k = KINDS[n.kind];
+            const k = kindOf(n);
             return (
               <div key={n.id} style={{ padding: "12px 16px", borderTop: i === 0 ? "none" : `1px solid ${c.borderLight}`, display: "flex", gap: 14, alignItems: "flex-start" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>

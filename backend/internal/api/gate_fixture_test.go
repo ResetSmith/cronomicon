@@ -73,6 +73,14 @@ func gateServer(t *testing.T) (http.Handler, *sql.DB) {
 // trusted-header cast.
 func gateServerWith(t *testing.T, adjust func(*config.Config)) (http.Handler, *sql.DB) {
 	t.Helper()
+	return gateServerSeeded(t, adjust, nil)
+}
+
+// gateServerSeeded is gateServerWith with rows written after the cast and
+// before the server is built: what the server reads once at its start (the
+// repositories whose sync services it starts, for one) sees them.
+func gateServerSeeded(t *testing.T, adjust func(*config.Config), seed func(exec func(string, ...any))) (http.Handler, *sql.DB) {
+	t.Helper()
 	pool, err := db.Open(filepath.Join(t.TempDir(), "gate.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -122,6 +130,9 @@ func gateServerWith(t *testing.T, adjust func(*config.Config)) (http.Handler, *s
 	grant(gAllViewer, "viewer", "")
 	grant(gAllComposer, "composer", "")
 	grant(gAllFull, "full", "")
+	if seed != nil {
+		seed(exec)
+	}
 
 	cfg := &config.Config{
 		AuthMode:       config.AuthModeTrustedHeader,

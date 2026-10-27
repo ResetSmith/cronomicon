@@ -376,7 +376,7 @@ func TestGlobalCalendarSuppressesAReaction(t *testing.T) {
 	seedJobRow(t, pool, "up", 1)
 	seedJobRow(t, pool, "down", 1)
 	seedReaction(t, pool, "down", "r", "up", "success")
-	seedCal(t, pool, "change-freeze", true, true, map[string]string{today(s): "Year-end freeze"})
+	seedCalOf(t, pool, opsAgency, "change-freeze", true, true, map[string]string{today(s): "Year-end freeze"}) // the reacting job's agency's (§0a)
 	seedFinishedRun(t, pool, "r1", "up", "success", time.Minute)
 
 	primeCursor(t, s)
@@ -405,7 +405,7 @@ func TestEntryLevelCalendarBindingDoesNotSuppressAReaction(t *testing.T) {
 	seedJobRow(t, pool, "down", 1)
 	seedReaction(t, pool, "down", "r", "up", "success")
 	// Non-global calendar, bound to the reacting job's own schedule entry.
-	seedCal(t, pool, "holidays", false, false, map[string]string{today(s): "A holiday"})
+	seedCalOf(t, pool, opsAgency, "holidays", false, false, map[string]string{today(s): "A holiday"})
 	bindSchedule(t, pool, "job", "down", "nightly", `["holidays"]`, "")
 	seedFinishedRun(t, pool, "r1", "up", "success", time.Minute)
 
@@ -970,9 +970,10 @@ func TestReactionFiresAWorkflowTarget(t *testing.T) {
 	pool := mustPool(t)
 	s := New(pool, quietLog(), nil)
 	seedJobRow(t, pool, "up", 1)
+	seedOpsRepo(t, pool)
 	if _, err := pool.ExecContext(ctxb(), `
-		INSERT INTO workflows (name, source, steps, enabled, synced_at)
-		VALUES ('cleanup','git','[]',1,'t')`); err != nil {
+		INSERT INTO workflows (name, source, steps, enabled, synced_at, repo_id)
+		VALUES ('cleanup','git','[]',1,'t',?)`, opsRepo); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.ExecContext(ctxb(), `
@@ -1047,9 +1048,10 @@ func TestReactionFiresAWorkflowTarget(t *testing.T) {
 func TestWorkflowToWorkflowReaction(t *testing.T) {
 	pool := mustPool(t)
 	s := New(pool, quietLog(), nil)
+	seedOpsRepo(t, pool)
 	if _, err := pool.ExecContext(ctxb(), `
-		INSERT INTO workflows (name, source, steps, enabled, synced_at) VALUES
-		  ('nightly','git','[]',1,'t'), ('report','git','[]',1,'t')`); err != nil {
+		INSERT INTO workflows (name, source, steps, enabled, synced_at, repo_id) VALUES
+		  ('nightly','git','[]',1,'t',?), ('report','git','[]',1,'t',?)`, opsRepo, opsRepo); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.ExecContext(ctxb(), `
@@ -1236,8 +1238,8 @@ func TestReactionMatchesTheUpstreamByIdentityNotName(t *testing.T) {
 	seedJobRow(t, pool, "downstream", 1)
 	for _, uid := range []string{"uid-fin-nightly", "uid-tax-nightly"} {
 		if _, err := pool.ExecContext(ctxb(),
-			`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, created_at)
-			 VALUES (?, 'nightly', 'cronomicon', 'bash', 'Allow', 1, 't')`, uid); err != nil {
+			`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, created_at, owner_agency)
+			 VALUES (?, 'nightly', 'cronomicon', 'bash', 'Allow', 1, 't', ?)`, uid, opsAgency); err != nil {
 			t.Fatalf("seed job %s: %v", uid, err)
 		}
 	}
@@ -1286,8 +1288,8 @@ func TestReactionNameFallbackNeedsAnUnambiguousName(t *testing.T) {
 	seedJobRow(t, pool, "downstream", 1)
 	job := func(uid string) {
 		if _, err := pool.ExecContext(ctxb(), `
-			INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, created_at)
-			VALUES (?, 'nightly', 'cronomicon', 'bash', 'Allow', 1, 't')`, uid); err != nil {
+			INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, created_at, owner_agency)
+			VALUES (?, 'nightly', 'cronomicon', 'bash', 'Allow', 1, 't', ?)`, uid, opsAgency); err != nil {
 			t.Fatalf("seed job %s: %v", uid, err)
 		}
 	}

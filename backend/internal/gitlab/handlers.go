@@ -33,21 +33,6 @@ func NewRegistryHandlers(reg *Registry) *Handlers {
 	return &Handlers{reg: reg}
 }
 
-// service is the Service a request is answered by. Every route mounted here
-// existed before a repository was a row, and means Global's (GR-20, GR-27):
-// the routes that name a repository are Phase R6's. It answers 503 and returns
-// nil when there is none: the server is shutting down, or the repository's row
-// could not be read when the server started. (A restart swaps one Service for
-// the next in one step, so a saved connection is never such a moment.)
-func (h *Handlers) service(w http.ResponseWriter) *Service {
-	svc := h.serviceOf(repoid.Global)
-	if svc == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable",
-			"the repository's sync service is not running; try again in a moment")
-	}
-	return svc
-}
-
 // serviceOf is the running Service of one repository, or nil when it has none.
 // It writes nothing. (Handlers built around one fixed Service answer for that
 // Service's repository and for no other.)
@@ -142,8 +127,15 @@ func pageParams(r *http.Request) (page, pageSize int) {
 
 // ListGitHistoryOf lists a named repository's syncs, and no other's.
 func (h *Handlers) ListGitHistoryOf(repoID string, w http.ResponseWriter, r *http.Request) {
-	svc := h.repoService(w, repoID)
+	svc := h.serviceOf(repoID)
+	if svc == nil && repoID == repoid.Global && h.reg != nil {
+		// The built-in agency has no repository and no Service since 2.5.3
+		// (CA-6), and its past syncs are still read: a reader of the rows that
+		// syncs nothing, the history being the database's alone.
+		svc = &Service{db: h.reg.db, repoID: repoid.Global}
+	}
 	if svc == nil {
+		h.repoService(w, repoID)
 		return
 	}
 	page, pageSize := pageParams(r)
@@ -207,13 +199,11 @@ func (h *Handlers) WebhookGitLab(w http.ResponseWriter, r *http.Request) {
 	if repoID == "" {
 		repoID = repoid.Global
 	}
+	// The built-in agency has no repository since 2.5.3 (CA-6), so a delivery
+	// to the route with no id (or naming 'global') finds no Service and is
+	// answered as one for a repository that is not there. Until then it was
+	// "not ready, try again", which a hook's sender would retry for ever.
 	svc := h.serviceOf(repoID)
-	if svc == nil && repoID == repoid.Global {
-		// Global's always exists; with no Service it is the server that is not
-		// ready (see service), and a hook's sender should try again.
-		h.service(w)
-		return
-	}
 	token := r.Header.Get("X-Gitlab-Token")
 	if svc == nil && token != "" && h.reg != nil && h.reg.db != nil {
 		// The read a real repository's check makes, made for one that is not
@@ -299,8 +289,11 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 	}
 	if svc == nil {
 		if repoID == repoid.Global {
-			writeError(w, http.StatusServiceUnavailable, "unavailable",
-				"the repository's sync service is not running; try again in a moment")
+			// The built-in agency has no repository since 2.5.3 (CA-6): nothing
+			// to publish to, as for an agency that has not connected one.
+			writeError(w, http.StatusUnprocessableEntity, "no_repository",
+				"the built-in administration agency has no repository, so there is nothing to publish to: "+
+					"publish to an agency's repository (repoId)")
 			return
 		}
 		writeError(w, http.StatusNotFound, "not_found", "no such repository")

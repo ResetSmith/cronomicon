@@ -32,6 +32,8 @@ func TestScheduleComposeCRUD(t *testing.T) {
 	      VALUES('gitsched','git','0 0 1 * * *','sha256:bbb','schedules/gitsched.yaml','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
+	workInAgency(t, pool, client)
+	copyGlobalDefsToWorkRepo(t, pool)
 
 	do := func(method, url string, body any, hdrCSRF bool) *http.Response {
 		t.Helper()
@@ -123,7 +125,7 @@ func TestScheduleComposeCRUD(t *testing.T) {
 
 	// ── A referencing cronomicon job binds 'nightly' (so we can prove propagation) ─────
 	resp = do(http.MethodPost, ts.URL+"/api/v1/jobs",
-		map[string]any{"name": "backup-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"nightly"}}, true)
+		map[string]any{"name": "backup-job", "scriptRef": "backup-db", "scope": workScope, "scheduleRefs": []string{"nightly"}}, true)
 	code = resp.StatusCode
 	resp.Body.Close()
 	if code != http.StatusCreated {

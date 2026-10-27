@@ -3,9 +3,6 @@ package notices
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"errors"
-	"fmt"
 )
 
 // KindLocalRunnerServed — the local runner served an agency until 2.4.0, and
@@ -21,40 +18,52 @@ const KindLocalRunnerServed = "local_runner_served"
 // the local runner served, as a JSON list of ids.
 const LocalRunnerServedKey = "upgrade.2.4.0.localRunnerServed"
 
+// Retired in 2.5.3 (CA-11): the local runner belongs to whichever agency a
+// global administrator gives it (CA-8), one of these included, so "it serves
+// Global only now" no longer holds. Its notices are cleared; the check stays
+// one release so that they are, and goes after.
 func checkLocalRunnerServed(ctx context.Context, database *sql.DB) error {
-	var raw string
-	err := database.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, LocalRunnerServedKey).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Reconcile(ctx, database, KindLocalRunnerServed, nil)
+	return Reconcile(ctx, database, KindLocalRunnerServed, nil)
+}
+
+// KindLocalRunnerUnassigned — the local runner's switch is stored on, and it
+// belongs to no agency, so it is off (2.5.3, CA-9): the state an installation
+// from before 2.5.3 arrives in when its local runner, which was Global's, was
+// on. Its runs were Global's, which runs nothing since (CA-1).
+//
+// Subject: "local-runner". Filed under the built-in agency, for global
+// administrators. It clears when the local runner is given to an agency, or
+// turned off.
+const KindLocalRunnerUnassigned = "local_runner_unassigned"
+
+// localRunnerUnassignedOn is settings.LocalRunnerUnassignedButSwitchedOn,
+// given by the server at start (the notices package does not import settings).
+var localRunnerUnassignedOn func(context.Context, *sql.DB) (bool, error)
+
+// SetLocalRunnerUnassignedCheck gives the checks the reader of that state.
+func SetLocalRunnerUnassignedCheck(f func(context.Context, *sql.DB) (bool, error)) {
+	localRunnerUnassignedOn = f
+}
+
+func checkLocalRunnerUnassigned(ctx context.Context, database *sql.DB) error {
+	if localRunnerUnassignedOn == nil {
+		return nil
 	}
+	on, err := localRunnerUnassignedOn(ctx, database)
 	if err != nil {
 		return err
 	}
-	var served []string
-	if err := json.Unmarshal([]byte(raw), &served); err != nil {
-		return fmt.Errorf("read the record of what the local runner served: %w", err)
-	}
 	var found []Finding
-	for _, agency := range served {
-		var name string
-		var hasAgent bool
-		err := database.QueryRowContext(ctx, `
-			SELECT a.name, EXISTS (SELECT 1 FROM runners r JOIN runner_agencies ra ON ra.runner_id = r.id
-			                        WHERE r.kind = 'agent' AND r.owner_agency = a.id AND ra.agency_id = a.id)
-			  FROM agencies a WHERE a.id = ?`, agency).Scan(&name, &hasAgent)
-		if errors.Is(err, sql.ErrNoRows) || (err == nil && hasAgent) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
+	if on {
 		found = append(found, Finding{
-			AgencyID: agency,
-			Subject:  agency,
-			Detail: fmt.Sprintf("Until 2.4.0 the local runner served %s, so the server ran its shell jobs. The local runner "+
-				"is Global's and serves Global only now: %s's shell jobs wait for an agent of its own. Enrol one for %s "+
-				"(Runners → Add runner). This notice clears when one serves it.", name, name, name),
+			AgencyID: "global",
+			Subject:  "local-runner",
+			Detail: "The local runner was on. Since 2.5.3 it belongs to the one agency a global administrator gives it, " +
+				"or to none, and with none it is off: it was the built-in agency's, which runs nothing now. Give it to the " +
+				"agency whose shell jobs it is to run (Settings → Local runner), or turn it off. Given, it is off until that " +
+				"agency has approved its own hosts' keys for it and a global administrator turns it on. This notice clears " +
+				"when either is done.",
 		})
 	}
-	return Reconcile(ctx, database, KindLocalRunnerServed, found)
+	return Reconcile(ctx, database, KindLocalRunnerUnassigned, found)
 }
