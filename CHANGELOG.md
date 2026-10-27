@@ -189,6 +189,9 @@ Then, because Central runs nothing from this release on:
   runs nothing).
 - The schedule entry's calendars are called Forbid and Allow on screen (the
   YAML keys stay `skipCalendars` and `onlyCalendars`).
+- In the Score's readout, a run's job name opens the run in History, as its
+  *View run* link does, and *View run* is set at the readout's text size
+  instead of the small muted one.
 - The validate and fat images apply Debian's published security fixes
   when they are built (`apt-get upgrade`), instead of waiting for a new base
   image.
