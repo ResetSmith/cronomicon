@@ -6551,8 +6551,12 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         The coequal <strong>“Key by name (runner / inventory)”</strong> option (writing
                         <code>authKeyEnvVar</code>) is <strong>fully supported</strong> — it is the <em>permanent</em>
                         path for hosts an agent connects to and for inventory-imported hosts, which resolve keys by name
-                        <em>locally</em> and never receive credential material. A host record or bastion may name only
-                        a key of its own agency (the picker offers its owner's keys only).
+                        <em>locally</em>. The picker's key is used by the <strong>local runner</strong> only; an agent
+                        receives a stored key only when the job gives it one, by <strong>Connect as</strong> or a key
+                        binding, and only if the agent is flagged for Secret injection (<a
+                            href="administrator-manual.html#stored-keys">administrator manual &sect;7.5b</a>). A host
+                        record or bastion may name only a key of its own agency (the picker offers its owner's keys
+                        only).
                     </p>
                 </div>
 
@@ -9304,11 +9308,13 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     </dd>
                     <dt>authKeyEnvVar</dt>
                     <dd>The <em>name</em> of the env var or stored secret holding the unencrypted SSH private key for a
-                        host or bastion. The server ships only this name to runners; key bytes never cross the wire.
+                        host or bastion. The server ships only this name to runners. Key bytes go to an agent only when a
+                        run carries a stored key (Connect as, or a key binding) and the agent is flagged for Secret
+                        injection.
                         <strong>Coequal</strong> with <code>authCredentialId</code> (the first-class <a
                             href="#envvars">SSH key credential</a>) and fully supported: the name path is
                         <strong>permanent</strong> for hosts an agent connects to and inventory-imported hosts, which
-                        resolve keys by name <em>locally</em> and never receive credential material.
+                        resolve keys by name <em>locally</em>.
                     </dd>
                     <dt>Bastion (jump host / ProxyJump)</dt>
                     <dd>An intermediate SSH host named in a target's “via” field. The local runner dials the bastion,
