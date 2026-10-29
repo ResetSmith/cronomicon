@@ -45,6 +45,7 @@ import {
   valueBoxStyle,
 } from "./ui";
 import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
+import { useScopeOptionLabel } from "./scopeOption";
 import { globalAgencyName } from "../../globalName";
 import { useInCentral } from "../../components/CentralRunsNothing";
 
@@ -691,6 +692,7 @@ function SecretFormModal({
   // A global row has no scope, so it initializes to the "All" sentinel and
   // round-trips back to global on save (scopeForWrite).
   const [scope, setScope] = useState(initial?.scope || ALL_SCOPE_OPTION);
+  const scopeLabel = useScopeOptionLabel(initial?.ownerAgency);
   const [value, setValue] = useState("");
   const [vaultPath, setVaultPath] = useState(initial?.vaultPath ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
@@ -878,7 +880,7 @@ function SecretFormModal({
           <select value={scope} onChange={(e) => setScope(e.target.value)} style={{ ...inputStyle(), cursor: "pointer" }}>
             {scopeNames.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {scopeLabel(s)}
               </option>
             ))}
           </select>

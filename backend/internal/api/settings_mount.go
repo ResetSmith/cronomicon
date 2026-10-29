@@ -133,9 +133,10 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "key and source required")
 			return
 		}
-		// D3: a scope-restricted manager may not create a secret outside their grants,
-		// NOR in the global scope (a global secret injects into every scope). 403 (not
-		// 404) — the actor supplied the scope, so there is no existence to leak.
+		// D3: a scope-restricted manager may not create a secret outside their grants;
+		// the global scope (every scope of the owner agency) needs the verb on that
+		// agency (auth.RowScopeWritableIn). 403 (not 404) — the actor supplied the
+		// scope, so there is no existence to leak.
 		// RF-Q2(a): a restricted creator names at least one held agency, so the new
 		// secret is born owned — an unmembered secret is RB-Q14 unrestricted-only,
 		// which would lock the creator out of the row they just made. RA-9: when they
@@ -147,7 +148,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		}
 		// The scope is the new row's owner's scope of that name (I2), so the owner
 		// is settled first.
-		if !auth.ScopeWritableIn(id, ownerAgencyFor(agencyIDs), scopeStrOf(inp.Scope)) {
+		if !auth.RowScopeWritableIn(id, auth.PermManageEnvVars, ownerAgencyFor(agencyIDs), scopeStrOf(inp.Scope)) {
 			s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot create a secret in a scope outside your access")
 			return
 		}
@@ -254,15 +255,15 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				return
 			}
 		}
-		// The target scope must be writable too (blocks moving it out of reach OR
-		// widening a scoped secret to global). A restricted PUT that omits scope would
-		// globalize the row — ScopeWritable("") rejects that for a restricted actor.
+		// The target scope must be writable too (blocks moving it out of reach). A PUT
+		// that omits scope globalizes the row, which needs the verb on its owner
+		// agency (auth.RowScopeWritableIn).
 		rowOwner, rerr := s.rowOwnerAgency(r.Context(), "secrets", sid)
 		if rerr != nil {
 			httpx.Fail500(w, s.log, "db_error", rerr)
 			return
 		}
-		if !auth.ScopeWritableIn(id, rowOwner, scopeStrOf(inp.Scope)) {
+		if !auth.RowScopeWritableIn(id, auth.PermManageEnvVars, rowOwner, scopeStrOf(inp.Scope)) {
 			s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot move a secret into a scope outside your access")
 			return
 		}
@@ -940,8 +941,9 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 // (auth.ScopeReadable), which returns true for a GLOBAL (scope "") row, so a
 // scope-restricted manager could otherwise delete, re-scope (capture), migrate, or
 // label a global secret that injects into every scope. This adds
-// auth.ScopeWritable(existing.Scope): a restricted actor is refused on a global
-// row. Ordering matters — loadSecretInScope has already returned 404 for a
+// auth.RowScopeWritableIn(existing.Scope): a global row is refused to anyone
+// without the verb on its owner agency (another agency's, Global's, an unowned
+// one). Ordering matters — loadSecretInScope has already returned 404 for a
 // genuinely out-of-scope non-global row (no existence oracle), so the only row
 // that reaches the writability gate and fails it is a global one, for which 403 is
 // correct (global existence is not scope-secret; it mirrors the create-side 403).
@@ -1068,7 +1070,7 @@ func (s *Server) loadSecretWritable(w http.ResponseWriter, r *http.Request, sec 
 		httpx.Fail500(w, s.log, "db_error", oerr)
 		return nil, false
 	}
-	if !auth.ScopeWritableIn(actor, owner, scopeStrOf(sc.Scope)) {
+	if !auth.RowScopeWritableIn(actor, auth.PermManageEnvVars, owner, scopeStrOf(sc.Scope)) {
 		s.denyScope(w, r, scopeStrOf(sc.Scope), "cannot modify a secret in a scope outside your access")
 		return nil, false
 	}
@@ -1081,7 +1083,7 @@ func (s *Server) loadSecretWritable(w http.ResponseWriter, r *http.Request, sec 
 // ordering turns into an INTEGRITY hole (a restricted manager POSTing
 // {key:"DB_HOST", scope:"prod"} makes a prod run's CRONOMICON_VAR_DB_HOST resolve the
 // attacker's value over the global row). 404 on a row out of read scope (no
-// existence oracle), 403 on a global row a restricted actor may not rewrite.
+// existence oracle), 403 on a global row of an agency the actor does not manage.
 func (s *Server) loadEnvVarWritable(w http.ResponseWriter, r *http.Request, evID string, actor auth.Identity) (*settings.EnvVar, bool) {
 	ev, err := settings.GetEnvVar(r.Context(), s.db, evID)
 	if err != nil {
@@ -1101,7 +1103,7 @@ func (s *Server) loadEnvVarWritable(w http.ResponseWriter, r *http.Request, evID
 		httpx.Fail(w, http.StatusNotFound, "not_found", "env var not found")
 		return nil, false
 	}
-	if !auth.ScopeWritableIn(actor, owner, scopeStr) {
+	if !auth.RowScopeWritableIn(actor, auth.PermManageEnvVars, owner, scopeStr) {
 		s.denyScope(w, r, scopeStr, "cannot modify an env var in a scope outside your access")
 		return nil, false
 	}
@@ -1183,9 +1185,9 @@ func (s *Server) handleCreateEnvVar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "key and value required")
 		return
 	}
-	// M4: a restricted manager may not create a variable outside their grants, NOR in
-	// the global scope (a global var injects into every scope — same rationale as
-	// secrets). 403 (not 404): the actor supplied the scope, so there is nothing to leak.
+	// M4: a restricted manager may not create a variable outside their grants; the
+	// global scope (every scope of the owner agency) needs the verb on that agency,
+	// as for secrets. 403 (not 404): the actor supplied the scope, so there is nothing to leak.
 	// RF-Q2(a): same creation rule as secrets — the new variable is born owned by
 	// at least one of the restricted creator's agencies (RB-Q14 otherwise makes it
 	// unrestricted-only the moment it exists), inherited per RA-9 when unambiguous.
@@ -1194,7 +1196,7 @@ func (s *Server) handleCreateEnvVar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The scope is the new row's owner's scope of that name (I2).
-	if !auth.ScopeWritableIn(id, ownerAgencyFor(agencyIDs), scopeStrOf(inp.Scope)) {
+	if !auth.RowScopeWritableIn(id, auth.PermManageEnvVars, ownerAgencyFor(agencyIDs), scopeStrOf(inp.Scope)) {
 		s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot create an env var in a scope outside your access")
 		return
 	}
@@ -1253,7 +1255,8 @@ func (s *Server) handleUpdateEnvVar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// M4: the actor must be able to WRITE the EXISTING variable (404 out-of-scope,
-	// 403 on a global row) AND may not move it into a scope outside their grants.
+	// 403 on a global row of an agency they do not manage) AND may not move it into
+	// a scope outside their grants.
 	if _, ok := s.loadEnvVarWritable(w, r, evID, id); !ok {
 		return
 	}
@@ -1269,7 +1272,7 @@ func (s *Server) handleUpdateEnvVar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", rerr)
 		return
 	}
-	if !auth.ScopeWritableIn(id, rowOwner, scopeStrOf(inp.Scope)) {
+	if !auth.RowScopeWritableIn(id, auth.PermManageEnvVars, rowOwner, scopeStrOf(inp.Scope)) {
 		s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot move an env var into a scope outside your access")
 		return
 	}

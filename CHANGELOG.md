@@ -13,6 +13,30 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **An agency's administrators create its global variables and secrets.** A
+  global (unscoped) row reaches every scope of its agency and, since 2.4.0, no
+  other agency's runs, so creating, changing or deleting one needs **Manage env
+  vars** on the row's agency, not an All-scopes grant. An agency's administrator
+  adding a variable with the dialog's default scope was refused (403 "cannot
+  create an env var in a scope outside your access"). A global row of another
+  agency, of Administration, or with no owner (shared, from before 2.3.0) is
+  still refused.
+- **The scope picker names the agency.** The Variables and Secrets dialogs' *All*
+  reads *All scopes in &lt;agency&gt; (global)*, so it is not taken for every
+  agency.
+
+### For developers
+
+- `auth.RowScopeWritableIn(id, perm, agency, scope)` is the write check for a
+  secret's or a variable's scope; `ScopeWritableIn` keeps its All-scopes rule
+  for jobs (`bindings_mount.go`).
+
+---
+
 ## [2.5.3] - 2026-10-27
 
 The built-in agency administers, agencies run. It becomes the installation's

@@ -6401,7 +6401,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <!-- ===== /env-vars ===== -->
                 <h3>11.3 Variables (non-secret) <span class="route">/env-vars → Variables</span></h3>
                 <p><strong>+ Add Variable</strong> → Key (auto-uppercased to <code>A–Z 0–9 _</code>, immutable on edit),
-                    Scope (defaults to <em>All</em>), a multi-line Value (newlines preserved), Description. Values are
+                    Scope (defaults to <em>All scopes in &lt;agency&gt; (global)</em>: every scope of the agency in use and
+                    no other agency's, which anyone who manages its variables may create), a multi-line Value (newlines preserved), Description. Values are
                     <strong>shown in plaintext</strong> — put anything sensitive in Secrets instead. Variable writes
                     require <strong>Manage env vars</strong>.
                 </p>

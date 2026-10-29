@@ -40,6 +40,7 @@ import {
   valueBoxStyle,
 } from "./ui";
 import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
+import { useScopeOptionLabel } from "./scopeOption";
 import { useInCentral } from "../../components/CentralRunsNothing";
 
 interface EnvVarRow {
@@ -458,6 +459,7 @@ function VarFormModal({
   // A global row has no scope, so it initializes to the "All" sentinel and
   // round-trips back to global on save (scopeForWrite).
   const [scope, setScope] = useState(initial?.scope || ALL_SCOPE_OPTION);
+  const scopeLabel = useScopeOptionLabel(initial?.ownerAgency);
   const [value, setValue] = useState(initial?.value ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [keyError, setKeyError] = useState("");
@@ -557,7 +559,7 @@ function VarFormModal({
           <select value={scope} onChange={(e) => setScope(e.target.value)} style={{ ...inputStyle(), cursor: "pointer" }}>
             {scopeNames.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {scopeLabel(s)}
               </option>
             ))}
           </select>
