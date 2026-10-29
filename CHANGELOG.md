@@ -13,7 +13,7 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
-## [Unreleased]
+## [2.5.4] - 2026-10-29
 
 ### Changed
 
