@@ -52,12 +52,22 @@ this.
   in use, and while it is chosen a line under the picker says that every run in
   the agency that references the row receives it, unless a row in the run's own
   scope has the same key.
+- **The shadow badge says what it means since 2.5.3.** A scoped row with the
+  same key as an agency-wide row is marked *shadows agency-wide*. A row of
+  Administration's was marked *⚠ shadows global* and announced as shadowing
+  "for every department", but Administration runs nothing, so no run uses it:
+  it now reads *⚠ unused: &lt;Administration's name&gt;'s*.
+- **The user manual's Job Composer screenshot is retaken.** It showed the scope
+  picker's *No scope* choice, gone since 2.5.3.
 
 ### For developers
 
 - `auth.RowScopeWritableIn(id, perm, agency, scope)` is the write check for a
   secret's or a variable's scope; `ScopeWritableIn` keeps its All-scopes rule
   for jobs (`bindings_mount.go`).
+- `make test` (and so `make verify`) passes `-timeout 20m`: under `-race`,
+  `internal/api` runs close to `go test`'s 10-minute default and a busy machine
+  pushed it over.
 
 ---
 

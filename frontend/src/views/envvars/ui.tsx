@@ -102,7 +102,7 @@ export function DetailGrid({ children }: { children: ReactNode }) {
 // in was a rename, not a rewrite. Re-exported under the old name so the three
 // tabs' imports keep working.
 import { SectionLabel } from "../../components/ui";
-import { globalAgencyName } from "../../globalName";
+import { administrationLabel, globalAgencyName } from "../../globalName";
 export { SectionLabel as DetailLabel };
 
 export function DetailRow({ label, value, last }: { label: string; value: ReactNode; last?: boolean }) {
@@ -336,21 +336,26 @@ export function useShadowWarnings(dep: unknown) {
   };
 }
 
-// ShadowBadge marks a row that shadows a global row of the same key.
+// ShadowBadge marks a scoped row with the same key as an agency-wide row.
 //
-// Two weights on purpose. An UNRESTRICTED shadow is the silent hole — it belongs to
-// no department, so it overrides the global row for everyone in that scope — and is
-// drawn as a warning. A membered shadow is usually the override feature working as
-// intended (it wins only for its own department's runs), so it is drawn quietly:
-// worth seeing, not worth alarming about. Flattening the two would make the badge
-// noise in exactly the catalogue where it matters most.
+// Two weights on purpose. A membered shadow is the override feature working as
+// intended (it wins for its own department's runs in that scope), so it is drawn
+// quietly: worth seeing, not worth alarming about. An UNRESTRICTED one is a row of
+// the built-in agency, in no department: until 2.5.3 it overrode the agency-wide
+// row for everyone in the scope; since then the built-in agency runs nothing, so
+// no run uses the row at all. It is still drawn as a warning, because it is a row
+// someone believes is in force, and it says "unused" rather than "shadows".
 export function ShadowBadge({ shadow }: { shadow: { unrestricted: boolean; reason: string } | null }) {
   if (!shadow) return null;
   const warn = shadow.unrestricted;
   return (
     <span
       title={shadow.reason}
-      aria-label={warn ? "Shadows the global row for every department" : "Shadows the global row"}
+      aria-label={
+        warn
+          ? `${administrationLabel(globalAgencyName())} holds this row, and no run uses it`
+          : "Shadows the agency-wide row with the same key in this scope"
+      }
       style={{
         padding: "1px 6px",
         borderRadius: c.radiusChip,
@@ -364,7 +369,7 @@ export function ShadowBadge({ shadow }: { shadow: { unrestricted: boolean; reaso
         cursor: "help",
       }}
     >
-      {warn ? "⚠ shadows global" : "shadows global"}
+      {warn ? `⚠ unused: ${globalAgencyName()}'s` : "shadows agency-wide"}
     </span>
   );
 }

@@ -5393,15 +5393,14 @@
 
                 <figure class="shot">
                     <img class="dark" src="manual/compose-dark.png"
-                        alt="The Job Composer form: name, script picker, scope and optional target host, SSH keys, secrets and variables, fixed environment rows, run inputs, and the shared-schedule checkboxes"
+                        alt="The Job Composer form: name, script picker, scope and optional target host, SSH keys, secrets and variables, fixed environment rows, run inputs, and the shared schedules"
                         loading="lazy" width="1600" height="900">
                     <img class="light" src="manual/compose-light.png"
-                        alt="The Job Composer form: name, script picker, scope and optional target host, SSH keys, secrets and variables, fixed environment rows, run inputs, and the shared-schedule checkboxes"
+                        alt="The Job Composer form: name, script picker, scope and optional target host, SSH keys, secrets and variables, fixed environment rows, run inputs, and the shared schedules"
                         loading="lazy" width="1600" height="900">
                     <figcaption>The Composer makes the formula concrete top to bottom: Script × Scope (+ optional target
-                        host) × env × Run inputs × Schedule(s). The capture predates 2.3.0: the <em>Executor</em>
-                        (Auto / SSH / Runner) and <em>Run on</em> fields it shows are gone, replaced by a one-line
-                        read-only <strong>Runs on</strong> note.</figcaption>
+                        host) × env × Run inputs × Schedule(s). The scope picker has no &ldquo;No scope&rdquo;
+                        choice: every job names one (since 2.5.3).</figcaption>
                 </figure>
 
                 <div class="callout tip">

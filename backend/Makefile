@@ -71,8 +71,11 @@ dev: build stop
 # sites, 20 mutexes, 14 tickers and a bounded-parallelism workflow engine —
 # races here surface as mis-dispatched runs, so they must not wait for a review.
 # Use `make test-fast` for the inner loop.
+# -timeout raises go test's 10-minute default per package: under -race,
+# internal/api alone took 561 s on 2026-10-29, and a busy machine pushed it
+# past 600 s, so the gate failed with nothing wrong.
 test:
-	go test -race ./...
+	go test -race -timeout 20m ./...
 
 # Inner-loop convenience: no -race, so it is NOT the gate. `make verify` is.
 test-fast:
