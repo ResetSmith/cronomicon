@@ -3132,7 +3132,10 @@
                     <strong>via</strong> (a bastion name; blank = direct), and its auth key: an <strong>SSH key
                         credential</strong>, or <strong>authKeyEnvVar</strong> (the <em>name</em> of the env var
                     or secret that contains the private key). A scope member with no matching host record becomes
-                    a <em>reported per-host failure</em>, never a silent skip.</p>
+                    a <em>reported per-host failure</em>, never a silent skip. A key chosen with the credential
+                    picker is used by the local runner only: an agent receives the key's <em>name</em> and looks for
+                    it on its own disk. To have an agent use a key stored in Cronomicon, give it to the job (Connect
+                    as, or a key binding): <a href="#stored-keys">&sect;7.5b</a>.</p>
                 <p><strong>A host record and a bastion have an owner.</strong> A record that an administrator
                     wrote manually belongs to one agency (never to Administration since 2.5.3), and the SSH Targets
                     tables show it in an <strong>Owner</strong> column. A record that was imported for a scope follows that scope's
@@ -4528,7 +4531,8 @@ cronomicon validate .                # any checkout, without the -agency checks
                         href="user-manual.html#settings">&sect;14</a>. The one exception: a job or script that
                     <em>binds</em> an <code>CRONOMICON_KEY_</code> reference sends resolved private-key material to an
                     agent that has the Secret injection flag (see <a href="#runner-ops">&sect;7</a>). Only an agent
-                    takes such a run; the local runner never does (&sect;4.1).</p>
+                    takes such a run; the local runner never does (&sect;4.1). A connect-as key (below) is the
+                    other way. <a href="#stored-keys">&sect;7.5b</a> is the procedure for both.</p>
                 <p><strong>Who can point a run at a stored key.</strong> Operators can select a stored
                     credential as a run's <strong>connect-as identity</strong>: for each run in the Run dialog, or
                     as a job's standing default in the Composer or Git YAML (<code>spec.ssh_credential</code>, by
@@ -5051,7 +5055,9 @@ cronomicon validate .                # any checkout, without the -agency checks
                     <div class="ct"><span class="em">🔑</span> Back up the KEK separately, and set the trusted proxy
                         exactly</div>
                     <p><strong>If you lose the KEK, no stored secret can decrypt again, permanently.</strong> Keep its
-                        backup <em>separate</em> from the database backup: a compromised bucket must not give both. And
+                        backup <em>separate</em> from the database backup: a compromised bucket must not give both.
+                        When SSH keys are stored in Cronomicon, the two together are access to every agency's
+                        servers (<a href="#key-custody">&sect;7.5b</a>). And
                         <code>CRONOMICON_TRUSTED_PROXIES</code> is the full trusted-header security model. Set it to the
                         exact peer IP that Cronomicon sees. If it is too wide, a spoofed <code>Remote-Groups: admins</code>
                         could impersonate an admin. See <a href="#deployment">&sect;8</a>.</p>
@@ -5764,8 +5770,11 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                         the flag does a binding-bearing run send resolved
                         <code>CRONOMICON_SECRET_*</code> and <code>CRONOMICON_VAR_*</code> <strong>values</strong> in a
                         dedicated manifest Secrets block, and a bound <code>CRONOMICON_KEY_&lt;name&gt;</code>'s
-                        private-key <strong>material</strong> in a Keys block. The agent writes each key to a
-                        <code>/dev/shm</code> <code>0600</code> file, off the run tree, zeroed and removed at run end.
+                        private-key <strong>material</strong> in a Keys block (a run's <strong>Connect as</strong>
+                        key travels the same way). The agent writes each key to a
+                        <code>0600</code> file under <code>/dev/shm</code> (else the system temporary directory),
+                        off the run tree, zeroed and removed at run end. The step-by-step setup is <a
+                            href="#stored-keys">&sect;7.5b</a>.
                         <strong>Fail-closed at each point:</strong> a binding that cannot resolve or an un-flagged
                         runner leaves the run <span class="pill run"><span class="dot"></span>queued</span>.
                         Nothing is sent. Injected values and delivered key material enter the run's redaction
@@ -5777,6 +5786,279 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                             references</strong> panel shows it (<code>GET /runs/{traceId}/references</code>). An
                         un-flagged runner keeps names-only resolution.</p>
                 </div>
+
+                <h3 id="stored-keys">7.5b Connecting with an SSH key stored in Cronomicon</h3>
+                <p>Most installations keep their SSH keys in Cronomicon (<a
+                        href="user-manual.html#envvars">Env Vars &rarr; SSH Keys</a>) rather than on each agent. The
+                    key is encrypted at rest (&sect;6.1), and an agent gets it for one run at a time: the server
+                    sends it with the run, the agent writes it to a private file, uses it, and deletes it when the
+                    run ends. This section is the procedure for that setup. The other setup, where each agent holds
+                    its own key files (<code>-key-dir</code>, <code>-key-map</code>), needs none of this and is
+                    described in &sect;7.2 and the <a href="runner-install.html">runner install guide</a>.</p>
+                <h4 id="key-custody">Before you choose: what keeping keys in Cronomicon means</h4>
+                <p>Where the keys are kept decides what an attacker has to reach. Keys stored in Cronomicon are the
+                    easier setup to run, and most installations will choose them. Choose them knowingly: they make
+                    the Cronomicon server, its database and its backups the one place that holds every agency's
+                    access to its servers. The manuals' description of agents as the holders of their own keys
+                    (&sect;7.2, the <a href="runner-security.html">runner security guide</a>) is true only of the
+                    other setup.</p>
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr><th></th><th>Keys stored in Cronomicon (this section)</th><th>Keys held on each agent
+                                    (&sect;7.2)</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Where the private key is</td>
+                                <td>In the database, encrypted under the KEK (&sect;6.1), and so in every database backup.
+                                    An agent has it only for the run that carries it.</td>
+                                <td>In files on the agent's disk, readable by the agent's service account. Never in
+                                    Cronomicon.</td>
+                            </tr>
+                            <tr>
+                                <td>What opens every agency's servers</td>
+                                <td>A copy of the database (one backup is enough) together with the KEK. Or control of
+                                    the running server, which holds the KEK.</td>
+                                <td>No single thing: each agent has to be broken into separately.</td>
+                            </tr>
+                            <tr>
+                                <td>One agent is broken into</td>
+                                <td>The attacker gets the keys, and the bound secret values, of the runs that agent takes
+                                    from then on. Only its own agency's: an agent serves exactly its owner (&sect;7.7).</td>
+                                <td>The attacker gets every key on that agent at once, used or not.</td>
+                            </tr>
+                            <tr>
+                                <td>Who can use a key</td>
+                                <td>Whoever can give a job the key (step 5), for that agency's runs. Nobody can read a key
+                                    back: Cronomicon has no reveal for SSH keys. But an Ansible run executes on the agent,
+                                    and its playbook can read the key file while the run lasts, so the right to give a job
+                                    the key is in effect the right to the key.</td>
+                                <td>Whoever can log in to the agent as its service account or as root.</td>
+                            </tr>
+                            <tr>
+                                <td>Rotation</td>
+                                <td>Once, in Env Vars &rarr; SSH Keys. The next run uses the new key.</td>
+                                <td>On every agent that holds the key.</td>
+                            </tr>
+                            <tr>
+                                <td>Record and alerts</td>
+                                <td>Every use is recorded against the key (its <strong>Usage</strong>, &sect;6.1), and a
+                                    key created, replaced or deleted can raise the <em>secret changed</em> alert
+                                    (&sect;8.11).</td>
+                                <td>Not recorded by Cronomicon.</td>
+                            </tr>
+                            <tr>
+                                <td>The agent's setting</td>
+                                <td><strong>Secret injection</strong> on (step 2). The agent then also receives the values
+                                    of any stored secrets its runs bind, not only keys.</td>
+                                <td>None.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="callout danger">
+                    <div class="ct"><span class="em">🔐</span> If you keep keys in Cronomicon, protect these</div>
+                    <ul>
+                        <li><strong>The KEK.</strong> Keep it in a file (<code>CRONOMICON_KEK_FILE</code>) that only
+                            the server's account can read, and back it up apart from the database (&sect;6.3). The
+                            KEK and a copy of the database together are every stored key.</li>
+                        <li><strong>The backups.</strong> Turn on encrypted backups (&sect;8.6.2). Without them, each
+                            backup in the bucket is half of that pair. Keep the bucket's access narrow either
+                            way.</li>
+                        <li><strong>The server host.</strong> Root on the server, or a read of its KEK file or its
+                            memory, gives every key. Limit who can log in to it as you would for a Vault
+                            server.</li>
+                        <li><strong>Who can give jobs a key.</strong> <strong>Configure app</strong> on an agency adds
+                            and replaces its keys; <strong>Manage env vars</strong> with <strong>Compose</strong> gives
+                            a job a key (step 5). Grant these as you would grant the keys themselves.</li>
+                        <li><strong>Which agents receive keys.</strong> Turn Secret injection on only for the agents
+                            that need it, and bind the agency's scopes to them (&sect;7.10).</li>
+                        <li><strong>Watching.</strong> Set an alert rule on <em>secret changed</em> for each agency
+                            (it covers SSH keys), and read a key's Usage from time to time for runs you do not
+                            expect.</li>
+                    </ul>
+                </div>
+                <p><strong>Two ways to reduce the exposure.</strong> <em>Keep the key in Vault.</em> An SSH key can
+                    be Vault-backed, in the agency's own Vault or under its Vault paths (&sect;6.4). The database
+                    and its backups then hold the path, not the key, and Vault's own policy and audit log govern
+                    reads of it. The credential that Cronomicon reads Vault with is still sealed in the database
+                    under the KEK, so limit what that credential can read and where it can log in from.
+                    <em>Mix the two setups.</em> Keep the keys for your most sensitive hosts on their agents
+                    (&sect;7.2) and store the rest in Cronomicon. A job that is not given a stored key uses the
+                    agent's own; a stored key given to a run is used before an agent's own key of the same
+                    name.</p>
+                <div class="callout warn">
+                    <div class="ct"><span class="em">⚠️</span> A key picked on a host record does not reach an
+                        agent</div>
+                    <p>Settings &rarr; SSH Targets lets you attach a stored key to a host or bastion with a picker.
+                        Only the <strong>local runner</strong> reads that choice. An agent receives a host's key by
+                        <em>name</em> only (the record's <strong>Key by name</strong>, <code>authKeyEnvVar</code>),
+                        and looks for a file of that name on its own disk. A run on an agent fails on that host with
+                        <code>cronomicon: auth: no local key for &hellip;</code> unless the job also gives it the key,
+                        by <strong>Connect as</strong> or a key binding (step 5 below).</p>
+                </div>
+                <p><strong>What you need first.</strong> The agency the jobs belong to (not Administration, which
+                    runs nothing), an agent enrolled for it in the default <code>cronomicon</code> inventory mode
+                    (&sect;7.4), and the <strong>Configure app</strong> permission on that agency for steps 1 to 4.
+                    Step 5 needs <strong>Manage env vars</strong> on the key's agency as well as
+                    <strong>Compose</strong> on the job.</p>
+                <ol class="steps">
+                    <li><strong>Store the key in the agency.</strong> Switch to the agency, open <strong>Env Vars
+                            &rarr; SSH Keys &rarr; + Add SSH Key</strong>, and paste the whole private key, BEGIN and
+                        END lines included. It must have no passphrase. Give it a <strong>label</strong> in
+                        snake_case (<code>prod_deploy</code>; a <code>-</code> or <code>.</code> is refused,
+                        because the label becomes the name <code>CRONOMICON_KEY_&lt;label&gt;</code>). The dialog
+                        then shows the key's fingerprint and its public key: add that public key to
+                        <code>~/.ssh/authorized_keys</code> of the login account on every target, and on the
+                        bastion if the hosts are behind one (see the bastion note below). A key belongs to one
+                        agency, and only that agency's runs can use it.</li>
+                    <li><strong>Turn on Secret injection on the agent.</strong> <strong>Runners</strong> &rarr;
+                        expand the agent &rarr; <strong>Secret injection</strong> (<code>PUT
+                            /api/v1/runners/{id}/secret-injection</code>). This is the trust decision: an agent with
+                        it on receives the decrypted key, and the values of any secrets a run binds, for every run
+                        it takes. Turn it on only for agents you trust with the agency's keys, and bind the
+                        agency's scopes to those agents (&sect;7.10) if it has others. A runner without it never
+                        takes a run that carries a key: the run waits (see the table below). The local runner
+                        needs no flag.</li>
+                    <li><strong>Approve the hosts' keys for the agent.</strong> <strong>Runners</strong> &rarr; the
+                        agent &rarr; <strong>Scan keys&hellip;</strong> &rarr; scan the scope, compare the
+                        fingerprints, and trust them (&sect;7.12). Paste the keys of hosts behind a bastion; they
+                        cannot be scanned. Without this, every host is refused with
+                        <code>host_key_unverified</code>, whichever key you use.</li>
+                    <li><strong>Check the scope's host records.</strong> Each host needs an address and, unless
+                        Connect as gives one, a login user (<code>root</code> when the record leaves it blank). With Connect as (step 5a), the record's key setting is
+                        not used on an agent. With a key binding (step 5b), set the record's <strong>Key by
+                            name</strong> to the key's label.</li>
+                    <li><strong>Give the job the key.</strong> Use one of the two ways below.
+                        <ol type="a">
+                            <li><strong>Connect as (start here).</strong> In the Composer, set <strong>SSH
+                                    key</strong> (and, if needed, <strong>Connect as</strong>, the login user) under
+                                the target host. In a Git job, set <code>spec.ssh_credential: &lt;label&gt;</code>
+                                and optionally <code>spec.ssh_user</code>. Every run of the job then logs in to every
+                                target with that key, whatever each host record says. A person can also choose a
+                                key for one run in the Run dialog (<strong>Targets &rarr; Connect as</strong>). For
+                                Ansible, the key and user are passed as
+                                <code>-e ansible_ssh_private_key_file=&hellip;</code> and <code>-e
+                                    ansible_user=&hellip;</code>, which override the inventory on every host.</li>
+                            <li><strong>A key binding.</strong> Expand the job (or its script) and add a reference
+                                binding of kind <strong>SSH Key</strong> with the label. The run's environment then
+                                holds <code>CRONOMICON_KEY_&lt;label&gt;</code>, the <em>path</em> of the key file on
+                                the agent. A host record whose Key by name is the label (or
+                                <code>CRONOMICON_KEY_&lt;label&gt;</code>) uses that file, an Ansible inventory can
+                                read it with <code>ansible_ssh_private_key_file="{{
+                                    lookup('env','CRONOMICON_KEY_&lt;label&gt;') }}"</code>, and a script can pass it
+                                to <code>ssh -i</code> or <code>git</code>. Use a binding when different hosts need
+                                different keys, or when the script itself needs the key.</li>
+                        </ol>
+                    </li>
+                    <li><strong>Run it and check.</strong> In the Run dialog, <strong>Method &rarr; Runs on</strong>
+                        says who can take the run: the scope's bound runners, <em>an agent</em> for a run that binds a
+                        key, or <em>any runner</em> otherwise. With Connect as on an unbound scope, the local runner
+                        can take the run too when it is on for the agency; bind the scope (&sect;7.10) if the run
+                        must go to the agent. After the run, the run's detail in History shows the key under
+                        <strong>Injected references</strong>, and the key's <strong>Usage</strong> (Env Vars
+                        &rarr; SSH Keys &rarr; the row) lists the run. An Ansible run's log also has a line
+                        <code>cronomicon: auth: -e ansible_ssh_private_key_file CRONOMICON_KEY_&lt;label&gt; &rarr;
+                            &lt;path&gt;</code>.</li>
+                </ol>
+                <p><strong>Which of the two to use.</strong></p>
+                <table>
+                    <thead>
+                        <tr><th></th><th>Connect as</th><th>Key binding</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>What it does</td>
+                            <td>Replaces the login key, and the user if given, on every target of the run.</td>
+                            <td>Delivers the key as a file and sets <code>CRONOMICON_KEY_&lt;label&gt;</code> to its
+                                path; host records, the inventory or the script decide where it is used.</td>
+                        </tr>
+                        <tr>
+                            <td>Set on</td>
+                            <td>The job (Composer, <code>spec.ssh_credential</code>), or one run (Run dialog).</td>
+                            <td>The job's or the script's reference bindings, or one run (Run dialog &rarr; <strong>Inputs</strong>, the references panel).</td>
+                        </tr>
+                        <tr>
+                            <td>The local runner</td>
+                            <td>Can take the run; it connects with the key itself, and nothing leaves the
+                                server.</td>
+                            <td>Never takes a shell run that binds a key. If no agent is enrolled for the agency,
+                                the run is refused when it is queued.</td>
+                        </tr>
+                        <tr>
+                            <td>An agent with <code>-inventory local</code></td>
+                            <td>Refuses the run (<code>409</code>): its own inventory decides the user and key.</td>
+                            <td>Takes the run; the inventory can read the variable.</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p><strong>A bastion on an agent.</strong> An agent logs in to a bastion with the same user and key
+                    as the host behind it. The bastion record's own key and user are used by the local runner only.
+                    So with Connect as, the bastion must accept that key and user too.</p>
+                <p><strong>What happens to the key.</strong> When the agent asks for the run, the server reads the
+                    key, checks that it belongs to the run's agency, writes the audit row
+                    (<code>Secrets/injected</code>, names only) and the key's usage record, and sends the key in the
+                    run's manifest over the agent's HTTPS connection. If any of that fails, nothing is sent and the
+                    run does not start. The agent writes the key to a <code>0600</code> file in a new directory
+                    under <code>/dev/shm</code> (the system temporary directory where <code>/dev/shm</code> is not
+                    writable), outside the run's working directory. The run's environment holds the file's path,
+                    never the key. When the run ends, however it ends, the agent overwrites the file with zeroes and
+                    removes the directory. If a script prints the key, the server masks it in the stored log. The
+                    key is on the agent's disk while the run lasts, so anyone with root on that machine during the
+                    run can read it: that is what step 2 trusts.</p>
+                <p><strong>When a run does not start.</strong></p>
+                <table>
+                    <thead>
+                        <tr><th>What you see</th><th>Why</th><th>What to do</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>The run stays <span class="pill run"><span class="dot"></span>queued</span> with
+                                <em>&ldquo;this run carries credentials, and no eligible runner is flagged for
+                                    secret injection&rdquo;</em></td>
+                            <td>No agent that could take the run has Secret injection on.</td>
+                            <td>Step 2, on an agent of the agency (one of the scope's bound runners, if it has
+                                any).</td>
+                        </tr>
+                        <tr>
+                            <td><code>422 key_binding_requires_runner</code> when the run is queued</td>
+                            <td>A shell run binds a key, and no agent is enrolled for the agency (or none of the
+                                scope's bound runners is an agent).</td>
+                            <td>Enrol an agent for the agency (&sect;7.2), or use Connect as instead so the local
+                                runner can take it.</td>
+                        </tr>
+                        <tr>
+                            <td><code>422</code> <em>&ldquo;no SSH credential with label &hellip; is usable by this
+                                    run's agency&rdquo;</em></td>
+                            <td>The label is wrong, or the key belongs to another agency.</td>
+                            <td>Store the key in the job's agency (step 1).</td>
+                        </tr>
+                        <tr>
+                            <td>The run fails: <code>409</code> <em>&ldquo;&hellip; a local-inventory runner cannot
+                                    honor&rdquo;</em></td>
+                            <td>Connect as on an agent in <code>local</code> inventory mode.</td>
+                            <td>Use a key binding, or an agent in <code>cronomicon</code> mode.</td>
+                        </tr>
+                        <tr>
+                            <td>A host fails: <code>cronomicon: auth: no local key for &hellip;</code></td>
+                            <td>The host record's key was picked with the picker, or its Key by name does not
+                                match a delivered label.</td>
+                            <td>Step 5: Connect as, or a binding plus Key by name = the label.</td>
+                        </tr>
+                        <tr>
+                            <td>A host fails: <code>host_key_unverified</code></td>
+                            <td>The agent has no approved key for the host.</td>
+                            <td>Step 3.</td>
+                        </tr>
+                        <tr>
+                            <td>A host fails: <em>permission denied</em> / <em>unable to authenticate</em></td>
+                            <td>The target (or the bastion) does not accept the key for that user.</td>
+                            <td>Add the public key from step 1 to that account's
+                                <code>authorized_keys</code>; check the user.</td>
+                        </tr>
+                    </tbody>
+                </table>
 
                 <h3>7.6 Lifecycle: drain, offline/reaping, deregister</h3>
                 <ul>
@@ -7093,7 +7375,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                 <h4 id="encrypted-backups">8.6.2 Encrypted backups (since 2.5.1, optional)</h4>
                 <p>A backup holds every row of the installation: run history, the audit trail, and the stored secrets
                     sealed with the KEK. Encrypting the backup itself protects the rest of it, in the bucket and on
-                    disk, from anyone who reaches the file. It is <strong>optional</strong>: with no key, backups are
+                    disk, from anyone who reaches the file. Where SSH keys are stored in Cronomicon, a backup and the
+                    KEK together are every agency's server access, so turn this on (<a
+                        href="#key-custody">&sect;7.5b</a>). It is <strong>optional</strong>: with no key, backups are
                     written unencrypted, as before, and the card says so plainly.</p>
                 <p><strong>How it works.</strong> A global administrator adds one or more
                     <a href="https://age-encryption.org">age</a> X25519 <strong>public</strong> keys
@@ -8549,6 +8833,21 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
 
                 <h3>Secrets &amp; runners</h3>
                 <details class="faq">
+                    <summary>A run on an agent does not use the SSH key stored in Cronomicon</summary>
+                    <div class="body">
+                        <p class="faq-cause"><strong>Cause:</strong> the key was attached to the host record with
+                            the credential picker, which only the local runner reads (an agent then fails the host
+                            with <code>cronomicon: auth: no local key for &hellip;</code>); or the run carries the
+                            key but no agent has <strong>Secret injection</strong> on, so it stays queued with
+                            <em>&ldquo;this run carries credentials, and no eligible runner is flagged for secret
+                                injection&rdquo;</em>; or it binds a key and no agent is enrolled for the agency
+                            (<code>422 key_binding_requires_runner</code>).</p>
+                        <p><strong>Correction:</strong> give the key to the job (Connect as, or a key binding) and
+                            turn on Secret injection on the agency's agent. The procedure and a table of every
+                            refusal are in <a href="#stored-keys">&sect;7.5b</a>.</p>
+                    </div>
+                </details>
+                <details class="faq">
                     <summary>A secret value still shows in plaintext in a run log</summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> the value is less than 5 characters, or equal to a
@@ -9738,8 +10037,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         Managed in <a href="user-manual.html#envvars">Env Vars &rarr; SSH Keys</a> and attached to a
                         host or bastion with a <strong>picker</strong> that writes <code>authCredentialId</code>. It is
                         <strong>coequal</strong> with the <code>authKeyEnvVar</code> name path, not a replacement for
-                        it. The API never returns private material, and the material goes into the log-redaction
-                        dictionary.</dd>
+                        it. The picker is read by the local runner only; an agent gets a stored key through a job's
+                        Connect as or a key binding (&sect;7.5b). The API never returns private material, and the
+                        material goes into the log-redaction dictionary.</dd>
                     <dt>Stored / Vault secret</dt>
                     <dd><strong>Stored</strong>: the value is encrypted at rest with envelope encryption, and you can
                         reveal it (audited). <strong>Vault</strong>: only a <code>path#field</code> reference is stored.
