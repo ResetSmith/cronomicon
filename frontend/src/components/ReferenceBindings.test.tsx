@@ -128,17 +128,17 @@ describe("reference rows", () => {
     expect(q.getAllByRole("listitem")).toHaveLength(1);
   });
 
-  it('labels the global row "global" rather than leaving it blank (T1.8)', async () => {
+  it('labels the global row "agency-wide" rather than leaving it blank (T1.8)', async () => {
     getResponses["/job-reference-bindings/{jobId}"] = { bindings: [binding("var", "REGION")] };
     verdicts["var REGION"] = verdict("var", "REGION", {
       ok: true,
       outcome: "resolved",
       resolvedScope: "",
-      reason: "resolves to the global variable",
+      reason: "resolves to the agency-wide variable",
     });
 
     const { container } = render(<ReferenceBindingsEditor owner={{ job: 1 }} scope="dev" />);
-    await waitFor(() => expect(within(container).getByText("global")).toBeTruthy());
+    await waitFor(() => expect(within(container).getByText("agency-wide")).toBeTruthy());
   });
 
   it("states the precise reason for an out-of-scope reference (G1)", async () => {
@@ -204,7 +204,7 @@ describe("reference rows", () => {
       ok: true,
       outcome: "resolved",
       resolvedScope: "",
-      reason: "resolves to the global variable",
+      reason: "resolves to the agency-wide variable",
     });
     // resolvedScope is null for keys — a ✓ with no scope pill, which must not
     // disqualify the row from rendering either.

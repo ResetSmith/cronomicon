@@ -555,8 +555,8 @@ function ScriptDetail({ listRow, tags, onSaveTags, tagErr, canCompose }: { listR
           Env Vars permission.
         </div>
         <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 4 }}>
-          A script has no scope of its own, so each reference is checked against the <strong>global</strong> scope —
-          the answer that holds for every job. A reference marked as living only in a named scope still resolves for
+          A script has no scope of its own, so each reference is checked against the <strong>agency-wide</strong> rows
+          (those with no scope) — the answer that holds for every job. A reference marked as living only in a named scope still resolves for
           jobs in that scope.
         </div>
       </div>

@@ -36,3 +36,60 @@ func TestAGrantOfAnAgencysScopeDoesNotCoverAnotherAgencys(t *testing.T) {
 		t.Error("an unrestricted identity is filtered")
 	}
 }
+
+// A secret's or a variable's global row (scope "") reaches every scope of its
+// owner agency and no other agency's runs (2.4.0), so writing one is the owner
+// agency's permission holders' (2.5.4, RowScopeWritableIn). Global's row and a
+// row with no owner stay a global administrator's, and the permission is asked
+// for: unlike ScopeWritableIn's empty-scope arm, reach alone is not enough.
+func TestRowScopeWritableInGivesAGlobalRowToItsAgency(t *testing.T) {
+	taxAdmin := Identity{
+		Email:         "tax-admin@example.org",
+		AllowedScopes: []string{"web"},
+		Grants:        []RoleGrant{{Role: "admin", Agency: "ag-tax", Scopes: []string{"web"}}},
+	}
+	taxOperator := Identity{
+		Email:         "tax-op@example.org",
+		AllowedScopes: []string{"web"},
+		Grants:        []RoleGrant{{Role: "operator", Agency: "ag-tax", Scopes: []string{"web"}}},
+	}
+	root := Identity{
+		Email:         "root@example.org",
+		AllowedScopes: []string{AllScopes},
+		Grants:        []RoleGrant{{Role: "admin", Agency: "*", Scopes: []string{AllScopes}}},
+	}
+	everywhereViewer := Identity{
+		Email:         "ops@example.org",
+		AllowedScopes: []string{AllScopes},
+		Grants:        []RoleGrant{{Role: "viewer", Agency: "*", Scopes: []string{AllScopes}}},
+	}
+	for _, c := range []struct {
+		name          string
+		id            Identity
+		agency, scope string
+		want          bool
+	}{
+		{"own agency's global row", taxAdmin, "ag-tax", "", true},
+		{"another agency's global row", taxAdmin, "ag-fin", "", false},
+		{"Global's row", taxAdmin, "global", "", false},
+		{"a row with no owner", taxAdmin, "", "", false},
+		{"own agency's scope", taxAdmin, "ag-tax", "web", true},
+		{"another agency's scope of the name", taxAdmin, "ag-fin", "web", false},
+		{"own agency's global row without the permission", taxOperator, "ag-tax", "", false},
+		{"global administrator, an agency's global row", root, "ag-tax", "", true},
+		{"global administrator, Global's row", root, "global", "", true},
+		{"global administrator, a row with no owner", root, "", "", true},
+		{"viewer of everything, an agency's global row", everywhereViewer, "ag-tax", "", false},
+		{"viewer of everything, Global's row", everywhereViewer, "global", "", false},
+		{"viewer of everything, a row with no owner", everywhereViewer, "", "", false},
+	} {
+		if got := RowScopeWritableIn(c.id, PermManageEnvVars, c.agency, c.scope); got != c.want {
+			t.Errorf("%s: RowScopeWritableIn(%q, %q) = %v, want %v", c.name, c.agency, c.scope, got, c.want)
+		}
+	}
+	// ScopeWritableIn keeps its rule for jobs: the empty scope is an All-scopes
+	// grant's, whatever the agency.
+	if ScopeWritableIn(taxAdmin, "ag-tax", "") {
+		t.Error("ScopeWritableIn gave an agency's grant the empty scope")
+	}
+}

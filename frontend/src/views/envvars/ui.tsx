@@ -184,18 +184,19 @@ export { Notice, Modal, ConfirmDialog } from "../../components/ui";
 
 // GLOBAL_SCOPE_LABEL: the "" / NULL scope convention rendered as a word. A blank
 // Scope cell was indistinguishable from "not loaded yet", and the distinction is
-// load-bearing — a global row injects into EVERY scope, which is exactly the fact
-// an operator needs before editing one. Shared with the reference chips so both
-// surfaces say the same word.
-export { GLOBAL_SCOPE_LABEL } from "../../components/ReferenceBindings";
+// load-bearing — an agency-wide row injects into EVERY scope of its agency, which
+// is exactly the fact an operator needs before editing one. Shared with the
+// reference chips so both surfaces say the same word.
+import { GLOBAL_SCOPE_LABEL } from "../../components/ReferenceBindings";
+export { GLOBAL_SCOPE_LABEL };
 
-// scopeCell renders a row's scope for a table cell: the global word, or the name.
+// scopeCell renders a row's scope for a table cell: the agency-wide word, or the name.
 export function scopeCell(scope?: string | null): string {
-  return scope ? scope : "global";
+  return scope ? scope : GLOBAL_SCOPE_LABEL;
 }
 
 // ALL_SCOPE_OPTION is the Variables/Secrets form's first scope choice, meaning
-// "every scope". It is a UI SENTINEL, not a scope name — the backend has no
+// "every scope of the agency". It is a UI SENTINEL, not a scope name — the backend has no
 // notion of a scope called "All"; global is the empty/NULL scope.
 export const ALL_SCOPE_OPTION = "All";
 
@@ -212,7 +213,7 @@ export function scopeForWrite(scope: string): string {
   return scope === ALL_SCOPE_OPTION ? "" : scope;
 }
 
-// ScopeFilterSelect narrows a list to one scope, with an explicit "Global only"
+// ScopeFilterSelect narrows a list to one scope, with an explicit "Agency-wide only"
 // option — the pair of controls an operator needs when a key exists in several
 // scopes and only one of them is the one they meant to edit. `value` is the empty
 // string for "all scopes"; GLOBAL_ONLY selects the unscoped rows.
@@ -244,7 +245,7 @@ export function ScopeFilterSelect({
       }}
     >
       <option value="">All scopes</option>
-      <option value={GLOBAL_ONLY}>Global only</option>
+      <option value={GLOBAL_ONLY}>Agency-wide only</option>
       {scopes.map((s) => (
         <option key={s} value={s}>
           {s}

@@ -149,12 +149,12 @@ func ShadowFindings(ctx context.Context, database *sql.DB) ([]ShadowFinding, err
 			if f.Unrestricted {
 				f.Reason = fmt.Sprintf(
 					"the %s in scope %q is the built-in administration agency's (it belongs to no department), "+
-						"which runs nothing since 2.5.3, so no run uses it in place of the global %s — give it to the "+
-						"department whose work it is, or delete it if the global row was meant to win",
+						"which runs nothing since 2.5.3, so no run uses it in place of the agency-wide %s — give it to the "+
+						"department whose work it is, or delete it if the agency-wide row was meant to win",
 					kindNoun(spec.kind), r.scope, kindNoun(spec.kind))
 			} else {
 				f.Reason = fmt.Sprintf(
-					"the %s in scope %q (%v) shadows the global %s for runs in that scope",
+					"the %s in scope %q (%v) shadows the agency-wide %s for runs in that scope",
 					kindNoun(spec.kind), r.scope, f.Agencies, kindNoun(spec.kind))
 			}
 			out = append(out, f)

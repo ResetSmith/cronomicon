@@ -408,3 +408,39 @@ func TestAgencyManagerWritesTheirAgencysGlobalRows(t *testing.T) {
 		})
 	}
 }
+
+// TestAgencyManagerLeavesAdministrationsGlobalRowAlone: a global row
+// Administration owns that is still a member of the manager's agency (one it
+// holds, SG-16) is Administration's to change, not the member agency's:
+// RowScopeWritableIn gives a row of `global` to a global administrator only.
+func TestAgencyManagerLeavesAdministrationsGlobalRowAlone(t *testing.T) {
+	h, pool := secretRBACServer(t, map[string]string{"admin": "prod"})
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatalf("%v\n%s", err, q)
+		}
+	}
+	exec(`INSERT INTO env_vars (id, key, value, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('v-held','HELD_GLOBAL','x','seed','2026-01-01T00:00:00Z','seed','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO env_var_agencies (env_var_id, agency_id) VALUES ('v-held','ag:prod')`)
+	secID := secretID(t, pool, "SEC_GLOBAL")
+	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES (?,'ag:prod')`, secID)
+
+	for _, k := range []struct{ name, path, table, id, update string }{
+		{"variable", "/api/v1/env-vars", "env_vars", "v-held", `{"key":"HELD_GLOBAL","value":"y"}`},
+		{"secret", "/api/v1/env-secrets", "secrets", secID, `{"key":"SEC_GLOBAL","source":"stored","value":"y"}`},
+	} {
+		t.Run(k.name, func(t *testing.T) {
+			for _, m := range []struct{ method, body string }{{http.MethodPut, k.update}, {http.MethodDelete, ""}} {
+				if rec := reqAs(t, h, m.method, k.path+"/"+k.id, "sec-admins", m.body); rec.Code != http.StatusForbidden {
+					t.Errorf("%s Administration's global %s = %d, want 403; body: %s", m.method, k.name, rec.Code, rec.Body.String())
+				}
+			}
+			var n int
+			if err := pool.QueryRow(`SELECT COUNT(*) FROM `+k.table+` WHERE id = ? AND scope IS NULL AND owner_agency = 'global'`, k.id).Scan(&n); err != nil || n != 1 {
+				t.Errorf("Administration's global %s was changed or removed (n=%d, err=%v)", k.name, n, err)
+			}
+		})
+	}
+}

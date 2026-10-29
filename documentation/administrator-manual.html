@@ -4910,13 +4910,13 @@ cronomicon validate .                # any checkout, without the -agency checks
                     agency, one shadow is still possible, and it is worth knowing.</p>
                 <div class="callout gotcha">
                     <div class="ct"><span class="em">🫥</span> The silent shadow</div>
-                    <p>A row named <code>X</code> exists in an agency with the global scope, and each of the
-                        agency's scopes can get to it. A second row, also named <code>X</code>, is created in the
-                        same agency for one <em>scope</em>. Scoped wins over global. Thus <strong>the agency's runs
+                    <p>A row named <code>X</code> exists in an agency with no scope (agency-wide; the API's
+                        global scope), and each of the agency's scopes can get to it. A second row, also named <code>X</code>, is created in the
+                        same agency for one <em>scope</em>. Scoped wins over agency-wide. Thus <strong>the agency's runs
                             in that scope resolve the new row</strong>: no error, no warning, and nothing in the run
                         log that shows which row was injected. The run operates; it just operates with a different
                         value.</p>
-                    <p style="margin-top:.5em">Where a scoped row shadows a global one with the same key, the
+                    <p style="margin-top:.5em">Where a scoped row shadows an agency-wide one with the same key, the
                         <strong>Env Vars view says so</strong> with a badge on the row.</p>
                 </div>
 

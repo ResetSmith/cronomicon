@@ -6401,8 +6401,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <!-- ===== /env-vars ===== -->
                 <h3>11.3 Variables (non-secret) <span class="route">/env-vars → Variables</span></h3>
                 <p><strong>+ Add Variable</strong> → Key (auto-uppercased to <code>A–Z 0–9 _</code>, immutable on edit),
-                    Scope (defaults to <em>All scopes in &lt;agency&gt; (global)</em>: every scope of the agency in use and
-                    no other agency's, which anyone who manages its variables may create), a multi-line Value (newlines preserved), Description. Values are
+                    Scope (defaults to <em>Agency-wide (every scope in &lt;agency&gt;)</em>: every scope of the agency in use and
+                    no other agency's, which anyone who manages its variables may create; while it is chosen, a line under
+                    the picker says what it reaches), a multi-line Value (newlines preserved), Description. Values are
                     <strong>shown in plaintext</strong> — put anything sensitive in Secrets instead. Variable writes
                     require <strong>Manage env vars</strong>.
                 </p>
@@ -6422,7 +6423,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <img class="light" src="manual/env-vars-light.png"
                         alt="The Env Vars view on the Variables tab: keys with scope, Used-by and description columns, the CRONOMICON_VAR_ reference hint banner, a scope filter beside the search box, and the Secrets and SSH Keys tabs"
                         loading="lazy" width="1600" height="900">
-                    <figcaption>The Variables tab: unscoped rows spell out <strong>global</strong>, Used-by counts the
+                    <figcaption>The Variables tab: unscoped rows spell out <strong>agency-wide</strong>, Used-by counts the
                         declared bindings, and the banner states the <code>CRONOMICON_VAR_&lt;key&gt;</code> reference
                         rule. Secrets and SSH Keys are the adjacent tabs.</figcaption>
                 </figure>
@@ -6430,10 +6431,13 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <h4>Reading the Variables and Secrets tables</h4>
                 <p>Two columns on both tables answer the questions you actually have before editing a row:</p>
                 <ul>
-                    <li><strong>Scope</strong> spells out <strong>global</strong> for an unscoped row instead of leaving
-                        the cell blank. The distinction matters: a global row is visible from — and injectable into —
-                        <em>every</em> scope of its agency, whereas a blank cell would be indistinguishable from “not
-                        loaded”. (Unscoped is not the same as Administration's: a row Administration still holds serves no run.)
+                    <li><strong>Scope</strong> spells out <strong>agency-wide</strong> for an unscoped row instead of leaving
+                        the cell blank (hover it, or open the row, for the agency it covers). The distinction matters: an
+                        agency-wide row is visible from — and injectable into — <em>every</em> scope of its agency and no
+                        other agency's, whereas a blank cell would be indistinguishable from “not loaded”. The API and job
+                        files call such a row <em>global</em> (a scope of <code>""</code>); the screens say agency-wide
+                        so it is not read as every agency, or as the built-in agency on an installation that still calls
+                        it Global. (Unscoped is not the same as Administration's: a row Administration still holds serves no run.)
                     </li>
                     <li><strong>Used by</strong> counts the jobs and scripts that <em>declare a binding</em> to that row
                         (see <a href="#refbindings">§11.6</a>). Read it before you re-scope or rename anything: those
@@ -6441,7 +6445,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         an edit is free. Job counts only include jobs in scopes you can read.</li>
                 </ul>
                 <p>A <strong>scope filter</strong> sits beside the search box on both tabs, with an explicit
-                    <strong>Global only</strong> option (the unscoped rows) — the fastest way to find which of several same-named rows is
+                    <strong>Agency-wide only</strong> option (the unscoped rows) — the fastest way to find which of several same-named rows is
                     the one you meant.
                 </p>
 
@@ -6716,15 +6720,15 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         </thead>
                         <tbody>
                             <tr>
-                                <td><strong>✓ global</strong></td>
-                                <td>Resolves — from the <strong>global</strong> (unscoped) row, because no row specific
-                                    to this scope exists. A global row is injectable from every scope of its
+                                <td><strong>✓ agency-wide</strong></td>
+                                <td>Resolves — from the <strong>agency-wide</strong> (unscoped) row, because no row specific
+                                    to this scope exists. An agency-wide row is injectable from every scope of its
                                     agency.</td>
                                 <td>Nothing.</td>
                             </tr>
                             <tr>
                                 <td><strong>✓ <span class="muted">&lt;scope&gt;</span></strong></td>
-                                <td>Resolves — from the row in that named scope, which wins over any global row of the
+                                <td>Resolves — from the row in that named scope, which wins over any agency-wide row of the
                                     same name.</td>
                                 <td>Nothing. Worth a glance when both exist and you expected the other one.</td>
                             </tr>
@@ -6733,7 +6737,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 <td>A row with that name <em>exists</em>, but only in another scope — so this job cannot
                                     see it. <strong>This is the case the run-time message deliberately hides.</strong>
                                 </td>
-                                <td>Either move/duplicate the row into this job's scope, make it global, or run the job
+                                <td>Either move/duplicate the row into this job's scope, make it agency-wide, or run the job
                                     in the scope that has it.</td>
                             </tr>
                             <tr>
@@ -6762,7 +6766,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     to the row for screen readers as well as sighted readers. An unresolved reference names the thing
                     you configure — <em>“no <strong>SSH key</strong> named …”</em>, not the database table behind it. On
                     a <strong>Script</strong>, which has no scope of its own, references are checked against the
-                    <strong>global</strong> scope — the answer that holds for every job; a reference reported as living
+                    <strong>agency-wide</strong> rows (those with no scope) — the answer that holds for every job; a reference reported as living
                     only in a named scope still resolves for jobs in that scope.
                 </p>
                 <p>The <strong>Run</strong> dialog repeats the check against the scope <em>this run</em> will actually
@@ -8784,7 +8788,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> the job binds a secret, variable or SSH key, and
                             the run has no scope. Since 2.5.3 such a run is the job's agency's, so it can use only that
-                            agency's own unscoped rows; a row of another agency, one Administration still holds, or one of a
+                            agency's own agency-wide (unscoped) rows; a row of another agency, one Administration still holds, or one of a
                             scope the run is not on resolves for nobody. The sentence names the first one: <em>this job
                                 consumes credentials its run cannot use &mdash; &lt;kind&gt; &lt;name&gt; is not one its
                                 agency can use when the run has no scope: create it in the job's agency, or bind the job
@@ -10349,7 +10353,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <p><strong>&ldquo;This job consumes credentials its run cannot use — … is not one its agency can use
                         when the run has no scope: create it in the job's agency, or bind the job to the scope it
                         belongs to&rdquo;</strong>. The job binds a Secret, Variable or key, and the run has no scope.
-                    Since 2.5.3 such a run is the job's agency's, so it can use only the agency's own unscoped rows: a
+                    Since 2.5.3 such a run is the job's agency's, so it can use only the agency's own agency-wide (unscoped) rows: a
                     row of another agency, one Administration still holds, or one of a scope the run is not on resolves for
                     nobody. Create the row in the job's agency, or give the job (or this run, under
                     <strong>Targets</strong>) the scope the row belongs to. (Until 2.5.3 a run with no scope was the

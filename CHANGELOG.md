@@ -15,6 +15,20 @@ before 1.0.0 are kept in their original prose form.
 
 ## [2.5.4] - 2026-10-29
 
+### Upgrading
+
+**From 2.5.3:** replace the image and start it. There is no migration (schema
+v1710) and runner protocol 14 is unchanged. **From an earlier release:** follow
+2.5.3's upgrade with the 2.5.4 image.
+
+This release gives an agency's administrators something they did not have:
+anyone who holds **Manage env vars** on an agency can now create, change and
+delete that agency's global variables and secrets. Until 2.5.3 only a global
+administrator could. If your installation relied on that refusal as policy,
+review who holds Manage env vars on each agency before you upgrade.
+`cronomicon preflight` reports what a release takes away and does not list
+this.
+
 ### Changed
 
 - **An agency's administrators create its global variables and secrets.** A
@@ -23,11 +37,21 @@ before 1.0.0 are kept in their original prose form.
   vars** on the row's agency, not an All-scopes grant. An agency's administrator
   adding a variable with the dialog's default scope was refused (403 "cannot
   create an env var in a scope outside your access"). A global row of another
-  agency, of Administration, or with no owner (shared, from before 2.3.0) is
-  still refused.
-- **The scope picker names the agency.** The Variables and Secrets dialogs' *All*
-  reads *All scopes in &lt;agency&gt; (global)*, so it is not taken for every
-  agency.
+  agency or of Administration is still refused.
+- **The screens call a row with no scope *agency-wide*, not *global*.** The word
+  read as "every agency", and on an installation that kept the name *Global* it
+  read as the built-in agency. The Variables and Secrets tables, their scope
+  filter (*Agency-wide only*), the row details, the reference-binding chips
+  (*✓ agency-wide*) and the reasons the server gives for them (*resolves to the
+  agency-wide secret*, *shadows the agency-wide variable*) say so, and both
+  manuals with them. The API, job files and stored values keep `global` (a scope
+  of `""`).
+- **The scope picker names the agency and says what it reaches.** The Variables
+  and Secrets dialogs' first choice reads *Agency-wide (every scope in
+  &lt;agency&gt;)*, naming the agency picked on the form where there is no agency
+  in use, and while it is chosen a line under the picker says that every run in
+  the agency that references the row receives it, unless a row in the run's own
+  scope has the same key.
 
 ### For developers
 

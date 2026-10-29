@@ -23,7 +23,7 @@ describe("ShadowBadge", () => {
   });
 
   it("warns loudly when the shadowing row belongs to no department", () => {
-    const reason = "the secret in scope \"prod\" belongs to no department, so it shadows the global secret";
+    const reason = "the secret in scope \"prod\" belongs to no department, so it shadows the agency-wide secret";
     const { getByTitle } = render(<ShadowBadge shadow={{ unrestricted: true, reason }} />);
     const el = getByTitle(reason);
     // The warning glyph is what distinguishes this from the benign case at a glance.
@@ -35,7 +35,7 @@ describe("ShadowBadge", () => {
   });
 
   it("states the benign shadow quietly, without the warning glyph", () => {
-    const reason = 'the secret in scope "prod" ([DSS]) shadows the global secret for runs in that scope';
+    const reason = 'the secret in scope "prod" ([DSS]) shadows the agency-wide secret for runs in that scope';
     const { getByTitle } = render(<ShadowBadge shadow={{ unrestricted: false, reason }} />);
     const el = getByTitle(reason);
     expect(el.textContent).toBe("shadows global");
