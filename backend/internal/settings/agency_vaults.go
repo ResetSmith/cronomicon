@@ -426,6 +426,12 @@ func agencyVaultProvider(ctx context.Context, database *sql.DB, agency string) (
 	return p, err == nil, err
 }
 
+// CountExternalRows is countExternalRows for the API's answer (SM5: the
+// screen locks the provider picker and says why).
+func CountExternalRows(ctx context.Context, database *sql.DB, agency string) (int, error) {
+	return countExternalRows(ctx, database, agency)
+}
+
 // countExternalRows counts an agency's external secrets and SSH keys, by each
 // store's own question (a secret: a source that is not exactly "stored"; a
 // key: exactly "vault"; either: a ref), as the disconnect does.

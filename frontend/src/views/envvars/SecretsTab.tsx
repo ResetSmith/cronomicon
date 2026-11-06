@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { api, fetchCapabilities } from "../../api/client";
 import { globalOnly, vaultSecretGlobalOnly } from "../../api/globalAdmin";
 import { GLOBAL_AGENCY, useAgencyIdByName } from "../../api/access";
-import { useVaultPrefixes, vaultPathWhy } from "../../api/vaultPaths";
+import { checkStoreRef, refHintOf, useStoreRefCheck, useVaultPrefixes, vaultPathWhy } from "../../api/vaultPaths";
 import { useAgencyOptional } from "../../agency";
 import { MoveAgency } from "./MoveAgency";
 import { HeldByGlobal, RowUsagePanel, SecretsReportButton } from "./RowUsage";
@@ -301,7 +301,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
               color: isVault ? c.primary : c.textSec,
             }}
           >
-            {isVault ? "Vault" : "Stored"}
+            {isVault ? "External" : "Stored"}
           </span>
         );
       },
@@ -498,7 +498,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                                   ) : undefined
                                 }
                               >
-                                {isVault ? "Vault Reference" : "Secret Value"}
+                                {isVault ? "External Reference" : "Secret Value"}
                               </DetailLabel>
                               <div
                                 style={{
@@ -508,7 +508,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                                   color: isVault ? c.primary : shown !== undefined ? c.text : c.textMuted,
                                   letterSpacing: !isVault && shown === undefined ? 2 : 0,
                                 }}
-                                title={isVault ? "Vault reference — resolved at run time" : undefined}
+                                title={isVault ? "A reference in the agency's secret store, resolved at run time" : undefined}
                               >
                                 {isVault ? v.vaultPath || "—" : shown !== undefined ? shown : MASK}
                               </div>
@@ -533,7 +533,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                                         color: isVault ? c.primary : c.textMuted,
                                       }}
                                     >
-                                      {isVault ? "Vault reference" : "Stored in Cronomicon"}
+                                      {isVault ? "External (secret store)" : "Stored in Cronomicon"}
                                     </span>
                                   }
                                 />
@@ -698,7 +698,12 @@ function SecretFormModal({
   const offerVault = vaultEnabled || (prefixes.kind === "prefixes" && prefixes.ownVault);
   // Why the Vault SOURCE cannot be chosen at all, and why this PATH cannot be.
   const vaultWhy = ownerId === GLOBAL_AGENCY ? globalVaultWhy : vaultPathWhy(prefixes, ownerName);
-  const pathWhy = source === "vault" && ownerId !== GLOBAL_AGENCY ? vaultPathWhy(prefixes, ownerName, vaultPath) : "";
+  // Whether THIS reference may be named is the server's to say (2.5.5 SM-10):
+  // asked as the field settles, and again before the save.
+  const currentRef = isEdit ? initial?.vaultPath ?? "" : "";
+  const refOwner = source === "vault" && ownerId && ownerId !== GLOBAL_AGENCY ? ownerId : undefined;
+  const pathWhy = useStoreRefCheck(refOwner, vaultPath, currentRef, !vaultWhy);
+  const hint = refHintOf(prefixes);
 
   const onKeyChange = (raw: string) => {
     const up = raw.toUpperCase().replace(/[^A-Z0-9_]/g, "");
@@ -712,12 +717,19 @@ function SecretFormModal({
       return;
     }
     if (source === "vault" && !vaultPath.trim()) {
-      setFormError("Vault path is required for vault-source secrets");
+      setFormError(`${hint.label} is required for an external secret`);
       return;
     }
     if (source === "vault" && (vaultWhy || pathWhy)) {
       setFormError(vaultWhy || pathWhy);
       return;
+    }
+    if (refOwner) {
+      const why = await checkStoreRef(refOwner, vaultPath, currentRef);
+      if (why) {
+        setFormError(why);
+        return;
+      }
     }
     if (source === "stored" && !isEdit && !value) {
       setFormError("Secret value is required for stored secrets");
@@ -814,7 +826,7 @@ function SecretFormModal({
                 [
                   { v: "stored", l: "Stored in Cronomicon" },
                   // Vault option only appears when Vault is configured (C.3).
-                  ...(offerVault ? [{ v: "vault", l: "Vault reference" }] : []),
+                  ...(offerVault ? [{ v: "vault", l: "External (secret store)" }] : []),
                 ] as { v: SecretSource; l: string }[]
               ).map((opt, i) => {
                 // Vault is configured (so the option is relevant) but this row's
@@ -875,14 +887,15 @@ function SecretFormModal({
         </div>
         {source === "vault" ? (
           <div>
-            <label style={labelStyle()}>Vault Path *</label>
+            <label style={labelStyle()}>{hint.label} *</label>
             <input
+              aria-label={hint.label}
               value={vaultPath}
               onChange={(e) => setVaultPath(e.target.value)}
-              placeholder="secret/data/myapp#KEY_NAME"
+              placeholder={hint.placeholder}
               style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm }}
             />
-            <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>Format: engine/data/path#FIELD_NAME</div>
+            <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>{hint.format}</div>
             {prefixes.kind === "prefixes" && prefixes.prefixes.length > 0 && (
               <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
                 {ownerName} may name paths inside:{" "}

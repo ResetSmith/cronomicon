@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import type { components } from "../../api/schema";
 import { c } from "../../theme";
@@ -11,7 +12,8 @@ import { globalAgencyName } from "../../globalName";
 type AgencyVault = components["schemas"]["AgencyVault"];
 type VaultRef = components["schemas"]["AgencyVaultReference"];
 
-// Settings → Agency Vault (2.5.1 SG3). An agency may connect a
+// Settings → Secret store (2.5.1 SG3 as "Agency Vault"; any kind of store since
+// 2.5.5 SM5: HashiCorp Vault / OpenBao or AWS Secrets Manager). An agency may connect a
 // Vault of its own; one that does not uses the installation's. A Vault-backed
 // secret or SSH key resolves in its OWNER agency's Vault (SG-21), and never
 // falls back to the installation's when the agency's own cannot be used.
@@ -27,33 +29,33 @@ export function AgencyVaultSection({ isGlobal }: { isGlobal: boolean }) {
 
   if (agency === GLOBAL_AGENCY) {
     return (
-      <Card title="Vault">
+      <Card title="Secret store">
         <div role="note" style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
           {agencyName}'s Vault is the installation's, used by every agency without a Vault of its own.{" "}
           {isGlobal ? (
             <a href="/settings?tab=vault" style={{ color: c.accent }}>
-              Settings → Vault (Installation)
+              Settings → Installation secret store
             </a>
           ) : (
             "A global administrator configures it."
           )}
-          {" "}To connect an agency's own Vault, switch to that agency.
+          {" "}To connect an agency's own secret store, switch to that agency.
         </div>
       </Card>
     );
   }
   if (!agency) {
     return (
-      <Card title="Vault">
-        <div role="note" style={{ fontSize: c.fontSm, color: c.textSec }}>Switch to an agency to see its Vault.</div>
+      <Card title="Secret store">
+        <div role="note" style={{ fontSize: c.fontSm, color: c.textSec }}>Switch to an agency to see its secret store.</div>
       </Card>
     );
   }
   if (!canWrite) {
     return (
-      <Card title="Vault">
+      <Card title="Secret store">
         <div role="note" style={{ fontSize: c.fontSm, color: c.textSec }}>
-          Only {agencyName}'s administrators can see and change its Vault connection.
+          Only {agencyName}'s administrators can see and change its secret store connection.
         </div>
       </Card>
     );
@@ -61,14 +63,29 @@ export function AgencyVaultSection({ isGlobal }: { isGlobal: boolean }) {
   return <AgencyVaultForm key={agency} agency={agency} agencyName={agencyName} />;
 }
 
+type Provider = "hashicorp" | "aws";
+const PROVIDERS: { id: Provider; label: string }[] = [
+  { id: "hashicorp", label: "HashiCorp Vault / OpenBao" },
+  { id: "aws", label: "AWS Secrets Manager" },
+];
+
 function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: string }) {
   const path = { params: { path: { agencyId: agency } } };
-  const [loaded, setLoaded] = useState<{ vault: AgencyVault | null } | null>(null);
+  const [loaded, setLoaded] = useState<{ vault: AgencyVault | null; externalRows: number } | null>(null);
   const [loadErr, setLoadErr] = useState("");
+  const [provider, setProvider] = useState<Provider>("hashicorp");
+  // HashiCorp Vault / OpenBao.
   const [addr, setAddr] = useState("");
   const [namespace, setNamespace] = useState("");
   const [roleId, setRoleId] = useState("");
   const [secretId, setSecretId] = useState("");
+  // AWS Secrets Manager (2.5.5 SM-4).
+  const [region, setRegion] = useState("");
+  const [endpoint, setEndpoint] = useState("");
+  const [accessKeyId, setAccessKeyId] = useState("");
+  const [secretAccessKey, setSecretAccessKey] = useState("");
+  const [sessionToken, setSessionToken] = useState("");
+  const [exampleRef, setExampleRef] = useState("");
   // undefined keeps the stored bundle; "" clears it.
   const [caPem, setCaPem] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
@@ -87,11 +104,17 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
         return;
       }
       const v = data.vault ?? null;
-      setLoaded({ vault: v });
+      setLoaded({ vault: v, externalRows: data.externalRows ?? 0 });
+      setProvider(v?.provider === "aws" ? "aws" : "hashicorp");
       setAddr(v?.addr ?? "");
       setNamespace(v?.namespace ?? "");
+      setRegion(v?.settings?.region ?? "");
+      setEndpoint(v?.settings?.endpoint ?? "");
       setRoleId("");
       setSecretId("");
+      setAccessKeyId("");
+      setSecretAccessKey("");
+      setSessionToken("");
       setCaPem(undefined);
     });
     return () => {
@@ -100,18 +123,38 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agency, bump]);
 
-  if (loadErr) return <Card title="Vault"><div style={{ color: c.danger }}>Error: {loadErr}</div></Card>;
+  if (loadErr) return <Card title="Secret store"><div style={{ color: c.danger }}>Error: {loadErr}</div></Card>;
   if (!loaded) return <InlineLoading style={{ padding: 16 }} />;
   const v = loaded.vault;
+  const stored = v ? (v.provider === "aws" ? "aws" : "hashicorp") : null;
+  // The same kind of store keeps its stored credential when a field is blank;
+  // another kind starts afresh.
+  const sameKind = stored === provider;
+  // SM-9: the kind of store does not change while rows name it.
+  const kindLockedWhy =
+    v && loaded.externalRows > 0
+      ? `${loaded.externalRows} of ${agencyName}'s external secrets and SSH keys use this store. Change them to stored values, or delete them, before choosing another kind.`
+      : "";
+  const label = PROVIDERS.find((p) => p.id === provider)!.label;
 
-  const body = (confirmUnresolved = false) => ({
-    addr,
-    namespace,
-    roleId,
-    secretId,
-    ...(caPem !== undefined ? { caPem } : {}),
-    ...(confirmUnresolved ? { confirmUnresolved: true } : {}),
-  });
+  const body = (confirmUnresolved = false) =>
+    provider === "aws"
+      ? {
+          provider,
+          settings: { region: region.trim(), endpoint: endpoint.trim(), ...(caPem !== undefined ? { caPem } : {}) },
+          credential: { accessKeyId, secretAccessKey, sessionToken },
+          ...(exampleRef.trim() ? { exampleRef: exampleRef.trim() } : {}),
+          ...(confirmUnresolved ? { confirmUnresolved: true } : {}),
+        }
+      : {
+          provider,
+          addr,
+          namespace,
+          roleId,
+          secretId,
+          ...(caPem !== undefined ? { caPem } : {}),
+          ...(confirmUnresolved ? { confirmUnresolved: true } : {}),
+        };
 
   async function test() {
     setBusy(true);
@@ -119,7 +162,12 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
     const { data, error } = await api.POST("/agencies/{agencyId}/vault/test", { ...path, params: { ...path.params, header: csrfHeader }, body: body() });
     setBusy(false);
     if (error) setMsg({ ok: false, text: errMsg(error) });
-    else setMsg(data?.ok ? { ok: true, text: "The Vault accepted the login." } : { ok: false, text: `The login failed: ${data?.problem ?? "no answer"}` });
+    else
+      setMsg(
+        data?.ok
+          ? { ok: true, text: provider === "aws" ? "AWS accepted the credential." : "The Vault accepted the login." }
+          : { ok: false, text: `The test failed: ${data?.problem ?? "no answer"}` },
+      );
   }
 
   async function preview() {
@@ -136,8 +184,9 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
     setMsg(null);
     const { error, response } = await api.PUT("/agencies/{agencyId}/vault", { ...path, params: { ...path.params, header: csrfHeader }, body: body(confirm) });
     setBusy(false);
-    if (response?.status === 409) {
-      setUnresolved(((error as { references?: VaultRef[] } | undefined)?.references) ?? []);
+    const e = error as { code?: string; references?: VaultRef[] } | undefined;
+    if (response?.status === 409 && e?.code === "references_unresolved") {
+      setUnresolved(e.references ?? []);
       return;
     }
     setUnresolved(null);
@@ -145,7 +194,7 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
       setMsg({ ok: false, text: errMsg(error) });
       return;
     }
-    setMsg({ ok: true, text: "Saved. The agency's Vault-backed secrets and SSH keys now resolve in this Vault." });
+    setMsg({ ok: true, text: `Saved. ${agencyName}'s external secrets and SSH keys now resolve in this store.` });
     setRefs(null);
     setBump((b) => b + 1);
   }
@@ -163,27 +212,62 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
   }
 
   const wide: React.CSSProperties = { ...inputStyle(), width: 320 };
-  const missing = !addr.trim() || (!v && (!roleId.trim() || !secretId.trim()));
-  const missingWhy = missing ? "Give the address, and the role id and secret id for a first connection" : undefined;
+  const keepHint = (set: boolean | undefined) =>
+    sameKind && set ? "Never shown. Leave blank to keep the stored one." : "Never shown after saving.";
+  const setMark = (set: boolean | undefined) => (sameKind && set ? "•••• (set)" : "");
+  const missingWhy =
+    provider === "aws"
+      ? !region.trim()
+        ? "Give the region"
+        : !sameKind && (!accessKeyId.trim() || !secretAccessKey.trim())
+          ? "Give the access key id and secret access key"
+          : undefined
+      : !addr.trim() || (!sameKind && (!roleId.trim() || !secretId.trim()))
+        ? "Give the address, and the role id and secret id for a first connection"
+        : undefined;
+  const missing = !!missingWhy;
+  const caField = (
+    <SettingRow
+      label="CA bundle"
+      hint={
+        caPem === undefined
+          ? sameKind && v?.caPresent
+            ? "A bundle is stored. Paste one to replace it."
+            : provider === "aws"
+              ? "PEM, for an endpoint of your own whose certificate the server does not already trust (optional)"
+              : "PEM, for a Vault whose certificate the server does not already trust (optional)"
+          : caPem === ""
+            ? "The stored bundle is removed on save."
+            : "Replaces the stored bundle on save."
+      }
+      last
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+        <textarea aria-label="CA bundle" value={caPem ?? ""} onChange={(e) => setCaPem(e.target.value)} rows={3} style={{ ...wide, fontFamily: c.mono, fontSize: c.fontXs }} />
+        {sameKind && v?.caPresent && caPem === undefined && <Btn small onClick={() => setCaPem("")}>Remove the stored bundle</Btn>}
+      </div>
+    </SettingRow>
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
         {v ? (
           <>
-            <strong style={{ color: c.text }}>{agencyName}</strong> has a Vault of its own. Its Vault-backed secrets and SSH
-            keys are read there, and only there: if it cannot be reached they fail, and are never read from the
-            installation's Vault instead.
+            <strong style={{ color: c.text }}>{agencyName}</strong> has a secret store of its own ({v.providerLabel || label}).
+            Its external secrets and SSH keys are read there, and only there: if it cannot be reached they fail, and are
+            never read from the installation's Vault instead.
           </>
         ) : (
           <>
             <strong style={{ color: c.text }}>{agencyName}</strong> uses the installation's Vault, inside the paths a global
-            administrator assigned it. Connecting a Vault of its own moves every one of its Vault references there at once.
+            administrator assigned it. Connecting a secret store of its own moves every one of its external references there
+            at once.
           </>
         )}
       </div>
       <Card
-        title={v ? "Its own Vault" : "Connect a Vault of its own"}
+        title={v ? "Its own secret store" : "Connect a secret store of its own"}
         action={
           <div style={{ display: "flex", gap: 8 }}>
             <Btn small onClick={test} disabled={busy || missing} title={missingWhy}>Test</Btn>
@@ -194,38 +278,76 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
       >
         <ReadOnlyFields readOnly={busy}>
           <div style={{ fontSize: c.fontSm }}>
-            <SettingRow label="Vault address" hint="https only, on the installation's allowed Vault hosts">
-              <input aria-label="Vault address" value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="https://vault.agency.internal:8200" style={wide} />
+            <SettingRow label="Kind of store" hint={kindLockedWhy || "Where this agency's external secrets and SSH keys are read"}>
+              <select
+                aria-label="Kind of store"
+                value={provider}
+                disabled={!!kindLockedWhy}
+                title={kindLockedWhy || undefined}
+                onChange={(e) => {
+                  setProvider(e.target.value as Provider);
+                  setCaPem(undefined);
+                  setMsg(null);
+                  setRefs(null);
+                }}
+                style={{ ...wide, cursor: kindLockedWhy ? "not-allowed" : "pointer" }}
+              >
+                {PROVIDERS.map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
+              </select>
             </SettingRow>
-            <SettingRow label="Namespace" hint="Vault Enterprise namespace (optional)">
-              <input aria-label="Namespace" value={namespace} onChange={(e) => setNamespace(e.target.value)} style={wide} />
-            </SettingRow>
-            <SettingRow label="AppRole role id" hint={v ? "Never shown. Leave blank to keep the stored one." : "Never shown after saving."}>
-              <input aria-label="Role id" type="password" value={roleId} onChange={(e) => setRoleId(e.target.value)} placeholder={v?.roleIdSet ? "•••• (set)" : ""} style={wide} />
-            </SettingRow>
-            <SettingRow label="AppRole secret id" hint={v ? "Never shown. Leave blank to keep the stored one." : "Never shown after saving."}>
-              <input aria-label="Secret id" type="password" value={secretId} onChange={(e) => setSecretId(e.target.value)} placeholder={v?.secretIdSet ? "•••• (set)" : ""} style={wide} />
-            </SettingRow>
-            <SettingRow
-              label="CA bundle"
-              hint={
-                caPem === undefined
-                  ? v?.caPresent
-                    ? "A bundle is stored. Paste one to replace it."
-                    : "PEM, for a Vault whose certificate the server does not already trust (optional)"
-                  : caPem === ""
-                    ? "The stored bundle is removed on save."
-                    : "Replaces the stored bundle on save."
-              }
-              last
-            >
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
-                <textarea aria-label="CA bundle" value={caPem ?? ""} onChange={(e) => setCaPem(e.target.value)} rows={3} style={{ ...wide, fontFamily: c.mono, fontSize: c.fontXs }} />
-                {v?.caPresent && caPem === undefined && (
-                  <Btn small onClick={() => setCaPem("")}>Remove the stored bundle</Btn>
-                )}
+            {kindLockedWhy && (
+              <div role="note" style={{ fontSize: c.fontXs, color: c.textMuted, margin: "0 0 8px" }}>
+                <Link to="/env-vars" style={{ color: c.accent }}>Open Secrets &amp; Variables</Link>
               </div>
-            </SettingRow>
+            )}
+            {provider === "aws" ? (
+              <>
+                <SettingRow label="Region" hint="The region the agency's secrets are in, such as us-east-1">
+                  <input aria-label="Region" value={region} onChange={(e) => setRegion(e.target.value)} placeholder="us-east-1" style={wide} />
+                </SettingRow>
+                <SettingRow label="Endpoint" hint="Optional: a VPC or FIPS endpoint (https, on the installation's allowed hosts). Blank: the region's own.">
+                  <input aria-label="Endpoint" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://vpce-….secretsmanager.us-east-1.vpce.amazonaws.com" style={wide} />
+                </SettingRow>
+                <SettingRow label="Access key id" hint={keepHint(v?.credentialSet?.accessKeyId)}>
+                  <input aria-label="Access key id" type="password" value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} placeholder={setMark(v?.credentialSet?.accessKeyId)} style={wide} />
+                </SettingRow>
+                <SettingRow label="Secret access key" hint={keepHint(v?.credentialSet?.secretAccessKey)}>
+                  <input aria-label="Secret access key" type="password" value={secretAccessKey} onChange={(e) => setSecretAccessKey(e.target.value)} placeholder={setMark(v?.credentialSet?.secretAccessKey)} style={wide} />
+                </SettingRow>
+                <SettingRow label="Session token" hint="Optional, for temporary credentials">
+                  <input aria-label="Session token" type="password" value={sessionToken} onChange={(e) => setSessionToken(e.target.value)} style={wide} />
+                </SettingRow>
+                <SettingRow
+                  label="Example reference"
+                  hint="AWS has no login to test: the test and the save read this secret (or one the agency already names) and discard it"
+                >
+                  <input aria-label="Example reference" value={exampleRef} onChange={(e) => setExampleRef(e.target.value)} placeholder="myapp/db#password" style={{ ...wide, fontFamily: c.mono }} />
+                </SettingRow>
+                {endpoint.trim() && caField}
+                <div role="note" style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 8, lineHeight: 1.5 }}>
+                  Cronomicon uses only the credential given here: never the server's own AWS identity, instance role or
+                  metadata service. Give it read access (secretsmanager:GetSecretValue) to the agency's secrets alone.
+                </div>
+              </>
+            ) : (
+              <>
+                <SettingRow label="Vault address" hint="https only, on the installation's allowed Vault hosts">
+                  <input aria-label="Vault address" value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="https://vault.agency.internal:8200" style={wide} />
+                </SettingRow>
+                <SettingRow label="Namespace" hint="Vault Enterprise namespace (optional)">
+                  <input aria-label="Namespace" value={namespace} onChange={(e) => setNamespace(e.target.value)} style={wide} />
+                </SettingRow>
+                <SettingRow label="AppRole role id" hint={keepHint(v?.roleIdSet)}>
+                  <input aria-label="Role id" type="password" value={roleId} onChange={(e) => setRoleId(e.target.value)} placeholder={setMark(v?.roleIdSet)} style={wide} />
+                </SettingRow>
+                <SettingRow label="AppRole secret id" hint={keepHint(v?.secretIdSet)}>
+                  <input aria-label="Secret id" type="password" value={secretId} onChange={(e) => setSecretId(e.target.value)} placeholder={setMark(v?.secretIdSet)} style={wide} />
+                </SettingRow>
+                {caField}
+              </>
+            )}
           </div>
         </ReadOnlyFields>
         {msg && (
@@ -239,14 +361,14 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
           </div>
         )}
       </Card>
-      {refs && <RefsCard title="Its Vault references in this Vault" refs={refs} />}
+      {refs && <RefsCard title="Its external references in this store" refs={refs} />}
       {v && <OwnPrefixesCard agency={agency} agencyName={agencyName} />}
       {v && (
         <Card title="Disconnect">
           <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: c.fontSm, color: c.textSec }}>
             <span style={{ flex: 1 }}>
-              Refused while {agencyName} owns any Vault-backed secret or SSH key: they would all move to the installation's
-              Vault at once. Move them out of Vault, or delete them, first.
+              Refused while {agencyName} owns any external secret or SSH key: they would all move to the installation's
+              Vault at once. Change them to stored values, or delete them, first.
             </span>
             <Btn dangerQuiet onClick={() => setDisconnecting(true)} disabled={busy}>Disconnect…</Btn>
           </div>
@@ -258,8 +380,8 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
           message={
             <div>
               <p style={{ marginTop: 0 }}>
-                These of {agencyName}'s Vault-backed secrets and SSH keys could not be read in this Vault. Saved, they fail
-                until their paths exist there.
+                These of {agencyName}'s external secrets and SSH keys could not be read in this store. Saved, they fail
+                until they exist there.
               </p>
               <RefsTable refs={unresolved} />
             </div>
@@ -272,8 +394,8 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
       )}
       {disconnecting && (
         <ConfirmDialog
-          title={`Disconnect ${agencyName}'s Vault?`}
-          message={`${agencyName} goes back to the installation's Vault, inside the paths a global administrator assigns it. The Vault path prefixes it set for its own Vault are cleared: until a global administrator assigns some, it names no Vault path.`}
+          title={`Disconnect ${agencyName}'s secret store?`}
+          message={`${agencyName} goes back to the installation's Vault, inside the paths a global administrator assigns it. The prefixes it set for its own store are cleared: until a global administrator assigns some, it names no reference.`}
           confirmLabel="Disconnect"
           busy={busy}
           onConfirm={disconnect}
@@ -310,9 +432,9 @@ function OwnPrefixesCard({ agency, agencyName }: { agency: string; agencyName: s
   return (
     <Card title="Path prefixes" action={<Btn small onClick={save} disabled={text == null}>Save prefixes</Btn>}>
       <div style={{ fontSize: c.fontSm, color: c.textSec, marginBottom: 8, lineHeight: 1.6 }}>
-        Optional. With none, {agencyName}'s secrets and keys may name any path in its own Vault; with some, only paths inside
-        them. One per line; a prefix holds whole path segments (<code style={{ fontFamily: c.mono }}>secret/data/tax</code> does
-        not hold <code style={{ fontFamily: c.mono }}>secret/data/tax-audit</code>).
+        Optional. With none, {agencyName}'s secrets and keys may name anything in its own store; with some, only
+        references inside them. One per line; a prefix holds whole segments (<code style={{ fontFamily: c.mono }}>tax</code> does
+        not hold <code style={{ fontFamily: c.mono }}>tax-audit</code>): a Vault path, or the start of an AWS secret name.
       </div>
       <textarea aria-label="Path prefixes" value={text ?? ""} onChange={(e) => setText(e.target.value)} rows={3} style={{ ...inputStyle(), width: 320, fontFamily: c.mono }} />
       {msg && (
@@ -328,7 +450,7 @@ function RefsCard({ title, refs }: { title: string; refs: VaultRef[] }) {
   return (
     <Card title={title}>
       {refs.length === 0 ? (
-        <div style={{ fontSize: c.fontSm, color: c.textSec }}>The agency has no Vault-backed secrets or SSH keys.</div>
+        <div style={{ fontSize: c.fontSm, color: c.textSec }}>The agency has no external secrets or SSH keys.</div>
       ) : (
         <RefsTable refs={refs} />
       )}

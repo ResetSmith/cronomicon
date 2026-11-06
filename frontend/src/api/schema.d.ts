@@ -9835,6 +9835,11 @@ export interface components {
             agencyId: string;
             /** @description False when the agency uses the installation's Vault. */
             connected: boolean;
+            /**
+             * @description v2.5.5 — how many external secrets and SSH keys the agency owns. The
+             *     kind of store cannot change while it is above zero (409 `vault_in_use`).
+             */
+            externalRows?: number;
             vault?: components["schemas"]["AgencyVault"] | null;
         };
         /**

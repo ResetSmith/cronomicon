@@ -52,7 +52,7 @@ export function VaultSection({ canWrite }: { canWrite: boolean }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
         The installation's Vault, used by every agency without a Vault of its own (each inside the path
-        prefixes assigned on Scopes → Agencies). An agency connects its own on Settings → Agency Vault, on
+        prefixes assigned on Scopes → Agencies). An agency connects its own secret store (HashiCorp Vault, OpenBao or AWS Secrets Manager) on Settings → Secret store, on
         a host listed below.
       </div>
       <VaultForm />

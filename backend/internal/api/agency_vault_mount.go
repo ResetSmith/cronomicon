@@ -83,7 +83,12 @@ func (s *Server) handleGetAgencyVault(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"agencyId": agency, "connected": v != nil, "vault": v})
+	n, err := settings.CountExternalRows(r.Context(), s.db, agency)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"agencyId": agency, "connected": v != nil, "vault": v, "externalRows": n})
 }
 
 // prepareAgencyVault decodes and validates a body and builds its client, one
