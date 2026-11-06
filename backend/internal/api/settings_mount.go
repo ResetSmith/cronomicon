@@ -10,7 +10,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/secretstore"
-	_ "github.com/ResetSmith/cronomicon/internal/secretstore/all"
 	"io"
 	"log/slog"
 	"net/http"
@@ -252,7 +251,11 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				httpx.Fail500(w, s.log, "db_error", oerr)
 				return
 			}
-			if !s.requireVaultPath(w, r, id, auth.PermManageEnvVars, owner, path, "secret") {
+			cur := ""
+			if existing.VaultPath != nil {
+				cur = *existing.VaultPath
+			}
+			if !s.requireVaultPathKeeping(w, r, id, auth.PermManageEnvVars, owner, path, cur, "secret") {
 				return
 			}
 		}
@@ -665,12 +668,12 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		if credentialNamesVault(inp.Source, inp.VaultRef) {
 			cid := r.PathValue("credentialId")
 			ref := inp.VaultRef
+			var cur sql.NullString
+			if qerr := s.db.QueryRowContext(r.Context(), `SELECT vault_ref FROM ssh_credentials WHERE id = ?`, cid).Scan(&cur); qerr != nil && !errors.Is(qerr, sql.ErrNoRows) {
+				httpx.Fail500(w, s.log, "db_error", qerr)
+				return
+			}
 			if ref == "" { // the edit leaves the path alone: judge the one it has
-				var cur sql.NullString
-				if qerr := s.db.QueryRowContext(r.Context(), `SELECT vault_ref FROM ssh_credentials WHERE id = ?`, cid).Scan(&cur); qerr != nil && !errors.Is(qerr, sql.ErrNoRows) {
-					httpx.Fail500(w, s.log, "db_error", qerr)
-					return
-				}
 				ref = cur.String
 			}
 			owner, oerr := s.rowOwnerAgency(r.Context(), "ssh_credentials", cid)
@@ -678,7 +681,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				httpx.Fail500(w, s.log, "db_error", oerr)
 				return
 			}
-			if !s.requireVaultPath(w, r, id, auth.PermConfigureApp, owner, ref, "SSH key") {
+			if !s.requireVaultPathKeeping(w, r, id, auth.PermConfigureApp, owner, ref, cur.String, "SSH key") {
 				return
 			}
 		}
@@ -925,6 +928,16 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 // refusal. Reading, revealing and consuming an existing Vault-backed row are
 // unchanged, and a path is NOT re-checked when a run resolves it (LR-81).
 func (s *Server) requireVaultPath(w http.ResponseWriter, r *http.Request, id auth.Identity, perm, ownerAgencyID, ref, label string) bool {
+	return s.requireVaultPathKeeping(w, r, id, perm, ownerAgencyID, ref, "", label)
+}
+
+// requireVaultPathKeeping is requireVaultPath for a row that already names
+// current: where nothing but the grammar would be checked (an agency with its
+// own store and no prefixes), a reference left as it was is not judged
+// again. Before 2.5.5 that branch stored any string, and an edit that leaves
+// the path alone must keep working for such a row (the grammar check is for
+// what is written now, SM-1).
+func (s *Server) requireVaultPathKeeping(w http.ResponseWriter, r *http.Request, id auth.Identity, perm, ownerAgencyID, ref, current, label string) bool {
 	if ownerAgencyID == agencyid.Global || ownerAgencyID == "" {
 		if id.GlobalAdmin(perm) {
 			return true
@@ -937,6 +950,14 @@ func (s *Server) requireVaultPath(w http.ResponseWriter, r *http.Request, id aut
 	if !id.CanAgency(perm, ownerAgencyID) {
 		s.denyEntityAgency(w, r, id, perm, ownerAgencyID,
 			"this "+label+" is owned by another agency: only that agency's administrators may say which Vault path it names")
+		return false
+	}
+	// 2.5.5 SM-1: the reference is judged by the owner's store's provider,
+	// in every branch below (before 2.5.5 an agency with its own Vault and no
+	// prefixes stored any string).
+	store, err := settings.StoreProviderOf(r.Context(), s.db, ownerAgencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
 		return false
 	}
 	prefixes, err := settings.ListVaultPrefixes(r.Context(), s.db, ownerAgencyID)
@@ -952,6 +973,13 @@ func (s *Server) requireVaultPath(w http.ResponseWriter, r *http.Request, id aut
 		return false
 	}
 	if own && len(prefixes) == 0 {
+		if current != "" && ref == current {
+			return true
+		}
+		if err := store.ValidateRef(ref); err != nil {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "not a "+store.Label()+" reference: "+err.Error())
+			return false
+		}
 		return true
 	}
 	if len(prefixes) == 0 {
@@ -960,7 +988,7 @@ func (s *Server) requireVaultPath(w http.ResponseWriter, r *http.Request, id aut
 				"a global administrator assigns an agency its Vault path prefixes, or the agency connects a Vault of its own")
 		return false
 	}
-	ok, err := secretstore.Allowed(secretstore.MustLookup(secretstore.Default), ref, prefixes) // SM1: the owner's provider from SM3
+	ok, err := secretstore.Allowed(store, ref, prefixes)
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
 		return false

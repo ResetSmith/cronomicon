@@ -25,6 +25,13 @@ import (
 // or prefix, whichever provider made it.
 var ErrInvalid = errors.New("invalid secret store reference")
 
+// ErrStoreUnusable is matched by a read failure that says the whole store
+// cannot be used (its credential refused, its endpoint silent), not that one
+// secret is missing. Such a failure raises agency_vault_unreachable until a
+// read or the health check succeeds (2.5.5 SM-6), for a provider whose health
+// check cannot see it.
+var ErrStoreUnusable = errors.New("the secret store cannot be used")
+
 // ErrUnknownProvider is returned by Lookup for an id no provider registered.
 var ErrUnknownProvider = errors.New("unknown secret store provider")
 

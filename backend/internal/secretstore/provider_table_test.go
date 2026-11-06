@@ -21,6 +21,16 @@ type providerCases struct {
 // cases names every registered provider's examples. A provider registered
 // without an entry here fails TestEveryProviderIsTabled.
 var cases = map[string]providerCases{
+	"aws": {
+		prefix: "cronomicon/tax/",
+		inside: []string{"cronomicon/tax/db#password", "cronomicon/tax", "cronomicon/tax/a/b",
+			"arn:aws:secretsmanager:eu-west-1:123456789012:secret:cronomicon/tax/db-AbCdEf#password",
+			"arn:aws:secretsmanager:eu-west-1:123456789012:secret:cronomicon/tax/db"},
+		sibling: []string{"cronomicon/tax-audit/db#x", "cronomicon/ta#x", "cronomicon/fin/db",
+			"arn:aws:secretsmanager:eu-west-1:123456789012:secret:cronomicon/fin/db-AbCdEf"},
+		malformed: []string{"cronomicon/tax/../fin/db", "/cronomicon/tax/db", "cronomicon/tax/db/", "cronomicon//tax",
+			"cronomicon/tax/%2e", "cronomicon/tax/db#", "arn:aws:s3:::bucket", "cronomicon/tax/ db", ""},
+	},
 	"hashicorp": {
 		prefix:    "secret/data/tax",
 		inside:    []string{"secret/data/tax/db#password", "secret/data/tax#k", "secret/data/tax/a/b"},

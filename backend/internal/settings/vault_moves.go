@@ -118,6 +118,20 @@ func checkVaultMoves(ctx context.Context, tx *sql.Tx, moves []catalogMove, opt M
 			continue
 		}
 		from, to := ownerOrGlobalAgency(m.mv.from), ownerOrGlobalAgency(m.mv.to)
+		// 2.5.5 SM-9: a reference is in its provider's grammar; it names
+		// nothing in another kind of store. Refused, not confirmable.
+		fp, err := StoreProviderOf(ctx, tx, from)
+		if err != nil {
+			return err
+		}
+		tp, err := StoreProviderOf(ctx, tx, to)
+		if err != nil {
+			return err
+		}
+		if fp.ID() != tp.ID() {
+			return &ProviderMismatchError{Kind: kind, ID: m.mv.id, Name: m.mv.name,
+				FromName: agencyNameTx(ctx, tx, from), ToName: agencyNameTx(ctx, tx, to), FromLabel: fp.Label(), ToLabel: tp.Label()}
+		}
 		fv, err := vaultOf(ctx, tx, from)
 		if err != nil {
 			return err

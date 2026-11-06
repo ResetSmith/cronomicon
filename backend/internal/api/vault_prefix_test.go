@@ -316,3 +316,49 @@ func TestVaultPrefixes_AreJudgedAsWrittenAndReplacedOnlyOnPurpose(t *testing.T) 
 		t.Fatal("a save that named no list cleared FIN's prefixes")
 	}
 }
+
+// 2.5.5 SM-9: a global administrator's repair that moves an external secret to
+// an agency whose store is another provider is 422 provider_mismatch, naming
+// both kinds of store, and nothing moves.
+func TestSM3_AMoveAcrossProvidersIsRefusedAtTheAPI(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO agency_vaults (agency_id, provider, addr, role_id_enc, secret_id_enc, credential_enc, settings_json,
+	      created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('ag:FIN', 'aws', '', '', '', 'x', '{"region":"eu-west-1"}', 't', 't', 't', 't')`)
+	exec(`INSERT INTO secrets (id, key, source, vault_ref, owner_agency, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('s-tax', 'TAX_DB', 'vault', 'secret/data/tax/db#password', 'ag:TAX', 't', 't', 't', 't')`)
+	rec := gateReq(t, h, http.MethodPut, "/api/v1/secret-agencies", gRoot, asRepair(`[{"id":"s-tax","agencyIds":["ag:FIN"]}]`))
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "provider_mismatch" {
+		t.Fatalf("moving TAX's Vault secret to FIN (AWS) = %d %s, want 422 provider_mismatch", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "HashiCorp Vault / OpenBao") || !strings.Contains(rec.Body.String(), "AWS Secrets Manager") {
+		t.Errorf("the refusal does not name both kinds of store: %s", rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM secrets WHERE id = 's-tax' AND owner_agency = 'ag:TAX'`); n != 1 {
+		t.Fatal("the secret moved")
+	}
+}
+
+// 2.5.5 SM-1: in an agency with its own store and no prefixes, a NEW
+// reference is judged by the store's grammar, but a row stored before with
+// one the grammar refuses can still be edited when the edit leaves it alone.
+func TestSM3_AnUnchangedOldReferenceIsNotJudgedAgain(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO agency_vaults (agency_id, provider, addr, role_id_enc, secret_id_enc, credential_enc, settings_json,
+	      created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('ag:TAX', 'hashicorp', 'https://v', '', '', 'x', '{"addr":"https://v"}', 't', 't', 't', 't')`)
+	exec(`INSERT INTO secrets (id, key, source, vault_ref, scope, owner_agency, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('s-old', 'OLD', 'vault', 'secret//data/old#v', 'tax-hosts', 'ag:TAX', 't', 't', 't', 't')`)
+	rec := gateReq(t, h, http.MethodPut, "/api/v1/env-secrets/s-old", gTaxAdmin,
+		`{"key":"OLD","source":"vault","scope":"tax-hosts","description":"edited","vaultPath":"secret//data/old#v"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("editing an old row that keeps its reference = %d %s, want 200", rec.Code, rec.Body)
+	}
+	rec = gateReq(t, h, http.MethodPut, "/api/v1/env-secrets/s-old", gTaxAdmin,
+		`{"key":"OLD","source":"vault","scope":"tax-hosts","vaultPath":"secret//data/other#v"}`)
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "validation_failed" {
+		t.Fatalf("a new malformed reference = %d %s, want 422 validation_failed", rec.Code, rec.Body)
+	}
+}

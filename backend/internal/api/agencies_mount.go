@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
@@ -1178,6 +1179,8 @@ func failAgencyRule(w http.ResponseWriter, err error) bool {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "agency_required", err.Error())
 	case errors.Is(err, settings.ErrGlobalMixed):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "global_mixed", err.Error())
+	case errors.Is(err, settings.ErrProviderMismatch): // 2.5.5 SM-9
+		httpx.Fail(w, http.StatusUnprocessableEntity, "provider_mismatch", err.Error())
 	case errors.Is(err, settings.ErrBuiltinAgency):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "builtin_agency", err.Error())
 	case errors.Is(err, settings.ErrOneAgency):
@@ -1219,10 +1222,10 @@ func (s *Server) requireVaultRowFits(w http.ResponseWriter, r *http.Request, id 
 	default:
 		return true
 	}
-	var source string
+	var source, owner string
 	var ref sql.NullString
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT COALESCE(source, ''), vault_ref FROM `+table+` WHERE id = ?`, entityID).Scan(&source, &ref)
+		`SELECT COALESCE(source, ''), vault_ref, COALESCE(owner_agency, '') FROM `+table+` WHERE id = ?`, entityID).Scan(&source, &ref, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true // the setter's own "unknown member"
 	}
@@ -1240,7 +1243,27 @@ func (s *Server) requireVaultRowFits(w http.ResponseWriter, r *http.Request, id 
 	if !vault {
 		return true
 	}
-	return s.requireVaultPath(w, r, id, perm, targetAgency, ref.String, label)
+	// 2.5.5 SM-9: another kind of store first, so the refusal says why rather
+	// than that the reference is malformed in the target's grammar.
+	from, err := settings.StoreProviderOf(r.Context(), s.db, owner)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	to, err := settings.StoreProviderOf(r.Context(), s.db, targetAgency)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if from.ID() != to.ID() {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "provider_mismatch", fmt.Sprintf(
+			"this %s reads %s, and %s's secret store is %s: change it to a stored value, or give it a reference "+
+				"in that store, before moving it", label, from.Label(), s.agencyNameOr(r, targetAgency), to.Label()))
+		return false
+	}
+	// The row keeps its reference: one stored before 2.5.5 that the grammar
+	// would refuse still moves where only the grammar would judge it.
+	return s.requireVaultPathKeeping(w, r, id, perm, targetAgency, ref.String, ref.String, label)
 }
 
 type vaultPrefixesJSON struct {

@@ -32,7 +32,9 @@ const agencyVaultHealthWait = 3 * time.Second
 // timeout).
 func CheckAgencyVaults(ctx context.Context, database *sql.DB, appCfg *config.Config) error {
 	rows, err := database.QueryContext(ctx, `
-		SELECT v.agency_id, COALESCE(a.name, v.agency_id), v.addr
+		SELECT v.agency_id, COALESCE(a.name, v.agency_id),
+		       CASE v.provider WHEN 'aws' THEN 'AWS Secrets Manager in ' || COALESCE(json_extract(v.settings_json, '$.region'), '?')
+		                       ELSE v.addr END
 		  FROM agency_vaults v LEFT JOIN agencies a ON a.id = v.agency_id
 		 ORDER BY v.agency_id`)
 	if err != nil {
@@ -81,9 +83,9 @@ func CheckAgencyVaults(ctx context.Context, database *sql.DB, appCfg *config.Con
 		found = append(found, notices.Finding{
 			AgencyID: t.id,
 			Subject:  t.id,
-			Detail: fmt.Sprintf("%s's own Vault at %s cannot be used: %s. Its Vault-backed secrets and SSH keys "+
+			Detail: fmt.Sprintf("%s's own secret store (%s) cannot be used: %s. Its external secrets and SSH keys "+
 				"do not resolve until it can, and runs that need them fail; they are never read from the "+
-				"installation's Vault instead. Check the Vault, or its connection in Settings → Agency Vault.",
+				"installation's Vault instead. Check the store, or its connection in Settings → Secret store.",
 				t.name, t.addr, problem),
 		})
 	}
@@ -109,6 +111,11 @@ func agencyVaultProblem(ctx context.Context, database *sql.DB, appCfg *config.Co
 		if err := hc.Health(); err != nil {
 			return err.Error()
 		}
+	}
+	// 2.5.5 SM-6: an endpoint that answers says nothing of the credential; a
+	// read since that found the store unusable does.
+	if why := lastStoreReadFailure(agency); why != "" {
+		return "its last read failed: " + why
 	}
 	return ""
 }

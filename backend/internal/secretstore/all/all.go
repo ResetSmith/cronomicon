@@ -3,5 +3,6 @@
 package all
 
 import (
+	_ "github.com/ResetSmith/cronomicon/internal/secretstore/aws"
 	_ "github.com/ResetSmith/cronomicon/internal/secretstore/hashicorp"
 )

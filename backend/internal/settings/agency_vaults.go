@@ -146,10 +146,16 @@ type AgencyVaultRuntime struct {
 	Provider                          string
 	Addr, Namespace, RoleID, SecretID string
 	CAPEM                             []byte
+	// Settings and Credential are another provider's (not HashiCorp's) as
+	// stored; HashiCorp's are the fields above.
+	Settings, Credential map[string]string
 }
 
 // Connection is the runtime as its provider reads it.
 func (rt AgencyVaultRuntime) Connection() secretstore.Connection {
+	if rt.provider() != hashicorp.ID {
+		return secretstore.Connection{Agency: rt.Agency, Provider: rt.provider(), Settings: rt.Settings, Credential: rt.Credential}
+	}
 	return secretstore.Connection{
 		Agency:   rt.Agency,
 		Provider: rt.provider(),
@@ -233,8 +239,11 @@ func ReadAgencyVaultRuntime(ctx context.Context, database *sql.DB, cfg *config.C
 		if err := json.Unmarshal([]byte(settingsJSON), &set); err != nil {
 			return rt, true, fmt.Errorf("read the agency's secret store settings: %w", err)
 		}
-		rt.Addr, rt.Namespace, rt.CAPEM = set[hashicorp.SettingAddr], set[hashicorp.SettingNamespace], []byte(set[hashicorp.SettingCAPEM])
-		rt.RoleID, rt.SecretID = cred[hashicorp.CredRoleID], cred[hashicorp.CredSecretID]
+		rt.Settings, rt.Credential = set, cred
+		if rt.provider() == hashicorp.ID {
+			rt.Addr, rt.Namespace, rt.CAPEM = set[hashicorp.SettingAddr], set[hashicorp.SettingNamespace], []byte(set[hashicorp.SettingCAPEM])
+			rt.RoleID, rt.SecretID = cred[hashicorp.CredRoleID], cred[hashicorp.CredSecretID]
+		}
 		return rt, true, nil
 	}
 	// A row the boot pass has not converted yet (it runs before any request;
@@ -315,6 +324,7 @@ func PutAgencyVault(ctx context.Context, database *sql.DB, cfg *config.Config, a
 		return nil, fmt.Errorf("write agency vault: %w", err)
 	}
 	secrets.RedactionSourceChanged()
+	forgetStoreReadFailure(agency) // a new credential is judged afresh (SM-6)
 	action := "vault-connected"
 	if prev != nil {
 		action = "vault-updated"
@@ -382,6 +392,7 @@ func DeleteAgencyVault(ctx context.Context, database *sql.DB, agency, actor stri
 	if len(cleared) > 0 {
 		detail = "prefixes cleared: " + strings.Join(cleared, ", ")
 	}
+	forgetStoreReadFailure(agency)
 	audit(ctx, database, agency, actor, "Settings", "vault-disconnected", "Vault", detail)
 	return true, nil
 }

@@ -8,7 +8,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/secretstore"
-	_ "github.com/ResetSmith/cronomicon/internal/secretstore/all"
 	"slices"
 	"sort"
 	"strings"
@@ -350,7 +349,12 @@ func vaultRowFits(ctx context.Context, tx *sql.Tx, t memberTable, entityID, agen
 		return false, err
 	}
 	rows.Close()
-	ok, err := secretstore.Allowed(secretstore.MustLookup(secretstore.Default), ref.String, prefixes) // SM1: the owner's provider from SM3
+	// The TARGET's provider judges: the row is to be read there (SM-9).
+	p, err := StoreProviderOf(ctx, tx, agencyID)
+	if err != nil {
+		return false, err
+	}
+	ok, err := secretstore.Allowed(p, ref.String, prefixes)
 	return err == nil && ok, nil
 }
 

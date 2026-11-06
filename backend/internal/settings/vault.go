@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -446,8 +447,13 @@ func AgencyVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Con
 		return nil, err
 	}
 	egress := agencyVaultEgress(appCfg)
+	// The whole connection is in the key (its settings and credential as
+	// JSON, for every provider): a changed field builds a new client.
+	conn := rt.Connection()
+	settingsJSON, _ := json.Marshal(conn.Settings)
+	credJSON, _ := json.Marshal(conn.Credential)
 	key := strings.Join([]string{"agency", rt.Agency, rt.Addr, rt.RoleID, rt.SecretID, rt.Namespace, string(rt.CAPEM),
-		fmt.Sprintf("%t/%t", egress.AllowPrivate, egress.AllowLoopback), rt.provider()}, "\x00")
+		fmt.Sprintf("%t/%t", egress.AllowPrivate, egress.AllowLoopback), rt.provider(), string(settingsJSON), string(credJSON)}, "\x00")
 	vaultClientMu.Lock()
 	defer vaultClientMu.Unlock()
 	if vc, ok := vaultClientCache[key]; ok {
@@ -504,7 +510,46 @@ func (d *dynamicVaultClient) Fetch(vaultRef string) (string, error) {
 	if vc == nil {
 		return "", secrets.ErrVaultUnavailable
 	}
-	return vc.Fetch(vaultRef)
+	v, err := vc.Fetch(vaultRef)
+	// 2.5.5 SM-6: a read that says the whole store cannot be used is
+	// remembered for the agency's notice; any read that works forgets it.
+	switch {
+	case err == nil:
+		forgetStoreReadFailure(d.agency)
+	case errors.Is(err, secretstore.ErrStoreUnusable):
+		rememberStoreReadFailure(d.agency, err)
+		return "", fmt.Errorf("%w: %w", secrets.ErrVaultUnavailable, err)
+	}
+	return v, err
+}
+
+// The last read of each agency's store that failed as unusable
+// (secretstore.ErrStoreUnusable), until a read or the health check succeeds.
+// In memory: a restart forgets it, and the next read that fails says it again.
+var (
+	storeReadFailuresMu sync.Mutex
+	storeReadFailures   = map[string]string{}
+)
+
+func rememberStoreReadFailure(agency string, err error) {
+	if agency == "" {
+		return
+	}
+	storeReadFailuresMu.Lock()
+	defer storeReadFailuresMu.Unlock()
+	storeReadFailures[agency] = err.Error()
+}
+
+func forgetStoreReadFailure(agency string) {
+	storeReadFailuresMu.Lock()
+	defer storeReadFailuresMu.Unlock()
+	delete(storeReadFailures, agency)
+}
+
+func lastStoreReadFailure(agency string) string {
+	storeReadFailuresMu.Lock()
+	defer storeReadFailuresMu.Unlock()
+	return storeReadFailures[agency]
 }
 
 // Configured is the live L7 signal secrets.Service.VaultConfigured asks for:
