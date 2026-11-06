@@ -290,7 +290,7 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
                   setMsg(null);
                   setRefs(null);
                 }}
-                style={{ ...wide, cursor: kindLockedWhy ? "not-allowed" : "pointer" }}
+                style={{ ...wide, cursor: kindLockedWhy ? "not-allowed" : "pointer", opacity: kindLockedWhy ? 0.5 : 1 }}
               >
                 {PROVIDERS.map((p) => (
                   <option key={p.id} value={p.id}>{p.label}</option>
@@ -299,7 +299,7 @@ function AgencyVaultForm({ agency, agencyName }: { agency: string; agencyName: s
             </SettingRow>
             {kindLockedWhy && (
               <div role="note" style={{ fontSize: c.fontXs, color: c.textMuted, margin: "0 0 8px" }}>
-                <Link to="/env-vars" style={{ color: c.accent }}>Open Secrets &amp; Variables</Link>
+                <Link to="/env-vars?tab=secrets" style={{ color: c.accent }}>Open Env Vars → Secrets</Link>
               </div>
             )}
             {provider === "aws" ? (

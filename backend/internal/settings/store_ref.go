@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/secretstore"
+	"github.com/ResetSmith/cronomicon/internal/vaultpath"
 )
 
 // StoreRefVerdict is whether an agency may name a reference (2.5.5 SM-10):
@@ -43,7 +44,7 @@ func JudgeStoreRef(ctx context.Context, database *sql.DB, agency, ref, current, 
 			return StoreRefVerdict{OK: true}, nil
 		}
 		if err := store.ValidateRef(ref); err != nil {
-			return StoreRefVerdict{Code: "validation_failed", Reason: "not a " + store.Label() + " reference: " + err.Error()}, nil
+			return StoreRefVerdict{Code: "validation_failed", Reason: RefRefusal(store, err)}, nil
 		}
 		return StoreRefVerdict{OK: true}, nil
 	}
@@ -53,10 +54,22 @@ func JudgeStoreRef(ctx context.Context, database *sql.DB, agency, ref, current, 
 	}
 	ok, err := secretstore.Allowed(store, ref, prefixes)
 	if err != nil {
-		return StoreRefVerdict{Code: "validation_failed", Reason: err.Error()}, nil
+		return StoreRefVerdict{Code: "validation_failed", Reason: RefRefusal(store, err)}, nil
 	}
 	if !ok {
 		return StoreRefVerdict{Code: "vault_path_not_allowed", Reason: "that reference is outside the paths assigned to this " + label + "'s agency (" + strings.Join(prefixes, ", ") + ")"}, nil
 	}
 	return StoreRefVerdict{OK: true}, nil
+}
+
+// RefRefusal is the sentence for a reference the store's grammar refuses:
+// "Not a valid <provider> reference: <why>", without the sentinels' own
+// prefixes ("invalid secret store reference: ", "invalid Vault path: "),
+// which would say the same thing twice.
+func RefRefusal(store secretstore.Provider, err error) string {
+	why := err.Error()
+	for _, p := range []string{secretstore.ErrInvalid.Error() + ": ", vaultpath.ErrInvalid.Error() + ": "} {
+		why = strings.TrimPrefix(why, p)
+	}
+	return "Not a valid " + store.Label() + " reference: " + why
 }

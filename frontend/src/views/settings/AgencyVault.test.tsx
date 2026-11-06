@@ -159,7 +159,7 @@ describe("Settings → Agency Vault (2.5.1 SG3)", () => {
     const kind = (await waitFor(() => screen.getByLabelText("Kind of store"))) as HTMLSelectElement;
     expect(kind.disabled).toBe(true);
     expect(kind.title).toMatch(/3 of Tax's external secrets and SSH keys use this store/);
-    expect(screen.getByRole("link", { name: "Open Secrets & Variables" }).getAttribute("href")).toBe("/env-vars");
+    expect(screen.getByRole("link", { name: "Open Env Vars → Secrets" }).getAttribute("href")).toBe("/env-vars?tab=secrets");
   });
 
   it("points Global at the installation's Vault, and a reader of another agency at its administrators", async () => {

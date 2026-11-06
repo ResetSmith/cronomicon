@@ -135,3 +135,18 @@ func TestSM3_AMoveAcrossProvidersIsRefused(t *testing.T) {
 		t.Fatalf("moving a stored secret to AWSAG = %v, want it moved", err)
 	}
 }
+
+// The refusal names the kind of store once, and says why without the
+// sentinels' own prefixes (found on the screenshots, 2026-11-06).
+func TestSM5_ARefusalReadsAsOneSentence(t *testing.T) {
+	f := newAgencyVaultFix(t)
+	f.connectAWS(t)
+	v, err := JudgeStoreRef(f.ctx, f.pool, "ag-aws", "cronomicon//db", "", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `Not a valid AWS Secrets Manager reference: "cronomicon//db" has an empty segment (a slash at either end, or a doubled slash)`
+	if v.OK || v.Code != "validation_failed" || v.Reason != want {
+		t.Fatalf("verdict = %+v\nwant reason %s", v, want)
+	}
+}

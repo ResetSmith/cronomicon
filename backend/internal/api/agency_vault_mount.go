@@ -326,7 +326,7 @@ func (s *Server) handleValidateStoreRef(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err := store.ValidateRef(in.Ref); err != nil {
-			httpx.JSON(w, http.StatusOK, settings.StoreRefVerdict{Code: "validation_failed", Reason: err.Error()})
+			httpx.JSON(w, http.StatusOK, settings.StoreRefVerdict{Code: "validation_failed", Reason: settings.RefRefusal(store, err)})
 			return
 		}
 		httpx.JSON(w, http.StatusOK, settings.StoreRefVerdict{OK: true})

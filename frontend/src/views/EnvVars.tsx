@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, fetchCapabilities } from "../api/client";
 import { useGet, rows } from "../hooks";
 import { TabBar } from "./envvars/ui";
@@ -9,8 +10,13 @@ import { SshKeysTab } from "./envvars/SshKeysTab";
 // Env Vars — variables + secrets + SSH keys. Scope management (and the Agencies
 // catalog) moved to the top-level Scopes page (SC1/SC2); this page is now the
 // name/value tabs plus the first-class SSH key store.
+// `?tab=secrets` or `?tab=keys` opens on that tab (2.5.5: Settings → Secret
+// store links to the agency's external secrets).
+const TAB_KEYS = ["variables", "secrets", "keys"];
+
 export function EnvVars() {
-  const [tab, setTab] = useState(0);
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(() => Math.max(0, TAB_KEYS.indexOf(params.get("tab") ?? "")));
   // PP-B1: variables + secrets writes require ManageEnvVars; SSH key credentials
   // are ConfigureApp-gated (SK-D6), matching the server requirePerm gates.
   // Mutation controls are hidden when the caller lacks the permission instead of
