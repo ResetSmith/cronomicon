@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ResetSmith/cronomicon/internal/vaultpath"
+	"github.com/ResetSmith/cronomicon/internal/secretstore"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
@@ -1334,7 +1334,7 @@ func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
 	case errors.Is(err, settings.ErrGlobalHasNoVaultPrefixes):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "builtin_agency", err.Error())
-	case errors.Is(err, vaultpath.ErrInvalid):
+	case errors.Is(err, secretstore.ErrInvalid):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
 	case err != nil:
 		httpx.Fail500(w, s.log, "update_failed", err)

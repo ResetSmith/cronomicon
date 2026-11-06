@@ -4489,8 +4489,9 @@ cronomicon validate .                # any checkout, without the -agency checks
                         <code>500 &ldquo;could not record the reveal; value withheld&rdquo;</code>. It does not let a
                         secret out with no trail. Reveal needs the <em>Manage env vars</em> permission. A Vault-source
                         secret returns <code>409</code>. A secret deleted between the scope-load and the reveal returns
-                        <code>404</code>, not an empty value. <strong>Migrate to Vault</strong> is one-way and zeroes
-                        the local ciphertext.</li>
+                        <code>404</code>, not an empty value. Since 2.5.5 there is no <em>Migrate to Vault</em>:
+                        Cronomicon reads from a secret store and never writes to one, so a stored secret is moved by
+                        putting its value in the store and editing the row to reference it.</li>
                     <li><strong>Make unrevealable</strong> (since 2.5.1). <code>manageEnvVars</code> on a stored
                         secret's own agency can lock its reveal, for good: from then on the reveal answers
                         <code>409 reveal_locked</code> for everyone, global administrators included, before anything
@@ -8607,7 +8608,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         only.</li>
                     <li><strong>An agency that owns a rule or a target is not deleted</strong> (&sect;6.1c).</li>
                     <li><strong>Three triggers are not about runs</strong> (since 2.5.1): <em>a secret revealed</em>,
-                        <em>a secret changed</em> (created, rotated, updated, moved, deleted, migrated to Vault), and
+                        <em>a secret changed</em> (created, rotated, updated, moved, deleted), and
                         <em>the backup keys changed</em>. A secret event belongs to the secret's agency, so an
                         agency's rule hears its own agency's secrets and a rule of Administration's hears every agency's; a
                         move is told to the agency it leaves and the one it reaches. The message names who acted and
@@ -10327,8 +10328,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             </tr>
                             <tr>
                                 <td>Env / secrets</td>
-                                <td><code>GET/POST/PUT/DELETE /env-secrets</code>, <code>/{id}/reveal</code>,
-                                    <code>/{id}/migrate-to-vault</code>, since 2.5.1 <code>/{id}/usage</code> and
+                                <td><code>GET/POST/PUT/DELETE /env-secrets</code>, <code>/{id}/reveal</code>, since 2.5.1 <code>/{id}/usage</code> and
                                     <code>POST /{id}/lock-reveal</code> (<code>409 reveal_locked</code> on a reveal
                                     afterwards), <code>/env-vars</code>; reference bindings
                                     <code>GET/PUT /job-reference-bindings/{jobId}</code>,

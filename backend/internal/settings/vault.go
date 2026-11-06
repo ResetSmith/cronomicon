@@ -405,7 +405,6 @@ func (d *dynamicVaultClient) ForAgency(owner string) secrets.VaultClient {
 type failedVaultClient struct{ err error }
 
 func (f failedVaultClient) Fetch(string) (string, error) { return "", f.err }
-func (f failedVaultClient) Write(string, string) error   { return f.err }
 func (f failedVaultClient) Configured() bool             { return false }
 
 // resolve returns the client for the config as of now, or nil when Vault is
@@ -487,14 +486,6 @@ func (d *dynamicVaultClient) Fetch(vaultRef string) (string, error) {
 		return "", secrets.ErrVaultUnavailable
 	}
 	return vc.Fetch(vaultRef)
-}
-
-func (d *dynamicVaultClient) Write(vaultPath, value string) error {
-	vc := d.resolve()
-	if vc == nil {
-		return secrets.ErrVaultUnavailable
-	}
-	return vc.Write(vaultPath, value)
 }
 
 // Configured is the live L7 signal secrets.Service.VaultConfigured asks for:

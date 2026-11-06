@@ -3184,8 +3184,7 @@
                         <li><strong>Compose</strong> (Admin) — creating/editing/deleting Jobs, Workflows and Schedules
                             in-app, and the <strong>Recycle Bin</strong> and a definition's <strong>History</strong>
                             (its revisions), each for the agencies you compose on.</li>
-                        <li><strong>Manage env vars</strong> (Admin) — all Variable and Secret CRUD, plus Reveal and
-                            Migrate-to-Vault. Also checked against the entity's owning <em>agency</em> — see §11.</li>
+                        <li><strong>Manage env vars</strong> (Admin) — all Variable and Secret CRUD, plus Reveal. Also checked against the entity's owning <em>agency</em> — see §11.</li>
                         <li><strong>Configure app</strong> (Admin) — Scopes, alerts, SSH targets/bastions, runner
                             management, the agency's repository and its sync, and the audit export. For anything an
                             agency owns it is checked against <em>that agency</em>: an agency's alert rules and push
@@ -6483,8 +6482,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         there, and names any path in it unless it set prefixes of its own. The Vault option appears
                         for such an agency even when the installation has no Vault.
                     </li>
-                    <li><strong>Migrate to Vault</strong> (stored secrets, when Vault is wired) is <strong>one-way and
-                            deletes the local ciphertext</strong> — no undo.</li>
+                    <li>To move a stored secret into a secret store, put the value there yourself, then edit the
+                        secret: change its source to the store and give its reference. Cronomicon reads from a store
+                        and never writes to one (since 2.5.5).</li>
                 </ul>
                 <div class="callout note">
                     <div class="ct"><span class="em">🔑</span> The A13 key-unification rule</div>
@@ -8572,8 +8572,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         values under 5 chars and common literals (see <a
                             href="administrator-manual.html#secrets">Secrets &amp; Security</a>, Administrator Manual).
                     </li>
-                    <li>Optionally <strong>Migrate to Vault</strong> once Vault is wired — one-way; deletes the local
-                        ciphertext.</li>
+                    <li>Optionally keep the value in a secret store instead: put it there, then edit the secret to
+                        reference it.</li>
                 </ol>
 
                 <h3>15.7 Run a job over a bastion (jump host)</h3>
@@ -9966,8 +9966,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             </tr>
                             <tr>
                                 <td>Env / secrets</td>
-                                <td><code>GET/POST/PUT/DELETE /env-secrets</code>, <code>/{id}/reveal</code>,
-                                    <code>/{id}/migrate-to-vault</code>
+                                <td><code>GET/POST/PUT/DELETE /env-secrets</code>, <code>/{id}/reveal</code>
                                 </td>
                                 <td>read = session; writes/reveal = Admin (ManageEnvVars) <strong>on the entity's owning
                                         agency</strong> (a row Administration still holds is a global administrator's for

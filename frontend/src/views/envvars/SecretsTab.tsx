@@ -140,7 +140,6 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<EnvSecretRow | null>(null);
   const [deleting, setDeleting] = useState<EnvSecretRow | null>(null);
-  const [migrating, setMigrating] = useState<EnvSecretRow | null>(null);
   const [expanded, setExpanded] = useState<EnvSecretRow["id"] | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
@@ -570,16 +569,6 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                                     </span>
                                   </div>
                                 )}
-                                {!isVault && vaultEnabled && (
-                                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
-                                    <Btn onClick={() => setMigrating(v)} disabled={!!rowVaultWhy(v)} title={rowVaultWhy(v) || undefined}>
-                                      Migrate to Vault
-                                    </Btn>
-                                    <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
-                                      {rowVaultWhy(v) || "Converts this entry to a vault reference"}
-                                    </span>
-                                  </div>
-                                )}
                               </div>
                             </div>
                           </DetailGrid>
@@ -659,17 +648,6 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         />
       )}
 
-      {migrating && (
-        <MigrateModal
-          row={migrating}
-          onClose={() => setMigrating(null)}
-          onDone={(text, kind) => {
-            setMigrating(null);
-            setNotice({ kind, text });
-            if (kind === "info") refetch();
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -957,102 +935,6 @@ function SecretFormModal({
             ownership is fixed at creation and there is no transfer action yet, so an
             editable-looking control would promise something the API cannot do. */}
         <CreationAgencyPicker label="secret" pick={agencyPick} />
-      </div>
-    </Modal>
-  );
-}
-
-function MigrateModal({
-  row,
-  onClose,
-  onDone,
-}: {
-  row: EnvSecretRow;
-  onClose: () => void;
-  onDone: (msg: string, kind: "info" | "error") => void;
-}) {
-  const [vaultPath, setVaultPath] = useState(`secret/data/cronomicon#${row.key}`);
-  const [busy, setBusy] = useState(false);
-  const [formError, setFormError] = useState("");
-  // LR-80 — the path must lie inside the Vault paths of the agency that owns
-  // the row (no limit for one of Global's).
-  const ownerName = row.ownerAgency || globalAgencyName();
-  const ownerId = useAgencyIdByName(ownerName);
-  const prefixes = useVaultPrefixes(ownerId);
-  const pathWhy = ownerId === GLOBAL_AGENCY ? "" : vaultPathWhy(prefixes, ownerName, vaultPath);
-  // The suggested path is only a starting point. For an agency's row it is
-  // moved inside that agency's first prefix once the prefixes are known, so
-  // the dialog does not open on a refusal the operator did nothing to cause.
-  // Never after they have typed.
-  const [touched, setTouched] = useState(false);
-  const firstPrefix = prefixes.kind === "prefixes" ? prefixes.prefixes[0] : undefined;
-  useEffect(() => {
-    if (!touched && firstPrefix) setVaultPath(`${firstPrefix}/cronomicon#${row.key}`);
-  }, [touched, firstPrefix, row.key]);
-
-  const migrate = async () => {
-    if (row.id == null) return;
-    if (!vaultPath.trim()) {
-      setFormError("Vault path is required");
-      return;
-    }
-    if (pathWhy) {
-      setFormError(pathWhy);
-      return;
-    }
-    setBusy(true);
-    const { error: e } = await api.POST("/env-secrets/{secretId}/migrate-to-vault", {
-      params: { path: { secretId: row.id }, header: csrfHeader },
-      body: { vaultPath: vaultPath.trim() },
-    });
-    setBusy(false);
-    if (e) onDone(`Migrate failed: ${errMsg(e)}`, "error");
-    else onDone(`${row.key} migrated to Vault`, "info");
-  };
-
-  return (
-    <Modal
-      title="Migrate secret to Vault?"
-      onClose={onClose}
-      footer={
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {formError && <div style={{ fontSize: c.fontSm, color: c.danger }}>{formError}</div>}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <Btn onClick={onClose} disabled={busy}>
-              Cancel
-            </Btn>
-            <Btn primary onClick={migrate} disabled={busy}>
-              {busy ? "Migrating…" : "Migrate to Vault"}
-            </Btn>
-          </div>
-        </div>
-      }
-    >
-      <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6, marginBottom: 14 }}>
-        This moves <code style={{ fontFamily: c.mono }}>{row.key}</code> to the Vault path below and removes the stored
-        value from Cronomicon. The vault reference will resolve at run time. There is no undo.
-      </div>
-      <div style={{ marginBottom: 14 }}>
-        <label style={labelStyle()}>Vault Path *</label>
-        <input
-          value={vaultPath}
-          onChange={(e) => {
-            setTouched(true);
-            setVaultPath(e.target.value);
-          }}
-          style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm }}
-        />
-        <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>Format: engine/data/path#FIELD_NAME</div>
-        {prefixes.kind === "prefixes" && prefixes.prefixes.length > 0 && (
-          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
-            {ownerName} may name paths inside: <code style={{ fontFamily: c.mono }}>{prefixes.prefixes.join(", ")}</code>
-          </div>
-        )}
-        {pathWhy && (
-          <div role="alert" style={{ fontSize: c.fontXs, color: c.danger, marginTop: 4 }}>
-            {pathWhy}
-          </div>
-        )}
       </div>
     </Modal>
   );

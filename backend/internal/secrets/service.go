@@ -399,43 +399,6 @@ func (s *Service) Reveal(ctx context.Context, id string) (string, error) {
 	return string(plain), nil
 }
 
-// MigrateToVault decrypts a stored secret and writes it to Vault at vaultPath,
-// then updates the DB row to vault-source (zeroing the ciphertext).
-// Returns the updated Secret, or an error if Vault is unavailable.
-func (s *Service) MigrateToVault(ctx context.Context, id, vaultPath, actor string) (*Secret, error) {
-	existing, err := s.Get(ctx, id)
-	if err != nil || existing == nil {
-		return nil, err
-	}
-	if existing.Source == "vault" {
-		return nil, fmt.Errorf("already vault-source")
-	}
-	plaintext, err := s.Reveal(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt for migration: %w", err)
-	}
-	var ownerID string
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(owner_agency, '') FROM secrets WHERE id = ?`, id).Scan(&ownerID); err != nil {
-		return nil, fmt.Errorf("read the secret's owner: %w", err)
-	}
-	// 2.5.1 SG-21: written to the owner's Vault, where its reads will look.
-	if err := VaultForOwner(s.vault, ownerID).Write(vaultPath, plaintext); err != nil {
-		return nil, fmt.Errorf("vault write: %w", err)
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE secrets SET source='vault', vault_ref=?,
-		  ciphertext=NULL, nonce=NULL, wrapped_dek=NULL, kek_version=NULL,
-		  last_modified_by=?, last_modified_at=?
-		 WHERE id=?`,
-		vaultPath, actor, now, id)
-	if err != nil {
-		return nil, fmt.Errorf("update secret after vault migration: %w", err)
-	}
-	RedactionSourceChanged() // AM-4b: the value left the stored table
-	return s.Get(ctx, id)
-}
-
 // RedactionValues returns the decrypted plaintext values for all stored-source
 // secrets, stored SSH key credentials (ssh_credentials, SK.14), AND the
 // encrypted settings columns (EncryptedSettingsColumns), to be used at log

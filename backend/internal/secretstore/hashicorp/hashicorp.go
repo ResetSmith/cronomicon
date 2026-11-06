@@ -1,0 +1,80 @@
+// Package hashicorp is the secret store provider for HashiCorp Vault and
+// OpenBao, which speaks the same API (2.5.5 SM-2). A reference is a KV v2 path
+// and a field, "secret/data/app#PASSWORD"; its prefix rule is internal/vaultpath
+// (whole segments, nothing a URL could decode into "..").
+//
+// Importing the package registers the provider; internal/secretstore/all
+// imports every provider so a caller needs one import.
+package hashicorp
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/ResetSmith/cronomicon/internal/secretstore"
+	"github.com/ResetSmith/cronomicon/internal/vaultpath"
+)
+
+// ID is the provider's stored value.
+const ID = "hashicorp"
+
+func init() { secretstore.Register(Provider{}) }
+
+// Provider is HashiCorp Vault / OpenBao.
+type Provider struct{}
+
+func (Provider) ID() string    { return ID }
+func (Provider) Label() string { return "HashiCorp Vault / OpenBao" }
+
+// ValidateRef refuses a reference whose path is malformed by vaultpath's
+// rules, including a slash at either end (the path is sent as written). The
+// "#field" is optional: without one the client reads the field "value".
+func (Provider) ValidateRef(ref string) error {
+	path, _ := vaultpath.Split(ref)
+	if strings.HasPrefix(path, "/") || strings.HasSuffix(path, "/") {
+		return invalid(fmt.Errorf("%w: %q must not begin or end with a slash", vaultpath.ErrInvalid, path))
+	}
+	if _, err := vaultpath.Segments(path); err != nil {
+		return invalid(err)
+	}
+	return nil
+}
+
+func (Provider) NormalizePrefix(prefix string) (string, error) {
+	n, err := vaultpath.Normalize(prefix)
+	if err != nil {
+		return "", invalid(err)
+	}
+	return n, nil
+}
+
+func (Provider) UnderPrefix(ref, prefix string) (bool, error) {
+	ok, err := vaultpath.Under(ref, prefix)
+	if err != nil {
+		return false, invalid(err)
+	}
+	return ok, nil
+}
+
+func (Provider) Location(ref string) string {
+	path, _ := vaultpath.Split(ref)
+	return path
+}
+
+// invalidErr carries vaultpath's message and matches both vaultpath.ErrInvalid
+// and secretstore.ErrInvalid.
+type invalidErr struct{ err error }
+
+func (e invalidErr) Error() string { return e.err.Error() }
+func (e invalidErr) Unwrap() error { return e.err }
+func (e invalidErr) Is(target error) bool {
+	return target == secretstore.ErrInvalid
+}
+
+func invalid(err error) error {
+	if err == nil || errors.Is(err, secretstore.ErrInvalid) {
+		return err
+	}
+	return invalidErr{err}
+}

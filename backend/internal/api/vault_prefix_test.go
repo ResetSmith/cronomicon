@@ -256,10 +256,6 @@ func TestVaultPrefixes_OnlyTheOwnerNamesASharedRowsPath(t *testing.T) {
 			`{"label":"tax_deploy","source":"vault","vaultRef":"secret/data/tax-private/other#pem"}`},
 		{"re-pointing TAX's key outside it", http.MethodPut, "/api/v1/ssh/credentials/k-tax",
 			`{"label":"tax_deploy","source":"vault","vaultRef":"secret/data/elsewhere#pem"}`},
-		{"migrating TAX's secret into TAX's prefix", http.MethodPost, "/api/v1/env-secrets/" + sec.ID + "/migrate-to-vault",
-			`{"vaultPath":"secret/data/tax-private/db#password"}`},
-		{"migrating TAX's secret elsewhere", http.MethodPost, "/api/v1/env-secrets/" + sec.ID + "/migrate-to-vault",
-			`{"vaultPath":"secret/data/elsewhere#password"}`},
 		{"re-sourcing TAX's secret to Vault", http.MethodPut, "/api/v1/env-secrets/" + sec.ID,
 			`{"key":"TAX_DB","source":"vault","scope":"fin-hosts","vaultPath":"secret/data/tax-private/db#password"}`},
 	} {

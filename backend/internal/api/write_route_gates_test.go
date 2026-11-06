@@ -189,7 +189,6 @@ var writeRouteGates = map[string]routeGate{
 	"DELETE /api/v1/env-secrets/{secretId}":                           {clsObject, "ScopeWritable and requireRowOwner (2.5.1 SG-42)"},
 	"POST /api/v1/env-secrets/{secretId}/reveal":                      {clsObject, "requireRowOwner (2.5.1 SG-42)"},
 	"POST /api/v1/env-secrets/{secretId}/lock-reveal":                 {clsObject, "requireRowOwner: manageEnvVars on the secret's OWNER (2.5.1 SG-19, SG-42)"},
-	"POST /api/v1/env-secrets/{secretId}/migrate-to-vault":            {clsObject, "requireRowOwner (2.5.1 SG-42), then requireVaultPath for the path written to (LR-80)"},
 	"PUT /api/v1/env-secret-tags/{secretId}":                          {clsObject, "requireRowOwner (2.5.1 SG-42)"},
 	"POST /api/v1/scopes":                                             {clsObject, "requireCreationAgencies — born in the creator's agency (GC-6)"},
 	"PUT /api/v1/scopes/{scopeId}/inventory":                          {clsObject, "requireScopeAgency"},

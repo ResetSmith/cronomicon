@@ -615,13 +615,10 @@ func TestGC_VaultPathsAreAGlobalAdministrators(t *testing.T) {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &sec)
-	// ...but may not be turned into a vault-source one, by edit or by migration.
+	// ...but may not be turned into a vault-source one by an edit.
 	rec = gateReq(t, h, http.MethodPut, "/api/v1/env-secrets/"+sec.ID, gFinAdmin,
 		`{"key":"FIN_STORED","source":"vault","scope":"fin-hosts","vaultPath":"secret/data/tax/db#password"}`)
 	notAllowed("fin admin re-sourcing a secret to Vault", rec)
-	rec = gateReq(t, h, http.MethodPost, "/api/v1/env-secrets/"+sec.ID+"/migrate-to-vault", gFinAdmin,
-		`{"vaultPath":"secret/data/tax/db#password"}`)
-	notAllowed("fin admin migrating a secret to a Vault path", rec)
 	if n := count(t, pool, `SELECT COUNT(*) FROM secrets WHERE source <> 'stored' OR vault_ref IS NOT NULL`); n != 0 {
 		t.Errorf("%d secret(s) now name a Vault path", n)
 	}

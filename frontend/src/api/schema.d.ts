@@ -2845,7 +2845,9 @@ export interface paths {
          *     `vault_path_not_allowed`; a malformed path (an empty, `.` or `..` segment,
          *     a `%`, or a slash at either end: the path is stored and sent as written)
          *     is 422 `validation_failed`. The same rule applies on update, to the path
-         *     the row will name, and on migrate-to-vault.
+         *     the row will name. (Since 2.5.5 a stored secret is not moved to Vault by
+         *     the app: the value is put there by hand and the row changed to a
+         *     reference, SM-8.)
          *
          *     Naming the path also takes the permission on the OWNER agency itself. A
          *     row from before v2.3.0 may be owned by one agency and shared with
@@ -2941,37 +2943,12 @@ export interface paths {
          * Make a stored secret unrevealable
          * @description v2.5.1. One way: no route undoes it. From then on nobody reveals the
          *     secret through Cronomicon (409 `reveal_locked`), global administrators
-         *     included; runs still use it, and it can still be rotated, moved and
-         *     migrated to Vault. manageEnvVars on the agency that owns the secret, as
+         *     included; runs still use it, and it can still be rotated and moved. manageEnvVars on the agency that owns the secret, as
          *     for a reveal (a Global-owned secret is a global administrator's; 404 to
          *     a caller who does not read it). Idempotent. Recorded in the change log
          *     (`reveal-locked`) and raised as `secret-changed`.
          */
         post: operations["lockEnvSecretReveal"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/env-secrets/{secretId}/migrate-to-vault": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Migrate a stored secret to Vault (H10/§8.3)
-         * @description Moves the value to Vault at the given path; the stored ciphertext is zeroed
-         *     and deleted. No undo. The path must be one the secret's owner may name
-         *     (v2.3.0, LR-80; see createEnvSecret): 422 `vault_path_not_allowed`
-         *     otherwise, 403 for a Global secret and a caller who is not a global
-         *     administrator. CSRF required.
-         */
-        post: operations["migrateSecretToVault"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8203,7 +8180,7 @@ export interface components {
              *     (written once in the agency it left and once in the one it
              *     reached), `deleted` (the target is the key or label, the id is in
              *     details), `revealed`, `injected` (a run's references; the target
-             *     is the run's trace id), `migrated-to-vault`.
+             *     is the run's trace id), `migrated-to-vault` (before 2.5.5).
              */
             action?: string;
             target?: string;
@@ -10710,7 +10687,7 @@ export interface components {
              *
              *     `sla-breach` and `missed-run` (SL) are NOT run outcomes: one fires mid-run when a job passes its `warnAfterSeconds` or `mustFinishBy` deadline, the other when a schedule expected a fire and none appeared. `any` deliberately does NOT cover them — an operator with an "any run" rule asked about run outcomes, and silently widening it would have turned every such rule into a pager the day SL shipped.
              *
-             *     `secret-revealed`, `secret-changed` and `backup-key-changed` (v2.5.1) are not about runs either: a stored secret was revealed; a secret or SSH key was created, rotated, updated, moved, deleted or migrated to Vault; the installation's backup keys changed. They are matched by a rule whose target is `all` only. An agency's rule hears of its own agency's secrets, Global's of every agency's, and `backup-key-changed` is Global's alone. The message names the actor and says when they are outside the agency.
+             *     `secret-revealed`, `secret-changed` and `backup-key-changed` (v2.5.1) are not about runs either: a stored secret was revealed; a secret or SSH key was created, rotated, updated, moved or deleted; the installation's backup keys changed. They are matched by a rule whose target is `all` only. An agency's rule hears of its own agency's secrets, Global's of every agency's, and `backup-key-changed` is Global's alone. The message names the actor and says when they are outside the agency.
              *     `calendar-update-available` and `calendar-updated` (v2.5.3) are an agency's copy of a calendar from the built-in agency's catalogue falling behind it (update mode ask, or an automatic update its bindings refused), and being updated from it (automatically, or pushed by a global administrator). Matched by a rule whose target is `all`; an agency's rule hears of its own copies, the built-in agency's of every agency's.
              * @enum {string}
              */
@@ -16401,59 +16378,6 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-        };
-    };
-    migrateSecretToVault: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
-                "X-CSRF-Token": components["parameters"]["csrf"];
-            };
-            path: {
-                secretId: components["parameters"]["secretId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** @example secret/data/cronomicon#DB_PASSWORD */
-                    vaultPath: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Migrated; secret is now vault-source. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EnvSecret"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            /** @description Already vault-source. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Vault unreachable (§11.4). */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
         };
     };
     updateSecretTags: {

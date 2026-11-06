@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
-	"github.com/ResetSmith/cronomicon/internal/vaultpath"
+	"github.com/ResetSmith/cronomicon/internal/secretstore"
+	_ "github.com/ResetSmith/cronomicon/internal/secretstore/all"
 	"slices"
 	"sort"
 	"strings"
@@ -349,7 +350,7 @@ func vaultRowFits(ctx context.Context, tx *sql.Tx, t memberTable, entityID, agen
 		return false, err
 	}
 	rows.Close()
-	ok, err := vaultpath.Allowed(ref.String, prefixes)
+	ok, err := secretstore.Allowed(secretstore.MustLookup(secretstore.Default), ref.String, prefixes) // SM1: the owner's provider from SM3
 	return err == nil && ok, nil
 }
 

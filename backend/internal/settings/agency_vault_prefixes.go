@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
-	"github.com/ResetSmith/cronomicon/internal/vaultpath"
+	"github.com/ResetSmith/cronomicon/internal/secretstore"
+	_ "github.com/ResetSmith/cronomicon/internal/secretstore/all"
 )
 
 // ErrGlobalHasNoVaultPrefixes is returned when prefixes are set for Global. Its
@@ -58,9 +59,10 @@ func SetVaultPrefixes(ctx context.Context, database *sql.DB, agencyID string, pr
 	if ag == nil {
 		return nil, ErrUnknownAgency
 	}
+	store := secretstore.MustLookup(secretstore.Default) // SM1: the agency's provider from SM3
 	var norm []string
 	for _, p := range prefixes {
-		n, err := vaultpath.Normalize(strings.TrimSpace(p))
+		n, err := store.NormalizePrefix(strings.TrimSpace(p))
 		if err != nil {
 			return nil, err
 		}
@@ -76,7 +78,7 @@ func SetVaultPrefixes(ctx context.Context, database *sql.DB, agencyID string, pr
 			if q == p {
 				continue
 			}
-			if ok, _ := vaultpath.Under(p, q); ok {
+			if ok, _ := store.UnderPrefix(p, q); ok {
 				inside = true
 				break
 			}

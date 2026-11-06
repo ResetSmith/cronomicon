@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
-	"github.com/ResetSmith/cronomicon/internal/vaultpath"
+	"github.com/ResetSmith/cronomicon/internal/secretstore"
+	_ "github.com/ResetSmith/cronomicon/internal/secretstore/all"
 )
 
 // The checks below find conditions the database can be in but the application
@@ -503,7 +504,8 @@ func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
 			if own[owner] && len(prefixes[owner]) == 0 {
 				continue
 			}
-			if ok, perr := vaultpath.Allowed(ref, prefixes[owner]); perr == nil && ok {
+			// SM1: the row's provider from SM3.
+			if ok, perr := secretstore.Allowed(secretstore.MustLookup(secretstore.Default), ref, prefixes[owner]); perr == nil && ok {
 				continue
 			}
 			if own[owner] {
@@ -516,7 +518,7 @@ func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
 				})
 				continue
 			}
-			path, _ := vaultpath.Split(ref)
+			path := mustPath(ref)
 			why := "is outside the Vault paths assigned to " + ownerName + " (" + strings.Join(prefixes[owner], ", ") + ")"
 			if len(prefixes[owner]) == 0 {
 				why = "and " + ownerName + " has no Vault paths assigned"
@@ -608,6 +610,5 @@ func checkLegacyPlacement(ctx context.Context, database *sql.DB) error {
 
 // mustPath is a reference's path part, for a sentence.
 func mustPath(ref string) string {
-	path, _ := vaultpath.Split(ref)
-	return path
+	return secretstore.MustLookup(secretstore.Default).Location(ref) // SM1: the row's provider from SM3
 }

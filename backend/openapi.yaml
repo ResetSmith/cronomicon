@@ -4744,7 +4744,9 @@ paths:
         `vault_path_not_allowed`; a malformed path (an empty, `.` or `..` segment,
         a `%`, or a slash at either end: the path is stored and sent as written)
         is 422 `validation_failed`. The same rule applies on update, to the path
-        the row will name, and on migrate-to-vault.
+        the row will name. (Since 2.5.5 a stored secret is not moved to Vault by
+        the app: the value is put there by hand and the row changed to a
+        reference, SM-8.)
 
         Naming the path also takes the permission on the OWNER agency itself. A
         row from before v2.3.0 may be owned by one agency and shared with
@@ -4868,8 +4870,7 @@ paths:
       description: |
         v2.5.1. One way: no route undoes it. From then on nobody reveals the
         secret through Cronomicon (409 `reveal_locked`), global administrators
-        included; runs still use it, and it can still be rotated, moved and
-        migrated to Vault. manageEnvVars on the agency that owns the secret, as
+        included; runs still use it, and it can still be rotated and moved. manageEnvVars on the agency that owns the secret, as
         for a reveal (a Global-owned secret is a global administrator's; 404 to
         a caller who does not read it). Idempotent. Recorded in the change log
         (`reveal-locked`) and raised as `secret-changed`.
@@ -4883,49 +4884,6 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-
-  /env-secrets/{secretId}/migrate-to-vault:
-    post:
-      tags: [Secrets]
-      operationId: migrateSecretToVault
-      summary: Migrate a stored secret to Vault (H10/§8.3)
-      description: |
-        Moves the value to Vault at the given path; the stored ciphertext is zeroed
-        and deleted. No undo. The path must be one the secret's owner may name
-        (v2.3.0, LR-80; see createEnvSecret): 422 `vault_path_not_allowed`
-        otherwise, 403 for a Global secret and a caller who is not a global
-        administrator. CSRF required.
-      parameters: [{ $ref: '#/components/parameters/secretId' }, { $ref: '#/components/parameters/csrf' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [vaultPath]
-              properties:
-                vaultPath:
-                  type: string
-                  examples: ['secret/data/cronomicon#DB_PASSWORD']
-      responses:
-        '200':
-          description: Migrated; secret is now vault-source.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/EnvSecret' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409':
-          description: Already vault-source.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '503':
-          description: Vault unreachable (§11.4).
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
 
   /env-secret-tags/{secretId}:
     put:
@@ -12324,7 +12282,7 @@ components:
             (written once in the agency it left and once in the one it
             reached), `deleted` (the target is the key or label, the id is in
             details), `revealed`, `injected` (a run's references; the target
-            is the run's trace id), `migrated-to-vault`.
+            is the run's trace id), `migrated-to-vault` (before 2.5.5).
         target: { type: string }
         details: { type: string }
         agency:
@@ -15474,8 +15432,8 @@ components:
 
             `secret-revealed`, `secret-changed` and `backup-key-changed`
             (v2.5.1) are not about runs either: a stored secret was revealed;
-            a secret or SSH key was created, rotated, updated, moved, deleted
-            or migrated to Vault; the installation's backup keys changed. They
+            a secret or SSH key was created, rotated, updated, moved or
+            deleted; the installation's backup keys changed. They
             are matched by a rule whose target is `all` only. An agency's rule
             hears of its own agency's secrets, Global's of every agency's, and
             `backup-key-changed` is Global's alone. The message names the actor

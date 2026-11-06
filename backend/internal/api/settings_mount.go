@@ -9,7 +9,8 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
-	"github.com/ResetSmith/cronomicon/internal/vaultpath"
+	"github.com/ResetSmith/cronomicon/internal/secretstore"
+	_ "github.com/ResetSmith/cronomicon/internal/secretstore/all"
 	"io"
 	"log/slog"
 	"net/http"
@@ -467,61 +468,6 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		}
 		s.raiseSecretAlert(r, notify.TriggerSecretRevealed, "Secret", sc.Key, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid), "revealed") // SG-17
 		httpx.JSON(w, http.StatusOK, map[string]string{"value": value})
-	})))
-	mux.Handle("POST /api/v1/env-secrets/{secretId}/migrate-to-vault", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, ok := auth.IdentityFrom(r.Context())
-		if !ok {
-			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-			return
-		}
-		sid := r.PathValue("secretId")
-		var inp struct {
-			VaultPath string `json:"vaultPath"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
-			httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
-			return
-		}
-		// D3/H3: enforce write-scope before migrating (404 out-of-scope; 403 on a global
-		// row — re-scoping/capturing a global secret's storage is a restricted-actor no).
-		if _, ok := s.loadSecretWritable(w, r, sec, sid, id); !ok {
-			return
-		}
-		// RB-32 (RF-5): migrating rewrites where the secret's MATERIAL lives — a
-		// write in every sense — so it takes the same departmental gate as PUT.
-		if !s.requireRowOwner(w, r, id, auth.PermManageEnvVars, "secrets", sid, "secret") {
-			return
-		}
-		// LR-80: migration WRITES the value to a caller-supplied Vault path, so
-		// the path must lie inside the owner agency's prefixes.
-		owner, oerr := s.rowOwnerAgency(r.Context(), "secrets", sid)
-		if oerr != nil {
-			httpx.Fail500(w, s.log, "db_error", oerr)
-			return
-		}
-		if !s.requireVaultPath(w, r, id, auth.PermManageEnvVars, owner, inp.VaultPath, "secret") {
-			return
-		}
-		sc, err := sec.MigrateToVault(r.Context(), sid, inp.VaultPath, id.Email)
-		if err != nil {
-			if strings.Contains(err.Error(), "already vault-source") {
-				httpx.Fail(w, http.StatusConflict, "already_vault", err.Error())
-				return
-			}
-			if strings.Contains(err.Error(), "vault unavailable") {
-				httpx.Fail(w, http.StatusServiceUnavailable, "vault_unreachable", err.Error())
-				return
-			}
-			httpx.Fail500(w, s.log, "migrate_failed", err)
-			return
-		}
-		if sc == nil {
-			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
-			return
-		}
-		s.mountWriteChangeLogID(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "migrated-to-vault", sc.Key, id.Email, "id="+sc.ID)
-		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "Secret", sc.Key, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "migrated to Vault") // SG-17
-		httpx.JSON(w, http.StatusOK, sc)
 	})))
 	// Tags (migration 470): operator-authored, SQLite-only labels on a secret —
 	// plaintext metadata, never the encrypted envelope; same ManageEnvVars gate.
@@ -1014,7 +960,7 @@ func (s *Server) requireVaultPath(w http.ResponseWriter, r *http.Request, id aut
 				"a global administrator assigns an agency its Vault path prefixes, or the agency connects a Vault of its own")
 		return false
 	}
-	ok, err := vaultpath.Allowed(ref, prefixes)
+	ok, err := secretstore.Allowed(secretstore.MustLookup(secretstore.Default), ref, prefixes) // SM1: the owner's provider from SM3
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
 		return false
