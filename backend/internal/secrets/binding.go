@@ -52,6 +52,7 @@ const (
 	LabelAlertTargetURL          = "alerts.targetURL"
 	LabelAgencyVaultRoleID       = "agencyVault.roleId"
 	LabelAgencyVaultSecretID     = "agencyVault.secretId"
+	LabelAgencyStoreCredential   = "agencyStore.credential"
 	sealedSettingsUnknownLabelID = "?"
 )
 

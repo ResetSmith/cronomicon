@@ -159,7 +159,7 @@ func TestSG3_AKeyResolvesInItsOwnersVault(t *testing.T) {
 func TestSG3_AnUnreadableConnectionNeverFallsBack(t *testing.T) {
 	f := newAgencyVaultFix(t)
 	f.connect(t)
-	if _, err := f.pool.ExecContext(f.ctx, `UPDATE agency_vaults SET role_id_enc = 'not-a-token' WHERE agency_id = 'ag-fin'`); err != nil {
+	if _, err := f.pool.ExecContext(f.ctx, `UPDATE agency_vaults SET credential_enc = 'not-a-token' WHERE agency_id = 'ag-fin'`); err != nil {
 		t.Fatal(err)
 	}
 	v, err := f.reveal(t, f.finSecret)

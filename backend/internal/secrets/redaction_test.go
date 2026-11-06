@@ -29,15 +29,15 @@ func TestRedactionReportCoversEverySettingsColumn(t *testing.T) {
 		}
 	}
 	seedAgencyVault := func(agency, column, tok string) error {
-		_, err := pool.ExecContext(ctx, fmt.Sprintf(`INSERT INTO agency_vaults(agency_id, addr, role_id_enc, secret_id_enc, created_by, created_at, last_modified_by, last_modified_at)
-			VALUES(?, 'https://v', ?, ?, 't', 't', 't', 't') ON CONFLICT(agency_id) DO UPDATE SET %s=excluded.%s`, column, column), agency, tok, tok)
+		_, err := pool.ExecContext(ctx, fmt.Sprintf(`INSERT INTO agency_vaults(agency_id, addr, role_id_enc, secret_id_enc, credential_enc, created_by, created_at, last_modified_by, last_modified_at)
+			VALUES(?, 'https://v', ?, ?, ?, 't', 't', 't', 't') ON CONFLICT(agency_id) DO UPDATE SET %s=excluded.%s`, column, column), agency, tok, tok, tok)
 		return err
 	}
 
 	want := map[string]string{}
 	for i, sc := range EncryptedSettingsColumns {
 		plain := fmt.Sprintf("settings-plaintext-%d-%s", i, sc.Label)
-		tok, err := EncryptString(cfg, plain)
+		tok, err := EncryptString(cfg, jsonIf(sc, plain))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -97,7 +97,7 @@ func TestRedactionReportCoversEverySettingsColumn(t *testing.T) {
 		if sc.Table == "agency_vaults" {
 			// 2.5.1 SG3: a second agency's own Vault.
 			plain := "second-agency-vault-plaintext-" + sc.Label
-			tok, err := EncryptString(cfg, plain)
+			tok, err := EncryptString(cfg, jsonIf(sc, plain))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -166,5 +166,30 @@ func TestRedactionReportCoversEverySettingsColumn(t *testing.T) {
 	// for the second repository, and the stored secret.
 	if wantN := len(EncryptedSettingsColumns) + len(second) + 1; undecryptable != wantN {
 		t.Errorf("undecryptable = %d, want %d (every column, the second repository's three, and one secret)", undecryptable, wantN)
+	}
+}
+
+// jsonIf is a column's plaintext as stored: a JSON column (2.5.5 SM-3) holds
+// an object, and each string in it must reach the dictionary on its own.
+func jsonIf(sc SettingsColumn, plain string) string {
+	if !sc.JSON {
+		return plain
+	}
+	return `{"secretId":"` + plain + `","roleId":"role-of-` + plain + `"}`
+}
+
+// TestSettingsValuesMasksEachStringOfAJSONColumn: the credential's secret id
+// is masked as itself, not only as part of the object (SM-3).
+func TestSettingsValuesMasksEachStringOfAJSONColumn(t *testing.T) {
+	sc := SettingsColumn{JSON: true}
+	got := settingsValues(sc, `{"accessKeyId":"AKIA1","secretAccessKey":"shh","sessionToken":""}`)
+	if len(got) != 2 || got[0] != "AKIA1" || got[1] != "shh" {
+		t.Fatalf("values = %q, want [AKIA1 shh]", got)
+	}
+	if got := settingsValues(sc, "not json"); len(got) != 1 || got[0] != "not json" {
+		t.Fatalf("a JSON column that is not an object = %q, want it masked whole", got)
+	}
+	if got := settingsValues(SettingsColumn{}, `{"a":"b"}`); len(got) != 1 || got[0] != `{"a":"b"}` {
+		t.Fatalf("a plain column = %q, want the value whole", got)
 	}
 }

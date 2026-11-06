@@ -16,6 +16,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/secrets"
 )
 
 // ErrInvalid is matched (errors.Is) by every refusal of a malformed reference
@@ -46,6 +49,27 @@ type Provider interface {
 	// Location is the part of a reference that names where the secret is,
 	// without any key inside it: what a sentence quotes.
 	Location(ref string) string
+	// Address is the URL a connection makes the server dial, which the
+	// installation's allowed hosts must list (vaultAllowedHosts, SG-22), or ""
+	// when it reaches only a fixed public endpoint no list has to name (SM-7).
+	Address(c Connection) string
+	// Validate refuses a connection missing what its provider needs. It
+	// never dials.
+	Validate(c Connection) error
+	// NewClient builds the client for a connection. It reads nothing but c:
+	// no environment, no instance role, no metadata service (SM-4). The
+	// caller has already checked Address against the allowed hosts.
+	NewClient(c Connection, egress httpx.EgressPolicy) (secrets.VaultClient, error)
+}
+
+// Connection is one agency's connection as a provider reads it: plain
+// settings and the opened credential, both string maps (their JSON is what
+// agency_vaults stores, migration 1720).
+type Connection struct {
+	Agency     string
+	Provider   string
+	Settings   map[string]string
+	Credential map[string]string
 }
 
 // Allowed reports whether ref lies inside any of prefixes under p's rule. A

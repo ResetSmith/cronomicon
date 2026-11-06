@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/secretstore"
 	"github.com/ResetSmith/cronomicon/internal/vaultpath"
 )
@@ -60,6 +62,40 @@ func (Provider) UnderPrefix(ref, prefix string) (bool, error) {
 func (Provider) Location(ref string) string {
 	path, _ := vaultpath.Split(ref)
 	return path
+}
+
+// The connection's keys. Settings: addr, namespace, caPem. Credential: roleId,
+// secretId (AppRole only, question 129).
+const (
+	SettingAddr      = "addr"
+	SettingNamespace = "namespace"
+	SettingCAPEM     = "caPem"
+	CredRoleID       = "roleId"
+	CredSecretID     = "secretId"
+)
+
+func (Provider) Address(c secretstore.Connection) string { return c.Settings[SettingAddr] }
+
+func (Provider) Validate(c secretstore.Connection) error {
+	if c.Settings[SettingAddr] == "" {
+		return fmt.Errorf("a HashiCorp Vault / OpenBao connection needs its address")
+	}
+	if c.Credential[CredRoleID] == "" || c.Credential[CredSecretID] == "" {
+		return fmt.Errorf("an agency's Vault is reached by AppRole: give its role id and secret id")
+	}
+	return nil
+}
+
+func (p Provider) NewClient(c secretstore.Connection, egress httpx.EgressPolicy) (secrets.VaultClient, error) {
+	if err := p.Validate(c); err != nil {
+		return nil, err
+	}
+	return secrets.NewVaultClientWithOptions(c.Settings[SettingAddr], c.Credential[CredRoleID], c.Credential[CredSecretID], secrets.VaultOptions{
+		AuthMethod: "approle",
+		Namespace:  c.Settings[SettingNamespace],
+		CAPEM:      []byte(c.Settings[SettingCAPEM]),
+		Egress:     egress,
+	})
 }
 
 // invalidErr carries vaultpath's message and matches both vaultpath.ErrInvalid

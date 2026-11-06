@@ -14,6 +14,8 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
+	"github.com/ResetSmith/cronomicon/internal/secretstore"
+	"github.com/ResetSmith/cronomicon/internal/secretstore/hashicorp"
 )
 
 // A Vault per agency (2.5.1 SG3, SG-20 to SG-27; migration 1630).
@@ -134,28 +136,74 @@ type AgencyVaultInput struct {
 }
 
 // AgencyVaultRuntime is what a client is built from.
+//
+// 2.5.5 SM-3: a connection names its provider. Until the API carries a
+// provider's own fields (SM4) the runtime keeps HashiCorp's as fields;
+// Connection turns it into what a provider reads.
 type AgencyVaultRuntime struct {
 	// Agency is whose connection this is: the cache keeps one client per agency.
 	Agency                            string
+	Provider                          string
 	Addr, Namespace, RoleID, SecretID string
 	CAPEM                             []byte
+}
+
+// Connection is the runtime as its provider reads it.
+func (rt AgencyVaultRuntime) Connection() secretstore.Connection {
+	return secretstore.Connection{
+		Agency:   rt.Agency,
+		Provider: rt.provider(),
+		Settings: map[string]string{
+			hashicorp.SettingAddr: rt.Addr, hashicorp.SettingNamespace: rt.Namespace, hashicorp.SettingCAPEM: string(rt.CAPEM),
+		},
+		Credential: map[string]string{hashicorp.CredRoleID: rt.RoleID, hashicorp.CredSecretID: rt.SecretID},
+	}
+}
+
+func (rt AgencyVaultRuntime) provider() string {
+	if rt.Provider == "" {
+		return secretstore.Default
+	}
+	return rt.Provider
+}
+
+// storedConnection is a connection's sealed credential and plain settings as
+// agency_vaults holds them (migration 1720).
+func sealStoreCredential(cfg *config.Config, agency string, cred map[string]string) (string, error) {
+	b, err := json.Marshal(cred)
+	if err != nil {
+		return "", err
+	}
+	return secrets.EncryptSetting(cfg, secrets.SettingsBinding(secrets.LabelAgencyStoreCredential, agency), string(b))
+}
+
+func openStoreCredential(cfg *config.Config, agency, tok string) (map[string]string, error) {
+	plain, err := secrets.DecryptSetting(cfg, secrets.SettingsBinding(secrets.LabelAgencyStoreCredential, agency), tok)
+	if err != nil {
+		return nil, err
+	}
+	var cred map[string]string
+	if err := json.Unmarshal([]byte(plain), &cred); err != nil {
+		return nil, fmt.Errorf("the stored credential is not a JSON object: %w", err)
+	}
+	return cred, nil
 }
 
 // GetAgencyVault reads an agency's connection; nil when it has none.
 func GetAgencyVault(ctx context.Context, database *sql.DB, agency string) (*AgencyVault, error) {
 	var v AgencyVault
-	var roleEnc, secretEnc, ca string
+	var roleEnc, secretEnc, ca, credEnc string
 	err := database.QueryRowContext(ctx, `
-		SELECT agency_id, addr, namespace, role_id_enc, secret_id_enc, ca_pem, last_modified_by, last_modified_at
+		SELECT agency_id, addr, namespace, role_id_enc, secret_id_enc, ca_pem, COALESCE(credential_enc, ''), last_modified_by, last_modified_at
 		  FROM agency_vaults WHERE agency_id = ?`, agency).
-		Scan(&v.AgencyID, &v.Addr, &v.Namespace, &roleEnc, &secretEnc, &ca, &v.LastModifiedBy, &v.LastModifiedAt)
+		Scan(&v.AgencyID, &v.Addr, &v.Namespace, &roleEnc, &secretEnc, &ca, &credEnc, &v.LastModifiedBy, &v.LastModifiedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read agency vault: %w", err)
 	}
-	v.CAPresent, v.RoleIDSet, v.SecretIDSet = ca != "", roleEnc != "", secretEnc != ""
+	v.CAPresent, v.RoleIDSet, v.SecretIDSet = ca != "", roleEnc != "" || credEnc != "", secretEnc != "" || credEnc != ""
 	return &v, nil
 }
 
@@ -164,16 +212,33 @@ func GetAgencyVault(ctx context.Context, database *sql.DB, agency string) (*Agen
 // be read, which a caller must not answer with the installation's Vault.
 func ReadAgencyVaultRuntime(ctx context.Context, database *sql.DB, cfg *config.Config, agency string) (AgencyVaultRuntime, bool, error) {
 	rt := AgencyVaultRuntime{Agency: agency}
-	var roleEnc, secretEnc, ca string
+	var roleEnc, secretEnc, ca, credEnc, settingsJSON string
 	err := database.QueryRowContext(ctx, `
-		SELECT addr, namespace, role_id_enc, secret_id_enc, ca_pem FROM agency_vaults WHERE agency_id = ?`, agency).
-		Scan(&rt.Addr, &rt.Namespace, &roleEnc, &secretEnc, &ca)
+		SELECT provider, addr, namespace, role_id_enc, secret_id_enc, ca_pem, COALESCE(credential_enc, ''), settings_json
+		  FROM agency_vaults WHERE agency_id = ?`, agency).
+		Scan(&rt.Provider, &rt.Addr, &rt.Namespace, &roleEnc, &secretEnc, &ca, &credEnc, &settingsJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return rt, false, nil
 	}
 	if err != nil {
 		return rt, true, fmt.Errorf("read agency vault: %w", err)
 	}
+	if credEnc != "" {
+		// 2.5.5 SM-3: the provider's credential and settings.
+		cred, err := openStoreCredential(cfg, agency, credEnc)
+		if err != nil {
+			return rt, true, fmt.Errorf("open the agency's secret store credential: %w", err)
+		}
+		var set map[string]string
+		if err := json.Unmarshal([]byte(settingsJSON), &set); err != nil {
+			return rt, true, fmt.Errorf("read the agency's secret store settings: %w", err)
+		}
+		rt.Addr, rt.Namespace, rt.CAPEM = set[hashicorp.SettingAddr], set[hashicorp.SettingNamespace], []byte(set[hashicorp.SettingCAPEM])
+		rt.RoleID, rt.SecretID = cred[hashicorp.CredRoleID], cred[hashicorp.CredSecretID]
+		return rt, true, nil
+	}
+	// A row the boot pass has not converted yet (it runs before any request;
+	// this is for the pass itself and a pass that could not finish).
 	if rt.RoleID, err = secrets.DecryptSetting(cfg, secrets.SettingsBinding(secrets.LabelAgencyVaultRoleID, agency), roleEnc); err != nil {
 		return rt, true, fmt.Errorf("open the agency's Vault role id: %w", err)
 	}
@@ -191,7 +256,7 @@ func PrepareAgencyVault(ctx context.Context, database *sql.DB, cfg *config.Confi
 	if agency == agencyid.Global || agency == "" {
 		return AgencyVaultRuntime{}, ErrGlobalUsesInstallationVault
 	}
-	rt := AgencyVaultRuntime{Agency: agency, Addr: strings.TrimRight(strings.TrimSpace(in.Addr), "/"), Namespace: strings.TrimSpace(in.Namespace)}
+	rt := AgencyVaultRuntime{Agency: agency, Provider: secretstore.Default, Addr: strings.TrimRight(strings.TrimSpace(in.Addr), "/"), Namespace: strings.TrimSpace(in.Namespace)}
 	if err := CheckVaultURL(ctx, database, rt.Addr); err != nil {
 		return rt, err
 	}
@@ -206,8 +271,8 @@ func PrepareAgencyVault(ctx context.Context, database *sql.DB, cfg *config.Confi
 	if rt.SecretID == "" && found {
 		rt.SecretID = cur.SecretID
 	}
-	if rt.RoleID == "" || rt.SecretID == "" {
-		return rt, fmt.Errorf("%w: an agency's Vault is reached by AppRole: give its role id and secret id", ErrValidation)
+	if err := secretstore.MustLookup(rt.provider()).Validate(rt.Connection()); err != nil {
+		return rt, fmt.Errorf("%w: %v", ErrValidation, err)
 	}
 	if in.CAPEM != nil {
 		pem := strings.TrimSpace(*in.CAPEM)
@@ -224,13 +289,14 @@ func PrepareAgencyVault(ctx context.Context, database *sql.DB, cfg *config.Confi
 
 // PutAgencyVault writes an agency's connection (prepared by PrepareAgencyVault).
 func PutAgencyVault(ctx context.Context, database *sql.DB, cfg *config.Config, agency string, rt AgencyVaultRuntime, actor string) (*AgencyVault, error) {
-	roleTok, err := secrets.EncryptSetting(cfg, secrets.SettingsBinding(secrets.LabelAgencyVaultRoleID, agency), rt.RoleID)
+	conn := rt.Connection()
+	credTok, err := sealStoreCredential(cfg, agency, conn.Credential)
 	if err != nil {
-		return nil, fmt.Errorf("seal the role id (is a KEK configured?): %w", err)
+		return nil, fmt.Errorf("seal the credential (is a KEK configured?): %w", err)
 	}
-	secretTok, err := secrets.EncryptSetting(cfg, secrets.SettingsBinding(secrets.LabelAgencyVaultSecretID, agency), rt.SecretID)
+	settingsJSON, err := json.Marshal(conn.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("seal the secret id (is a KEK configured?): %w", err)
+		return nil, err
 	}
 	prev, err := GetAgencyVault(ctx, database, agency)
 	if err != nil {
@@ -238,12 +304,14 @@ func PutAgencyVault(ctx context.Context, database *sql.DB, cfg *config.Config, a
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := database.ExecContext(ctx, `
-		INSERT INTO agency_vaults (agency_id, addr, namespace, role_id_enc, secret_id_enc, ca_pem, created_by, created_at, last_modified_by, last_modified_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(agency_id) DO UPDATE SET addr = excluded.addr, namespace = excluded.namespace,
-		  role_id_enc = excluded.role_id_enc, secret_id_enc = excluded.secret_id_enc, ca_pem = excluded.ca_pem,
+		INSERT INTO agency_vaults (agency_id, provider, credential_enc, settings_json, addr, namespace, role_id_enc, secret_id_enc, ca_pem,
+		                           created_by, created_at, last_modified_by, last_modified_at)
+		VALUES (?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?)
+		ON CONFLICT(agency_id) DO UPDATE SET provider = excluded.provider, credential_enc = excluded.credential_enc,
+		  settings_json = excluded.settings_json, addr = excluded.addr, namespace = excluded.namespace,
+		  role_id_enc = '', secret_id_enc = '', ca_pem = excluded.ca_pem,
 		  last_modified_by = excluded.last_modified_by, last_modified_at = excluded.last_modified_at`,
-		agency, rt.Addr, rt.Namespace, roleTok, secretTok, string(rt.CAPEM), actor, now, actor, now); err != nil {
+		agency, rt.provider(), credTok, string(settingsJSON), rt.Addr, rt.Namespace, string(rt.CAPEM), actor, now, actor, now); err != nil {
 		return nil, fmt.Errorf("write agency vault: %w", err)
 	}
 	secrets.RedactionSourceChanged()
