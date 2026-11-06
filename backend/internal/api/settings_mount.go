@@ -9,7 +9,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
-	"github.com/ResetSmith/cronomicon/internal/secretstore"
 	"io"
 	"log/slog"
 	"net/http"
@@ -952,52 +951,13 @@ func (s *Server) requireVaultPathKeeping(w http.ResponseWriter, r *http.Request,
 			"this "+label+" is owned by another agency: only that agency's administrators may say which Vault path it names")
 		return false
 	}
-	// 2.5.5 SM-1: the reference is judged by the owner's store's provider,
-	// in every branch below (before 2.5.5 an agency with its own Vault and no
-	// prefixes stored any string).
-	store, err := settings.StoreProviderOf(r.Context(), s.db, ownerAgencyID)
+	v, err := settings.JudgeStoreRef(r.Context(), s.db, ownerAgencyID, ref, current, label)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
 	}
-	prefixes, err := settings.ListVaultPrefixes(r.Context(), s.db, ownerAgencyID)
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return false
-	}
-	// 2.5.1 SG-26: in an agency's own Vault every path is its own, and its
-	// prefixes, if it set any, limit only itself.
-	own, err := settings.AgencyHasOwnVault(r.Context(), s.db, ownerAgencyID)
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return false
-	}
-	if own && len(prefixes) == 0 {
-		if current != "" && ref == current {
-			return true
-		}
-		if err := store.ValidateRef(ref); err != nil {
-			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "not a "+store.Label()+" reference: "+err.Error())
-			return false
-		}
-		return true
-	}
-	if len(prefixes) == 0 {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "vault_path_not_allowed",
-			"this "+label+"'s agency has no Vault paths assigned in the installation's Vault, so it cannot name one: "+
-				"a global administrator assigns an agency its Vault path prefixes, or the agency connects a Vault of its own")
-		return false
-	}
-	ok, err := secretstore.Allowed(store, ref, prefixes)
-	if err != nil {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
-		return false
-	}
-	if !ok {
-		// The caller administers this agency and may read its prefixes, so the
-		// refusal names them.
-		httpx.Fail(w, http.StatusUnprocessableEntity, "vault_path_not_allowed",
-			"that Vault path is outside the paths assigned to this "+label+"'s agency ("+strings.Join(prefixes, ", ")+")")
+	if !v.OK {
+		httpx.Fail(w, http.StatusUnprocessableEntity, v.Code, v.Reason)
 		return false
 	}
 	return true

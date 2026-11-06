@@ -56,6 +56,10 @@ type Provider interface {
 	// Location is the part of a reference that names where the secret is,
 	// without any key inside it: what a sentence quotes.
 	Location(ref string) string
+	// RequiredCredential names the credential fields a connection must have.
+	RequiredCredential() []string
+	// RefHint is how a screen asks for one of this provider's references.
+	RefHint() RefHint
 	// Address is the URL a connection makes the server dial, which the
 	// installation's allowed hosts must list (vaultAllowedHosts, SG-22), or ""
 	// when it reaches only a fixed public endpoint no list has to name (SM-7).
@@ -67,6 +71,14 @@ type Provider interface {
 	// no environment, no instance role, no metadata service (SM-4). The
 	// caller has already checked Address against the allowed hosts.
 	NewClient(c Connection, egress httpx.EgressPolicy) (secrets.VaultClient, error)
+}
+
+// RefHint labels a reference field (2.5.5 SM-10): the screens ask the
+// server rather than mirror each provider's grammar.
+type RefHint struct {
+	Label       string `json:"label"`
+	Placeholder string `json:"placeholder"`
+	Format      string `json:"format"`
 }
 
 // Connection is one agency's connection as a provider reads it: plain

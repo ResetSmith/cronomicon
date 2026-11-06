@@ -81,6 +81,7 @@ var writeRouteGates = map[string]routeGate{
 	"DELETE /api/v1/agencies/{agencyId}/vault":                        {clsObject, "configureApp on the agency (requireRepoAgency, 2.5.1 SG3)"},
 	"POST /api/v1/agencies/{agencyId}/vault/test":                     {clsObject, "configureApp on the agency (requireRepoAgency, 2.5.1 SG3)"},
 	"POST /api/v1/agencies/{agencyId}/vault/preview":                  {clsObject, "configureApp on the agency (requireRepoAgency, 2.5.1 SG3)"},
+	"POST /api/v1/agencies/{agencyId}/vault/validate-ref":             {clsObject, "manageEnvVars or configureApp on the agency (2.5.5 SM-10); writes nothing, a POST for its body"},
 	"POST /api/v1/settings/vault/test":                                {clsGlobal, "the installation's Vault (2.5.1 SG3)"},
 	"PUT /api/v1/agencies/{agencyId}/groups":                          {clsGlobal, "which directory groups an agency's delegates may grant to (GA-1)"},
 	"POST /api/v1/agencies/{agencyId}/assign":                         {clsGlobal, "a definition given to an agency by one commit into its repository (IN-12)"},

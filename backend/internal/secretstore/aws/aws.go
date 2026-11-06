@@ -160,6 +160,15 @@ func (Provider) Location(ref string) string {
 	return id
 }
 
+func (Provider) RequiredCredential() []string {
+	return []string{CredAccessKeyID, CredSecretAccessKey}
+}
+
+func (Provider) RefHint() secretstore.RefHint {
+	return secretstore.RefHint{Label: "Secret name or ARN", Placeholder: "myapp/db#password",
+		Format: "A secret's name or ARN, and #key to read one key of a JSON secret (without it, the whole secret)."}
+}
+
 // Address is the endpoint when the connection names one; the region's public
 // endpoint is not a host an administrator chose (SM-7).
 func (Provider) Address(c secretstore.Connection) string { return c.Settings[SettingEndpoint] }

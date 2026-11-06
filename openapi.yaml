@@ -8070,6 +8070,17 @@ paths:
         the list, and nothing is stored, unless `confirmUnresolved` is set.
         Connecting moves every one of the agency's Vault references at once.
         Logged as `vault-connected` or `vault-updated`. CSRF required.
+
+        v2.5.5 (SM-3, SM-4, SM-9): `provider` names the kind of store
+        (`hashicorp` for HashiCorp Vault and OpenBao, `aws` for AWS Secrets
+        Manager), and `settings` / `credential` carry its fields. A provider
+        with no login of its own (AWS) is tested by reading a secret: the
+        agency's first external reference, else `exampleRef`; with neither the
+        answer is 422 `example_ref_required`, and a read the store refuses is
+        422 `vault_login_failed`. Changing the provider while the agency owns
+        external secrets or SSH keys is 409 `vault_in_use` with their count:
+        their references are in the old kind's grammar. The same provider with
+        new settings or credentials is an ordinary save.
       parameters: [{ $ref: '#/components/parameters/agencyId' }, { $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -8130,10 +8141,15 @@ paths:
     post:
       tags: [Agencies]
       operationId: testAgencyVault
-      summary: Log in to a proposed agency Vault (v2.5.1)
+      summary: Test a proposed agency secret store connection (v2.5.1; any provider since v2.5.5)
       description: |
-        An AppRole login with the body's connection (blank credentials are the
-        stored ones). Reads nothing. `configureApp` on the agency. CSRF required.
+        HashiCorp: an AppRole login with the body's connection (blank
+        credentials are the stored ones); reads nothing. A provider with no
+        login of its own (AWS, v2.5.5 SM-5a) reads `exampleRef`, else the
+        agency's first external reference, and discards the value: `ok` is
+        false when the store refuses the credential or does not answer (and,
+        for `exampleRef`, when it does not resolve), and when there is nothing
+        to read. `configureApp` on the agency. CSRF required.
       parameters: [{ $ref: '#/components/parameters/agencyId' }, { $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -8178,6 +8194,46 @@ paths:
                   references:
                     type: array
                     items: { $ref: '#/components/schemas/AgencyVaultReference' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /agencies/{agencyId}/vault/validate-ref:
+    post:
+      tags: [Agencies]
+      operationId: validateAgencyStoreRef
+      summary: May the agency name this reference (v2.5.5)
+      description: |
+        SM-10: the same judgement the secret and SSH key writes make, asked by
+        their forms before they save: the agency's store's grammar and its
+        prefixes. Writes nothing. `current` is the reference the row names now
+        (a reference left as it was is not judged again where only the grammar
+        would judge it); `label` is `key` for an SSH key. `manageEnvVars` or
+        `configureApp` on the agency (question 226). CSRF required.
+      parameters: [{ $ref: '#/components/parameters/agencyId' }, { $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ref]
+              properties:
+                ref: { type: string }
+                current: { type: string }
+                label: { type: string, enum: [secret, key] }
+      responses:
+        '200':
+          description: The verdict.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+                  code: { type: string, description: "`validation_failed` or `vault_path_not_allowed` when not ok." }
+                  reason: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Validation' }
@@ -14203,6 +14259,19 @@ components:
             v2.5.1 (SG-26) — the agency has connected a Vault of its own
             (`/agencies/{agencyId}/vault`). Its prefixes then limit only itself
             in its own Vault and are optional, and its `configureApp` sets them.
+        provider:
+          type: string
+          description: v2.5.5 — the kind of store the agency's references are in (`hashicorp` for an agency with none of its own).
+        refHint: { $ref: '#/components/schemas/StoreRefHint' }
+
+    StoreRefHint:
+      type: object
+      description: How a form asks for one of a provider's references (v2.5.5 SM-10).
+      required: [label, placeholder, format]
+      properties:
+        label: { type: string }
+        placeholder: { type: string }
+        format: { type: string }
 
     AgencyVault:
       type: object
@@ -14212,6 +14281,16 @@ components:
       required: [agencyId, addr, namespace, caPresent, roleIdSet, secretIdSet, lastModifiedBy, lastModifiedAt]
       properties:
         agencyId: { type: string }
+        provider: { type: string, description: "v2.5.5: `hashicorp` or `aws`." }
+        providerLabel: { type: string }
+        settings:
+          type: object
+          additionalProperties: { type: string }
+          description: v2.5.5 — the provider's plain settings (a CA bundle is reported by `caPresent`, not returned).
+        credentialSet:
+          type: object
+          additionalProperties: { type: boolean }
+          description: v2.5.5 — which of the provider's required credential fields are stored.
         addr: { type: string, description: "`https://` address, on `vaultAllowedHosts`." }
         namespace: { type: string, description: Vault Enterprise namespace, or empty. }
         caPresent: { type: boolean, description: A CA bundle is stored for this Vault. }
@@ -14239,8 +14318,28 @@ components:
         AppRole only (SG-23). A blank `roleId` or `secretId` keeps the stored
         one; a first connection needs both. `caPem` absent keeps the stored
         bundle, an empty string clears it (PEM, 64 KiB at most).
-      required: [addr]
+
+        v2.5.5: `provider` (absent: the connection's own, else `hashicorp`),
+        and the provider's `settings` and `credential`. HashiCorp: settings
+        `addr`, `namespace`, `caPem`; credential `roleId`, `secretId` (the
+        flat fields still work; the maps win). AWS: settings `region`,
+        `endpoint` (optional, https, on `vaultAllowedHosts`), `caPem` (only
+        with an endpoint); credential `accessKeyId`, `secretAccessKey`,
+        `sessionToken` (optional). A blank credential field keeps the stored
+        one when the provider is unchanged; a settings key absent keeps the
+        stored value.
       properties:
+        provider: { type: string, enum: [hashicorp, aws] }
+        settings:
+          type: object
+          additionalProperties: { type: string }
+        credential:
+          type: object
+          writeOnly: true
+          additionalProperties: { type: string }
+        exampleRef:
+          type: string
+          description: A reference to read on the test or the save, for a provider tested by a read (v2.5.5 SM-5a).
         addr: { type: string }
         namespace: { type: string }
         roleId: { type: string, writeOnly: true }

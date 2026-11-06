@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"strings"
 	"time"
@@ -115,24 +116,41 @@ func CheckVaultURL(ctx context.Context, database *sql.DB, rawURL string) error {
 // AgencyVault is an agency's own Vault connection as its card shows it. The
 // credentials are never returned.
 type AgencyVault struct {
-	AgencyID       string `json:"agencyId"`
-	Addr           string `json:"addr"`
-	Namespace      string `json:"namespace"`
-	CAPresent      bool   `json:"caPresent"`
-	RoleIDSet      bool   `json:"roleIdSet"`
-	SecretIDSet    bool   `json:"secretIdSet"`
-	LastModifiedBy string `json:"lastModifiedBy"`
-	LastModifiedAt string `json:"lastModifiedAt"`
+	AgencyID string `json:"agencyId"`
+	// Provider is the kind of store (2.5.5 SM-3); Settings its plain settings
+	// (a CA bundle is reported by CAPresent, not returned); CredentialSet
+	// which of its credential's fields are stored. The HashiCorp fields below
+	// stay for the screens that read them.
+	Provider       string            `json:"provider"`
+	ProviderLabel  string            `json:"providerLabel"`
+	Settings       map[string]string `json:"settings"`
+	CredentialSet  map[string]bool   `json:"credentialSet"`
+	Addr           string            `json:"addr"`
+	Namespace      string            `json:"namespace"`
+	CAPresent      bool              `json:"caPresent"`
+	RoleIDSet      bool              `json:"roleIdSet"`
+	SecretIDSet    bool              `json:"secretIdSet"`
+	LastModifiedBy string            `json:"lastModifiedBy"`
+	LastModifiedAt string            `json:"lastModifiedAt"`
 }
 
 // AgencyVaultInput is a write. A blank RoleID or SecretID keeps the stored one
 // (a new connection needs both); CAPEM nil keeps the stored bundle, "" clears it.
+//
+// 2.5.5 SM-4: Provider ("" is the connection's own, else hashicorp),
+// Settings and Credential carry any provider's fields; for HashiCorp the flat
+// fields below still work and the maps win where both are given. A blank
+// credential field keeps the stored one when the provider is unchanged. A
+// settings key absent keeps the stored value; "" clears it.
 type AgencyVaultInput struct {
-	Addr      string  `json:"addr"`
-	Namespace string  `json:"namespace"`
-	RoleID    string  `json:"roleId"`
-	SecretID  string  `json:"secretId"`
-	CAPEM     *string `json:"caPem"`
+	Provider   string            `json:"provider"`
+	Settings   map[string]string `json:"settings"`
+	Credential map[string]string `json:"credential"`
+	Addr       string            `json:"addr"`
+	Namespace  string            `json:"namespace"`
+	RoleID     string            `json:"roleId"`
+	SecretID   string            `json:"secretId"`
+	CAPEM      *string           `json:"caPem"`
 }
 
 // AgencyVaultRuntime is what a client is built from.
@@ -198,11 +216,12 @@ func openStoreCredential(cfg *config.Config, agency, tok string) (map[string]str
 // GetAgencyVault reads an agency's connection; nil when it has none.
 func GetAgencyVault(ctx context.Context, database *sql.DB, agency string) (*AgencyVault, error) {
 	var v AgencyVault
-	var roleEnc, secretEnc, ca, credEnc string
+	var roleEnc, secretEnc, ca, credEnc, settingsJSON string
 	err := database.QueryRowContext(ctx, `
-		SELECT agency_id, addr, namespace, role_id_enc, secret_id_enc, ca_pem, COALESCE(credential_enc, ''), last_modified_by, last_modified_at
+		SELECT agency_id, provider, addr, namespace, role_id_enc, secret_id_enc, ca_pem, COALESCE(credential_enc, ''), settings_json,
+		       last_modified_by, last_modified_at
 		  FROM agency_vaults WHERE agency_id = ?`, agency).
-		Scan(&v.AgencyID, &v.Addr, &v.Namespace, &roleEnc, &secretEnc, &ca, &credEnc, &v.LastModifiedBy, &v.LastModifiedAt)
+		Scan(&v.AgencyID, &v.Provider, &v.Addr, &v.Namespace, &roleEnc, &secretEnc, &ca, &credEnc, &settingsJSON, &v.LastModifiedBy, &v.LastModifiedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -210,6 +229,30 @@ func GetAgencyVault(ctx context.Context, database *sql.DB, agency string) (*Agen
 		return nil, fmt.Errorf("read agency vault: %w", err)
 	}
 	v.CAPresent, v.RoleIDSet, v.SecretIDSet = ca != "", roleEnc != "" || credEnc != "", secretEnc != "" || credEnc != ""
+	var set map[string]string
+	_ = json.Unmarshal([]byte(settingsJSON), &set)
+	v.Settings = map[string]string{}
+	for k, val := range set {
+		if k == "caPem" {
+			v.CAPresent = v.CAPresent || val != ""
+			continue // public, but large: its presence is what the card shows
+		}
+		v.Settings[k] = val
+	}
+	if p, err := secretstore.Lookup(v.Provider); err == nil {
+		v.ProviderLabel = p.Label()
+	}
+	// Which credential fields are stored is known without opening it: a
+	// connection is saved only when its provider's Validate passed, so every
+	// field the provider requires is set. The optional ones are not reported.
+	v.CredentialSet = map[string]bool{}
+	if credEnc != "" || roleEnc != "" {
+		if p, err := secretstore.Lookup(v.Provider); err == nil {
+			for _, k := range p.RequiredCredential() {
+				v.CredentialSet[k] = true
+			}
+		}
+	}
 	return &v, nil
 }
 
@@ -265,35 +308,133 @@ func PrepareAgencyVault(ctx context.Context, database *sql.DB, cfg *config.Confi
 	if agency == agencyid.Global || agency == "" {
 		return AgencyVaultRuntime{}, ErrGlobalUsesInstallationVault
 	}
-	rt := AgencyVaultRuntime{Agency: agency, Provider: secretstore.Default, Addr: strings.TrimRight(strings.TrimSpace(in.Addr), "/"), Namespace: strings.TrimSpace(in.Namespace)}
-	if err := CheckVaultURL(ctx, database, rt.Addr); err != nil {
-		return rt, err
+	cur, found, curErr := ReadAgencyVaultRuntime(ctx, database, cfg, agency)
+	if found && curErr != nil {
+		// Unreadable: nothing of it is kept, so the input must be whole.
+		found = false
+	} else if curErr != nil {
+		return AgencyVaultRuntime{}, curErr
 	}
-	cur, found, err := ReadAgencyVaultRuntime(ctx, database, cfg, agency)
-	if err != nil && (in.RoleID == "" || in.SecretID == "") {
-		return rt, err
+	provider := strings.TrimSpace(in.Provider)
+	if provider == "" {
+		provider = secretstore.Default
+		if found {
+			provider = cur.provider()
+		}
 	}
-	rt.RoleID, rt.SecretID, rt.CAPEM = strings.TrimSpace(in.RoleID), strings.TrimSpace(in.SecretID), cur.CAPEM
-	if rt.RoleID == "" && found {
-		rt.RoleID = cur.RoleID
+	p, err := secretstore.Lookup(provider)
+	if err != nil {
+		return AgencyVaultRuntime{}, fmt.Errorf("%w: %v", ErrValidation, err)
 	}
-	if rt.SecretID == "" && found {
-		rt.SecretID = cur.SecretID
+	// SM-9: another kind of store while rows name this one is refused; their
+	// references are written in this provider's grammar.
+	prev, exists, err := agencyVaultProvider(ctx, database, agency)
+	if err != nil {
+		return AgencyVaultRuntime{}, err
 	}
-	if err := secretstore.MustLookup(rt.provider()).Validate(rt.Connection()); err != nil {
-		return rt, fmt.Errorf("%w: %v", ErrValidation, err)
+	if exists && prev != provider {
+		n, err := countExternalRows(ctx, database, agency)
+		if err != nil {
+			return AgencyVaultRuntime{}, err
+		}
+		if n > 0 {
+			return AgencyVaultRuntime{}, fmt.Errorf("%w (%d)", ErrStoreProviderInUse, n)
+		}
 	}
-	if in.CAPEM != nil {
-		pem := strings.TrimSpace(*in.CAPEM)
+	same := found && cur.provider() == provider
+	conn := secretstore.Connection{Agency: agency, Provider: provider, Settings: map[string]string{}, Credential: map[string]string{}}
+	if same {
+		c := cur.Connection()
+		maps.Copy(conn.Settings, c.Settings)
+		maps.Copy(conn.Credential, c.Credential)
+	}
+	if provider == hashicorp.ID {
+		// The flat fields (the 2.5.1 body): the address and namespace are
+		// always the body's; a blank credential keeps the stored one.
+		conn.Settings[hashicorp.SettingAddr] = strings.TrimRight(strings.TrimSpace(in.Addr), "/")
+		conn.Settings[hashicorp.SettingNamespace] = strings.TrimSpace(in.Namespace)
+		if v := strings.TrimSpace(in.RoleID); v != "" {
+			conn.Credential[hashicorp.CredRoleID] = v
+		}
+		if v := strings.TrimSpace(in.SecretID); v != "" {
+			conn.Credential[hashicorp.CredSecretID] = v
+		}
+		if in.CAPEM != nil {
+			conn.Settings[hashicorp.SettingCAPEM] = *in.CAPEM
+		}
+	}
+	for k, v := range in.Settings {
+		v = strings.TrimSpace(v)
+		if k == hashicorp.SettingAddr || k == "endpoint" {
+			v = strings.TrimRight(v, "/")
+		}
+		conn.Settings[k] = v
+	}
+	for k, v := range in.Credential {
+		if v = strings.TrimSpace(v); v != "" {
+			conn.Credential[k] = v
+		}
+	}
+	if pem := strings.TrimSpace(conn.Settings["caPem"]); pem != "" {
 		if len(pem) > maxCAPEMBytes {
-			return rt, fmt.Errorf("%w: the CA bundle is larger than 64 KiB", ErrValidation)
+			return AgencyVaultRuntime{}, fmt.Errorf("%w: the CA bundle is larger than 64 KiB", ErrValidation)
 		}
-		if pem != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(pem)) {
-			return rt, fmt.Errorf("%w: the CA bundle holds no PEM certificate", ErrValidation)
+		if !x509.NewCertPool().AppendCertsFromPEM([]byte(pem)) {
+			return AgencyVaultRuntime{}, fmt.Errorf("%w: the CA bundle holds no PEM certificate", ErrValidation)
 		}
-		rt.CAPEM = []byte(pem)
+		conn.Settings["caPem"] = pem
+	} else {
+		delete(conn.Settings, "caPem")
+	}
+	for k, v := range conn.Settings {
+		if v == "" {
+			delete(conn.Settings, k)
+		}
+	}
+	if err := p.Validate(conn); err != nil {
+		return AgencyVaultRuntime{}, fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	rt := runtimeOf(conn)
+	if addr := p.Address(conn); addr != "" {
+		if err := CheckVaultURL(ctx, database, addr); err != nil {
+			return rt, err
+		}
 	}
 	return rt, nil
+}
+
+// runtimeOf is the runtime for a connection.
+func runtimeOf(c secretstore.Connection) AgencyVaultRuntime {
+	rt := AgencyVaultRuntime{Agency: c.Agency, Provider: c.Provider, Settings: c.Settings, Credential: c.Credential}
+	if c.Provider == hashicorp.ID {
+		rt.Addr, rt.Namespace, rt.CAPEM = c.Settings[hashicorp.SettingAddr], c.Settings[hashicorp.SettingNamespace], []byte(c.Settings[hashicorp.SettingCAPEM])
+		rt.RoleID, rt.SecretID = c.Credential[hashicorp.CredRoleID], c.Credential[hashicorp.CredSecretID]
+	}
+	return rt
+}
+
+// ErrStoreProviderInUse refuses changing an agency's provider while it owns
+// external secrets or keys (2.5.5 SM-9, decision 5): 409 vault_in_use.
+var ErrStoreProviderInUse = errors.New("the agency's external secrets and SSH keys name references in its current kind of store")
+
+func agencyVaultProvider(ctx context.Context, database *sql.DB, agency string) (string, bool, error) {
+	var p string
+	err := database.QueryRowContext(ctx, `SELECT provider FROM agency_vaults WHERE agency_id = ?`, agency).Scan(&p)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return p, err == nil, err
+}
+
+// countExternalRows counts an agency's external secrets and SSH keys, by each
+// store's own question (a secret: a source that is not exactly "stored"; a
+// key: exactly "vault"; either: a ref), as the disconnect does.
+func countExternalRows(ctx context.Context, q rowQuerier, agency string) (int, error) {
+	var n int
+	err := q.QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM secrets WHERE owner_agency = ?1 AND (source <> 'stored' OR COALESCE(vault_ref, '') <> ''))
+		     + (SELECT COUNT(*) FROM ssh_credentials WHERE owner_agency = ?1 AND (source = 'vault' OR COALESCE(vault_ref, '') <> ''))`, agency).Scan(&n)
+	return n, err
 }
 
 // PutAgencyVault writes an agency's connection (prepared by PrepareAgencyVault).

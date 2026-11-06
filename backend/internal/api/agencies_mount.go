@@ -1272,6 +1272,11 @@ type vaultPrefixesJSON struct {
 	// OwnVault: the agency has a Vault of its own (2.5.1 SG-26), where no
 	// prefix means any path.
 	OwnVault bool `json:"ownVault"`
+	// Provider is the kind of store the agency's references are in, and
+	// RefHint how a form asks for one (2.5.5 SM-10): the screens label the
+	// field from it instead of mirroring each provider's grammar.
+	Provider string              `json:"provider"`
+	RefHint  secretstore.RefHint `json:"refHint"`
 }
 
 // vaultPrefixesAnswer is the list with whether the agency has its own Vault.
@@ -1281,7 +1286,12 @@ func (s *Server) vaultPrefixesAnswer(w http.ResponseWriter, r *http.Request, age
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes, OwnVault: own})
+	store, err := settings.StoreProviderOf(r.Context(), s.db, agencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes, OwnVault: own, Provider: store.ID(), RefHint: store.RefHint()})
 }
 
 func (s *Server) handleListVaultPrefixes(w http.ResponseWriter, r *http.Request) {

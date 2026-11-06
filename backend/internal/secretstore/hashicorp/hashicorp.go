@@ -74,6 +74,13 @@ const (
 	CredSecretID     = "secretId"
 )
 
+func (Provider) RequiredCredential() []string { return []string{CredRoleID, CredSecretID} }
+
+func (Provider) RefHint() secretstore.RefHint {
+	return secretstore.RefHint{Label: "Vault path", Placeholder: "secret/data/myapp#KEY_NAME",
+		Format: "A KV v2 path and a field: engine/data/path#FIELD (without #FIELD the field \"value\" is read)."}
+}
+
 func (Provider) Address(c secretstore.Connection) string { return c.Settings[SettingAddr] }
 
 func (Provider) Validate(c secretstore.Connection) error {

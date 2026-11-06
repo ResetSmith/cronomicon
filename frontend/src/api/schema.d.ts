@@ -5074,6 +5074,17 @@ export interface paths {
          *     the list, and nothing is stored, unless `confirmUnresolved` is set.
          *     Connecting moves every one of the agency's Vault references at once.
          *     Logged as `vault-connected` or `vault-updated`. CSRF required.
+         *
+         *     v2.5.5 (SM-3, SM-4, SM-9): `provider` names the kind of store
+         *     (`hashicorp` for HashiCorp Vault and OpenBao, `aws` for AWS Secrets
+         *     Manager), and `settings` / `credential` carry its fields. A provider
+         *     with no login of its own (AWS) is tested by reading a secret: the
+         *     agency's first external reference, else `exampleRef`; with neither the
+         *     answer is 422 `example_ref_required`, and a read the store refuses is
+         *     422 `vault_login_failed`. Changing the provider while the agency owns
+         *     external secrets or SSH keys is 409 `vault_in_use` with their count:
+         *     their references are in the old kind's grammar. The same provider with
+         *     new settings or credentials is an ordinary save.
          */
         put: operations["putAgencyVault"];
         post?: never;
@@ -5106,9 +5117,14 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Log in to a proposed agency Vault (v2.5.1)
-         * @description An AppRole login with the body's connection (blank credentials are the
-         *     stored ones). Reads nothing. `configureApp` on the agency. CSRF required.
+         * Test a proposed agency secret store connection (v2.5.1; any provider since v2.5.5)
+         * @description HashiCorp: an AppRole login with the body's connection (blank
+         *     credentials are the stored ones); reads nothing. A provider with no
+         *     login of its own (AWS, v2.5.5 SM-5a) reads `exampleRef`, else the
+         *     agency's first external reference, and discards the value: `ok` is
+         *     false when the store refuses the credential or does not answer (and,
+         *     for `exampleRef`, when it does not resolve), and when there is nothing
+         *     to read. `configureApp` on the agency. CSRF required.
          */
         post: operations["testAgencyVault"];
         delete?: never;
@@ -5134,6 +5150,31 @@ export interface paths {
          *     required.
          */
         post: operations["previewAgencyVault"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/vault/validate-ref": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * May the agency name this reference (v2.5.5)
+         * @description SM-10: the same judgement the secret and SSH key writes make, asked by
+         *     their forms before they save: the agency's store's grammar and its
+         *     prefixes. Writes nothing. `current` is the reference the row names now
+         *     (a reference left as it was is not judged again where only the grammar
+         *     would judge it); `label` is `key` for an SSH key. `manageEnvVars` or
+         *     `configureApp` on the agency (question 226). CSRF required.
+         */
+        post: operations["validateAgencyStoreRef"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9752,6 +9793,15 @@ export interface components {
              *     in its own Vault and are optional, and its `configureApp` sets them.
              */
             ownVault?: boolean;
+            /** @description v2.5.5 — the kind of store the agency's references are in (`hashicorp` for an agency with none of its own). */
+            provider?: string;
+            refHint?: components["schemas"]["StoreRefHint"];
+        };
+        /** @description How a form asks for one of a provider's references (v2.5.5 SM-10). */
+        StoreRefHint: {
+            label: string;
+            placeholder: string;
+            format: string;
         };
         /**
          * @description An agency's own Vault connection (v2.5.1, SG3). Never carries a
@@ -9759,6 +9809,17 @@ export interface components {
          */
         AgencyVault: {
             agencyId: string;
+            /** @description v2.5.5: `hashicorp` or `aws`. */
+            provider?: string;
+            providerLabel?: string;
+            /** @description v2.5.5 — the provider's plain settings (a CA bundle is reported by `caPresent`, not returned). */
+            settings?: {
+                [key: string]: string;
+            };
+            /** @description v2.5.5 — which of the provider's required credential fields are stored. */
+            credentialSet?: {
+                [key: string]: boolean;
+            };
             /** @description `https://` address, on `vaultAllowedHosts`. */
             addr: string;
             /** @description Vault Enterprise namespace */
@@ -9780,9 +9841,29 @@ export interface components {
          * @description AppRole only (SG-23). A blank `roleId` or `secretId` keeps the stored
          *     one; a first connection needs both. `caPem` absent keeps the stored
          *     bundle, an empty string clears it (PEM, 64 KiB at most).
+         *
+         *     v2.5.5: `provider` (absent: the connection's own, else `hashicorp`),
+         *     and the provider's `settings` and `credential`. HashiCorp: settings
+         *     `addr`, `namespace`, `caPem`; credential `roleId`, `secretId` (the
+         *     flat fields still work; the maps win). AWS: settings `region`,
+         *     `endpoint` (optional, https, on `vaultAllowedHosts`), `caPem` (only
+         *     with an endpoint); credential `accessKeyId`, `secretAccessKey`,
+         *     `sessionToken` (optional). A blank credential field keeps the stored
+         *     one when the provider is unchanged; a settings key absent keeps the
+         *     stored value.
          */
         AgencyVaultInput: {
-            addr: string;
+            /** @enum {string} */
+            provider?: "hashicorp" | "aws";
+            settings?: {
+                [key: string]: string;
+            };
+            credential?: {
+                [key: string]: string;
+            };
+            /** @description A reference to read on the test or the save, for a provider tested by a read (v2.5.5 SM-5a). */
+            exampleRef?: string;
+            addr?: string;
             namespace?: string;
             roleId?: string;
             secretId?: string;
@@ -20037,6 +20118,48 @@ export interface operations {
                 content: {
                     "application/json": {
                         references: components["schemas"]["AgencyVaultReference"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    validateAgencyStoreRef: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    ref: string;
+                    current?: string;
+                    /** @enum {string} */
+                    label?: "secret" | "key";
+                };
+            };
+        };
+        responses: {
+            /** @description The verdict. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok: boolean;
+                        /** @description `validation_failed` or `vault_path_not_allowed` when not ok. */
+                        code?: string;
+                        reason?: string;
                     };
                 };
             };
