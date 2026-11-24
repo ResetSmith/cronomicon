@@ -70,7 +70,7 @@ func loadStringSets(ctx context.Context, database *sql.DB, query string) (map[st
 
 func scopeName(s string) string {
 	if s == "" {
-		return "(global)"
+		return "(agency-wide)"
 	}
 	return fmt.Sprintf("%q", s)
 }

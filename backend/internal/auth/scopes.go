@@ -52,6 +52,24 @@ func ScopeWritableIn(id Identity, agency, targetScope string) bool {
 	return targetScope != "" && grantCoversIn(id, agency, targetScope)
 }
 
+// RowScopeWritableIn is ScopeWritableIn for a secret's or a variable's row: the
+// same rule for a named scope, and for the global scope ("", every scope of the
+// row's agency) the permission on that agency. ScopeWritableIn keeps the empty
+// scope for an All-scopes grant because, before 2.4.0, a global row was injected
+// into every agency's runs. A row is now injected into its owner's runs only,
+// and an agency's grant covers every scope that agency has, so a global row of
+// the agency reaches nothing the grant does not. A row with no owner (shared,
+// from before 2.3.0) or Global's is a global administrator's, by CanAgency.
+func RowScopeWritableIn(id Identity, perm, agency, targetScope string) bool {
+	if targetScope == "" {
+		if agency == "" {
+			return id.GlobalAdmin(perm)
+		}
+		return id.CanAgency(perm, agency)
+	}
+	return ScopeWritableIn(id, agency, targetScope)
+}
+
 // grantCoversIn: one of the actor's grants is of the agency and covers the scope.
 //
 // An empty agency is a row that names no owner (a secret, variable or key from

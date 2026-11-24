@@ -98,7 +98,7 @@ func TestValidateTruthTable(t *testing.T) {
 			name: "global row resolves for a scope with no override",
 			kind: KindSecret, ref: "DB_PASS", scope: "dev", canRead: allScopes(),
 			wantOK: true, wantOutcome: OutcomeResolved, wantResolved: new(""),
-			reasonContains: "global",
+			reasonContains: "agency-wide",
 		},
 		{
 			name: "global row resolves for a global run",

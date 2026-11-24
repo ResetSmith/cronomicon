@@ -1129,7 +1129,7 @@ export function JobComposer() {
           <>
             The Env Vars references this job's runs receive — only what is declared here is injected at dispatch.
             Names, never values. Each is checked against this job's scope
-            {scope ? <> (<code style={{ fontFamily: c.mono }}>{scope}</code>)</> : " (global)"}; the Run dialog
+            {scope ? <> (<code style={{ fontFamily: c.mono }}>{scope}</code>)</> : " (none chosen yet: agency-wide rows only)"}; the Run dialog
             re-checks against the scope a run actually targets, and can add more for one run.
             {scriptRef && (
               <>

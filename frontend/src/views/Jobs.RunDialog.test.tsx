@@ -1255,7 +1255,7 @@ describe("RunDialog — reference preflight (T1.7)", () => {
       reference: "CRONOMICON_VAR_REGION",
       ok: true,
       outcome: "resolved",
-      reason: "resolves to the global variable",
+      reason: "resolves to the agency-wide variable",
       resolvedScope: "",
     };
     const { q } = renderDialog(makeJob([]));

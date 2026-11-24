@@ -341,11 +341,12 @@ func kindNoun(k Kind) string {
 	return "reference"
 }
 
-// scopeLabel renders the "" global convention as a word, so a reason never reads
+// scopeLabel renders the "" global convention as words, so a reason never reads
 // "not visible from ”" (T1.8 makes the same substitution in the Env Vars list).
+// The screens call a row with no scope agency-wide (2.5.4).
 func scopeLabel(scope string) string {
 	if scope == "" {
-		return "the global scope"
+		return "a run with no scope"
 	}
 	return fmt.Sprintf("scope %q", scope)
 }
@@ -381,9 +382,9 @@ func resolvedReason(kind Kind, rowScope, runScope string, nameScope bool) string
 		return fmt.Sprintf("resolves to the %s in scope %q", kindNoun(kind), rowScope)
 	}
 	if runScope == "" {
-		return fmt.Sprintf("resolves to the global %s", kindNoun(kind))
+		return fmt.Sprintf("resolves to the agency-wide %s", kindNoun(kind))
 	}
-	return fmt.Sprintf("resolves to the global %s (no row specific to scope %q)", kindNoun(kind), runScope)
+	return fmt.Sprintf("resolves to the agency-wide %s (no row specific to scope %q)", kindNoun(kind), runScope)
 }
 
 // scopeAgencyNames resolves a scope name to the agency NAMES a run in it would

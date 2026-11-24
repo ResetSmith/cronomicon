@@ -39,8 +39,9 @@ function kindColor(k: string): string {
 
 // GLOBAL_SCOPE_LABEL — the "" scope convention rendered as a word. A blank cell
 // used to be indistinguishable from "unset" (T1.8); every reference surface says
-// the same thing now.
-export const GLOBAL_SCOPE_LABEL = "global";
+// the same thing now. The API calls the scope global; the screens say
+// agency-wide (2.5.4): the row reaches every scope of its own agency, no other.
+export const GLOBAL_SCOPE_LABEL = "agency-wide";
 
 // ── Authoring-time validation (agencies plan T1.4-T1.7) ─────────────────────
 // Until now the ONLY feedback on a bad binding was a 409 at dispatch, and that
@@ -1438,8 +1439,8 @@ export function ReferencePreflightPanel({
             : error
               ? `Could not check references: ${error}`
               : unresolved > 0
-                ? `${unresolved} reference${unresolved === 1 ? "" : "s"} will not resolve in ${scope || GLOBAL_SCOPE_LABEL} — the run will fail closed at dispatch.`
-                : `All references resolve in ${scope || GLOBAL_SCOPE_LABEL}.`}
+                ? `${unresolved} reference${unresolved === 1 ? "" : "s"} will not resolve ${scope ? `in ${scope}` : `from ${GLOBAL_SCOPE_LABEL} rows`} — the run will fail closed at dispatch.`
+                : `All references resolve ${scope ? `in ${scope}` : `from ${GLOBAL_SCOPE_LABEL} rows`}.`}
         </div>
       )}
       {keyCaveat && (

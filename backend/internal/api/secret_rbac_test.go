@@ -210,8 +210,8 @@ func TestEnvSecretRevealScopeEnforced(t *testing.T) {
 }
 
 // TestEnvSecretWriteScopeEnforced (P1.7/D3): a scope-restricted manager may not
-// create a secret outside their grants (403) NOR in the global scope (403,
-// ScopeWritable), may not delete an out-of-scope secret (404), may not move an
+// create a secret outside their grants (403), may create one in the global scope
+// of their own agency (201, RowScopeWritableIn), may not delete an out-of-scope secret (404), may not move an
 // in-scope secret out of scope via update (403), and may not migrate/tag one
 // out-of-scope (404). In-scope create is allowed (201).
 func TestEnvSecretWriteScopeEnforced(t *testing.T) {
@@ -224,10 +224,10 @@ func TestEnvSecretWriteScopeEnforced(t *testing.T) {
 		`{"key":"NEW_STAGING","source":"stored","scope":"staging","value":"x"}`); rec.Code != http.StatusForbidden {
 		t.Errorf("create out-of-scope = %d, want 403; body: %s", rec.Code, rec.Body.String())
 	}
-	// Create in the GLOBAL scope → 403 (a restricted actor can't write global).
+	// Create in the GLOBAL scope → 201: every scope of the manager's own agency.
 	if rec := reqAs(t, h, http.MethodPost, "/api/v1/env-secrets", "sec-admins",
-		`{"key":"NEW_GLOBAL","source":"stored","value":"x"}`); rec.Code != http.StatusForbidden {
-		t.Errorf("create global by restricted manager = %d, want 403; body: %s", rec.Code, rec.Body.String())
+		`{"key":"NEW_GLOBAL","source":"stored","value":"x"}`); rec.Code != http.StatusCreated {
+		t.Errorf("create global by the agency's manager = %d, want 201; body: %s", rec.Code, rec.Body.String())
 	}
 	// Create in-scope WITHOUT agencyIds → 201, and the secret INHERITS the creator's
 	// department (RA-9, superseding RF-Q2(a)'s 422). Secret material is the
@@ -329,5 +329,118 @@ func TestEnvSecretGlobalWriteAllowedForUnrestricted(t *testing.T) {
 	// Delete a global secret → 204.
 	if rec := reqAs(t, h, http.MethodDelete, "/api/v1/env-secrets/"+globalID, "sec-admins", ""); rec.Code != http.StatusNoContent {
 		t.Errorf("delete global by unrestricted admin = %d, want 204; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAgencyManagerWritesTheirAgencysGlobalRows: a global (unscoped) secret or
+// variable reaches every scope of its owner agency and no other agency's runs
+// (2.4.0), so it is the owner agency's manageEnvVars holders' to create, change
+// and delete (RowScopeWritableIn). Another agency's global row, and Global's,
+// stay out of their reach.
+func TestAgencyManagerWritesTheirAgencysGlobalRows(t *testing.T) {
+	h, pool := secretRBACServer(t, map[string]string{"admin": "prod"})
+	if _, err := pool.Exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-other','Other','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	created := func(path, body string) string {
+		t.Helper()
+		rec := reqAs(t, h, http.MethodPost, path, "sec-admins", body)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create global at %s = %d, want 201; body: %s", path, rec.Code, rec.Body.String())
+		}
+		var out struct {
+			ID    string  `json:"id"`
+			Scope *string `json:"scope"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		if out.Scope != nil {
+			t.Fatalf("created row has scope %q, want global", *out.Scope)
+		}
+		return out.ID
+	}
+	ownerOf := func(table, id string) string {
+		t.Helper()
+		var owner string
+		if err := pool.QueryRow(`SELECT owner_agency FROM `+table+` WHERE id = ?`, id).Scan(&owner); err != nil {
+			t.Fatal(err)
+		}
+		return owner
+	}
+
+	for _, k := range []struct{ name, path, table, create, update string }{
+		{"variable", "/api/v1/env-vars", "env_vars",
+			`{"key":"OWN_GLOBAL","value":"x"}`, `{"key":"OWN_GLOBAL","value":"y"}`},
+		{"secret", "/api/v1/env-secrets", "secrets",
+			`{"key":"OWN_GLOBAL","source":"stored","value":"x"}`, `{"key":"OWN_GLOBAL","source":"stored","value":"y"}`},
+	} {
+		t.Run(k.name, func(t *testing.T) {
+			id := created(k.path, k.create)
+			if got := ownerOf(k.table, id); got != "ag:prod" {
+				t.Errorf("owner = %q, want the creator's agency ag:prod", got)
+			}
+			if rec := reqAs(t, h, http.MethodPut, k.path+"/"+id, "sec-admins", k.update); rec.Code != http.StatusOK {
+				t.Errorf("update own agency's global %s = %d, want 200; body: %s", k.name, rec.Code, rec.Body.String())
+			}
+			if rec := reqAs(t, h, http.MethodDelete, k.path+"/"+id, "sec-admins", ""); rec.Code != http.StatusNoContent && rec.Code != http.StatusOK {
+				t.Errorf("delete own agency's global %s = %d, want 2xx; body: %s", k.name, rec.Code, rec.Body.String())
+			}
+
+			// Another agency's global row: neither changed nor deleted. Only the
+			// owner moves, and the creator's membership row stays, so for a
+			// variable the owner rule is what refuses (a secret is refused before
+			// it, by the owner agency's read rule).
+			if _, err := pool.Exec(`UPDATE `+k.table+` SET owner_agency = 'ag-other' WHERE id = ?`, created(k.path, k.create)); err != nil {
+				t.Fatal(err)
+			}
+			var otherID string
+			if err := pool.QueryRow(`SELECT id FROM ` + k.table + ` WHERE owner_agency = 'ag-other'`).Scan(&otherID); err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range []struct{ method, body string }{{http.MethodPut, k.update}, {http.MethodDelete, ""}} {
+				if rec := reqAs(t, h, m.method, k.path+"/"+otherID, "sec-admins", m.body); rec.Code < 400 {
+					t.Errorf("%s another agency's global %s = %d, want a refusal", m.method, k.name, rec.Code)
+				}
+			}
+			var n int
+			if err := pool.QueryRow(`SELECT COUNT(*) FROM `+k.table+` WHERE id = ? AND scope IS NULL`, otherID).Scan(&n); err != nil || n != 1 {
+				t.Errorf("another agency's global %s was changed or removed (n=%d, err=%v)", k.name, n, err)
+			}
+		})
+	}
+}
+
+// TestAgencyManagerLeavesAdministrationsGlobalRowAlone: a global row
+// Administration owns that is still a member of the manager's agency (one it
+// holds, SG-16) is Administration's to change, not the member agency's:
+// RowScopeWritableIn gives a row of `global` to a global administrator only.
+func TestAgencyManagerLeavesAdministrationsGlobalRowAlone(t *testing.T) {
+	h, pool := secretRBACServer(t, map[string]string{"admin": "prod"})
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatalf("%v\n%s", err, q)
+		}
+	}
+	exec(`INSERT INTO env_vars (id, key, value, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('v-held','HELD_GLOBAL','x','seed','2026-01-01T00:00:00Z','seed','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO env_var_agencies (env_var_id, agency_id) VALUES ('v-held','ag:prod')`)
+	secID := secretID(t, pool, "SEC_GLOBAL")
+	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES (?,'ag:prod')`, secID)
+
+	for _, k := range []struct{ name, path, table, id, update string }{
+		{"variable", "/api/v1/env-vars", "env_vars", "v-held", `{"key":"HELD_GLOBAL","value":"y"}`},
+		{"secret", "/api/v1/env-secrets", "secrets", secID, `{"key":"SEC_GLOBAL","source":"stored","value":"y"}`},
+	} {
+		t.Run(k.name, func(t *testing.T) {
+			for _, m := range []struct{ method, body string }{{http.MethodPut, k.update}, {http.MethodDelete, ""}} {
+				if rec := reqAs(t, h, m.method, k.path+"/"+k.id, "sec-admins", m.body); rec.Code != http.StatusForbidden {
+					t.Errorf("%s Administration's global %s = %d, want 403; body: %s", m.method, k.name, rec.Code, rec.Body.String())
+				}
+			}
+			var n int
+			if err := pool.QueryRow(`SELECT COUNT(*) FROM `+k.table+` WHERE id = ? AND scope IS NULL AND owner_agency = 'global'`, k.id).Scan(&n); err != nil || n != 1 {
+				t.Errorf("Administration's global %s was changed or removed (n=%d, err=%v)", k.name, n, err)
+			}
+		})
 	}
 }

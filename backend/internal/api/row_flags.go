@@ -99,7 +99,7 @@ func (s *Server) flagsWithScope(ctx context.Context, id auth.Identity, fl rowFla
 	if scope != nil {
 		sc = *scope
 	}
-	if !auth.ScopeWritableIn(id, owner, sc) {
+	if !auth.RowScopeWritableIn(id, auth.PermManageEnvVars, owner, sc) {
 		fl.CanEdit, fl.CanDelete = false, false
 	}
 	return fl, nil

@@ -40,6 +40,7 @@ import {
   valueBoxStyle,
 } from "./ui";
 import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
+import { agencyWideLabel, pickedAgencyName, useAgencyWide } from "./scopeOption";
 import { useInCentral } from "../../components/CentralRunsNothing";
 
 interface EnvVarRow {
@@ -203,10 +204,15 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
       label: "Scope",
       sortKey: "scope",
       width: COL_W.scope,
-      // T1.8 — an unscoped row is GLOBAL, and a global variable injects into
-      // every scope. A blank cell said neither.
+      // T1.8 — an unscoped row is agency-wide: it injects into every scope of
+      // its agency. A blank cell said neither.
       cell: (v) => (
-        <span style={{ color: v.scope ? c.text : c.textSec, fontStyle: v.scope ? "normal" : "italic" }}>{scopeCell(v.scope)}</span>
+        <span
+          title={v.scope ? undefined : agencyWideLabel(v.ownerAgency)}
+          style={{ color: v.scope ? c.text : c.textSec, fontStyle: v.scope ? "normal" : "italic" }}
+        >
+          {scopeCell(v.scope)}
+        </span>
       ),
     },
     { key: "usedBy", label: "Used by", sortKey: "usedBy", width: COL_W.usedBy, cell: (v) => <UsageCell {...usage.usageFor("var", v.key)} /> },
@@ -362,7 +368,7 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
                             <div>
                               <DetailLabel>Details</DetailLabel>
                               <div style={detailBoxStyle()}>
-                                <DetailRow label="Scope" value={v.scope || "global (injects into every scope)"} />
+                                <DetailRow label="Scope" value={v.scope || agencyWideLabel(v.ownerAgency)} />
                                 <DetailRow
                                   label="Used by"
                                   value={<UsageCell {...usage.usageFor("var", v.key)} />}
@@ -465,6 +471,7 @@ function VarFormModal({
   const [busy, setBusy] = useState(false);
   // RF-Q2(a): the create-time agency binding, shown only to restricted callers.
   const agencyPick = useCreationAgencies(isEdit, "manageEnvVars");
+  const agencyWide = useAgencyWide(initial?.ownerAgency, pickedAgencyName(agencyPick));
 
   const onKeyChange = (raw: string) => {
     const up = raw.toUpperCase().replace(/[^A-Z0-9_]/g, "");
@@ -557,10 +564,15 @@ function VarFormModal({
           <select value={scope} onChange={(e) => setScope(e.target.value)} style={{ ...inputStyle(), cursor: "pointer" }}>
             {scopeNames.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {agencyWide.optionLabel(s)}
               </option>
             ))}
           </select>
+          {scope === ALL_SCOPE_OPTION && (
+            <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
+              {agencyWide.hint("variable")}
+            </div>
+          )}
         </div>
         <div>
           <label style={labelStyle()}>Value</label>

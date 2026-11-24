@@ -199,10 +199,11 @@ func TestEnvVarWriteScopeEnforced(t *testing.T) {
 		`{"key":"NEW_STG","value":"x","scope":"staging"}`); rec.Code != http.StatusForbidden {
 		t.Errorf("create out-of-scope var = %d, want 403; body: %s", rec.Code, rec.Body.String())
 	}
-	// Create global → 403.
+	// Create global → 201, the manager's agency's: a global row reaches every
+	// scope of its agency only, all of which the agency's grant covers.
 	if rec := reqAs(t, h, http.MethodPost, "/api/v1/env-vars", "sec-admins",
-		`{"key":"NEW_GLOBAL","value":"x"}`); rec.Code != http.StatusForbidden {
-		t.Errorf("create global var by restricted manager = %d, want 403; body: %s", rec.Code, rec.Body.String())
+		`{"key":"NEW_GLOBAL","value":"x"}`); rec.Code != http.StatusCreated {
+		t.Errorf("create global var by the agency's manager = %d, want 201; body: %s", rec.Code, rec.Body.String())
 	}
 	// Create in-scope WITHOUT agencyIds → 201, and the variable INHERITS the
 	// creator's department (RA-9). This was a 422 under RF-Q2(a); Phase D turns the
@@ -246,7 +247,7 @@ func TestEnvVarWriteScopeEnforced(t *testing.T) {
 		`{"key":"EV_PROD","value":"x","scope":"staging"}`); rec.Code != http.StatusForbidden {
 		t.Errorf("update moving prod→staging var = %d, want 403; body: %s", rec.Code, rec.Body.String())
 	}
-	// Rewrite a GLOBAL var → 403 (the integrity hole).
+	// Rewrite Global's GLOBAL var → 403 (the integrity hole).
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/env-vars/ev-global", "sec-admins",
 		`{"key":"EV_GLOBAL","value":"attacker","scope":"prod"}`); rec.Code != http.StatusForbidden {
 		t.Errorf("rewrite global var by restricted manager = %d, want 403; body: %s", rec.Code, rec.Body.String())
@@ -255,11 +256,11 @@ func TestEnvVarWriteScopeEnforced(t *testing.T) {
 	if rec := reqAs(t, h, http.MethodDelete, "/api/v1/env-vars/ev-staging", "sec-admins", ""); rec.Code != http.StatusNotFound {
 		t.Errorf("delete out-of-scope var = %d, want 404", rec.Code)
 	}
-	// Delete a global var → 403.
+	// Delete Global's global var → 403.
 	if rec := reqAs(t, h, http.MethodDelete, "/api/v1/env-vars/ev-global", "sec-admins", ""); rec.Code != http.StatusForbidden {
 		t.Errorf("delete global var by restricted manager = %d, want 403", rec.Code)
 	}
-	// Tag a global var → 403.
+	// Tag Global's global var → 403.
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/env-var-tags/ev-global", "sec-admins",
 		`{"tags":["x"]}`); rec.Code != http.StatusForbidden {
 		t.Errorf("tag global var by restricted manager = %d, want 403", rec.Code)

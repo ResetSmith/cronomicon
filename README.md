@@ -57,7 +57,7 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e CRONOMICON_DEV_AUTH=true \
   -e CRONOMICON_DEV_SEED=true \
   -e CRONOMICON_COOKIE_SECURE=false \
-  ghcr.io/resetsmith/cronomicon:2.5.3
+  ghcr.io/resetsmith/cronomicon:2.5.4
 ```
 
 Open <http://localhost:8080> and choose **Developer login**. The data disappears when the container stops.
@@ -103,10 +103,10 @@ Each image is tagged with its full version (`2.5.2`), its minor version (`2.5`) 
 **Verifying a release.** Since 2.5.3 every image carries a build-provenance attestation and a signed SBOM, made by this repository's release workflow from the tag's commit, and the GitHub Release carries each image's SBOM and Trivy report and the source's `govulncheck` and `npm audit` reports. With the [GitHub CLI](https://cli.github.com/):
 
 ```bash
-gh attestation verify oci://ghcr.io/resetsmith/cronomicon:2.5.3 --repo ResetSmith/cronomicon
-gh attestation verify oci://ghcr.io/resetsmith/cronomicon:2.5.3 --repo ResetSmith/cronomicon \
+gh attestation verify oci://ghcr.io/resetsmith/cronomicon:2.5.4 --repo ResetSmith/cronomicon
+gh attestation verify oci://ghcr.io/resetsmith/cronomicon:2.5.4 --repo ResetSmith/cronomicon \
   --predicate-type https://spdx.dev/Document/v2.3          # the SBOM
-gh attestation verify cronomicon-docs-2.5.3.zip --repo ResetSmith/cronomicon
+gh attestation verify cronomicon-docs-2.5.4.zip --repo ResetSmith/cronomicon
 ```
 
 The scan reports are as of the release; scan the image again for what has been found since.
@@ -169,7 +169,7 @@ docker run -d --name cronomicon --restart unless-stopped \
   -v cronomicon-data:/var/lib/cronomicon \
   -v /etc/cronomicon/kek:/run/secrets/cronomicon_kek:ro \
   --env-file /etc/cronomicon/cronomicon.env \
-  ghcr.io/resetsmith/cronomicon:2.5.3
+  ghcr.io/resetsmith/cronomicon:2.5.4
 ```
 
 Database migrations run automatically at startup. Confirm the server is ready:
@@ -185,7 +185,7 @@ curl -s http://localhost:8080/version    # {"version":"2.5.2", ...}
 ```yaml
 services:
   cronomicon:
-    image: ghcr.io/resetsmith/cronomicon:2.5.3
+    image: ghcr.io/resetsmith/cronomicon:2.5.4
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -221,7 +221,7 @@ Cronomicon grants nothing by default, so the first step is to make someone an ad
 
 ```bash
 docker stop cronomicon
-docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.5.3 \
+docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.5.4 \
   grant-admin -db /var/lib/cronomicon/cronomicon.db cronomicon-admins
 docker start cronomicon
 ```
@@ -265,7 +265,7 @@ docker build -f backend/Dockerfile \
   --build-arg VERSION=2.5.2 \
   --build-arg COMMIT=$(git rev-parse --short HEAD) \
   --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-  -t cronomicon:2.5.3 .
+  -t cronomicon:2.5.4 .
 ```
 
 The version arguments are optional. They appear in the interface and at `/version`.
@@ -283,7 +283,7 @@ The fat image's Ansible version is a build argument (`ANSIBLE_VERSION`). To add 
 
 #### Step 4: Deploy
 
-Follow [Option 1](#option-1-deploy-the-published-image) from Step 1, replacing `ghcr.io/resetsmith/cronomicon:2.5.3` with `cronomicon:2.5.3`. To run the image on another host, push it to your own registry first.
+Follow [Option 1](#option-1-deploy-the-published-image) from Step 1, replacing `ghcr.io/resetsmith/cronomicon:2.5.4` with `cronomicon:2.5.4`. To run the image on another host, push it to your own registry first.
 
 ### Adding runners
 
@@ -323,7 +323,7 @@ Migrations run automatically when a new version starts, and they cannot be rolle
 To roll back, restore the volume from the archive and start the previous version. The [CHANGELOG](CHANGELOG.md) lists what changes in each release.
 
 > [!NOTE]
-> **Upgrading from 2.2.3.** Before you stop the old server, run the report with the new image against the existing database: `docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.5.3 preflight -db /var/lib/cronomicon/cronomicon.db` (read-only). It lists, for this installation, what stops or moves at the first start: Git jobs on an agency's scope stop running until each agency has its own repository, and an agency's shell jobs need an agent of that agency. Lines marked `!!` need action first. After the upgrade, a global administrator reads the **Notices** page, which lists each item by agency.
+> **Upgrading from 2.2.3.** Before you stop the old server, run the report with the new image against the existing database: `docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.5.4 preflight -db /var/lib/cronomicon/cronomicon.db` (read-only). It lists, for this installation, what stops or moves at the first start: Git jobs on an agency's scope stop running until each agency has its own repository, and an agency's shell jobs need an agent of that agency. Lines marked `!!` need action first. After the upgrade, a global administrator reads the **Notices** page, which lists each item by agency.
 
 ## How Cronomicon works
 
@@ -475,7 +475,7 @@ The other step types are `branch` (choose a path from an earlier step's result),
 **4. Validate before you push.** The `cronomicon` binary checks syntax and cross-references with the same parser the server uses. You can run it from the image without installing anything:
 
 ```bash
-docker run --rm -v "$PWD":/repo:ro ghcr.io/resetsmith/cronomicon:2.5.3 validate /repo
+docker run --rm -v "$PWD":/repo:ro ghcr.io/resetsmith/cronomicon:2.5.4 validate /repo
 ```
 
 **5. Push.** A GitLab webhook triggers a sync automatically, or choose **Resync** on the repository under **Settings → Repositories**. Definitions from Git are read-only in the app; change them in Git.

@@ -45,6 +45,7 @@ import {
   valueBoxStyle,
 } from "./ui";
 import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
+import { agencyWideLabel, pickedAgencyName, useAgencyWide } from "./scopeOption";
 import { globalAgencyName } from "../../globalName";
 import { useInCentral } from "../../components/CentralRunsNothing";
 
@@ -268,10 +269,15 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
       label: "Scope",
       sortKey: "scope",
       width: COL_W.scope,
-      // T1.8 — an unscoped row is GLOBAL, and a global secret is injectable from
-      // every scope. A blank cell said neither.
+      // T1.8 — an unscoped row is agency-wide: injectable from every scope of
+      // its agency. A blank cell said neither.
       cell: (v) => (
-        <span style={{ color: v.scope ? c.text : c.textSec, fontStyle: v.scope ? "normal" : "italic" }}>{scopeCell(v.scope)}</span>
+        <span
+          title={v.scope ? undefined : agencyWideLabel(v.ownerAgency)}
+          style={{ color: v.scope ? c.text : c.textSec, fontStyle: v.scope ? "normal" : "italic" }}
+        >
+          {scopeCell(v.scope)}
+        </span>
       ),
     },
     { key: "usedBy", label: "Used by", sortKey: "usedBy", width: COL_W.usedBy, cell: (v) => <UsageCell {...usage.usageFor("secret", v.key)} /> },
@@ -511,7 +517,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                             <div>
                               <DetailLabel>Details</DetailLabel>
                               <div style={detailBoxStyle()}>
-                                <DetailRow label="Scope" value={v.scope || "global (injectable from every scope)"} />
+                                <DetailRow label="Scope" value={v.scope || agencyWideLabel(v.ownerAgency)} />
                                 <DetailRow label="Used by" value={<UsageCell {...usage.usageFor("secret", v.key)} />} />
                                 <DetailRow label="Description" value={v.description || "—"} />
                                 <DetailRow
@@ -699,6 +705,7 @@ function SecretFormModal({
   const [busy, setBusy] = useState(false);
   // The one agency a new secret belongs to (LR-54).
   const agencyPick = useCreationAgencies(isEdit, "manageEnvVars");
+  const agencyWide = useAgencyWide(initial?.ownerAgency, pickedAgencyName(agencyPick));
 
   // LR-80 — whose Vault paths apply: the row's owner on an edit, the agency
   // chosen on a create. Global's rows have no path limit and are a global
@@ -878,10 +885,15 @@ function SecretFormModal({
           <select value={scope} onChange={(e) => setScope(e.target.value)} style={{ ...inputStyle(), cursor: "pointer" }}>
             {scopeNames.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {agencyWide.optionLabel(s)}
               </option>
             ))}
           </select>
+          {scope === ALL_SCOPE_OPTION && (
+            <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
+              {agencyWide.hint("secret")}
+            </div>
+          )}
         </div>
         {source === "vault" ? (
           <div>

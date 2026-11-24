@@ -102,7 +102,7 @@ export function DetailGrid({ children }: { children: ReactNode }) {
 // in was a rename, not a rewrite. Re-exported under the old name so the three
 // tabs' imports keep working.
 import { SectionLabel } from "../../components/ui";
-import { globalAgencyName } from "../../globalName";
+import { administrationLabel, globalAgencyName } from "../../globalName";
 export { SectionLabel as DetailLabel };
 
 export function DetailRow({ label, value, last }: { label: string; value: ReactNode; last?: boolean }) {
@@ -184,18 +184,19 @@ export { Notice, Modal, ConfirmDialog } from "../../components/ui";
 
 // GLOBAL_SCOPE_LABEL: the "" / NULL scope convention rendered as a word. A blank
 // Scope cell was indistinguishable from "not loaded yet", and the distinction is
-// load-bearing — a global row injects into EVERY scope, which is exactly the fact
-// an operator needs before editing one. Shared with the reference chips so both
-// surfaces say the same word.
-export { GLOBAL_SCOPE_LABEL } from "../../components/ReferenceBindings";
+// load-bearing — an agency-wide row injects into EVERY scope of its agency, which
+// is exactly the fact an operator needs before editing one. Shared with the
+// reference chips so both surfaces say the same word.
+import { GLOBAL_SCOPE_LABEL } from "../../components/ReferenceBindings";
+export { GLOBAL_SCOPE_LABEL };
 
-// scopeCell renders a row's scope for a table cell: the global word, or the name.
+// scopeCell renders a row's scope for a table cell: the agency-wide word, or the name.
 export function scopeCell(scope?: string | null): string {
-  return scope ? scope : "global";
+  return scope ? scope : GLOBAL_SCOPE_LABEL;
 }
 
 // ALL_SCOPE_OPTION is the Variables/Secrets form's first scope choice, meaning
-// "every scope". It is a UI SENTINEL, not a scope name — the backend has no
+// "every scope of the agency". It is a UI SENTINEL, not a scope name — the backend has no
 // notion of a scope called "All"; global is the empty/NULL scope.
 export const ALL_SCOPE_OPTION = "All";
 
@@ -212,7 +213,7 @@ export function scopeForWrite(scope: string): string {
   return scope === ALL_SCOPE_OPTION ? "" : scope;
 }
 
-// ScopeFilterSelect narrows a list to one scope, with an explicit "Global only"
+// ScopeFilterSelect narrows a list to one scope, with an explicit "Agency-wide only"
 // option — the pair of controls an operator needs when a key exists in several
 // scopes and only one of them is the one they meant to edit. `value` is the empty
 // string for "all scopes"; GLOBAL_ONLY selects the unscoped rows.
@@ -244,7 +245,7 @@ export function ScopeFilterSelect({
       }}
     >
       <option value="">All scopes</option>
-      <option value={GLOBAL_ONLY}>Global only</option>
+      <option value={GLOBAL_ONLY}>Agency-wide only</option>
       {scopes.map((s) => (
         <option key={s} value={s}>
           {s}
@@ -335,21 +336,26 @@ export function useShadowWarnings(dep: unknown) {
   };
 }
 
-// ShadowBadge marks a row that shadows a global row of the same key.
+// ShadowBadge marks a scoped row with the same key as an agency-wide row.
 //
-// Two weights on purpose. An UNRESTRICTED shadow is the silent hole — it belongs to
-// no department, so it overrides the global row for everyone in that scope — and is
-// drawn as a warning. A membered shadow is usually the override feature working as
-// intended (it wins only for its own department's runs), so it is drawn quietly:
-// worth seeing, not worth alarming about. Flattening the two would make the badge
-// noise in exactly the catalogue where it matters most.
+// Two weights on purpose. A membered shadow is the override feature working as
+// intended (it wins for its own department's runs in that scope), so it is drawn
+// quietly: worth seeing, not worth alarming about. An UNRESTRICTED one is a row of
+// the built-in agency, in no department: until 2.5.3 it overrode the agency-wide
+// row for everyone in the scope; since then the built-in agency runs nothing, so
+// no run uses the row at all. It is still drawn as a warning, because it is a row
+// someone believes is in force, and it says "unused" rather than "shadows".
 export function ShadowBadge({ shadow }: { shadow: { unrestricted: boolean; reason: string } | null }) {
   if (!shadow) return null;
   const warn = shadow.unrestricted;
   return (
     <span
       title={shadow.reason}
-      aria-label={warn ? "Shadows the global row for every department" : "Shadows the global row"}
+      aria-label={
+        warn
+          ? `${administrationLabel(globalAgencyName())} holds this row, and no run uses it`
+          : "Shadows the agency-wide row with the same key in this scope"
+      }
       style={{
         padding: "1px 6px",
         borderRadius: c.radiusChip,
@@ -363,7 +369,7 @@ export function ShadowBadge({ shadow }: { shadow: { unrestricted: boolean; reaso
         cursor: "help",
       }}
     >
-      {warn ? "⚠ shadows global" : "shadows global"}
+      {warn ? `⚠ unused: ${globalAgencyName()}'s` : "shadows agency-wide"}
     </span>
   );
 }
