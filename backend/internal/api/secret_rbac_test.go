@@ -262,11 +262,6 @@ func TestEnvSecretWriteScopeEnforced(t *testing.T) {
 	if rec := reqAs(t, h, http.MethodDelete, "/api/v1/env-secrets/"+stagingID, "sec-admins", ""); rec.Code != http.StatusNotFound {
 		t.Errorf("delete out-of-scope = %d, want 404", rec.Code)
 	}
-	// Migrate an out-of-scope secret → 404.
-	if rec := reqAs(t, h, http.MethodPost, "/api/v1/env-secrets/"+stagingID+"/migrate-to-vault", "sec-admins",
-		`{"vaultPath":"secret/data/x#f"}`); rec.Code != http.StatusNotFound {
-		t.Errorf("migrate out-of-scope = %d, want 404", rec.Code)
-	}
 	// Tag an out-of-scope secret → 404.
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/env-secret-tags/"+stagingID, "sec-admins",
 		`{"tags":["x"]}`); rec.Code != http.StatusNotFound {
@@ -275,7 +270,7 @@ func TestEnvSecretWriteScopeEnforced(t *testing.T) {
 }
 
 // TestEnvSecretGlobalWriteBlockedForRestricted is the H3 regression: a
-// scope-restricted manager must not DELETE, re-scope (capture), migrate, or
+// scope-restricted manager must not DELETE, re-scope (capture) or
 // label a GLOBAL secret — a global secret injects into every scope, so mutating
 // it is beyond a restricted actor's reach. This was a 403 while P1.7 let a
 // restricted manager read a global secret's metadata; since 2.5.0 C2 Global's
@@ -293,11 +288,6 @@ func TestEnvSecretGlobalWriteBlockedForRestricted(t *testing.T) {
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/env-secrets/"+globalID, "sec-admins",
 		`{"key":"SEC_GLOBAL","source":"stored","scope":"prod","value":"x"}`); rec.Code != http.StatusNotFound {
 		t.Errorf("capture global→prod by restricted manager = %d, want 404; body: %s", rec.Code, rec.Body.String())
-	}
-	// Migrate a global secret's storage.
-	if rec := reqAs(t, h, http.MethodPost, "/api/v1/env-secrets/"+globalID+"/migrate-to-vault", "sec-admins",
-		`{"vaultPath":"secret/data/x#f"}`); rec.Code != http.StatusNotFound {
-		t.Errorf("migrate global by restricted manager = %d, want 404; body: %s", rec.Code, rec.Body.String())
 	}
 	// Label a global secret.
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/env-secret-tags/"+globalID, "sec-admins",

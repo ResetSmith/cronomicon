@@ -17,8 +17,6 @@ type VaultClient interface {
 	// Fetch retrieves the plaintext secret value at vaultRef.
 	// Returns ErrVaultUnavailable if Vault is not reachable.
 	Fetch(vaultRef string) (string, error)
-	// Write stores a plaintext value at the given path. Used by migrate-to-vault.
-	Write(vaultPath, value string) error
 }
 
 // ErrVaultUnavailable is returned when Vault is not configured or unreachable.
@@ -31,4 +29,3 @@ var ErrVaultUnavailable = errors.New("vault unavailable: no Vault client configu
 type stubVaultClient struct{}
 
 func (stubVaultClient) Fetch(_ string) (string, error) { return "", ErrVaultUnavailable }
-func (stubVaultClient) Write(_, _ string) error        { return ErrVaultUnavailable }

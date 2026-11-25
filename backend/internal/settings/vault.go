@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
+	"github.com/ResetSmith/cronomicon/internal/secretstore"
 )
 
 type VaultConfig struct {
@@ -405,7 +407,6 @@ func (d *dynamicVaultClient) ForAgency(owner string) secrets.VaultClient {
 type failedVaultClient struct{ err error }
 
 func (f failedVaultClient) Fetch(string) (string, error) { return "", f.err }
-func (f failedVaultClient) Write(string, string) error   { return f.err }
 func (f failedVaultClient) Configured() bool             { return false }
 
 // resolve returns the client for the config as of now, or nil when Vault is
@@ -442,18 +443,23 @@ func InstallationVaultClient(ctx context.Context, database *sql.DB, appCfg *conf
 // an agency's own Vault. The address is held to the allowed hosts here as
 // well as on write, so a host taken off the list stops being reached.
 func AgencyVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Config, rt AgencyVaultRuntime) (secrets.VaultClient, error) {
-	if err := CheckVaultURL(ctx, database, rt.Addr); err != nil {
+	if err := checkStoreAddress(ctx, database, rt); err != nil {
 		return nil, err
 	}
-	opts := agencyVaultOptions(appCfg, rt)
+	egress := agencyVaultEgress(appCfg)
+	// The whole connection is in the key (its settings and credential as
+	// JSON, for every provider): a changed field builds a new client.
+	conn := rt.Connection()
+	settingsJSON, _ := json.Marshal(conn.Settings)
+	credJSON, _ := json.Marshal(conn.Credential)
 	key := strings.Join([]string{"agency", rt.Agency, rt.Addr, rt.RoleID, rt.SecretID, rt.Namespace, string(rt.CAPEM),
-		fmt.Sprintf("%t/%t", opts.Egress.AllowPrivate, opts.Egress.AllowLoopback)}, "\x00")
+		fmt.Sprintf("%t/%t", egress.AllowPrivate, egress.AllowLoopback), rt.provider(), string(settingsJSON), string(credJSON)}, "\x00")
 	vaultClientMu.Lock()
 	defer vaultClientMu.Unlock()
 	if vc, ok := vaultClientCache[key]; ok {
 		return vc, nil
 	}
-	vc, err := secrets.NewVaultClientWithOptions(rt.Addr, rt.RoleID, rt.SecretID, opts)
+	vc, err := newStoreClient(rt, egress)
 	if err != nil {
 		return nil, err
 	}
@@ -466,19 +472,37 @@ func AgencyVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Con
 // review's A6): taking the agency's cache slot dropped the live client and its
 // token, or, with the stored credentials, a Login on the live client did.
 func NewAgencyVaultClient(ctx context.Context, database *sql.DB, appCfg *config.Config, rt AgencyVaultRuntime) (secrets.VaultClient, error) {
-	if err := CheckVaultURL(ctx, database, rt.Addr); err != nil {
+	if err := checkStoreAddress(ctx, database, rt); err != nil {
 		return nil, err
 	}
-	return secrets.NewVaultClientWithOptions(rt.Addr, rt.RoleID, rt.SecretID, agencyVaultOptions(appCfg, rt))
+	return newStoreClient(rt, agencyVaultEgress(appCfg))
 }
 
-func agencyVaultOptions(appCfg *config.Config, rt AgencyVaultRuntime) secrets.VaultOptions {
-	return secrets.VaultOptions{
-		AuthMethod: "approle",
-		Namespace:  rt.Namespace,
-		CAPEM:      rt.CAPEM,
-		Egress:     httpx.EgressPolicy{AllowPrivate: appCfg.OutboundAllowPrivate, AllowLoopback: appCfg.OutboundAllowLoopback},
+// checkStoreAddress applies the allowed hosts to the address the connection
+// dials, when its provider dials one an administrator chose (SM-7).
+func checkStoreAddress(ctx context.Context, database *sql.DB, rt AgencyVaultRuntime) error {
+	p, err := secretstore.Lookup(rt.provider())
+	if err != nil {
+		return err
 	}
+	if addr := p.Address(rt.Connection()); addr != "" {
+		return CheckVaultURL(ctx, database, addr)
+	}
+	return nil
+}
+
+// newStoreClient builds a connection's client through its provider (2.5.5
+// SM-1). An unknown provider is an error, never another provider's client.
+func newStoreClient(rt AgencyVaultRuntime, egress httpx.EgressPolicy) (secrets.VaultClient, error) {
+	p, err := secretstore.Lookup(rt.provider())
+	if err != nil {
+		return nil, err
+	}
+	return p.NewClient(rt.Connection(), egress)
+}
+
+func agencyVaultEgress(appCfg *config.Config) httpx.EgressPolicy {
+	return httpx.EgressPolicy{AllowPrivate: appCfg.OutboundAllowPrivate, AllowLoopback: appCfg.OutboundAllowLoopback}
 }
 
 func (d *dynamicVaultClient) Fetch(vaultRef string) (string, error) {
@@ -486,15 +510,46 @@ func (d *dynamicVaultClient) Fetch(vaultRef string) (string, error) {
 	if vc == nil {
 		return "", secrets.ErrVaultUnavailable
 	}
-	return vc.Fetch(vaultRef)
+	v, err := vc.Fetch(vaultRef)
+	// 2.5.5 SM-6: a read that says the whole store cannot be used is
+	// remembered for the agency's notice; any read that works forgets it.
+	switch {
+	case err == nil:
+		forgetStoreReadFailure(d.agency)
+	case errors.Is(err, secretstore.ErrStoreUnusable):
+		rememberStoreReadFailure(d.agency, err)
+		return "", fmt.Errorf("%w: %w", secrets.ErrVaultUnavailable, err)
+	}
+	return v, err
 }
 
-func (d *dynamicVaultClient) Write(vaultPath, value string) error {
-	vc := d.resolve()
-	if vc == nil {
-		return secrets.ErrVaultUnavailable
+// The last read of each agency's store that failed as unusable
+// (secretstore.ErrStoreUnusable), until a read or the health check succeeds.
+// In memory: a restart forgets it, and the next read that fails says it again.
+var (
+	storeReadFailuresMu sync.Mutex
+	storeReadFailures   = map[string]string{}
+)
+
+func rememberStoreReadFailure(agency string, err error) {
+	if agency == "" {
+		return
 	}
-	return vc.Write(vaultPath, value)
+	storeReadFailuresMu.Lock()
+	defer storeReadFailuresMu.Unlock()
+	storeReadFailures[agency] = err.Error()
+}
+
+func forgetStoreReadFailure(agency string) {
+	storeReadFailuresMu.Lock()
+	defer storeReadFailuresMu.Unlock()
+	delete(storeReadFailures, agency)
+}
+
+func lastStoreReadFailure(agency string) string {
+	storeReadFailuresMu.Lock()
+	defer storeReadFailuresMu.Unlock()
+	return storeReadFailures[agency]
 }
 
 // Configured is the live L7 signal secrets.Service.VaultConfigured asks for:

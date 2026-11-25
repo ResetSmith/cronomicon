@@ -248,17 +248,6 @@ func (v *httpVaultClient) Fetch(vaultRef string) (string, error) {
 	return s, nil
 }
 
-// Write stores value at the KV v2 secret named by vaultPath (field after '#').
-func (v *httpVaultClient) Write(vaultPath, value string) error {
-	path, field := splitRef(vaultPath)
-	token, err := v.ensureToken()
-	if err != nil {
-		return err
-	}
-	body := map[string]any{"data": map[string]string{field: value}}
-	return v.do(http.MethodPost, "/v1/"+path, token, body, nil)
-}
-
 // ensureToken returns a valid client token, logging in via AppRole when the
 // cached token is missing or within the renewal margin of expiry. The lazy
 // re-login here IS the token-refresh mechanism (D4): a request-driven client

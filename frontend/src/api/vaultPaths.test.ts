@@ -1,53 +1,50 @@
-import { describe, expect, it } from "vitest";
-import { vaultPathAllowed, vaultPathWhy, vaultRefPath } from "./vaultPaths";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// The form's hint must agree with the server's rule (internal/vaultpath), or it
-// would refuse what the server accepts — or, worse, wave through what it won't.
-describe("vault path hint (LR-80)", () => {
-  const prefixes = ["secret/data/tax", "kv/fin"];
+const post = vi.fn();
+vi.mock("./client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./client")>();
+  return { ...actual, api: { ...actual.api, POST: (...a: unknown[]) => post(...a) } as unknown as typeof actual.api };
+});
 
-  it("matches whole segments, as written", () => {
-    for (const [ref, want] of [
-      ["secret/data/tax/db#password", true],
-      ["secret/data/tax#token", true],
-      ["kv/fin/app", true],
-      ["secret/data/tax-audit/db#password", false], // a longer name is another path
-      ["secret/data/ta", false],
-      ["secret/data", false], // above the prefix
-      ["Secret/data/tax/db", false], // case-sensitive, as Vault is
-      ["/secret/data/tax/db", false], // judged as written
-      ["secret/data/tax/db/", false],
-      ["secret/data/tax/../fin/db", false],
-      ["secret/data/tax//db", false],
-      ["secret/data/tax/./db", false],
-      ["secret/data/tax/%2e%2e/db", false],
-      ["", false],
-    ] as [string, boolean][]) {
-      expect(vaultPathAllowed(ref, prefixes), ref).toBe(want);
-    }
-    expect(vaultPathAllowed("secret/data/tax/db", [])).toBe(false);
+import { VAULT_REF_HINT, checkStoreRef, refHintOf, vaultPathWhy } from "./vaultPaths";
+
+const AWS_HINT = { label: "Secret name or ARN", placeholder: "myapp/db#password", format: "…" };
+
+describe("vaultPaths (2.5.5 SM-10: the server judges a reference)", () => {
+  beforeEach(() => post.mockReset());
+
+  it("says why an owner can name nothing, and nothing about one reference", () => {
+    const st = (prefixes: string[], ownVault: boolean) => ({ kind: "prefixes" as const, prefixes, ownVault, provider: "hashicorp", refHint: VAULT_REF_HINT });
+    expect(vaultPathWhy({ kind: "unlimited" }, "Tax")).toBe("");
+    expect(vaultPathWhy({ kind: "unknown" }, "Tax")).toBe("");
+    expect(vaultPathWhy(st([], false), "Tax")).toMatch(/Tax has no Vault paths assigned/);
+    expect(vaultPathWhy(st([], true), "Tax")).toBe("");
+    expect(vaultPathWhy(st(["secret/data/tax"], false), "Tax")).toBe("");
   });
 
-  it("takes the path from before the last #", () => {
-    expect(vaultRefPath("secret/data/tax/db#password")).toBe("secret/data/tax/db");
-    expect(vaultRefPath("secret/data/tax/db")).toBe("secret/data/tax/db");
+  it("labels the field from the owner's provider, else Vault's", () => {
+    expect(refHintOf({ kind: "unlimited" })).toBe(VAULT_REF_HINT);
+    expect(refHintOf({ kind: "prefixes", prefixes: [], ownVault: true, provider: "aws", refHint: AWS_HINT })).toBe(AWS_HINT);
   });
 
-  it("explains an agency with no prefixes, and a path outside them", () => {
-    expect(vaultPathWhy({ kind: "unlimited" }, "Tax", "anything")).toBe("");
-    expect(vaultPathWhy({ kind: "unknown" }, "Tax", "anything")).toBe("");
-    expect(vaultPathWhy({ kind: "prefixes", prefixes: [], ownVault: false }, "Tax")).toMatch(/Tax has no Vault paths assigned/);
-    expect(vaultPathWhy({ kind: "prefixes", prefixes, ownVault: false }, "Tax", "secret/data/hr/db#x")).toMatch(
-      /outside the Vault paths assigned to Tax: secret\/data\/tax, kv\/fin\./,
-    );
-    expect(vaultPathWhy({ kind: "prefixes", prefixes, ownVault: false }, "Tax", "secret/data/tax/db#x")).toBe("");
-    expect(vaultPathWhy({ kind: "prefixes", prefixes, ownVault: false }, "Tax", "")).toBe("");
+  it("asks the server, and passes on its reason", async () => {
+    post.mockResolvedValueOnce({ data: { ok: false, code: "vault_path_not_allowed", reason: "outside (cronomicon/tax)" } });
+    expect(await checkStoreRef("ag-tax", " cronomicon/fin/db ", "cronomicon/old")).toBe("outside (cronomicon/tax)");
+    const [path, init] = post.mock.calls[0] as [string, { params: { path: { agencyId: string } }; body: unknown }];
+    expect(path).toBe("/agencies/{agencyId}/vault/validate-ref");
+    expect(init.params.path.agencyId).toBe("ag-tax");
+    expect(init.body).toEqual({ ref: "cronomicon/fin/db", current: "cronomicon/old", label: "secret" });
+
+    post.mockResolvedValueOnce({ data: { ok: true } });
+    expect(await checkStoreRef("ag-tax", "cronomicon/tax/db")).toBe("");
   });
 
-  it("lets an agency with its own Vault and no prefixes name any path (2.5.1 SG-26)", () => {
-    expect(vaultPathWhy({ kind: "prefixes", prefixes: [], ownVault: true }, "Tax", "kv/anything#x")).toBe("");
-    expect(vaultPathWhy({ kind: "prefixes", prefixes, ownVault: true }, "Tax", "kv/elsewhere#x")).toMatch(
-      /outside the prefixes Tax set for its own Vault/,
-    );
+  it("asks nothing for Global, an empty reference, or no owner, and a failed request is not a refusal", async () => {
+    expect(await checkStoreRef("global", "x")).toBe("");
+    expect(await checkStoreRef("ag-tax", "  ")).toBe("");
+    expect(await checkStoreRef("", "x")).toBe("");
+    expect(post).not.toHaveBeenCalled();
+    post.mockResolvedValueOnce({ error: { code: "x" } });
+    expect(await checkStoreRef("ag-tax", "x")).toBe("");
   });
 });

@@ -63,7 +63,7 @@ var errIdentityNotReady = errors.New("identity provider not ready")
 // tags); a release build still overrides all three via -ldflags. Kept in sync with
 // the top CHANGELOG.md entry.
 var (
-	version   = "2.5.4"
+	version   = "2.5.5"
 	commit    = "none"
 	buildDate = "unknown"
 )
@@ -360,6 +360,17 @@ func run() error {
 			logger.Warn("sealed values bound to their rows (2.5.1): this database can no longer be opened by 2.5.0; restoring a backup from before the upgrade is the only way back",
 				"bound", rep.Bound)
 		}
+	}
+	// 2.5.5 SM-3: each agency connection's two AppRole tokens become one sealed
+	// credential (migration 1720 cannot re-seal). After BindSeals, which has
+	// bound the old tokens; before the server takes requests.
+	if rep, serr := settings.RunStoreCredentialPass(ctx0, pool, cfg); serr != nil {
+		logger.Error("could not convert the agencies' secret store connections; they are read as before and the next start tries again", "error", serr)
+	} else if rep.Failed > 0 {
+		logger.Warn("some agencies' secret store connections could not be converted; they are read as before and the next start tries again",
+			"converted", rep.Converted, "failed", rep.Failed)
+	} else if rep.Converted > 0 {
+		logger.Info("agencies' secret store connections converted (2.5.5)", "count", rep.Converted)
 	}
 	if err := seedBackupKeys(ctx0, pool, cfg.BackupRecipients, logger); err != nil {
 		return err

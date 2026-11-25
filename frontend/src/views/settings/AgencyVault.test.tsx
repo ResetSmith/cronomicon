@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 
-// 2.5.1 SG3 — Settings → Agency Vault. An agency connects a Vault of its own;
+// 2.5.1 SG3 — Settings → Secret store (Agency Vault until 2.5.5). An agency connects a Vault of its own;
 // a save whose references would not all resolve asks first (SG-25), and the
 // credentials are never shown back.
 
 let CONNECTED: Record<string, unknown> | null = null;
+let EXTERNAL_ROWS = 0;
 let PUT_ANSWERS: { error?: unknown; response: { status: number } }[] = [];
 const writes: { method: string; path: string; body?: Record<string, unknown> }[] = [];
 
@@ -17,7 +19,7 @@ vi.mock("../../api/client", async (importOriginal) => {
     ...actual,
     api: {
       GET: vi.fn(async (path: string) => {
-        if (path === "/agencies/{agencyId}/vault") return { data: { agencyId: "ag-tax", connected: !!CONNECTED, vault: CONNECTED } };
+        if (path === "/agencies/{agencyId}/vault") return { data: { agencyId: "ag-tax", connected: !!CONNECTED, vault: CONNECTED, externalRows: EXTERNAL_ROWS } };
         if (path === "/agencies/{agencyId}/vault-prefixes") return { data: { agencyId: "ag-tax", prefixes: [], ownVault: !!CONNECTED } };
         return { data: {} };
       }),
@@ -56,6 +58,7 @@ import { AgencyVaultSection } from "./AgencyVault";
 
 beforeEach(() => {
   CONNECTED = null;
+  EXTERNAL_ROWS = 0;
   PUT_ANSWERS = [];
   writes.length = 0;
   AG = { agency: "ag-tax", agencyName: "Tax" };
@@ -75,7 +78,7 @@ describe("Settings → Agency Vault (2.5.1 SG3)", () => {
       { response: { status: 200 } },
     ];
     render(<AgencyVaultSection isGlobal={false} />);
-    await waitFor(() => expect(screen.getByText("Connect a Vault of its own")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Connect a secret store of its own")).toBeTruthy());
     expect(screen.getByText(/uses the installation's Vault/)).toBeTruthy();
     const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
@@ -93,7 +96,7 @@ describe("Settings → Agency Vault (2.5.1 SG3)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save anyway" }));
     await waitFor(() => expect(writes.filter((w) => w.method === "PUT")).toHaveLength(2));
     const [first, second] = writes.filter((w) => w.method === "PUT");
-    expect(first.body).toEqual({ addr: "https://vault.tax.internal:8200", namespace: "", roleId: "r", secretId: "s" });
+    expect(first.body).toEqual({ provider: "hashicorp", addr: "https://vault.tax.internal:8200", namespace: "", roleId: "r", secretId: "s" });
     expect(second.body).toMatchObject({ confirmUnresolved: true });
   });
 
@@ -103,7 +106,7 @@ describe("Settings → Agency Vault (2.5.1 SG3)", () => {
       roleIdSet: true, secretIdSet: true, lastModifiedBy: "a@x", lastModifiedAt: "2026-10-21T10:00:00Z",
     };
     render(<AgencyVaultSection isGlobal={false} />);
-    await waitFor(() => expect(screen.getByText("Its own Vault")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Its own secret store")).toBeTruthy());
     expect((screen.getByLabelText("Role id") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Role id") as HTMLInputElement).placeholder).toMatch(/set/);
     expect(screen.getByText("Path prefixes")).toBeTruthy();
@@ -113,14 +116,57 @@ describe("Settings → Agency Vault (2.5.1 SG3)", () => {
     await waitFor(() => expect(writes.some((w) => w.method === "PUT")).toBe(true));
     // Blank credentials and an untouched CA bundle: the stored ones are kept.
     expect(writes.find((w) => w.method === "PUT")!.body).toEqual({
-      addr: "https://vault.tax.internal:8200", namespace: "", roleId: "", secretId: "",
+      provider: "hashicorp", addr: "https://vault.tax.internal:8200", namespace: "", roleId: "", secretId: "",
     });
+  });
+
+  // 2.5.5 SM5: AWS Secrets Manager — its own fields, an example reference to
+  // test with, and nothing of the server's own AWS identity.
+  it("connects AWS Secrets Manager with its own fields", async () => {
+    render(<AgencyVaultSection isGlobal={false} />);
+    await waitFor(() => expect(screen.getByText("Connect a secret store of its own")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Kind of store"), { target: { value: "aws" } });
+    expect(screen.queryByLabelText("Vault address")).toBeNull();
+    expect(screen.getByText(/never the server's own AWS identity/)).toBeTruthy();
+    const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(screen.queryByLabelText("CA bundle")).toBeNull(); // only with an endpoint of one's own
+    type("Region", "eu-west-1");
+    type("Access key id", "AKID");
+    type("Secret access key", "shh");
+    type("Example reference", "cronomicon/db#password");
+    expect(save.disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Test" }));
+    await waitFor(() => expect(screen.getByText("AWS accepted the credential.")).toBeTruthy());
+    fireEvent.click(save);
+    await waitFor(() => expect(writes.some((w) => w.method === "PUT")).toBe(true));
+    expect(writes.find((w) => w.method === "PUT")!.body).toEqual({
+      provider: "aws",
+      settings: { region: "eu-west-1", endpoint: "" },
+      credential: { accessKeyId: "AKID", secretAccessKey: "shh", sessionToken: "" },
+      exampleRef: "cronomicon/db#password",
+    });
+  });
+
+  // SM-9: the kind of store does not change while rows name it.
+  it("locks the kind of store while the agency's rows use it, and says why", async () => {
+    CONNECTED = {
+      agencyId: "ag-tax", provider: "hashicorp", providerLabel: "HashiCorp Vault / OpenBao", addr: "https://v", namespace: "",
+      caPresent: false, roleIdSet: true, secretIdSet: true, lastModifiedBy: "a@x", lastModifiedAt: "t",
+    };
+    EXTERNAL_ROWS = 3;
+    render(<MemoryRouter><AgencyVaultSection isGlobal={false} /></MemoryRouter>);
+    const kind = (await waitFor(() => screen.getByLabelText("Kind of store"))) as HTMLSelectElement;
+    expect(kind.disabled).toBe(true);
+    expect(kind.title).toMatch(/3 of Tax's external secrets and SSH keys use this store/);
+    expect(screen.getByRole("link", { name: "Open Env Vars → Secrets" }).getAttribute("href")).toBe("/env-vars?tab=secrets");
   });
 
   it("points Global at the installation's Vault, and a reader of another agency at its administrators", async () => {
     AG = { agency: "global", agencyName: "Global" };
     render(<AgencyVaultSection isGlobal />);
     expect(screen.getByText(/Global's Vault is the installation's/)).toBeTruthy();
+    expect(screen.getByText("Settings → Installation secret store")).toBeTruthy();
     cleanup();
 
     AG = { agency: "ag-fin", agencyName: "Fin" };

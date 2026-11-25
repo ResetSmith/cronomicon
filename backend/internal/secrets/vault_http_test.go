@@ -78,14 +78,14 @@ func fakeVault(t *testing.T) (*httptest.Server, map[string]map[string]string) {
 	return srv, store
 }
 
-func TestVaultClientWriteFetchRoundTrip(t *testing.T) {
-	srv, _ := fakeVault(t)
+func TestVaultClientFetch(t *testing.T) {
+	srv, store := fakeVault(t)
 	vc := loopbackVaultClient(srv.URL, "role-1", "secret-1")
 
+	// The client is read-only (2.5.5 SM-8): the value is put in the store, as
+	// an administrator puts it in Vault.
 	ref := "secret/data/cronomicon/app#DB_PASSWORD"
-	if err := vc.Write(ref, "s3cr3t"); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	store["secret/data/cronomicon/app"] = map[string]string{"DB_PASSWORD": "s3cr3t"}
 	got, err := vc.Fetch(ref)
 	if err != nil {
 		t.Fatalf("fetch: %v", err)

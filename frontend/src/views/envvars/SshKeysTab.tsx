@@ -222,7 +222,7 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
         const isVault = v.source === "vault";
         return (
           <span style={{ display: "inline-flex", padding: "2px 8px", borderRadius: c.radiusChip, fontSize: c.fontXs, fontWeight: 600, background: isVault ? `${c.primary}22` : c.panel2, color: isVault ? c.primary : c.textSec }}>
-            {isVault ? "Vault" : "Stored"}
+            {isVault ? "External" : "Stored"}
           </span>
         );
       },
@@ -406,7 +406,7 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
                                 Public Key
                               </DetailLabel>
                               <div style={{ ...valueBoxStyle(), fontFamily: c.mono, fontSize: c.fontXs, color: v.publicKey ? c.text : c.textMuted, lineHeight: 1.5 }}>
-                                {v.publicKey || (isVault ? "(resolved from Vault at run time)" : "—")}
+                                {v.publicKey || (isVault ? "(resolved from the secret store at run time)" : "—")}
                               </div>
                               <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>Add this line to the target account's authorized_keys.</div>
                               {v.publicKey && (

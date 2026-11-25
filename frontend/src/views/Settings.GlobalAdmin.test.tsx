@@ -72,7 +72,7 @@ afterEach(cleanup);
 
 // 2.4.0 R8 (question 47): GitLab Connection (Installation) is replaced by
 // Repositories (Agency), which an agency's administrator opens for their own.
-const INSTALLATION = ["General", "Notifications", "Vault", "Observability", "Log Storage", "Audit & Compliance", "Local runner"];
+const INSTALLATION = ["General", "Notifications", "Installation secret store", "Observability", "Log Storage", "Audit & Compliance", "Local runner"];
 const AGENCY = ["Users & Access", "Service Accounts", "Repositories", "SSH Targets", "Alerts", "Recycle Bin"];
 // An administrator of one agency who does not compose: the audit export, and no
 // Recycle Bin (the bin is a composer's since 2.5.0, SO-2).
@@ -170,7 +170,7 @@ describe("Settings — a global administrator", () => {
     // The hosts an agency's repository may be on: a global administrator's.
     expect(screen.getByText("Allowed hosts")).toBeTruthy();
 
-    go("Vault");
+    go("Installation secret store");
     await waitFor(() => expect(screen.getByDisplayValue("https://vault.internal:8200")).toBeTruthy());
 
     go("Recycle Bin");

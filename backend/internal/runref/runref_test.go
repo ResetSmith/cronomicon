@@ -428,13 +428,11 @@ func (f fakeVaultClient) Fetch(ref string) (string, error) {
 	}
 	return "", fmt.Errorf("vault: no value at %q", ref)
 }
-func (f fakeVaultClient) Write(ref, val string) error { f[ref] = val; return nil }
 
 // downVaultClient models a reachable-but-failing Vault (outage / permission).
 type downVaultClient struct{}
 
 func (downVaultClient) Fetch(string) (string, error) { return "", errors.New("vault unavailable") }
-func (downVaultClient) Write(string, string) error   { return errors.New("vault unavailable") }
 
 // TestResolveMixedStoredAndVault is the P2.2 core: a run binding both a stored and
 // a vault-source secret (plus a variable) resolves all three through the SAME path,

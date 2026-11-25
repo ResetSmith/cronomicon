@@ -101,7 +101,6 @@ func TestSG6_AHeldRowIsReadOnlyToItsMembers(t *testing.T) {
 		{"lock-reveal", http.MethodPost, "/api/v1/env-secrets/" + sid + "/lock-reveal", ``},
 		{"edit", http.MethodPut, "/api/v1/env-secrets/" + sid, `{"key":"HELD_SECRET","source":"stored","value":"by-a-member"}`},
 		{"tags", http.MethodPut, "/api/v1/env-secret-tags/" + sid, `{"tags":["member"]}`},
-		{"migrate", http.MethodPost, "/api/v1/env-secrets/" + sid + "/migrate-to-vault", `{"vaultPath":"secret/data/x#f"}`},
 		{"delete", http.MethodDelete, "/api/v1/env-secrets/" + sid, ``},
 		{"key edit", http.MethodPut, "/api/v1/ssh/credentials/pk-held", `{"label":"HELD_KEY","source":"stored","description":"by-a-member"}`},
 		{"key tags", http.MethodPut, "/api/v1/ssh-credential-tags/pk-held", `{"tags":["member"]}`},
@@ -158,10 +157,7 @@ var secretKeyWriteProbes = map[string]secretKeyWrite{
 	"DELETE /api/v1/env-secrets/{secretId}":           {http.MethodDelete, func(o map[string]string, k string) string { return "/api/v1/env-secrets/" + o["s:"+k] }, ``},
 	"POST /api/v1/env-secrets/{secretId}/reveal":      {http.MethodPost, func(o map[string]string, k string) string { return "/api/v1/env-secrets/" + o["s:"+k] + "/reveal" }, ``},
 	"POST /api/v1/env-secrets/{secretId}/lock-reveal": {http.MethodPost, func(o map[string]string, k string) string { return "/api/v1/env-secrets/" + o["s:"+k] + "/lock-reveal" }, ``},
-	"POST /api/v1/env-secrets/{secretId}/migrate-to-vault": {http.MethodPost, func(o map[string]string, k string) string {
-		return "/api/v1/env-secrets/" + o["s:"+k] + "/migrate-to-vault"
-	}, `{"vaultPath":"secret/data/x#f"}`},
-	"PUT /api/v1/env-secret-tags/{secretId}": {http.MethodPut, func(o map[string]string, k string) string { return "/api/v1/env-secret-tags/" + o["s:"+k] }, `{"tags":["probe"]}`},
+	"PUT /api/v1/env-secret-tags/{secretId}":          {http.MethodPut, func(o map[string]string, k string) string { return "/api/v1/env-secret-tags/" + o["s:"+k] }, `{"tags":["probe"]}`},
 	"PUT /api/v1/ssh/credentials/{credentialId}": {http.MethodPut, func(o map[string]string, k string) string { return "/api/v1/ssh/credentials/pk-" + k },
 		`{"label":"PROBE_KEY","source":"stored","description":"rewritten"}`},
 	"DELETE /api/v1/ssh/credentials/{credentialId}":  {http.MethodDelete, func(o map[string]string, k string) string { return "/api/v1/ssh/credentials/pk-" + k + "?force=true" }, ``},

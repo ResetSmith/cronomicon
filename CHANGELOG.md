@@ -13,6 +13,93 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.5.5] - 2026-11-06
+
+### Upgrading
+
+**From 2.5.3 or 2.5.4:** replace the image and start it. Migration **1720**
+runs first (schema v1720); runner protocol 14 is unchanged. The first start
+then converts each agency's own Vault connection: its AppRole role id and
+secret id, two sealed values, are sealed again as one credential bound to the
+agency. The log says how many were converted; a connection that cannot be
+opened is left as it was, still works, and the next start tries again.
+Nothing changes for an installation where no agency has a Vault of its own.
+**From an earlier release:** follow 2.5.3's upgrade with the 2.5.5 image.
+
+**Going back to 2.5.4 costs each converted agency's Vault credential.** The
+down migration removes the new columns, so 2.5.4 cannot log in to that
+agency's Vault until its administrator enters the role id and secret id again;
+its Vault-backed rows fail meanwhile and are never read from the
+installation's Vault. An AWS connection has no meaning in 2.5.4 and is
+removed. Back up before the upgrade if you may need to go back.
+
+**Migrate to Vault is removed.** To move a stored secret into a secret store,
+put its value there yourself, then edit the secret to reference it.
+
+### Added
+
+- **An agency's secret store may be AWS Secrets Manager.** Settings → Secret
+  store picks the kind: HashiCorp Vault / OpenBao (OpenBao speaks Vault's API)
+  or AWS Secrets Manager. An AWS reference is a secret's name or ARN, with
+  `#key` to read one key of a JSON secret (`myapp/db#password`). The
+  connection is a region, an optional VPC or FIPS endpoint (held to the
+  allowed hosts, with an optional CA bundle), and an access key pair with an
+  optional session token.
+- **Cronomicon never uses the server's own AWS identity.** Only the agency's
+  credential is read: not the environment, an instance role or the metadata
+  service, whose address the HTTP client refuses. Requests are signed with a
+  hand-written SigV4 held to AWS's published test vectors; no AWS SDK is
+  added.
+- **An AWS connection is tested by reading a secret.** AWS has no login, so
+  Test and Save read the agency's first reference or an example reference
+  given on the form, and discard the value. A first connection with nothing
+  to read is refused (`422 example_ref_required`).
+- **The forms ask the server whether a reference may be named.**
+  `POST /agencies/{agencyId}/vault/validate-ref` judges a reference by the
+  agency's kind of store and its prefixes, the same judgement the save makes.
+  The secret form asks it as the field settles and before it saves, and
+  labels the field from the store's `refHint` (`GET
+  …/vault-prefixes`). The TypeScript copy of Vault's path rules is gone.
+- **GET `/agencies/{agencyId}/vault`** reports the kind of store, its plain
+  settings, which credential fields are stored and how many external rows
+  the agency has; never a credential or the CA bundle.
+- **Env Vars opens on a tab**: `/env-vars?tab=secrets` or `?tab=keys`.
+
+### Changed
+
+- **Settings → Agency Vault is now Settings → Secret store, and Settings →
+  Vault is Installation secret store.** The `?tab=` links are unchanged. A
+  Vault-backed secret or key is called *External* on screen (*External
+  (secret store)* on the form, which said *Vault reference*); the API, job
+  files and stored values keep `vault`.
+- **The kind of store does not change while it is in use.** Choosing another
+  kind while the agency owns external secrets or keys is `409 vault_in_use`
+  with their count; the picker is locked and says how many. Moving an
+  external row to an agency whose store is another kind is `422
+  provider_mismatch`.
+- **A new reference is checked against its store's grammar everywhere.** An
+  agency with its own Vault and no prefixes could save any text before; a new
+  or changed malformed reference is now `422 validation_failed` ("Not a valid
+  … reference: …"). One saved before keeps working and stays editable while it
+  is left as it is.
+- **The unreachable-store notice covers AWS.** For a Vault it still asks
+  `sys/health` without logging in. For AWS it opens a TLS connection (no
+  request), and a read that the store refuses (the credential, or no answer)
+  also raises it until a read works or the connection is saved again.
+
+### Removed
+
+- **Migrate to Vault** (`POST /env-secrets/{secretId}/migrate-to-vault` and
+  its dialog). Cronomicon reads from a secret store and never writes to one.
+
+### Fixed
+
+- A sealed setting holding a JSON object would have been masked in logs only
+  as a whole: each string in it is now masked on its own (a credential's
+  secret id, an access key).
+- The agency Vault screen opened an empty confirm dialog for a 409 that was
+  not about unresolved references; it shows the error.
+
 ## [2.5.4] - 2026-10-29
 
 ### Upgrading

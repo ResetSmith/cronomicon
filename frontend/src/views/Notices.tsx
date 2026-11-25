@@ -54,7 +54,7 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   // administrator lists the group on Scopes → Agencies.
   grant_group_unlisted: { title: "A grant names a group its agency does not list", to: "/settings?tab=users", toLabel: "Users & Access" },
   // 2.5.1 SG-28: the agency's own Vault did not answer.
-  agency_vault_unreachable: { title: "An agency's own Vault cannot be reached", to: "/settings?tab=agencyvault", toLabel: "Agency Vault" },
+  agency_vault_unreachable: { title: "An agency's own secret store cannot be used", to: "/settings?tab=agencyvault", toLabel: "Secret store" },
   global_script_job: { get title() { return `A job is built on a script of ${globalAgencyName()}'s repository`; }, to: "/jobs", toLabel: "Jobs" },
   global_schedule_bound: { get title() { return `A job or workflow is bound to a schedule of ${globalAgencyName()}'s`; }, to: "/schedules", toLabel: "Schedules" },
   schedule_entry_no_owner: { title: "A schedule entry with no owner no longer fires", to: "/schedules", toLabel: "Schedules" },

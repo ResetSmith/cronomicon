@@ -56,8 +56,16 @@ vi.mock("../../api/client", async (importOriginal) => {
         }
         return { data: [] };
       }),
-      POST: vi.fn(async (path: string, init?: { body?: unknown }) => {
+      POST: vi.fn(async (path: string, init?: { body?: unknown; params?: { path?: { agencyId?: string } } }) => {
         posts.push({ path, body: init?.body });
+        // The server's judgement (2.5.5 SM-10), as the write makes it.
+        if (path === "/agencies/{agencyId}/vault/validate-ref") {
+          const id = init?.params?.path?.agencyId ?? "";
+          const ref = ((init?.body as { ref?: string }) ?? {}).ref ?? "";
+          const p = ref.split("#")[0];
+          const inside = (PREFIXES[id] ?? []).some((x) => p === x || p.startsWith(x + "/"));
+          return { data: inside ? { ok: true } : { ok: false, code: "vault_path_not_allowed", reason: `that reference is outside the paths assigned to this secret's agency (${(PREFIXES[id] ?? []).join(", ")})` } };
+        }
         return { data: {} };
       }),
       PUT: vi.fn(async () => ({ data: {} })),
@@ -74,7 +82,7 @@ vi.mock("../../api/access", async (importOriginal) => {
 import { SecretsTab } from "./SecretsTab";
 
 const WHY =
-  "A Vault-backed secret that is Global's may name any path on the installation's Vault — only a global administrator can edit or migrate one.";
+  "A Vault-backed secret that is Global's may name any path on the installation's Vault — only a global administrator can edit one.";
 
 const grant = (agencyId: string, agencyName: string) => ({
   role: "admin", allScopes: false, agencyId, agencyName, scopes: [], permissions: ["manageEnvVars"], groups: [], origin: "group",
@@ -118,15 +126,11 @@ describe("Secrets — Global's Vault-backed rows are a global administrator's (G
     }
   });
 
-  it("disables Migrate to Vault with the reason, and says it beside the button", async () => {
+  it("offers no Migrate to Vault: the app does not write to a store (2.5.5 SM-8)", async () => {
     await open();
     fireEvent.click(screen.getByText("DB_PASS"));
-    const migrate = (await waitFor(() => screen.getByRole("button", { name: "Migrate to Vault" }))) as HTMLButtonElement;
-    expect(migrate.disabled).toBe(true);
-    expect(migrate.title).toBe(WHY);
-    expect(screen.getByText(WHY)).toBeTruthy();
-    fireEvent.click(migrate);
-    expect(screen.queryByText("Migrate secret to Vault?")).toBeNull();
+    await waitFor(() => screen.getByRole("button", { name: "Make unrevealable…" }));
+    expect(screen.queryByRole("button", { name: "Migrate to Vault" })).toBeNull();
   });
 });
 
@@ -141,16 +145,13 @@ describe("Secrets — an agency names Vault paths inside its own prefixes (LR-80
     const picker = (await waitFor(() => screen.getByRole("combobox", { name: "Agency" }))) as HTMLSelectElement;
     await waitFor(() => expect(picker.options.length).toBe(3)); // the prompt, HR, Tax — never Global
     fireEvent.change(picker, { target: { value: agencyId } });
-    return screen.getByText("Vault reference");
+    return screen.getByText("External (secret store)");
   };
 
-  it("leaves an agency's own Vault-backed row editable and its stored row migratable", async () => {
+  it("leaves an agency's own Vault-backed row editable", async () => {
     await open();
     expect(editOf("TAX_TOKEN").disabled).toBe(false);
     expect(editOf("TAX_TOKEN").title).toBe("");
-    fireEvent.click(screen.getByText("TAX_PASS"));
-    const migrate = (await waitFor(() => screen.getByRole("button", { name: "Migrate to Vault" }))) as HTMLButtonElement;
-    expect(migrate.disabled).toBe(false);
   });
 
   it("shows the agency's prefixes, refuses a path outside them before sending, and sends one inside", async () => {
@@ -164,7 +165,7 @@ describe("Secrets — an agency names Vault paths inside its own prefixes (LR-80
     fireEvent.change(screen.getByPlaceholderText("MY_SECRET_NAME"), { target: { value: "NEW_TOKEN" } });
     // A longer name is another path, not a path inside this one.
     fireEvent.change(path, { target: { value: "secret/data/tax-audit/db#x" } });
-    expect((await screen.findByRole("alert")).textContent).toMatch(/outside the Vault paths assigned to Tax: secret\/data\/tax\./);
+    expect((await screen.findByRole("alert")).textContent).toMatch(/outside the paths assigned to this secret's agency \(secret\/data\/tax\)/);
     fireEvent.click(screen.getByRole("button", { name: "Save Secret" }));
     await new Promise((r) => setTimeout(r, 20));
     expect(posts.filter((p) => p.path === "/env-secrets")).toHaveLength(0);
@@ -181,11 +182,11 @@ describe("Secrets — an agency names Vault paths inside its own prefixes (LR-80
   it("disables the Vault source for an agency with no prefixes, with the reason", async () => {
     const opt = await addFor("ag-hr");
     await waitFor(() => expect(opt.getAttribute("aria-disabled")).toBe("true"));
-    expect(opt.getAttribute("title")).toMatch(/HR has no Vault paths assigned.*A global administrator assigns them on Scopes → Agencies\./);
+    expect(opt.getAttribute("title")).toMatch(/HR has no Vault paths assigned.*A global administrator assigns them on Scopes → Agencies/);
     expect(screen.getByRole("note").textContent).toMatch(/HR has no Vault paths assigned/);
     fireEvent.click(opt);
     // Still the stored form: no Vault path field appeared.
-    expect(screen.queryByText("Vault Path *")).toBeNull();
+    expect(screen.queryByText("Vault path *")).toBeNull();
     expect(screen.getByText("Secret Value *")).toBeTruthy();
   });
 });
@@ -195,26 +196,19 @@ describe("Secrets — Vault controls for a global administrator (GC-8)", () => {
     caps = { manageEnvVarsGlobal: true };
   });
 
-  it("enables Edit on a Vault-backed row and Migrate to Vault", async () => {
+  it("enables Edit on a Vault-backed row", async () => {
     await open();
     expect(editOf("API_TOKEN").disabled).toBe(false);
     expect(editOf("API_TOKEN").title).toBe("");
-
-    fireEvent.click(screen.getByText("DB_PASS"));
-    const migrate = (await waitFor(() => screen.getByRole("button", { name: "Migrate to Vault" }))) as HTMLButtonElement;
-    expect(migrate.disabled).toBe(false);
-    expect(screen.queryByText(WHY)).toBeNull();
-    fireEvent.click(migrate);
-    await waitFor(() => expect(screen.getByText("Migrate secret to Vault?")).toBeTruthy());
   });
 
   it("lets the Vault source be chosen when adding a secret", async () => {
     await open();
     fireEvent.click(screen.getByRole("button", { name: "+ Add Secret" }));
-    const opt = await waitFor(() => screen.getByText("Vault reference"));
+    const opt = await waitFor(() => screen.getByText("External (secret store)"));
     expect(opt.getAttribute("aria-disabled")).toBeNull();
     expect(screen.queryByRole("note")).toBeNull();
     fireEvent.click(opt);
-    await waitFor(() => expect(screen.getByText("Vault Path *")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Vault path *")).toBeTruthy());
   });
 });

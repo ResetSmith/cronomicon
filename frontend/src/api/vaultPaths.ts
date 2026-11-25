@@ -1,70 +1,51 @@
-// An agency names Vault paths inside the prefixes assigned to it (LR-80, v2.3.0).
+// An agency names references in its secret store inside its prefixes (LR-80,
+// v2.3.0; any kind of store since 2.5.5).
 //
-// A global administrator assigns each agency without a Vault of its own a list
-// of path prefixes on the installation's Vault (Scopes → Agencies). A
-// Vault-backed secret or SSH key that the agency owns must lie inside one of
-// them; Global's rows are a global administrator's and have no path limit.
-// Since 2.5.1 (SG-26) an agency may connect a Vault of its own: its prefixes
-// are then optional and its own, and none means any path in its Vault.
+// A global administrator assigns each agency without a store of its own a list
+// of path prefixes on the installation's Vault (Scopes → Agencies). An external
+// secret or SSH key the agency owns must lie inside one of them. An agency with
+// a store of its own (2.5.1 SG-26) sets its own prefixes, optional: none means
+// any reference in its store.
 //
-// What is here is the form's side of that: read the owner's prefixes, and say
-// before submit whether a path is inside one. The check mirrors the server's
-// (internal/vaultpath: whole segments, case-sensitive, the path as written),
-// and it is a HINT: the server decides every write, and a reference this file
-// accepted may still be refused there.
+// Since 2.5.5 (SM-10) the form does NOT judge a reference itself: each kind of
+// store has its own grammar (a Vault path, an AWS secret name or ARN, …), and
+// mirroring each in TypeScript would drift. It reads the owner's prefixes, its
+// provider and how to ask for a reference (`refHint`), and asks the server
+// (`POST /agencies/{agencyId}/vault/validate-ref`) whether a reference may be
+// named: the same judgement as the write, which still decides.
 import { useEffect, useState } from "react";
-import { api } from "./client";
+import { api, csrfHeader } from "./client";
 import { GLOBAL_AGENCY } from "./access";
 
-/** The path part of a `path#field` reference. */
-export function vaultRefPath(ref: string): string {
-  const i = ref.lastIndexOf("#");
-  return i >= 0 ? ref.slice(0, i) : ref;
-}
+export type RefHint = { label: string; placeholder: string; format: string };
 
-function segments(path: string): string[] | null {
-  const p = path.replace(/^\/+|\/+$/g, "");
-  if (!p) return null;
-  const segs = p.split("/");
-  for (const s of segs) {
-    if (s === "" || s === "." || s === ".." || s !== s.trim()) return null;
-    // eslint-disable-next-line no-control-regex
-    if (/[%\\?#\u0000-\u001f\u007f]/.test(s)) return null;
-  }
-  return segs;
-}
-
-/**
- * Is `ref` inside one of `prefixes`? A prefix contains a path when its segments
- * are the path's first segments: `secret/data/tax` contains `secret/data/tax/db`
- * and not `secret/data/tax-audit/db`. A reference that begins or ends with a
- * slash, or has an empty, `.` or `..` segment, is inside nothing.
- */
-export function vaultPathAllowed(ref: string, prefixes: string[]): boolean {
-  const path = vaultRefPath(ref.trim());
-  if (path.startsWith("/") || path.endsWith("/")) return false;
-  const ps = segments(path);
-  if (!ps) return false;
-  return prefixes.some((prefix) => {
-    const xs = segments(prefix);
-    return !!xs && xs.length <= ps.length && xs.every((x, i) => x === ps[i]);
-  });
-}
+/** HashiCorp's, for a server that sends no hint (and for Global's rows). */
+export const VAULT_REF_HINT: RefHint = {
+  label: "Vault path",
+  placeholder: "secret/data/myapp#KEY_NAME",
+  format: "A KV v2 path and a field: engine/data/path#FIELD (without #FIELD the field \"value\" is read).",
+};
 
 export type VaultPrefixState =
   /** Global's row, or no owner chosen yet: nothing to check here. */
   | { kind: "unlimited" }
   | { kind: "loading" }
-  /** The owner agency's prefixes. Empty means it can name no Vault path,
-   *  unless it has a Vault of its own (`ownVault`), where it means any. */
-  | { kind: "prefixes"; prefixes: string[]; ownVault: boolean }
+  /** The owner agency's prefixes. Empty means it can name no reference,
+   *  unless it has a store of its own (`ownVault`), where it means any. */
+  | { kind: "prefixes"; prefixes: string[]; ownVault: boolean; provider: string; refHint: RefHint }
   /** The list could not be read (not the caller's agency, or an older server). */
   | { kind: "unknown" };
 
+/** The hint for a state: the owner's provider's, else Vault's. */
+export function refHintOf(state: VaultPrefixState): RefHint {
+  return state.kind === "prefixes" ? state.refHint : VAULT_REF_HINT;
+}
+
 /**
- * useVaultPrefixes reads the Vault path prefixes of the agency that owns (or
- * will own) a row. `undefined`, "" and Global read as unlimited: with no owner
- * there is nothing to check yet, and Global's rows have no path limit.
+ * useVaultPrefixes reads the prefixes, provider and reference hint of the
+ * agency that owns (or will own) a row. `undefined`, "" and Global read as
+ * unlimited: with no owner there is nothing to check yet, and Global's rows
+ * have no path limit.
  */
 export function useVaultPrefixes(agencyId: string | undefined, enabled: boolean = true): VaultPrefixState {
   const [state, setState] = useState<VaultPrefixState>({ kind: "unlimited" });
@@ -77,9 +58,19 @@ export function useVaultPrefixes(agencyId: string | undefined, enabled: boolean 
     setState({ kind: "loading" });
     api.GET("/agencies/{agencyId}/vault-prefixes", { params: { path: { agencyId } } }).then((res) => {
       if (cancelled) return;
-      const body = res.data as { prefixes?: string[]; ownVault?: boolean } | undefined;
+      const body = res.data as { prefixes?: string[]; ownVault?: boolean; provider?: string; refHint?: RefHint } | undefined;
       const prefixes = body?.prefixes;
-      setState(res.error || !prefixes ? { kind: "unknown" } : { kind: "prefixes", prefixes, ownVault: !!body?.ownVault });
+      setState(
+        res.error || !prefixes
+          ? { kind: "unknown" }
+          : {
+              kind: "prefixes",
+              prefixes,
+              ownVault: !!body?.ownVault,
+              provider: body?.provider || "hashicorp",
+              refHint: body?.refHint ?? VAULT_REF_HINT,
+            },
+      );
     });
     return () => {
       cancelled = true;
@@ -89,19 +80,52 @@ export function useVaultPrefixes(agencyId: string | undefined, enabled: boolean 
 }
 
 /**
- * Why a Vault path may not be named for this owner, or "" when it may. With a
- * `ref` it also judges that reference.
+ * Why the owner cannot name ANY reference, or "": an agency with no store of
+ * its own and no prefixes assigned. Whether one reference may be named is the
+ * server's to say (checkStoreRef).
  */
-export function vaultPathWhy(state: VaultPrefixState, agencyName: string, ref?: string): string {
+export function vaultPathWhy(state: VaultPrefixState, agencyName: string): string {
   if (state.kind !== "prefixes") return "";
-  if (state.ownVault && state.prefixes.length === 0) return "";
-  if (state.prefixes.length === 0) {
-    return `${agencyName} has no Vault paths assigned, so it cannot hold a Vault-backed row. A global administrator assigns them on Scopes → Agencies.`;
-  }
-  if (ref && ref.trim() && !vaultPathAllowed(ref, state.prefixes)) {
-    return state.ownVault
-      ? `That path is outside the prefixes ${agencyName} set for its own Vault: ${state.prefixes.join(", ")}.`
-      : `That path is outside the Vault paths assigned to ${agencyName}: ${state.prefixes.join(", ")}.`;
-  }
-  return "";
+  if (state.ownVault || state.prefixes.length > 0) return "";
+  return `${agencyName} has no Vault paths assigned, so it cannot hold an external row. A global administrator assigns them on Scopes → Agencies, or ${agencyName} connects a secret store of its own.`;
+}
+
+/**
+ * checkStoreRef asks the server whether the agency may name ref: "" when it
+ * may, else the reason. `current` is the reference the row names now (an
+ * edit that leaves it as it was is not judged again where only the grammar
+ * would). A failed request is "" (the write decides; this is a hint).
+ */
+export async function checkStoreRef(agencyId: string, ref: string, current = "", label: "secret" | "key" = "secret"): Promise<string> {
+  if (!agencyId || agencyId === GLOBAL_AGENCY || !ref.trim()) return "";
+  const res = await api.POST("/agencies/{agencyId}/vault/validate-ref", {
+    params: { path: { agencyId }, header: csrfHeader },
+    body: { ref: ref.trim(), ...(current ? { current } : {}), label },
+  });
+  const v = res.data as { ok?: boolean; reason?: string } | undefined;
+  if (res.error || !v || v.ok !== false) return "";
+  return v.reason || "That reference cannot be named.";
+}
+
+/**
+ * useStoreRefCheck is checkStoreRef as the user types: asked once the field
+ * has been still for a moment, and the answer for the latest text only.
+ */
+export function useStoreRefCheck(agencyId: string | undefined, ref: string, current = "", enabled = true): string {
+  const [why, setWhy] = useState("");
+  useEffect(() => {
+    setWhy("");
+    if (!enabled || !agencyId || agencyId === GLOBAL_AGENCY || !ref.trim()) return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      checkStoreRef(agencyId, ref, current).then((reason) => {
+        if (!cancelled) setWhy(reason);
+      });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [agencyId, ref, current, enabled]);
+  return why;
 }

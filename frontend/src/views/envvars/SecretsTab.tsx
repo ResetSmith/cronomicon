@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { api, fetchCapabilities } from "../../api/client";
 import { globalOnly, vaultSecretGlobalOnly } from "../../api/globalAdmin";
 import { GLOBAL_AGENCY, useAgencyIdByName } from "../../api/access";
-import { useVaultPrefixes, vaultPathWhy } from "../../api/vaultPaths";
+import { checkStoreRef, refHintOf, useStoreRefCheck, useVaultPrefixes, vaultPathWhy } from "../../api/vaultPaths";
 import { useAgencyOptional } from "../../agency";
 import { MoveAgency } from "./MoveAgency";
 import { HeldByGlobal, RowUsagePanel, SecretsReportButton } from "./RowUsage";
@@ -140,7 +140,6 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<EnvSecretRow | null>(null);
   const [deleting, setDeleting] = useState<EnvSecretRow | null>(null);
-  const [migrating, setMigrating] = useState<EnvSecretRow | null>(null);
   const [expanded, setExpanded] = useState<EnvSecretRow["id"] | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
@@ -302,7 +301,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
               color: isVault ? c.primary : c.textSec,
             }}
           >
-            {isVault ? "Vault" : "Stored"}
+            {isVault ? "External" : "Stored"}
           </span>
         );
       },
@@ -499,7 +498,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                                   ) : undefined
                                 }
                               >
-                                {isVault ? "Vault Reference" : "Secret Value"}
+                                {isVault ? "External Reference" : "Secret Value"}
                               </DetailLabel>
                               <div
                                 style={{
@@ -509,7 +508,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                                   color: isVault ? c.primary : shown !== undefined ? c.text : c.textMuted,
                                   letterSpacing: !isVault && shown === undefined ? 2 : 0,
                                 }}
-                                title={isVault ? "Vault reference — resolved at run time" : undefined}
+                                title={isVault ? "A reference in the agency's secret store, resolved at run time" : undefined}
                               >
                                 {isVault ? v.vaultPath || "—" : shown !== undefined ? shown : MASK}
                               </div>
@@ -534,7 +533,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                                         color: isVault ? c.primary : c.textMuted,
                                       }}
                                     >
-                                      {isVault ? "Vault reference" : "Stored in Cronomicon"}
+                                      {isVault ? "External (secret store)" : "Stored in Cronomicon"}
                                     </span>
                                   }
                                 />
@@ -567,16 +566,6 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                                     </Btn>
                                     <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
                                       Nobody can reveal it afterwards, global administrators included. Runs still use it.
-                                    </span>
-                                  </div>
-                                )}
-                                {!isVault && vaultEnabled && (
-                                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
-                                    <Btn onClick={() => setMigrating(v)} disabled={!!rowVaultWhy(v)} title={rowVaultWhy(v) || undefined}>
-                                      Migrate to Vault
-                                    </Btn>
-                                    <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
-                                      {rowVaultWhy(v) || "Converts this entry to a vault reference"}
                                     </span>
                                   </div>
                                 )}
@@ -659,17 +648,6 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         />
       )}
 
-      {migrating && (
-        <MigrateModal
-          row={migrating}
-          onClose={() => setMigrating(null)}
-          onDone={(text, kind) => {
-            setMigrating(null);
-            setNotice({ kind, text });
-            if (kind === "info") refetch();
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -720,7 +698,12 @@ function SecretFormModal({
   const offerVault = vaultEnabled || (prefixes.kind === "prefixes" && prefixes.ownVault);
   // Why the Vault SOURCE cannot be chosen at all, and why this PATH cannot be.
   const vaultWhy = ownerId === GLOBAL_AGENCY ? globalVaultWhy : vaultPathWhy(prefixes, ownerName);
-  const pathWhy = source === "vault" && ownerId !== GLOBAL_AGENCY ? vaultPathWhy(prefixes, ownerName, vaultPath) : "";
+  // Whether THIS reference may be named is the server's to say (2.5.5 SM-10):
+  // asked as the field settles, and again before the save.
+  const currentRef = isEdit ? initial?.vaultPath ?? "" : "";
+  const refOwner = source === "vault" && ownerId && ownerId !== GLOBAL_AGENCY ? ownerId : undefined;
+  const pathWhy = useStoreRefCheck(refOwner, vaultPath, currentRef, !vaultWhy);
+  const hint = refHintOf(prefixes);
 
   const onKeyChange = (raw: string) => {
     const up = raw.toUpperCase().replace(/[^A-Z0-9_]/g, "");
@@ -734,12 +717,19 @@ function SecretFormModal({
       return;
     }
     if (source === "vault" && !vaultPath.trim()) {
-      setFormError("Vault path is required for vault-source secrets");
+      setFormError(`${hint.label} is required for an external secret`);
       return;
     }
     if (source === "vault" && (vaultWhy || pathWhy)) {
       setFormError(vaultWhy || pathWhy);
       return;
+    }
+    if (refOwner) {
+      const why = await checkStoreRef(refOwner, vaultPath, currentRef);
+      if (why) {
+        setFormError(why);
+        return;
+      }
     }
     if (source === "stored" && !isEdit && !value) {
       setFormError("Secret value is required for stored secrets");
@@ -836,7 +826,7 @@ function SecretFormModal({
                 [
                   { v: "stored", l: "Stored in Cronomicon" },
                   // Vault option only appears when Vault is configured (C.3).
-                  ...(offerVault ? [{ v: "vault", l: "Vault reference" }] : []),
+                  ...(offerVault ? [{ v: "vault", l: "External (secret store)" }] : []),
                 ] as { v: SecretSource; l: string }[]
               ).map((opt, i) => {
                 // Vault is configured (so the option is relevant) but this row's
@@ -897,14 +887,15 @@ function SecretFormModal({
         </div>
         {source === "vault" ? (
           <div>
-            <label style={labelStyle()}>Vault Path *</label>
+            <label style={labelStyle()}>{hint.label} *</label>
             <input
+              aria-label={hint.label}
               value={vaultPath}
               onChange={(e) => setVaultPath(e.target.value)}
-              placeholder="secret/data/myapp#KEY_NAME"
+              placeholder={hint.placeholder}
               style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm }}
             />
-            <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>Format: engine/data/path#FIELD_NAME</div>
+            <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>{hint.format}</div>
             {prefixes.kind === "prefixes" && prefixes.prefixes.length > 0 && (
               <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
                 {ownerName} may name paths inside:{" "}
@@ -957,102 +948,6 @@ function SecretFormModal({
             ownership is fixed at creation and there is no transfer action yet, so an
             editable-looking control would promise something the API cannot do. */}
         <CreationAgencyPicker label="secret" pick={agencyPick} />
-      </div>
-    </Modal>
-  );
-}
-
-function MigrateModal({
-  row,
-  onClose,
-  onDone,
-}: {
-  row: EnvSecretRow;
-  onClose: () => void;
-  onDone: (msg: string, kind: "info" | "error") => void;
-}) {
-  const [vaultPath, setVaultPath] = useState(`secret/data/cronomicon#${row.key}`);
-  const [busy, setBusy] = useState(false);
-  const [formError, setFormError] = useState("");
-  // LR-80 — the path must lie inside the Vault paths of the agency that owns
-  // the row (no limit for one of Global's).
-  const ownerName = row.ownerAgency || globalAgencyName();
-  const ownerId = useAgencyIdByName(ownerName);
-  const prefixes = useVaultPrefixes(ownerId);
-  const pathWhy = ownerId === GLOBAL_AGENCY ? "" : vaultPathWhy(prefixes, ownerName, vaultPath);
-  // The suggested path is only a starting point. For an agency's row it is
-  // moved inside that agency's first prefix once the prefixes are known, so
-  // the dialog does not open on a refusal the operator did nothing to cause.
-  // Never after they have typed.
-  const [touched, setTouched] = useState(false);
-  const firstPrefix = prefixes.kind === "prefixes" ? prefixes.prefixes[0] : undefined;
-  useEffect(() => {
-    if (!touched && firstPrefix) setVaultPath(`${firstPrefix}/cronomicon#${row.key}`);
-  }, [touched, firstPrefix, row.key]);
-
-  const migrate = async () => {
-    if (row.id == null) return;
-    if (!vaultPath.trim()) {
-      setFormError("Vault path is required");
-      return;
-    }
-    if (pathWhy) {
-      setFormError(pathWhy);
-      return;
-    }
-    setBusy(true);
-    const { error: e } = await api.POST("/env-secrets/{secretId}/migrate-to-vault", {
-      params: { path: { secretId: row.id }, header: csrfHeader },
-      body: { vaultPath: vaultPath.trim() },
-    });
-    setBusy(false);
-    if (e) onDone(`Migrate failed: ${errMsg(e)}`, "error");
-    else onDone(`${row.key} migrated to Vault`, "info");
-  };
-
-  return (
-    <Modal
-      title="Migrate secret to Vault?"
-      onClose={onClose}
-      footer={
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {formError && <div style={{ fontSize: c.fontSm, color: c.danger }}>{formError}</div>}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <Btn onClick={onClose} disabled={busy}>
-              Cancel
-            </Btn>
-            <Btn primary onClick={migrate} disabled={busy}>
-              {busy ? "Migrating…" : "Migrate to Vault"}
-            </Btn>
-          </div>
-        </div>
-      }
-    >
-      <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6, marginBottom: 14 }}>
-        This moves <code style={{ fontFamily: c.mono }}>{row.key}</code> to the Vault path below and removes the stored
-        value from Cronomicon. The vault reference will resolve at run time. There is no undo.
-      </div>
-      <div style={{ marginBottom: 14 }}>
-        <label style={labelStyle()}>Vault Path *</label>
-        <input
-          value={vaultPath}
-          onChange={(e) => {
-            setTouched(true);
-            setVaultPath(e.target.value);
-          }}
-          style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm }}
-        />
-        <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>Format: engine/data/path#FIELD_NAME</div>
-        {prefixes.kind === "prefixes" && prefixes.prefixes.length > 0 && (
-          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
-            {ownerName} may name paths inside: <code style={{ fontFamily: c.mono }}>{prefixes.prefixes.join(", ")}</code>
-          </div>
-        )}
-        {pathWhy && (
-          <div role="alert" style={{ fontSize: c.fontXs, color: c.danger, marginTop: 4 }}>
-            {pathWhy}
-          </div>
-        )}
       </div>
     </Modal>
   );

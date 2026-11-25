@@ -3,7 +3,9 @@ package secrets
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"slices"
 	"sync/atomic"
 
 	"github.com/ResetSmith/cronomicon/internal/config"
@@ -25,6 +27,11 @@ type SettingsColumn struct {
 	// re-wrapped. A many-row table listed WITHOUT a Key would be read with a
 	// single-row query and silently cover its first row only.
 	Key string
+	// JSON marks a column whose plaintext is a JSON object of strings (2.5.5
+	// SM-3: a secret store's credential). Each string in it is masked on its
+	// own: masked whole, the object would match no log line, and the secret
+	// id or access key inside it would print in clear.
+	JSON bool
 }
 
 // SettingsToken is one stored token of a SettingsColumn: the raw (still
@@ -65,6 +72,10 @@ var EncryptedSettingsColumns = []SettingsColumn{
 	// 2.5.1 SG3: an agency's own Vault's AppRole credentials, one row per agency.
 	{Label: LabelAgencyVaultRoleID, Table: "agency_vaults", Column: "role_id_enc", Where: "1=1", Key: "agency_id"},
 	{Label: LabelAgencyVaultSecretID, Table: "agency_vaults", Column: "secret_id_enc", Where: "1=1", Key: "agency_id"},
+	// 2.5.5 SM-3: an agency's secret store credential, one JSON object per
+	// connection. The two AppRole columns above are emptied by the boot pass and
+	// stay listed until they are dropped.
+	{Label: LabelAgencyStoreCredential, Table: "agency_vaults", Column: "credential_enc", Where: "1=1", Key: "agency_id", JSON: true},
 }
 
 // ReadSettingsTokens returns every raw (still encrypted) token stored in one
@@ -254,9 +265,7 @@ func redactionReport(ctx context.Context, database *sql.DB, cfg *config.Config, 
 				undecryptable++
 				continue
 			}
-			if plain != "" {
-				values = append(values, plain)
-			}
+			values = append(values, settingsValues(sc, plain)...)
 		}
 	}
 	return values, undecryptable, nil
@@ -289,4 +298,29 @@ func RedactionSourceChanged() {
 	if p := changeHook.Load(); p != nil {
 		(*p)()
 	}
+}
+
+// settingsValues is what one decrypted settings token adds to the dictionary:
+// the value, or for a JSON column each non-empty string in its object. A JSON
+// column whose plaintext is not such an object is masked whole, so nothing is
+// left out.
+func settingsValues(sc SettingsColumn, plain string) []string {
+	if plain == "" {
+		return nil
+	}
+	if !sc.JSON {
+		return []string{plain}
+	}
+	var obj map[string]string
+	if err := json.Unmarshal([]byte(plain), &obj); err != nil {
+		return []string{plain}
+	}
+	var out []string
+	for _, v := range obj {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	slices.Sort(out)
+	return out
 }

@@ -46,7 +46,7 @@ import { CentralGate } from "../components/CentralRunsNothing";
 const SECTIONS = [
   { group: "Installation", key: "general", label: "General", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "notifications", label: "Notifications", requires: "configureAppGlobal", global: "configureAppGlobal" },
-  { group: "Installation", key: "vault", label: "Vault", requires: "configureAppGlobal", global: "configureAppGlobal" },
+  { group: "Installation", key: "vault", label: "Installation secret store", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "observability", label: "Observability", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "logstorage", label: "Log Storage", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "audit", label: "Audit & Compliance", requires: "configureAppGlobal", global: "configureAppGlobal" },
@@ -66,7 +66,7 @@ const SECTIONS = [
   { group: "Agency", key: "targets", label: "SSH Targets", requires: "configureApp", global: "configureAppGlobal" },
   // 2.5.1 SG3: an agency's own Vault, its administrators' to connect; in
   // Global, a pointer to the Installation group's Vault.
-  { group: "Agency", key: "agencyvault", label: "Agency Vault", requires: "configureApp", global: "configureAppGlobal" },
+  { group: "Agency", key: "agencyvault", label: "Secret store", requires: "configureApp", global: "configureAppGlobal" },
   // 2.5.0 C4 (AL-1 to AL-3): an agency's alert rules and push targets, its
   // administrators' to change. The relay they send through stays on
   // Notifications, in the Installation group.

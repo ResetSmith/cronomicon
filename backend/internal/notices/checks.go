@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
-	"github.com/ResetSmith/cronomicon/internal/vaultpath"
+	"github.com/ResetSmith/cronomicon/internal/secretstore"
+	_ "github.com/ResetSmith/cronomicon/internal/secretstore/all"
 )
 
 // The checks below find conditions the database can be in but the application
@@ -461,17 +462,21 @@ func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
 	// 2.5.1 SG-26: an agency with a Vault of its own may name any path in it
 	// when it has no prefixes, and its prefixes are its own to set.
 	own := map[string]bool{}
-	rows, err = database.QueryContext(ctx, `SELECT agency_id FROM agency_vaults`)
+	// 2.5.5 SM-1: each agency's references are judged by its own store's
+	// provider; an agency with none is the installation's (secretstore.Default).
+	provider := map[string]string{}
+	rows, err = database.QueryContext(ctx, `SELECT agency_id, provider FROM agency_vaults`)
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
-		var a string
-		if err := rows.Scan(&a); err != nil {
+		var a, p string
+		if err := rows.Scan(&a, &p); err != nil {
 			rows.Close()
 			return err
 		}
 		own[a] = true
+		provider[a] = p
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -503,7 +508,11 @@ func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
 			if own[owner] && len(prefixes[owner]) == 0 {
 				continue
 			}
-			if ok, perr := vaultpath.Allowed(ref, prefixes[owner]); perr == nil && ok {
+			store := storeOf(provider[owner])
+			if store == nil {
+				continue // a provider this build lacks: the store's own notice says so
+			}
+			if ok, perr := secretstore.Allowed(store, ref, prefixes[owner]); perr == nil && ok {
 				continue
 			}
 			if own[owner] {
@@ -512,11 +521,11 @@ func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
 					Subject:  k.kind + ":" + id,
 					Detail: fmt.Sprintf("The %s %s reads the path %s in %s's own Vault, which is outside the prefixes %s set for itself (%s). "+
 						"It still works; it cannot be edited or moved until that is settled. Change the path, or the prefixes on Settings → Agency Vault.",
-						k.noun, name, mustPath(ref), ownerName, ownerName, strings.Join(prefixes[owner], ", ")),
+						k.noun, name, store.Location(ref), ownerName, ownerName, strings.Join(prefixes[owner], ", ")),
 				})
 				continue
 			}
-			path, _ := vaultpath.Split(ref)
+			path := store.Location(ref)
 			why := "is outside the Vault paths assigned to " + ownerName + " (" + strings.Join(prefixes[owner], ", ") + ")"
 			if len(prefixes[owner]) == 0 {
 				why = "and " + ownerName + " has no Vault paths assigned"
@@ -606,8 +615,14 @@ func checkLegacyPlacement(ctx context.Context, database *sql.DB) error {
 	return Reconcile(ctx, database, KindLegacyPlacement, found)
 }
 
-// mustPath is a reference's path part, for a sentence.
-func mustPath(ref string) string {
-	path, _ := vaultpath.Split(ref)
-	return path
+// storeOf is the provider with id ("" is the installation's), or nil.
+func storeOf(id string) secretstore.Provider {
+	if id == "" {
+		id = secretstore.Default
+	}
+	p, err := secretstore.Lookup(id)
+	if err != nil {
+		return nil
+	}
+	return p
 }

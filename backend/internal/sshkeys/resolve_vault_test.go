@@ -25,7 +25,6 @@ func (f fakeVault) Fetch(ref string) (string, error) {
 	}
 	return "", errors.New("vault: no value at ref")
 }
-func (f fakeVault) Write(ref, val string) error { f[ref] = val; return nil }
 
 // seedVaultCred inserts a vault-source ssh_credentials row (no envelope columns,
 // only a vault_ref) directly, mirroring what a vault-backed key looks like on disk.

@@ -41,7 +41,7 @@ export const GLOBAL_ADMIN_VIEW_ONLY = globalAdminOnly("view or change this");
  * name when it is shown.
  */
 export const vaultSecretGlobalOnly = (): string =>
-  `A Vault-backed secret that is ${globalAgencyName()}'s may name any path on the installation's Vault — only a global administrator can edit or migrate one.`;
+  `A Vault-backed secret that is ${globalAgencyName()}'s may name any path on the installation's Vault — only a global administrator can edit one.`;
 
 /**
  * globalOnly turns a "…Global" capability flag into the reason a control is

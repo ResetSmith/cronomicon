@@ -9,7 +9,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
-	"github.com/ResetSmith/cronomicon/internal/vaultpath"
 	"io"
 	"log/slog"
 	"net/http"
@@ -251,7 +250,11 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				httpx.Fail500(w, s.log, "db_error", oerr)
 				return
 			}
-			if !s.requireVaultPath(w, r, id, auth.PermManageEnvVars, owner, path, "secret") {
+			cur := ""
+			if existing.VaultPath != nil {
+				cur = *existing.VaultPath
+			}
+			if !s.requireVaultPathKeeping(w, r, id, auth.PermManageEnvVars, owner, path, cur, "secret") {
 				return
 			}
 		}
@@ -468,61 +471,6 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		s.raiseSecretAlert(r, notify.TriggerSecretRevealed, "Secret", sc.Key, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sid), "revealed") // SG-17
 		httpx.JSON(w, http.StatusOK, map[string]string{"value": value})
 	})))
-	mux.Handle("POST /api/v1/env-secrets/{secretId}/migrate-to-vault", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, ok := auth.IdentityFrom(r.Context())
-		if !ok {
-			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-			return
-		}
-		sid := r.PathValue("secretId")
-		var inp struct {
-			VaultPath string `json:"vaultPath"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
-			httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
-			return
-		}
-		// D3/H3: enforce write-scope before migrating (404 out-of-scope; 403 on a global
-		// row — re-scoping/capturing a global secret's storage is a restricted-actor no).
-		if _, ok := s.loadSecretWritable(w, r, sec, sid, id); !ok {
-			return
-		}
-		// RB-32 (RF-5): migrating rewrites where the secret's MATERIAL lives — a
-		// write in every sense — so it takes the same departmental gate as PUT.
-		if !s.requireRowOwner(w, r, id, auth.PermManageEnvVars, "secrets", sid, "secret") {
-			return
-		}
-		// LR-80: migration WRITES the value to a caller-supplied Vault path, so
-		// the path must lie inside the owner agency's prefixes.
-		owner, oerr := s.rowOwnerAgency(r.Context(), "secrets", sid)
-		if oerr != nil {
-			httpx.Fail500(w, s.log, "db_error", oerr)
-			return
-		}
-		if !s.requireVaultPath(w, r, id, auth.PermManageEnvVars, owner, inp.VaultPath, "secret") {
-			return
-		}
-		sc, err := sec.MigrateToVault(r.Context(), sid, inp.VaultPath, id.Email)
-		if err != nil {
-			if strings.Contains(err.Error(), "already vault-source") {
-				httpx.Fail(w, http.StatusConflict, "already_vault", err.Error())
-				return
-			}
-			if strings.Contains(err.Error(), "vault unavailable") {
-				httpx.Fail(w, http.StatusServiceUnavailable, "vault_unreachable", err.Error())
-				return
-			}
-			httpx.Fail500(w, s.log, "migrate_failed", err)
-			return
-		}
-		if sc == nil {
-			httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
-			return
-		}
-		s.mountWriteChangeLogID(r, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "Secrets", "migrated-to-vault", sc.Key, id.Email, "id="+sc.ID)
-		s.raiseSecretAlert(r, notify.TriggerSecretChanged, "Secret", sc.Key, settings.RowAgency(r.Context(), s.db, "secrets", "owner_agency", sc.ID), "migrated to Vault") // SG-17
-		httpx.JSON(w, http.StatusOK, sc)
-	})))
 	// Tags (migration 470): operator-authored, SQLite-only labels on a secret —
 	// plaintext metadata, never the encrypted envelope; same ManageEnvVars gate.
 	mux.Handle("PUT /api/v1/env-secret-tags/{secretId}", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(s.updateSecretTags)))
@@ -719,12 +667,12 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		if credentialNamesVault(inp.Source, inp.VaultRef) {
 			cid := r.PathValue("credentialId")
 			ref := inp.VaultRef
+			var cur sql.NullString
+			if qerr := s.db.QueryRowContext(r.Context(), `SELECT vault_ref FROM ssh_credentials WHERE id = ?`, cid).Scan(&cur); qerr != nil && !errors.Is(qerr, sql.ErrNoRows) {
+				httpx.Fail500(w, s.log, "db_error", qerr)
+				return
+			}
 			if ref == "" { // the edit leaves the path alone: judge the one it has
-				var cur sql.NullString
-				if qerr := s.db.QueryRowContext(r.Context(), `SELECT vault_ref FROM ssh_credentials WHERE id = ?`, cid).Scan(&cur); qerr != nil && !errors.Is(qerr, sql.ErrNoRows) {
-					httpx.Fail500(w, s.log, "db_error", qerr)
-					return
-				}
 				ref = cur.String
 			}
 			owner, oerr := s.rowOwnerAgency(r.Context(), "ssh_credentials", cid)
@@ -732,7 +680,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 				httpx.Fail500(w, s.log, "db_error", oerr)
 				return
 			}
-			if !s.requireVaultPath(w, r, id, auth.PermConfigureApp, owner, ref, "SSH key") {
+			if !s.requireVaultPathKeeping(w, r, id, auth.PermConfigureApp, owner, ref, cur.String, "SSH key") {
 				return
 			}
 		}
@@ -979,6 +927,16 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 // refusal. Reading, revealing and consuming an existing Vault-backed row are
 // unchanged, and a path is NOT re-checked when a run resolves it (LR-81).
 func (s *Server) requireVaultPath(w http.ResponseWriter, r *http.Request, id auth.Identity, perm, ownerAgencyID, ref, label string) bool {
+	return s.requireVaultPathKeeping(w, r, id, perm, ownerAgencyID, ref, "", label)
+}
+
+// requireVaultPathKeeping is requireVaultPath for a row that already names
+// current: where nothing but the grammar would be checked (an agency with its
+// own store and no prefixes), a reference left as it was is not judged
+// again. Before 2.5.5 that branch stored any string, and an edit that leaves
+// the path alone must keep working for such a row (the grammar check is for
+// what is written now, SM-1).
+func (s *Server) requireVaultPathKeeping(w http.ResponseWriter, r *http.Request, id auth.Identity, perm, ownerAgencyID, ref, current, label string) bool {
 	if ownerAgencyID == agencyid.Global || ownerAgencyID == "" {
 		if id.GlobalAdmin(perm) {
 			return true
@@ -993,37 +951,13 @@ func (s *Server) requireVaultPath(w http.ResponseWriter, r *http.Request, id aut
 			"this "+label+" is owned by another agency: only that agency's administrators may say which Vault path it names")
 		return false
 	}
-	prefixes, err := settings.ListVaultPrefixes(r.Context(), s.db, ownerAgencyID)
+	v, err := settings.JudgeStoreRef(r.Context(), s.db, ownerAgencyID, ref, current, label)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
 	}
-	// 2.5.1 SG-26: in an agency's own Vault every path is its own, and its
-	// prefixes, if it set any, limit only itself.
-	own, err := settings.AgencyHasOwnVault(r.Context(), s.db, ownerAgencyID)
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return false
-	}
-	if own && len(prefixes) == 0 {
-		return true
-	}
-	if len(prefixes) == 0 {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "vault_path_not_allowed",
-			"this "+label+"'s agency has no Vault paths assigned in the installation's Vault, so it cannot name one: "+
-				"a global administrator assigns an agency its Vault path prefixes, or the agency connects a Vault of its own")
-		return false
-	}
-	ok, err := vaultpath.Allowed(ref, prefixes)
-	if err != nil {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
-		return false
-	}
-	if !ok {
-		// The caller administers this agency and may read its prefixes, so the
-		// refusal names them.
-		httpx.Fail(w, http.StatusUnprocessableEntity, "vault_path_not_allowed",
-			"that Vault path is outside the paths assigned to this "+label+"'s agency ("+strings.Join(prefixes, ", ")+")")
+	if !v.OK {
+		httpx.Fail(w, http.StatusUnprocessableEntity, v.Code, v.Reason)
 		return false
 	}
 	return true
